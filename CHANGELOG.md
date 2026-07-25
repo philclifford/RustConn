@@ -5,6 +5,18 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.4] - 2026-07-25
+
+### Fixed
+
+- **RDP connection fails with "server only supports Standard RDP Security" instead of falling back (issue #235)** — servers configured for legacy Standard RDP Security (NLA and TLS disabled, e.g. some Windows Server 2022 setups) make `ironrdp-connector` return `FailureCode(2)` / `SSL_NOT_ALLOWED_BY_SERVER`, surfaced as `negotiation failure: server only supports Standard RDP Security`. IronRDP does not implement Standard RDP Security at all, so this is a permanent incompatibility — but the fallback detector matched only `negotiation failed` / `NegotiationError`, never the actual `negotiation failure` wording. The session died with a red status and no fallback. Such failures are now classified as `SecurityUnsupported` and handed over to the external FreeRDP client, which speaks the legacy security layer.
+- **FreeRDP fallback broken on FreeRDP 3.24/3.25 due to the `file:` prefix (regression from the 0.19.3 fix for issue #234)** — the `file:` prefix in `/args-from:file:<path>` only exists from FreeRDP 3.26 on. Releases shipped by current Debian/Ubuntu (3.24, 3.25) accept only `/args-from:<path>`, `stdin`, `fd:<n>` or `env:<name>`, so they tried to open a file literally named `file:/run/user/…/rustconn-rdp-*.args`, logged `args_from_fp: Failed to read command line options`, and exited with status 255. Every external FreeRDP launch and every IronRDP→FreeRDP fallback failed on those versions. The launcher now probes `--version` and picks the syntax that binary understands: bare path for anything below 3.26 (and whenever the version cannot be determined), `file:` for 3.26 and newer.
+- **CredSSP logon failures triggered a pointless FreeRDP fallback and hid the real reason** — `ConnectorError`'s `Display` renders only the kind label (`[CredSSP @ …] CredSSP`); the `NTSTATUS` that identifies a rejected credential (`0xc000006d` / `STATUS_LOGON_FAILURE`) lives in the kind's `Debug` and was logged but never propagated to the GUI. The existing auth-failure guard therefore never matched, the message fell through to the protocol-incompatibility branch, and RustConn retried with external FreeRDP using the very same credentials. Users saw "external client closed unexpectedly" instead of an authentication error. The connector error kind is now carried in the message, wrong credentials are mapped to `RdpClientError::AuthenticationFailed` at the source in `rustconn-core`, and the GUI reports the specific NTSTATUS reason without a fallback attempt.
+
+### Improved
+
+- **RDP failure classification moved out of the GTK layer** — the decision between "retry without GFX", "fall back to FreeRDP" and "report an authentication error" was a chain of `msg.contains(..)` checks inlined in `handle_ironrdp_error`, which silently broke whenever an upstream `ironrdp` error string changed (issues #199, #234, #235). It now lives in `rustconn-core/src/rdp_client/failure.rs` as a pure `classify_rdp_failure()` returning `RdpFailureClass` (`Authentication`, `GraphicsPipeline`, `SecurityUnsupported`, `ProtocolIncompatible`, `Other`), covered by unit tests built from real-world failure messages. The GUI only switches on the class.
+
 ## [0.19.3] - 2026-07-23
 
 ### Added

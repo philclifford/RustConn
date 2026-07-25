@@ -175,10 +175,10 @@ pub fn build_freerdp_args(config: &FreeRdpConfig) -> Vec<String> {
         args.push(format!("/u:{username}"));
     }
 
-    // Password — handled externally via ephemeral args file (/args-from:file:)
+    // Password — handled externally via ephemeral args file (/args-from:)
     // to survive RD Connection Broker redirects (issue #218). The password
     // never appears on argv or stdin. The caller is responsible for writing
-    // the args file and passing /args-from:file:<path> separately.
+    // the args file and passing the /args-from: switch separately.
 
     // Resolution
     args.push(format!("/w:{}", config.width));

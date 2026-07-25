@@ -28,6 +28,24 @@ use super::super::gfx_handler::{GfxFrameUpdate, RustConnGfxHandler, try_load_ope
 use super::super::rdpdr::{RustConnRdpdrBackend, cups_default_printer, list_cups_printers};
 use super::super::{RdpClientConfig, RdpClientError, RdpClientEvent};
 
+/// Turns an `ironrdp` connector failure into a typed [`RdpClientError`].
+///
+/// `ConnectorError`'s `Display` renders only the kind label plus the upstream
+/// message; the machine-readable detail the GUI needs — the CredSSP `NTSTATUS`
+/// in particular — lives in the kind's `Debug`. Both are kept so
+/// [`crate::rdp_client::failure::classify_rdp_failure`] can tell a rejected
+/// credential apart from a protocol incompatibility. Without the `NTSTATUS`,
+/// a wrong password looked like a broken server and triggered a pointless
+/// external `FreeRDP` fallback with the very same credentials.
+fn map_connector_error(context: &str, display: &str, kind_debug: &str) -> RdpClientError {
+    let detail = format!("{context}: {display} [kind: {kind_debug}]");
+    if crate::rdp_client::failure::is_authentication_failure(&detail) {
+        RdpClientError::AuthenticationFailed(detail)
+    } else {
+        RdpClientError::ConnectionFailed(detail)
+    }
+}
+
 /// Transport layer: either a direct TCP connection or a gateway tunnel.
 enum GatewayOrTcp {
     Tcp(TcpStream),
@@ -454,7 +472,14 @@ pub(super) async fn establish_connection(
         let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector)
             .await
             .map_err(|e| {
-                RdpClientError::ConnectionFailed(format!("Connection begin failed: {e}"))
+                let kind = format!("{:?}", e.kind());
+                tracing::error!(
+                    protocol = "rdp",
+                    error = %e,
+                    error_kind = %kind,
+                    "IronRDP connect_begin failed"
+                );
+                map_connector_error("Connection begin failed", &e.to_string(), &kind)
             })?;
 
         tracing::debug!(
@@ -527,14 +552,18 @@ pub(super) async fn establish_connection(
         let connection_result = match futures::FutureExt::catch_unwind(finalize_future).await {
             Ok(Ok(result)) => result,
             Ok(Err(e)) => {
+                let kind = format!("{:?}", e.kind());
                 tracing::error!(
-                    "IronRDP connect_finalize failed: {:?}, error_kind={:?}",
-                    e,
-                    e.kind()
+                    protocol = "rdp",
+                    error = %e,
+                    error_kind = %kind,
+                    "IronRDP connect_finalize failed"
                 );
-                return Err(RdpClientError::ConnectionFailed(format!(
-                    "Connection finalize failed: {e}"
-                )));
+                return Err(map_connector_error(
+                    "Connection finalize failed",
+                    &e.to_string(),
+                    &kind,
+                ));
             }
             Err(panic_payload) => {
                 let msg = panic_payload

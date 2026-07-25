@@ -1615,62 +1615,33 @@ impl super::EmbeddedRdpWidget {
             cb.disconnect(handler_id);
         }
 
-        // Detect protocol-level errors that indicate server incompatibility
-        // Known issue: IronRDP connector 0.8.0 does not handle ServerDeactivateAll
-        // PDU during CapabilitiesExchange phase. GNOME Remote Desktop (grd) and
-        // some other servers send this PDU before ServerDemandActive, causing
-        // "unexpected Share Control Pdu (expected ServerDemandActive)" error.
-        // See: https://github.com/Devolutions/IronRDP — upstream limitation.
+        // Decide what to do with the failure. The matching itself lives in
+        // `rustconn_core::rdp_client::failure` as a pure, unit-tested function —
+        // keeping it here as inline `msg.contains(..)` chains broke every time
+        // an upstream error string changed (issues #199, #234, #235).
         //
-        // GNOME Remote Desktop also trips the connector's internal state machine
-        // during connect_finalize: NLA/CredSSP succeeds, then the capabilities /
-        // finalization phase returns `general_err!("invalid state (this is a bug)")`
-        // (ironrdp-connector connection.rs). Our core wraps this as
-        // "Connection finalize failed: …". Match both the wrapper prefix and the
-        // upstream signature so the connection falls back to FreeRDP instead of
-        // surfacing a dead-end error. See https://github.com/totoshko88/RustConn/issues/199.
-        //
-        // IMPORTANT: CredSSP authentication failures (wrong password, locked
-        // account, etc.) also arrive as "Connection finalize failed: … CredSSP"
-        // but are NOT protocol incompatibilities — retrying with FreeRDP using
-        // the same credentials is pointless. Exclude them from fallback.
-        let is_auth_failure = msg.contains("0xc000006d")
-            || msg.contains("0xc000006e")
-            || msg.contains("0xc000006a")
-            || msg.contains("0xc0000070")
-            || msg.contains("0xc0000071")
-            || msg.contains("0xc0000072")
-            || msg.contains("0xc000015b")
-            || msg.contains("STATUS_LOGON_FAILURE")
-            || msg.contains("STATUS_ACCOUNT_DISABLED")
-            || msg.contains("STATUS_ACCOUNT_LOCKED_OUT")
-            || msg.contains("STATUS_PASSWORD_EXPIRED");
+        // The classes that matter here:
+        // * `Authentication` — CredSSP/NLA rejected the credentials. The
+        //   external client would fail identically, so no fallback.
+        // * `GraphicsPipeline` — GFX/EGFX produced nothing decodable; retry
+        //   once with Legacy graphics, then fall back.
+        // * `SecurityUnsupported` — the server offers only Standard RDP
+        //   Security, which IronRDP does not implement at all (issue #235).
+        // * `ProtocolIncompatible` — connector/server mismatch, e.g. GNOME
+        //   Remote Desktop's `invalid state (this is a bug)` (issue #199).
+        let class = rustconn_core::rdp_client::classify_rdp_failure(msg);
+        tracing::debug!(
+            protocol = "rdp",
+            failure_class = ?class,
+            "[IronRDP] Failure classified"
+        );
 
-        let is_protocol_error = !is_auth_failure
-            && (msg.contains("ServerDemandActive")
-                || msg.contains("ServerDeactivateAll")
-                || msg.contains("connect_finalize")
-                || msg.contains("Connection finalize failed")
-                || msg.contains("invalid state (this is a bug)")
-                || msg.contains("unexpected Share Control Pdu")
-                || msg.contains("Unsupported PDU")
-                || msg.contains("Unsupported security protocol")
-                || msg.contains("negotiation failed")
-                || msg.contains("NegotiationError")
-                || msg.contains("decode error")
-                || msg.contains("unsupported fast-path update code")
-                // First-frame watchdog: server connected but never sent a decodable
-                // frame (GFX/H.264-only). Treated as incompatibility → FreeRDP fallback.
-                || msg.contains("no-frame-watchdog"));
-
-        if is_protocol_error {
-            // Distinguish GFX-specific errors (decode failure, no-frame-watchdog)
-            // from true protocol incompatibilities (ServerDemandActive, NLA negotiation).
-            // GFX errors get a retry with Legacy graphics before falling back to FreeRDP.
-            let is_gfx_error =
-                msg.contains("no-frame-watchdog") || msg.contains("GFX pipeline decode failure");
-
-            let should_retry_without_gfx = is_gfx_error && !*ctx.gfx_retry_attempted.borrow()
+        if class.warrants_freerdp_fallback() {
+            // GFX errors get one retry with Legacy graphics before the session
+            // is handed over to the external client.
+            let should_retry_without_gfx = class
+                == rustconn_core::rdp_client::RdpFailureClass::GraphicsPipeline
+                && !*ctx.gfx_retry_attempted.borrow()
                 // Skip retry if user already selected a non-GFX graphics mode
                 // (Legacy/RemoteFx) — there's nothing to fall back to.
                 && ctx
@@ -1723,8 +1694,10 @@ impl super::EmbeddedRdpWidget {
 
             tracing::warn!(
                 protocol = "rdp",
+                failure_class = ?class,
                 error = %msg,
-                "[IronRDP] Protocol incompatibility — attempting fallback to FreeRDP"
+                "[IronRDP] Server incompatible with the embedded client — \
+                 attempting fallback to FreeRDP"
             );
 
             // Clean up IronRDP state

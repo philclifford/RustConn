@@ -1,14 +1,15 @@
 //! Ephemeral FreeRDP args file for connection arguments.
 //!
-//! FreeRDP 3.26+ requires that `/args-from:file:<path>` is the **only**
-//! argument on the command line — it cannot be combined with other CLI
-//! arguments ([FreeRDP#12697]). All connection parameters (including
-//! secrets like `/p:<password>`) are written into a single-use file in
-//! `$XDG_RUNTIME_DIR` (mode 0600), keeping everything out of
-//! `/proc/<pid>/cmdline`.
+//! FreeRDP requires that `/args-from:` is the **only** argument on the command
+//! line — it cannot be combined with other CLI arguments ([FreeRDP#12697]).
+//! All connection parameters (including secrets like `/p:<password>`) are
+//! written into a single-use file in `$XDG_RUNTIME_DIR` (mode 0600), keeping
+//! everything out of `/proc/<pid>/cmdline`.
 //!
-//! Prior to FreeRDP 3.26 it was possible to mix `/args-from:file:` with
-//! other CLI args, but that is no longer the case.
+//! The switch itself is spelled differently across FreeRDP releases —
+//! `/args-from:<path>` everywhere, `/args-from:file:<path>` only from 3.26 on.
+//! [`super::detect::args_from_argument`] picks the form the installed binary
+//! understands.
 //!
 //! [FreeRDP#12697]: https://github.com/FreeRDP/FreeRDP/pull/12697
 //!
@@ -31,7 +32,7 @@ use secrecy::{ExposeSecret, SecretString};
 
 /// Single-use args file containing all FreeRDP connection arguments.
 ///
-/// FreeRDP 3.26+ requires `/args-from:file:` to be the sole CLI argument.
+/// FreeRDP requires `/args-from:` to be the sole CLI argument.
 /// All parameters (secret and plain) are written one-per-line into this
 /// file. The file is created with mode `0600` so only the owning user can
 /// read it. It is removed when the guard is dropped, even if the
@@ -41,8 +42,8 @@ pub(super) struct EphemeralRdpArgs {
 }
 
 impl EphemeralRdpArgs {
-    /// Returns the path the spawned `xfreerdp3` should read its args
-    /// from via `/args-from:file:<path>`.
+    /// Returns the path the spawned FreeRDP client should read its args
+    /// from via `/args-from:`.
     pub(super) fn path(&self) -> &Path {
         &self.path
     }
@@ -50,9 +51,9 @@ impl EphemeralRdpArgs {
     /// Writes all connection arguments (plain + secret) to a fresh file in
     /// `$XDG_RUNTIME_DIR` and returns a guard that removes the file on drop.
     ///
-    /// FreeRDP 3.26+ requires `/args-from:file:` to be the **only** CLI
-    /// argument — it cannot be combined with other arguments. All connection
-    /// parameters are therefore written into this file, one per line.
+    /// FreeRDP requires `/args-from:` to be the **only** CLI argument — it
+    /// cannot be combined with other arguments. All connection parameters are
+    /// therefore written into this file, one per line.
     ///
     /// # Arguments
     ///
@@ -112,10 +113,9 @@ impl EphemeralRdpArgs {
                 ))
             })?;
 
-        // FreeRDP /args-from:file: format is one argument per line.
-        // Since FreeRDP 3.26 this file must contain ALL arguments —
-        // nothing else may appear on the command line alongside
-        // `/args-from:file:<path>`.
+        // The FreeRDP args-file format is one argument per line. The file must
+        // contain ALL arguments — nothing else may appear on the command line
+        // alongside the `/args-from:` switch.
 
         // Write plain-text arguments first (non-secret, e.g. /v:host)
         for arg in plain_args {

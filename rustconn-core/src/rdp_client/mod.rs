@@ -58,6 +58,7 @@ mod config;
 pub mod dir_watcher;
 mod error;
 mod event;
+pub mod failure;
 pub mod gateway;
 #[cfg(feature = "gfx-h264")]
 pub mod gfx_handler;
@@ -83,6 +84,7 @@ pub use event::{
     RdpClientEvent, RdpRect, convert_to_bgra, create_frame_update,
     create_frame_update_with_conversion,
 };
+pub use failure::{RdpFailureClass, classify_rdp_failure, is_authentication_failure};
 pub use gateway::{GatewayAuthMethod, GatewayConfig, GatewayError, GatewayState};
 pub use graphics::{
     FrameStatistics, GraphicsError, GraphicsMode, GraphicsQuality, ServerGraphicsCapabilities,

@@ -156,13 +156,16 @@ impl SafeFreeRdpLauncher {
         }
 
         // Session password is always passed via a single-use args file in
-        // $XDG_RUNTIME_DIR (mode 0600) consumed by `/args-from:file:`.
+        // $XDG_RUNTIME_DIR (mode 0600) consumed by `/args-from:`.
         //
-        // FreeRDP 3.26+ (PR #12697) requires `/args-from:file:` to be the
-        // ONLY argument on the command line — it cannot be combined with other
-        // CLI arguments. All connection parameters (including secrets) are
-        // therefore written into the file, one per line. This also improves
-        // security: nothing is visible in `/proc/<pid>/cmdline`.
+        // FreeRDP (PR #12697) requires `/args-from:` to be the ONLY argument on
+        // the command line — it cannot be combined with other CLI arguments.
+        // All connection parameters (including secrets) are therefore written
+        // into the file, one per line. This also improves security: nothing is
+        // visible in `/proc/<pid>/cmdline`.
+        //
+        // The exact spelling of the switch depends on the installed FreeRDP
+        // version, see [`super::detect::args_from_argument`].
         //
         // The RD Gateway no longer needs a separate secret here: FreeRDP
         // reuses the session credentials (`/u:`, `/d:` and the `/p:` from
@@ -185,7 +188,10 @@ impl SafeFreeRdpLauncher {
         let _args_guard =
             match super::ephemeral_args::EphemeralRdpArgs::write_all(&plain_args, &secret_args) {
                 Ok(guard) => {
-                    cmd.arg(format!("/args-from:file:{}", guard.path().display()));
+                    cmd.arg(super::detect::args_from_argument(
+                        &actual_binary,
+                        guard.path(),
+                    ));
                     guard
                 }
                 Err(e) => {
@@ -264,7 +270,7 @@ impl SafeFreeRdpLauncher {
 
     /// Builds the full list of connection arguments as owned strings.
     ///
-    /// FreeRDP 3.26+ requires all arguments to be in the `/args-from:file:`
+    /// FreeRDP requires all arguments to be in the `/args-from:`
     /// file. This method collects them into a `Vec<String>` so they can be
     /// written to the ephemeral args file by [`EphemeralRdpArgs::write_all`].
     pub fn build_connection_args(config: &RdpConfig) -> Vec<String> {
@@ -393,7 +399,7 @@ impl SafeFreeRdpLauncher {
         }
 
         // The password is passed via a single-use args file
-        // (`/args-from:file:<path>`) in `launch()` — it never appears on
+        // (`/args-from:<path>`) in `launch()` — it never appears on
         // argv or stdin. This survives RD Connection Broker redirects
         // because FreeRDP reads the file once into memory (issue #218).
 

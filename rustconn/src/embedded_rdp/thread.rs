@@ -390,8 +390,8 @@ impl FreeRdpThread {
         // Do NOT set QT_QPA_PLATFORM — allow wlfreerdp to use native Wayland backend
 
         // Build connection arguments as a Vec<String> for the args file.
-        // FreeRDP 3.26+ requires `/args-from:file:` to be the ONLY CLI
-        // argument — it cannot be combined with other arguments.
+        // FreeRDP requires `/args-from:` to be the ONLY CLI argument — it
+        // cannot be combined with other arguments.
         let mut plain_args: Vec<String> = Vec::new();
 
         if let Some(ref domain) = config.domain
@@ -442,7 +442,7 @@ impl FreeRdpThread {
         let _args_guard =
             match super::ephemeral_args::EphemeralRdpArgs::write_all(&plain_args, &secret_args) {
                 Ok(guard) => {
-                    cmd.arg(format!("/args-from:file:{}", guard.path().display()));
+                    cmd.arg(super::detect::args_from_argument(binary, guard.path()));
                     guard
                 }
                 Err(e) => {
