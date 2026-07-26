@@ -290,6 +290,12 @@ pub fn default_keybindings() -> Vec<KeybindingDef> {
             "Switch Tab",
             Terminal,
         ),
+        KeybindingDef::new(
+            "win.toggle-detach",
+            "<Control><Shift>m",
+            "Move Session to New Window",
+            Terminal,
+        ),
         // Split View
         KeybindingDef::new(
             "win.split-horizontal",
@@ -525,6 +531,27 @@ mod tests {
             .insert("win.paste".into(), "<Control>v".into());
         settings.reset_all();
         assert!(!settings.has_overrides());
+    }
+
+    #[test]
+    fn toggle_detach_is_registered_without_accel_conflict() {
+        let defs = default_keybindings();
+        let detach = defs
+            .iter()
+            .find(|d| d.action == "win.toggle-detach")
+            .expect("win.toggle-detach must be registered");
+        assert_eq!(detach.default_accels, "<Control><Shift>m");
+        assert_eq!(detach.category, KeybindingCategory::Terminal);
+
+        for other in defs.iter().filter(|d| d.action != detach.action) {
+            for accel in other.default_accel_list() {
+                assert!(
+                    !accelerators_equivalent(accel, &detach.default_accels),
+                    "'{}' conflicts with win.toggle-detach",
+                    other.action
+                );
+            }
+        }
     }
 
     #[test]

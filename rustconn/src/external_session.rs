@@ -6,8 +6,9 @@
 //! count and an external-viewer emblem, and their child processes are watched by
 //! a single shared poll timer so the sidebar state clears when the viewer closes.
 //!
-//! This module is intentionally separate from [`crate::external_window`], which
-//! reparents VTE terminals into RustConn-owned windows — a different concept.
+//! This module is intentionally separate from [`crate::detached_window`], which
+//! hosts RustConn's own in-process session widgets in extra windows — a
+//! different concept.
 //!
 //! The registry keeps no direct sidebar/state coupling: the launch path injects
 //! two callbacks ([`ExternalSessionCallbacks`]) that bridge into the sidebar

@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.19.3** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.19.4** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -25,6 +25,7 @@ RustConn is a modern connection manager designed for Linux with Wayland-first ap
    - [Session Types & Display Modes](#session-types)
    - [Tab Management](#tab-management)
    - [Split View](#split-view)
+   - [Detached Session Windows](#detached-session-windows)
    - [Terminal Search](#terminal-search)
    - [Session Restore & Reconnect](#session-restore)
    - [Session Logging](#session-logging)
@@ -1311,6 +1312,29 @@ Sessions shown through an external viewer (xfreerdp, vncviewer, or an external S
 - **Tab Overview** — split-view tabs render correctly in Tab Overview (Ctrl+Shift+O) with live thumbnails showing the split layout
 
 Embedded viewers adapt to narrow panels: the toolbar collapses its secondary actions into an overflow ("⋯") menu (Fit resolution and Ctrl+Alt+Del stay visible), and the remote desktop rescales to fully fill a small or oddly-shaped panel. The same adaptation applies to a single embedded tab in a small or narrow application window. Keystroke broadcast (Ctrl+Shift+B) applies only to terminals — its toggle appears when a split holds at least two terminal sessions and a terminal panel is focused, and mirroring never targets an embedded remote desktop.
+
+### Detached Session Windows
+
+A session can be moved out of the main window into a window of its own — useful for keeping one session on a second monitor while you keep working in the main window. Moving a session never reconnects it: the same live widget is handed over, so scrollback, monitoring, recording, highlight rules, and SSH tunnels continue uninterrupted.
+
+- **Detach** — Right-click a tab → **Move to New Window**, or press **Ctrl+Shift+M**. The tab leaves the main window and the session appears in its own window, focused and ready for input.
+- **Attach** — Click the restore button in the detached window's header bar (**Move to Main Window**), or press **Ctrl+Shift+M** again while that window has focus. The session returns to a tab with the same title, icon, tab group, and color it had before, and the now-empty window closes.
+- **Choose a monitor** — With two or more monitors connected, the tab menu also offers **Move to New Window on…** with one entry per monitor (for example "Monitor 2 (DP-1)"). The window opens fullscreen on the chosen monitor, because Wayland does not let an application place a window at specific coordinates. With a single monitor the submenu is not shown.
+
+**Supported sessions:** everything RustConn renders itself — terminal sessions (SSH, Local Shell, Telnet, Serial, Kubernetes, MOSH, Zero Trust, and SFTP in mc mode) plus embedded RDP, embedded VNC, and embedded Web.
+
+**Not offered for:** sessions handed to an external viewer (SPICE, or RDP/VNC in External Window mode), which already run in their own operating-system window, and split tabs — remove the split first (activating the item on a split tab explains this).
+
+A detached window behaves like the main window: copy, paste, terminal search, close, and fullscreen (F11) act on the session in that window and never on a session in the main window, the keyboard passthrough toggle works from there as well, and toasts raised by that session appear in it. Compact-interface and layout-independent accelerator handling apply the same way as in the main window.
+
+**Lifecycle:**
+- **Closing a detached window ends its session** — the same teardown as closing its tab: the child process is stopped, SSH tunnels are dropped, and the sidebar status and history entry are updated. Ctrl+W inside a detached window closes only that session.
+- Closing or quitting the main window closes detached windows with it, and the "Close RustConn?" confirmation counts detached sessions along with open tabs.
+- Minimize-to-tray leaves detached windows and their sessions running.
+- Activating a detached session in the sidebar presents its window instead of starting a second session.
+- If a detached session ends on its own (remote disconnect, process exit), its window closes and the sidebar and history update exactly as they would for a tab.
+
+Detached sessions are not listed in Tab Overview, the Tab Switcher, or the split-view session picker, since they have no tab; the sidebar keeps showing them as connected.
 
 ### Status Indicators
 
@@ -3147,6 +3171,7 @@ Note: Sidebar-scoped shortcuts (F2, Delete, Ctrl+E, Ctrl+D, Ctrl+C, Ctrl+V, Ctrl
 | Ctrl+Shift+T | Local Shell |
 | Ctrl+Shift+O | Tab Overview |
 | Ctrl+% | Switch to Open Tab |
+| Ctrl+Shift+M | Move Session to New Window (and back) |
 | Ctrl+Scroll | Zoom in/out (font size) |
 | Ctrl+Plus / Ctrl+Minus | Zoom in/out (font size) |
 | Ctrl+0 | Reset zoom |
@@ -3182,6 +3207,7 @@ RustConn uses VTE, which passes all keystrokes to the shell. Configure vim/emacs
 | Ctrl+, | Settings |
 | F11 | Toggle Fullscreen |
 | F9 | Toggle Sidebar |
+| Ctrl+Shift+D | Toggle Compact Interface |
 | Ctrl+H | Connection History |
 | Ctrl+Shift+I | Statistics |
 | Ctrl+G | Password Generator |
@@ -3193,7 +3219,7 @@ RustConn uses VTE, which passes all keystrokes to the shell. Configure vim/emacs
 | Ctrl+Shift+B | Toggle Split Broadcast |
 | Ctrl+Q | Quit |
 
-> **Note:** Quitting with **Ctrl+Q** (or closing the window) while session tabs are open shows a "Close RustConn?" confirmation dialog with the number of open tabs, instead of silently disconnecting everything. This is skipped when minimize-to-tray is enabled (the app keeps running in the tray).
+> **Note:** Quitting with **Ctrl+Q** (or closing the window) while session tabs are open shows a "Close RustConn?" confirmation dialog with the number of open sessions (tabs plus [detached windows](#detached-session-windows)), instead of silently disconnecting everything. This is skipped when minimize-to-tray is enabled (the app keeps running in the tray).
 
 ---
 

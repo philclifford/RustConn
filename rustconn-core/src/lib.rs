@@ -73,6 +73,7 @@ pub mod protocol;
 pub mod search;
 pub mod secret;
 pub mod session;
+pub mod session_placement;
 pub mod sftp;
 pub mod shell_escape;
 pub mod smart_folder;
@@ -274,6 +275,8 @@ pub use session::{
     LogConfig, LogContext, LogError, LogResult, Session, SessionLogger, SessionManager,
     SessionState, SessionType,
 };
+// Session placement (tab / split / detached window) decisions
+pub use session_placement::{DetachContext, DetachVerdict, detach_verdict};
 pub use sftp::{
     build_mc_sftp_command, build_sftp_browser_uri, build_sftp_command, build_sftp_uri,
     build_sftp_uri_from_connection, ensure_key_in_agent, get_downloads_dir, get_ssh_key_path,

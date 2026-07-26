@@ -8,6 +8,7 @@ mod clusters;
 mod connection_actions;
 mod connection_dialogs;
 mod credentials;
+mod detach_actions;
 mod document_actions;
 mod edit_actions;
 mod edit_dialogs;
@@ -49,12 +50,10 @@ use vte4::prelude::*;
 
 use self::document_actions as doc_actions;
 use self::types::{
-    SessionSplitBridges, SharedExternalWindowManager, SharedNotebook, SharedSidebar,
-    SharedSplitView, get_protocol_string,
+    SessionSplitBridges, SharedNotebook, SharedSidebar, SharedSplitView, get_protocol_string,
 };
 use crate::activity_coordinator::ActivityCoordinator;
 use crate::dialogs::{ExportDialog, SettingsDialog};
-use crate::external_window::ExternalWindowManager;
 use crate::monitoring::MonitoringCoordinator;
 use crate::sidebar::{ConnectionItem, ConnectionSidebar};
 use crate::split_view::{SplitDirection, SplitViewBridge};
@@ -88,6 +87,14 @@ thread_local! {
     static EXTERNAL_SESSIONS: RefCell<Option<Rc<crate::external_session::ExternalSessionRegistry>>> =
         const { RefCell::new(None) };
 }
+// Detached session windows (issue #236), published for the same reason as
+// `EXTERNAL_SESSIONS`: `MainWindow` itself is a short-lived value in `build_ui`,
+// so the registry needs one owner that lives as long as the process while every
+// closure holds only a `Weak` handle to it.
+thread_local! {
+    static DETACHED_WINDOWS: RefCell<Option<Rc<crate::detached_window::DetachedWindowRegistry>>> =
+        const { RefCell::new(None) };
+}
 
 /// Acquires a busy guard from the thread-local [`BusyStack`].
 ///
@@ -107,13 +114,31 @@ pub fn external_session_registry() -> Option<Rc<crate::external_session::Externa
     EXTERNAL_SESSIONS.with(|cell| cell.borrow().as_ref().map(Rc::clone))
 }
 
+/// Returns the thread-local registry of detached session windows.
+///
+/// Returns `None` before `MainWindow::new` has published it (issue #236).
+///
+/// The shutdown paths use it to close every detached window: the main window's
+/// close handler and the `app.quit` action, which bypasses that handler.
+pub fn detached_window_registry() -> Option<Rc<crate::detached_window::DetachedWindowRegistry>> {
+    DETACHED_WINDOWS.with(|cell| cell.borrow().as_ref().map(Rc::clone))
+}
+
+/// Returns how many sessions a shutdown would end (pure).
+///
+/// `TerminalNotebook::session_count` only counts sessions that have a tab, so
+/// the two tabless kinds are added here: sessions in a detached window (issue
+/// #236) and sessions delegated to an external viewer (issue #209). Shared by
+/// the main window's close handler and the `app.quit` action so both ask the
+/// same question before showing the confirmation dialog.
+#[must_use]
+pub const fn open_session_count(tabbed: usize, detached: usize, external: usize) -> usize {
+    tabbed + detached + external
+}
+
 /// Main application window wrapper
 ///
 /// Provides access to the main window and its components.
-#[expect(
-    dead_code,
-    reason = "Fields kept for GTK widget lifecycle and future use"
-)]
 pub struct MainWindow {
     window: adw::ApplicationWindow,
     sidebar: SharedSidebar,
@@ -129,11 +154,14 @@ pub struct MainWindow {
     split_container: gtk4::Box,
     state: SharedAppState,
     overlay_split_view: adw::OverlaySplitView,
-    external_window_manager: SharedExternalWindowManager,
     /// Registry of external viewer sessions (VNC/RDP/SPICE delegated to a
     /// separate viewer process, issue #209). Tracks child processes and drives
     /// sidebar session-count + history via callbacks; watched by a shared timer.
     external_sessions: Rc<crate::external_session::ExternalSessionRegistry>,
+    /// Windows hosting detached sessions (issue #236), keyed by session. Owns
+    /// the window values; the notebook keeps owning all session state. Also
+    /// published to a thread-local so the lifecycle paths can reach it.
+    detached_windows: Rc<crate::detached_window::DetachedWindowRegistry>,
     toast_overlay: SharedToastOverlay,
     monitoring: Rc<MonitoringCoordinator>,
     activity_coordinator: types::SharedActivityCoordinator,
@@ -371,6 +399,9 @@ impl MainWindow {
         let activity_coordinator = Rc::new(ActivityCoordinator::new());
         let activity_for_close = activity_coordinator.clone();
         terminal_notebook.set_activity_coordinator(activity_coordinator.clone());
+        // The detach/attach paths suspend and resume the monitoring bar around
+        // the widget move, mirroring the split path.
+        terminal_notebook.set_monitoring_coordinator(Rc::clone(&monitoring));
         terminal_notebook.set_on_page_closed(move |session_id, connection_id| {
             monitoring_for_close.stop_monitoring(session_id);
             activity_for_close.stop(session_id);
@@ -757,9 +788,6 @@ impl MainWindow {
             win.set_width_request((min_width + 4).max(360));
         });
 
-        // Create external window manager
-        let external_window_manager = Rc::new(ExternalWindowManager::new());
-
         // External viewer session registry (issue #209): tracks VNC/RDP/SPICE
         // sessions delegated to a separate viewer process, surfaced in the
         // sidebar without a notebook tab. The callbacks bridge the registry into
@@ -835,8 +863,8 @@ impl MainWindow {
             split_container,
             state: state.clone(),
             overlay_split_view,
-            external_window_manager,
             external_sessions,
+            detached_windows: Rc::new(crate::detached_window::DetachedWindowRegistry::new()),
             toast_overlay,
             monitoring,
             activity_coordinator,
@@ -864,6 +892,11 @@ impl MainWindow {
         // (issue #209) without threading the registry through every call site.
         EXTERNAL_SESSIONS.with(|cell| {
             *cell.borrow_mut() = Some(Rc::clone(&main_window.external_sessions));
+        });
+        // Publish the detached window registry (issue #236) so the lifecycle
+        // paths reach it while every action closure keeps only a `Weak` handle.
+        DETACHED_WINDOWS.with(|cell| {
+            *cell.borrow_mut() = Some(Rc::clone(&main_window.detached_windows));
         });
 
         // Set up recording checker for sidebar context menu
@@ -1009,6 +1042,7 @@ impl MainWindow {
         self.setup_variables_actions(window, &state);
         self.setup_history_actions(window, &state);
         self.setup_misc_actions(window, &state, &sidebar, &terminal_notebook);
+        self.setup_detach_actions(window);
         Self::setup_smart_folder_actions(window, &state, &sidebar);
     }
     fn setup_document_actions(
@@ -1542,8 +1576,14 @@ impl MainWindow {
             // against accidental loss of active connections). Count tabless
             // external-viewer sessions too (issue #209), so a window holding
             // only external VNC/RDP/SPICE sessions still warns before quitting.
+            // Detached sessions (issue #236) have no tab either, so they are
+            // counted separately — closing the main window ends them too.
             let external_open = external_session_registry().map_or(0, |reg| reg.active_count());
-            let open_sessions = notebook_for_close.session_count() + external_open;
+            let open_sessions = open_session_count(
+                notebook_for_close.session_count(),
+                notebook_for_close.detached_count(),
+                external_open,
+            );
             if !minimize_to_tray && !force_close.get() && open_sessions > 0 {
                 let dialog = Self::close_confirmation_dialog(open_sessions);
                 let force_close_confirm = force_close.clone();
@@ -1570,6 +1610,15 @@ impl MainWindow {
 
             // Stop all standalone SSH tunnels
             tunnel_manager_for_close.borrow_mut().stop_all();
+
+            // No detached window outlives the main window (issue #236). Each
+            // close runs the standard session teardown, so their child
+            // processes and tunnels go down with the tabbed ones. Skipped when
+            // minimizing to tray: then the main window only hides and every
+            // session, detached or not, keeps running.
+            if !minimize_to_tray && let Some(registry) = detached_window_registry() {
+                registry.close_all();
+            }
 
             // Save window geometry and expanded groups state
             let (width, height) = win.default_size();
@@ -3777,5 +3826,29 @@ impl MainWindow {
                 crate::dialogs::TerminalSearchDialog::new(Some(&window.clone().upcast()), terminal);
             dialog.show();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::open_session_count;
+
+    #[test]
+    fn tabless_sessions_are_counted_for_the_close_confirmation() {
+        // One tab, one detached window, one external viewer: three sessions
+        // would end, so the confirmation has to appear.
+        assert_eq!(open_session_count(1, 1, 1), 3);
+    }
+
+    #[test]
+    fn only_detached_sessions_still_count_as_open() {
+        // The main window can hold nothing but a Welcome tab while a session
+        // runs in its own window — quitting must still ask (Requirement 6.4).
+        assert_eq!(open_session_count(0, 2, 0), 2);
+    }
+
+    #[test]
+    fn nothing_open_needs_no_confirmation() {
+        assert_eq!(open_session_count(0, 0, 0), 0);
     }
 }

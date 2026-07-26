@@ -30,6 +30,20 @@ You are editing a file in `rustconn/src/window/`.
 - Tab Overview → `AdwTabOverview`, terminals always inside `TabPage`
 - Split view → layout lives inside TabPage, not in a global container
 
+## Detached Session Windows
+
+- Three placements, one at a time: tab, split panel, detached window (one session per window)
+- `TerminalNotebook` stays the single owner of session state — a detached window only borrows the
+  session's widget subtree; teardown always goes through the notebook's `close-page` path
+- `DetachedWindowRegistry` (`rustconn/src/detached_window.rs`) owns the window values by session id;
+  actions live in `window/detach_actions.rs` (`win.detach-session`, `win.detach-session-to-monitor`,
+  `win.attach-session`, `win.toggle-detach`)
+- Detachability is decided only by `rustconn_core::detach_verdict()` — never re-derive it inline
+- Any "open sessions" count must be `session_count() + detached_count()` (+ external sessions)
+- Window actions in a detached window are scoped to that window's `session_id`, never to the main
+  window's selection; callbacks capture `Weak` handles only (no `Rc` cycle back to the notebook)
+- Monitor choice → `present_fullscreen_on()`; never position a window by coordinates (Wayland)
+
 ## Auto-Reconnect
 
 - Uses `poll_until_online_with_backoff()` from `rustconn-core/src/host_check.rs`

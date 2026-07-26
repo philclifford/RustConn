@@ -96,8 +96,9 @@ fn set_window_compact(window: &gtk4::Window, manual: bool, auto: bool) {
 
 /// Recomputes the `.compact` class for one window from the stored preferences.
 ///
-/// Used as the resize handler so auto-compact reacts live to window size.
-fn recompute_window_compact(window: &gtk4::Window) {
+/// Used as the resize handler so auto-compact reacts live to window size, and
+/// once per window at creation to apply the current preferences immediately.
+pub fn recompute_window_compact(window: &gtk4::Window) {
     let (manual, auto) = COMPACT_PREFS.with(Cell::get);
     set_window_compact(window, manual, auto);
 }
@@ -129,6 +130,22 @@ pub fn set_compact_prefs(manual: bool, auto: bool) {
 pub fn watch_window_for_compact(window: &gtk4::Window) {
     window.connect_default_width_notify(recompute_window_compact);
     window.connect_default_height_notify(recompute_window_compact);
+}
+
+thread_local! {
+    /// The application's main window, tracked so re-activation presents it
+    /// specifically (issue #236).
+    ///
+    /// `app.active_window()` returns whichever window has focus, which since
+    /// detached session windows exist may not be the main one. Held weakly, so
+    /// this never keeps the window alive past its own close.
+    static MAIN_WINDOW: RefCell<Option<glib::WeakRef<adw::ApplicationWindow>>> =
+        const { RefCell::new(None) };
+}
+
+/// Returns the application's main window, if it has been built.
+fn main_window() -> Option<adw::ApplicationWindow> {
+    MAIN_WINDOW.with(|cell| cell.borrow().as_ref().and_then(glib::WeakRef::upgrade))
 }
 
 /// Application ID for `RustConn`
@@ -164,8 +181,10 @@ pub fn create_application() -> adw::Application {
 /// Builds the main UI when the application is activated
 fn build_ui(app: &adw::Application, tray_manager: SharedTrayManager) {
     // Guard against repeated activation (e.g. second instance, D-Bus
-    // activation).  If a window already exists just present it.
-    if let Some(window) = app.active_window() {
+    // activation). If the main window already exists just present it. Tracked
+    // explicitly rather than via `app.active_window()`, so a focused detached
+    // session window is never presented in its place (issue #236).
+    if let Some(window) = main_window() {
         window.present();
         return;
     }
@@ -221,6 +240,11 @@ fn build_ui(app: &adw::Application, tray_manager: SharedTrayManager) {
 
     // Create main window with state
     let window = MainWindow::new(app, state.clone());
+
+    // Track it for the re-activation guard above.
+    MAIN_WINDOW.with(|cell| {
+        *cell.borrow_mut() = Some(window.gtk_window().downgrade());
+    });
 
     // Make application accelerators work under non-Latin keyboard layouts
     // (Ukrainian, Russian, Greek, …) where GTK's keyval-based matching fails.
@@ -1141,6 +1165,12 @@ fn setup_app_actions(
             if let Some(registry) = crate::window::external_session_registry() {
                 registry.shutdown();
             }
+            // Same reasoning for detached session windows (issue #236): Ctrl+Q
+            // never reaches the main window's close handler, so their sessions
+            // are torn down here instead of being dropped with the process.
+            if let Some(registry) = crate::window::detached_window_registry() {
+                registry.close_all();
+            }
             if let Some(app) = app_weak.upgrade() {
                 app.quit();
             }
@@ -1150,9 +1180,16 @@ fn setup_app_actions(
         // through app.quit() and bypasses close_request, so the same
         // confirmation dialog is shown here. Count tabless external-viewer
         // sessions too (issue #209).
+        // Detached sessions have no tab either (issue #236), so they are
+        // counted separately or quitting with only detached sessions open
+        // would skip the confirmation.
         let external_open =
             crate::window::external_session_registry().map_or(0, |reg| reg.active_count());
-        let open_sessions = notebook_for_quit.session_count() + external_open;
+        let open_sessions = crate::window::open_session_count(
+            notebook_for_quit.session_count(),
+            notebook_for_quit.detached_count(),
+            external_open,
+        );
         if open_sessions > 0
             && let Some(win) = window_for_quit.upgrade()
         {
@@ -1554,7 +1591,7 @@ fn apply_saved_language(state: &SharedAppState) {
 /// Querying `accels_for_action` at press time means user overrides and
 /// passthrough mode (which clears accelerators) are honored automatically: when
 /// an action has no active accelerator, the key falls through unchanged.
-fn install_layout_independent_accels(window: &adw::ApplicationWindow, app: &adw::Application) {
+pub fn install_layout_independent_accels(window: &adw::ApplicationWindow, app: &adw::Application) {
     // Action names are stable for the lifetime of the process.
     let actions: Vec<String> = rustconn_core::default_keybindings()
         .into_iter()

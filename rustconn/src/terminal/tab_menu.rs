@@ -2,7 +2,44 @@
 //!
 //! Extracted from `terminal/mod.rs` to reduce module complexity.
 
+use gtk4::gdk;
+use rustconn_core::DetachVerdict;
+use rustconn_core::activity_monitor::MonitorMode;
+
 use super::*;
+
+/// The facts about the right-clicked tab that the context menu adapts to.
+///
+/// Bundled rather than passed as a row of booleans so the call site names every
+/// flag it sets.
+#[derive(Debug, Clone, Copy, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "four independent per-tab facts, each gating one menu section"
+)]
+pub struct TabMenuState {
+    /// Activity or silence monitoring mode of the tab's session, if any.
+    pub monitor_mode: Option<MonitorMode>,
+    /// The tab belongs to a tab group.
+    pub has_group: bool,
+    /// The tab is pinned.
+    pub is_pinned: bool,
+    /// At least one tab in the window belongs to a group.
+    pub any_groups_exist: bool,
+    /// The tab's session may be offered a move to its own window.
+    pub can_detach: bool,
+}
+
+/// Reports whether the detach section is offered for a verdict.
+///
+/// A split owner keeps the item: activating it explains that the split layout
+/// has to be removed first (Requirement 4.3), which is clearer than a silently
+/// missing entry. Every other blocking verdict hides the whole section, so no
+/// inert item is ever shown (Requirement 3.2), and a page with no session — the
+/// Welcome tab — never reaches this function at all (Requirement 4.5).
+const fn offers_detach(verdict: DetachVerdict) -> bool {
+    matches!(verdict, DetachVerdict::Allowed | DetachVerdict::SplitOwner)
+}
 
 impl TerminalNotebook {
     /// Sets up the tab context menu with group management actions.
@@ -26,12 +63,14 @@ impl TerminalNotebook {
         let sessions_for_menu = self.sessions.clone();
         let session_info_for_menu = self.session_info.clone();
         let activity_for_menu = self.activity_coordinator.clone();
+        let detach_hooks_for_menu = self.detach_hooks();
         let menu_for_setup = menu;
         self.tab_view.connect_setup_menu(move |_tab_view, page| {
             *context_page_setup.borrow_mut() = page.cloned();
 
-            // Determine the current monitor mode and group membership for the right-clicked tab
-            let (current_mode, has_group, is_pinned, any_groups_exist) = page
+            // Determine the current monitor mode, group membership and
+            // detachability for the right-clicked tab
+            let state = page
                 .map(|page| {
                     let sessions = sessions_for_menu.borrow();
                     let session_id = sessions.iter().find(|(_, p)| *p == page).map(|(id, _)| *id);
@@ -40,26 +79,29 @@ impl TerminalNotebook {
                         let coordinator = coordinator.as_ref()?;
                         coordinator.get_mode(sid)
                     });
+                    // A page with no session (the Welcome tab) is never
+                    // detachable, so the verdict is only asked for real sessions.
+                    let can_detach = session_id
+                        .is_some_and(|sid| offers_detach(detach_hooks_for_menu.verdict(sid)));
                     let info_ref = session_info_for_menu.borrow();
-                    let in_group = session_id
+                    let has_group = session_id
                         .and_then(|sid| info_ref.get(&sid).and_then(|i| i.tab_group.clone()))
                         .is_some();
-                    // Check if ANY tab has a group assigned (for showing group-related actions)
-                    let groups_exist = info_ref.values().any(|i| i.tab_group.is_some());
-                    let pinned = page.is_pinned();
-                    (mode, in_group, pinned, groups_exist)
+                    TabMenuState {
+                        monitor_mode: mode,
+                        has_group,
+                        is_pinned: page.is_pinned(),
+                        // Check if ANY tab has a group assigned (for showing
+                        // group-related actions)
+                        any_groups_exist: info_ref.values().any(|i| i.tab_group.is_some()),
+                        can_detach,
+                    }
                 })
-                .unwrap_or((None, false, false, false));
+                .unwrap_or_default();
 
             // Mutate the existing menu in-place (clear + re-populate)
             menu_for_setup.remove_all();
-            Self::populate_tab_context_menu(
-                &menu_for_setup,
-                current_mode,
-                has_group,
-                is_pinned,
-                any_groups_exist,
-            );
+            Self::populate_tab_context_menu(&menu_for_setup, state);
         });
 
         // Create action group
@@ -507,6 +549,42 @@ impl TerminalNotebook {
         });
         action_group.add_action(&close_action);
 
+        // "Move to New Window" action — hands the session to the window layer,
+        // which re-checks the verdict and explains a rejection with a toast.
+        let detach_action = gio::SimpleAction::new("detach", None);
+        let context_page_detach = context_page.clone();
+        let sessions_for_detach = self.sessions.clone();
+        let detach_hooks = self.detach_hooks();
+        detach_action.connect_activate(move |_, _| {
+            if let Some(session_id) =
+                Self::context_menu_session_id(&context_page_detach, &sessions_for_detach)
+            {
+                detach_hooks.notify_detach_request(session_id, None);
+            }
+        });
+        action_group.add_action(&detach_action);
+
+        // "Move to New Window on…" submenu entries — the target is the monitor
+        // index in the default display's monitor list.
+        let detach_monitor_action =
+            gio::SimpleAction::new("detach-to-monitor", Some(glib::VariantTy::UINT32));
+        let context_page_detach_monitor = context_page.clone();
+        let sessions_for_detach_monitor = self.sessions.clone();
+        let detach_hooks_monitor = self.detach_hooks();
+        detach_monitor_action.connect_activate(move |_, param| {
+            let Some(monitor) = param.and_then(glib::Variant::get::<u32>) else {
+                tracing::warn!("tab.detach-to-monitor activated without a monitor index");
+                return;
+            };
+            if let Some(session_id) = Self::context_menu_session_id(
+                &context_page_detach_monitor,
+                &sessions_for_detach_monitor,
+            ) {
+                detach_hooks_monitor.notify_detach_request(session_id, Some(monitor));
+            }
+        });
+        action_group.add_action(&detach_monitor_action);
+
         // "Cycle Monitor" action — cycles Off → Activity → Silence → Off
         let cycle_monitor_action = gio::SimpleAction::new("cycle-monitor", None);
         let context_page_monitor = context_page;
@@ -550,24 +628,72 @@ impl TerminalNotebook {
         self.tab_bar.insert_action_group("tab", Some(&action_group));
     }
 
+    /// Resolves the right-clicked page to its session id.
+    ///
+    /// Mirrors the lookup `tab.set-group` performs, so every handler in this
+    /// action group finds its session the same way.
+    fn context_menu_session_id(
+        context_page: &Rc<RefCell<Option<adw::TabPage>>>,
+        sessions: &Rc<RefCell<HashMap<Uuid, adw::TabPage>>>,
+    ) -> Option<Uuid> {
+        let target_page = context_page.borrow().clone()?;
+        let sessions_ref = sessions.borrow();
+        sessions_ref
+            .iter()
+            .find(|(_, page)| *page == &target_page)
+            .map(|(id, _)| *id)
+    }
+
+    /// Builds the "Move to New Window on…" submenu, or `None` for one monitor.
+    ///
+    /// With a single monitor there is no choice to present, so the submenu is
+    /// omitted rather than shown with one entry (Requirement 8.3).
+    fn monitor_detach_submenu() -> Option<gio::Menu> {
+        let monitors = gdk::Display::default()?.monitors();
+        let count = monitors.n_items();
+        if count < 2 {
+            return None;
+        }
+
+        let submenu = gio::Menu::new();
+        for index in 0..count {
+            let monitor = monitors.item(index).and_downcast::<gdk::Monitor>();
+            let label = Self::monitor_label(index, monitor.as_ref());
+            let item = gio::MenuItem::new(Some(&label), None);
+            item.set_action_and_target_value(
+                Some("tab.detach-to-monitor"),
+                Some(&index.to_variant()),
+            );
+            submenu.append_item(&item);
+        }
+        Some(submenu)
+    }
+
+    /// Names a monitor for the submenu, for example "Monitor 1 (DP-1)".
+    ///
+    /// The connector is the name the desktop's display settings show; the model
+    /// is the fallback, and a monitor that reports neither is listed by number
+    /// alone.
+    fn monitor_label(index: u32, monitor: Option<&gdk::Monitor>) -> String {
+        let number = (index + 1).to_string();
+        let descriptor =
+            monitor.and_then(|monitor| monitor.connector().or_else(|| monitor.model()));
+        match descriptor {
+            Some(descriptor) => i18n_f("Monitor {} ({})", &[&number, descriptor.as_str()]),
+            None => i18n_f("Monitor {}", &[&number]),
+        }
+    }
+
     /// Populates the tab context menu model in-place.
     ///
     /// The caller must pass an existing `gio::Menu` that has already been set
     /// as the `TabView` menu model.  This avoids replacing the model object
     /// (which would invalidate the popover's reference and cause a SIGSEGV on
     /// rapid repeated right-clicks).
-    pub(crate) fn populate_tab_context_menu(
-        menu: &gio::Menu,
-        current_mode: Option<rustconn_core::activity_monitor::MonitorMode>,
-        has_group: bool,
-        is_pinned: bool,
-        any_groups_exist: bool,
-    ) {
-        use rustconn_core::activity_monitor::MonitorMode;
-
+    pub(crate) fn populate_tab_context_menu(menu: &gio::Menu, state: TabMenuState) {
         // Pin/Unpin section
         let pin_section = gio::Menu::new();
-        if is_pinned {
+        if state.is_pinned {
             pin_section.append(Some(&i18n("Unpin Tab")), Some("tab.unpin"));
         } else {
             pin_section.append(Some(&i18n("Pin Tab")), Some("tab.pin"));
@@ -577,7 +703,7 @@ impl TerminalNotebook {
         // Group section — adaptive: only show group actions when groups exist
         let group_section = gio::Menu::new();
         group_section.append(Some(&i18n("Set Group...")), Some("tab.set-group"));
-        if has_group {
+        if state.has_group {
             group_section.append(Some(&i18n("Remove from Group")), Some("tab.remove-group"));
             group_section.append(
                 Some(&i18n("Close All in Group")),
@@ -588,10 +714,21 @@ impl TerminalNotebook {
 
         // Monitor section with current mode in label
         let monitor_section = gio::Menu::new();
-        let mode = current_mode.unwrap_or(MonitorMode::Off);
+        let mode = state.monitor_mode.unwrap_or(MonitorMode::Off);
         let label = i18n_f("Monitor: {}", &[&i18n(mode.display_name())]);
         monitor_section.append(Some(&label), Some("tab.cycle-monitor"));
         menu.append_section(None, &monitor_section);
+
+        // Detach section — sits directly above the close section, and is
+        // omitted entirely for a session that cannot be moved to its own window.
+        if state.can_detach {
+            let detach_section = gio::Menu::new();
+            detach_section.append(Some(&i18n("Move to New Window")), Some("tab.detach"));
+            if let Some(monitors) = Self::monitor_detach_submenu() {
+                detach_section.append_submenu(Some(&i18n("Move to New Window on…")), &monitors);
+            }
+            menu.append_section(None, &detach_section);
+        }
 
         // Close section — minimal by default, expanded when groups exist
         let close_section = gio::Menu::new();
@@ -599,7 +736,7 @@ impl TerminalNotebook {
         close_section.append(Some(&i18n("Close Others")), Some("tab.close-others"));
         close_section.append(Some(&i18n("Close to the Left")), Some("tab.close-left"));
         close_section.append(Some(&i18n("Close to the Right")), Some("tab.close-right"));
-        if any_groups_exist {
+        if state.any_groups_exist {
             close_section.append(
                 Some(&i18n("Close All Ungrouped")),
                 Some("tab.close-ungrouped"),
@@ -607,5 +744,37 @@ impl TerminalNotebook {
         }
         close_section.append(Some(&i18n("Close All Tabs")), Some("tab.close-all"));
         menu.append_section(None, &close_section);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustconn_core::DetachVerdict;
+
+    use super::offers_detach;
+
+    #[test]
+    fn a_detachable_session_gets_the_menu_item() {
+        assert!(offers_detach(DetachVerdict::Allowed));
+    }
+
+    #[test]
+    fn a_split_owner_keeps_the_item_so_the_restriction_can_be_explained() {
+        assert!(offers_detach(DetachVerdict::SplitOwner));
+    }
+
+    #[test]
+    fn every_other_blocking_verdict_hides_the_section() {
+        for verdict in [
+            DetachVerdict::AlreadyDetached,
+            DetachVerdict::ExternalViewer,
+            DetachVerdict::SplitGuest,
+        ] {
+            assert!(
+                !offers_detach(verdict),
+                "{} must not show an inert menu item",
+                verdict.reason_key()
+            );
+        }
     }
 }

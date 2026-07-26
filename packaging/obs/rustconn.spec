@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.3
+Version:        0.19.4
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,17 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Sat Jul 25 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.4-0
+- Version bump to 0.19.4
+- Added detachable session windows (issue #236)
+- Fixed RDP connection failing when the server only supports Standard RDP Security (issue #235)
+- Fixed FreeRDP fallback broken on FreeRDP 3.24/3.25 due to the args-from file: prefix
+- Fixed CredSSP logon failures triggering a pointless FreeRDP fallback
+- Removed dead external_window module (ExternalWindowManager)
+- Improved RDP failure classification moved into rustconn-core
+- Improved single code path for building a session's tab content
+- Improved localization: new strings translated in all 16 languages
+
 * Wed Jul 23 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.3-0
 - Version bump to 0.19.3
 - Added option to hide Welcome tab at startup (issue #232)
