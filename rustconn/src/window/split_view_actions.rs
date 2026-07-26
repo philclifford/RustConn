@@ -4,6 +4,30 @@
 
 use super::*;
 
+/// Reports whether a "Select Tab" placement must be refused, and says why.
+///
+/// Asked **before** the session's widget is resolved and reparented: once
+/// `move_session_to_panel` has run, a refusal can only report corruption instead
+/// of preventing it. Both pickers already filter these sessions out, so this
+/// guards any other route into the commit callback — a detached session above all
+/// (issue #236).
+fn refuses_split_placement(
+    notebook: &SharedNotebook,
+    session_id: Uuid,
+    orientation: &'static str,
+) -> bool {
+    if notebook.may_place_in_split(session_id) {
+        return false;
+    }
+    tracing::warn!(
+        session = %session_id,
+        orientation,
+        detached = notebook.is_detached(session_id),
+        "Select Tab refused: session cannot be placed in a split"
+    );
+    true
+}
+
 impl MainWindow {
     pub(crate) fn setup_split_view_actions(&self, window: &adw::ApplicationWindow) {
         // Helper function to get or create a split bridge for a session
@@ -264,6 +288,11 @@ impl MainWindow {
                                     crate::terminal::SplitEligibility::Embeddable
                                 )
                             })
+                            // A detached session's widget lives in its own
+                            // window; offering it here would rip it out and
+                            // leave an empty window behind (issue #236). Same
+                            // predicate the commit callback refuses with.
+                            .filter(|s| notebook_for_provider.may_place_in_split(s.id))
                             .map(|s| (s.id, s.name, s.protocol))
                             .filter(|(id, _, _)| !split_view_for_provider.is_session_displayed(*id))
                             .collect()
@@ -274,6 +303,13 @@ impl MainWindow {
                             session_id,
                             panel_uuid
                         );
+
+                        // Refuse before anything moves — see
+                        // `refuses_split_placement`.
+                        if refuses_split_placement(&notebook_for_terminal, session_id, "horizontal")
+                        {
+                            return;
+                        }
 
                         // First, clear this session from any previous split view
                         {
@@ -570,6 +606,11 @@ impl MainWindow {
                                     crate::terminal::SplitEligibility::Embeddable
                                 )
                             })
+                            // A detached session's widget lives in its own
+                            // window; offering it here would rip it out and
+                            // leave an empty window behind (issue #236). Same
+                            // predicate the commit callback refuses with.
+                            .filter(|s| notebook_for_provider.may_place_in_split(s.id))
                             .map(|s| (s.id, s.name, s.protocol))
                             .filter(|(id, _, _)| !split_view_for_provider.is_session_displayed(*id))
                             .collect()
@@ -580,6 +621,12 @@ impl MainWindow {
                             session_id,
                             panel_uuid
                         );
+
+                        // Refuse before anything moves — see
+                        // `refuses_split_placement`.
+                        if refuses_split_placement(&notebook_for_terminal, session_id, "vertical") {
+                            return;
+                        }
 
                         // First, clear this session from any previous split view
                         {

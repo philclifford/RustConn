@@ -252,9 +252,15 @@ impl MainWindow {
         let window_weak = window.downgrade();
         let state_clone = state.clone();
         let sidebar_clone = sidebar.clone();
+        let notebook_for_rename = Rc::clone(&self.terminal_notebook);
         rename_action.connect_activate(move |_, _| {
             if let Some(win) = window_weak.upgrade() {
-                Self::rename_selected_item(win.upcast_ref(), &state_clone, &sidebar_clone);
+                Self::rename_selected_item(
+                    win.upcast_ref(),
+                    &state_clone,
+                    &sidebar_clone,
+                    &notebook_for_rename,
+                );
             }
         });
         window.add_action(&rename_action);

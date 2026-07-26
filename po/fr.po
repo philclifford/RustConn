@@ -9427,8 +9427,8 @@ msgid "Pin Tab"
 msgstr "Épingler l'onglet"
 
 #: rustconn/src/terminal/tab_menu.rs:705
-msgid "Set Group..."
-msgstr "Définir le groupe..."
+msgid "Set Group…"
+msgstr "Définir le groupe…"
 
 #: rustconn/src/terminal/tab_menu.rs:707
 msgid "Remove from Group"
@@ -9443,8 +9443,8 @@ msgid "Move to New Window"
 msgstr "Déplacer vers une nouvelle fenêtre"
 
 #: rustconn/src/terminal/tab_menu.rs:728
-msgid "Move to New Window on…"
-msgstr "Déplacer vers une nouvelle fenêtre sur…"
+msgid "Move to New Window on"
+msgstr "Déplacer vers une nouvelle fenêtre sur"
 
 #: rustconn/src/terminal/tab_menu.rs:735
 msgid "Close Tab"
@@ -10651,6 +10651,10 @@ msgstr "Voulez-vous vraiment terminer cette session ?"
 #: rustconn/src/window/sessions.rs:246
 msgid "{} UI session(s), {} tracked session(s)"
 msgstr "{} session(s) UI, {} session(s) suivie(s)"
+
+#: rustconn/src/window/sessions.rs:307
+msgid "{} — in a separate window"
+msgstr "{} — dans une fenêtre séparée"
 
 #: rustconn/src/window/sessions.rs:321
 msgid "Send Text to Session"

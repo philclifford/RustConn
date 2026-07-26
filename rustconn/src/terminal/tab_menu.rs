@@ -702,7 +702,9 @@ impl TerminalNotebook {
 
         // Group section — adaptive: only show group actions when groups exist
         let group_section = gio::Menu::new();
-        group_section.append(Some(&i18n("Set Group...")), Some("tab.set-group"));
+        // HIG: the ellipsis marks an item that opens a dialog, and it is the
+        // single character U+2026 rather than three periods.
+        group_section.append(Some(&i18n("Set Group…")), Some("tab.set-group"));
         if state.has_group {
             group_section.append(Some(&i18n("Remove from Group")), Some("tab.remove-group"));
             group_section.append(
@@ -725,7 +727,8 @@ impl TerminalNotebook {
             let detach_section = gio::Menu::new();
             detach_section.append(Some(&i18n("Move to New Window")), Some("tab.detach"));
             if let Some(monitors) = Self::monitor_detach_submenu() {
-                detach_section.append_submenu(Some(&i18n("Move to New Window on…")), &monitors);
+                // No ellipsis: this opens a submenu, not a dialog (HIG).
+                detach_section.append_submenu(Some(&i18n("Move to New Window on")), &monitors);
             }
             menu.append_section(None, &detach_section);
         }

@@ -9340,8 +9340,8 @@ msgid "Pin Tab"
 msgstr "Fastgør fane"
 
 #: rustconn/src/terminal/tab_menu.rs:705
-msgid "Set Group..."
-msgstr "Angiv gruppe..."
+msgid "Set Group…"
+msgstr "Angiv gruppe…"
 
 #: rustconn/src/terminal/tab_menu.rs:707
 msgid "Remove from Group"
@@ -9356,8 +9356,8 @@ msgid "Move to New Window"
 msgstr "Flyt til nyt vindue"
 
 #: rustconn/src/terminal/tab_menu.rs:728
-msgid "Move to New Window on…"
-msgstr "Flyt til nyt vindue på…"
+msgid "Move to New Window on"
+msgstr "Flyt til nyt vindue på"
 
 #: rustconn/src/terminal/tab_menu.rs:735
 msgid "Close Tab"
@@ -10548,6 +10548,10 @@ msgstr "Er du sikker på, at du vil afslutte denne session?"
 #: rustconn/src/window/sessions.rs:246
 msgid "{} UI session(s), {} tracked session(s)"
 msgstr "{} UI-session(er), {} sporede session(er)"
+
+#: rustconn/src/window/sessions.rs:307
+msgid "{} — in a separate window"
+msgstr "{} — i separat vindue"
 
 #: rustconn/src/window/sessions.rs:321
 msgid "Send Text to Session"

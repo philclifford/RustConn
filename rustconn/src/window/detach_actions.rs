@@ -14,7 +14,14 @@
 //! Every closure holds `Weak` handles to the notebook, the registry, and the
 //! main window, so nothing registered here can keep a session alive past its
 //! teardown (Requirement 10.4).
+//!
+//! The free helpers below are `pub` rather than `pub(crate)` even though this
+//! module is private: `clippy::redundant_pub_crate` is part of the nursery set
+//! this crate enables and it rejects `pub(crate)` on an item in a private
+//! module. `MainWindow::setup_detach_actions` can be `pub(crate)` because it is
+//! a method on a type that is public elsewhere.
 
+use std::collections::HashSet;
 use std::rc::Weak;
 
 use gtk4::gdk;
@@ -105,6 +112,120 @@ fn monitor_at(index: u32) -> Option<gdk::Monitor> {
         tracing::debug!(index, "requested monitor is no longer connected");
     }
     monitor
+}
+
+/// Returns the window hosting a session, when that session is detached.
+///
+/// Session-scoped feedback belongs on the window the user is looking at, so
+/// anything addressed to a session asks here first and falls back to the main
+/// window (Requirement 5.4). The window is cloned out of the registry, so no
+/// borrow is held while it is used.
+pub fn detached_host_window(session_id: Uuid) -> Option<adw::ApplicationWindow> {
+    crate::window::detached_window_registry()?
+        .with_window(session_id, |window| window.window().clone())
+}
+
+/// Renames every open session of a connection, in tabs and in detached windows.
+///
+/// A rename used to reach only the sidebar: an open tab kept the old name in its
+/// title and tooltip, and a detached window kept it in its own title bar. Called
+/// from the rename dialog once the new name is stored (issue #236).
+pub fn rename_open_sessions(notebook: &SharedNotebook, connection_id: Uuid, new_name: &str) {
+    let renamed = notebook.rename_connection_sessions(connection_id, new_name);
+    let retitled = crate::window::detached_window_registry().map_or(0, |registry| {
+        registry.rename_connection(connection_id, new_name)
+    });
+    if !renamed.is_empty() || retitled > 0 {
+        tracing::debug!(
+            connection = %connection_id,
+            sessions = renamed.len(),
+            windows = retitled,
+            "connection rename applied to open sessions"
+        );
+    }
+}
+
+/// How long to keep looking for the session a reconnect creates.
+///
+/// The close+create reconnect fallback usually has the replacement tab in place
+/// by the time it returns, but a connection that resolves its credentials from a
+/// vault or waits for a port check creates it later. Ten polls of 300 ms cover
+/// those without waiting on a session that never arrives (a cancelled password
+/// prompt, say).
+const REDETACH_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(300);
+/// Number of [`REDETACH_POLL_INTERVAL`] polls before giving up.
+const REDETACH_POLL_ATTEMPTS: u8 = 10;
+
+/// Moves the session a reconnect just created back into its own window.
+///
+/// Requirement 7.6: a detached session that reconnects must show up in the same
+/// detached window. The close+create fallback in `MainWindow`'s reconnect handler
+/// cannot honour that literally — closing the session takes its window with it —
+/// so the placement is recorded before the close and re-established here, on the
+/// replacement session, as soon as it exists (issue #236).
+///
+/// `known_sessions` are the sessions this connection already had before the
+/// reconnect, so an unrelated tab of the same connection is never mistaken for
+/// the replacement.
+pub fn redetach_after_reconnect(
+    notebook: &SharedNotebook,
+    connection_id: Uuid,
+    known_sessions: HashSet<Uuid>,
+) {
+    if try_redetach(notebook, connection_id, &known_sessions) {
+        return;
+    }
+    // Nothing yet: the connection is still being set up. Poll, because there is
+    // no per-connection "session created" signal to hook — `on_tab_added` is a
+    // single slot owned by workspace restore.
+    let notebook = Rc::clone(notebook);
+    let attempts = std::cell::Cell::new(0_u8);
+    glib::timeout_add_local(REDETACH_POLL_INTERVAL, move || {
+        attempts.set(attempts.get() + 1);
+        if try_redetach(&notebook, connection_id, &known_sessions) {
+            return glib::ControlFlow::Break;
+        }
+        if attempts.get() >= REDETACH_POLL_ATTEMPTS {
+            tracing::warn!(
+                connection = %connection_id,
+                attempts = attempts.get(),
+                "reconnected session did not appear in time; it stays in a tab"
+            );
+            return glib::ControlFlow::Break;
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
+/// One attempt of [`redetach_after_reconnect`]; reports whether it is finished.
+fn try_redetach(
+    notebook: &SharedNotebook,
+    connection_id: Uuid,
+    known_sessions: &HashSet<Uuid>,
+) -> bool {
+    let target = notebook
+        .get_all_sessions()
+        .into_iter()
+        .filter(|session| {
+            session.connection_id == connection_id && !known_sessions.contains(&session.id)
+        })
+        .max_by_key(|session| session.connected_at)
+        .map(|session| session.id);
+    let Some(target) = target else {
+        return false;
+    };
+    if notebook.is_detached(target) {
+        // Someone was faster (a manual detach, or a second poll racing the
+        // first): the requirement is met either way.
+        return true;
+    }
+    tracing::info!(
+        connection = %connection_id,
+        session = %target,
+        "moving the reconnected session back into its own window"
+    );
+    notebook.request_detach(target, None);
+    true
 }
 
 /// Shows a high-priority error toast inside a detached window.
@@ -241,6 +362,14 @@ fn close_detached_session(handles: &DetachHandles, session_id: Uuid) {
 /// entry, the others find nothing. `begin_attach` marks the close as a move so
 /// the window's close handler does not run `close_session` again.
 fn close_detached_window_later(registry: &Weak<DetachedWindowRegistry>, session_id: Uuid) {
+    // Most sessions that end live in a tab; scheduling an idle for each of them
+    // would be work with nothing to do. Asking first also keeps the log quiet.
+    if !registry
+        .upgrade()
+        .is_some_and(|registry| registry.contains(session_id))
+    {
+        return;
+    }
     let registry = registry.clone();
     glib::idle_add_local_once(move || {
         if let Some(registry) = registry.upgrade()

@@ -9345,8 +9345,8 @@ msgid "Pin Tab"
 msgstr "Připnout kartu"
 
 #: rustconn/src/terminal/tab_menu.rs:705
-msgid "Set Group..."
-msgstr "Nastavit skupinu..."
+msgid "Set Group…"
+msgstr "Nastavit skupinu…"
 
 #: rustconn/src/terminal/tab_menu.rs:707
 msgid "Remove from Group"
@@ -9361,8 +9361,8 @@ msgid "Move to New Window"
 msgstr "Přesunout do nového okna"
 
 #: rustconn/src/terminal/tab_menu.rs:728
-msgid "Move to New Window on…"
-msgstr "Přesunout do nového okna na…"
+msgid "Move to New Window on"
+msgstr "Přesunout do nového okna na"
 
 #: rustconn/src/terminal/tab_menu.rs:735
 msgid "Close Tab"
@@ -10553,6 +10553,10 @@ msgstr "Opravdu chcete ukončit tuto relaci?"
 #: rustconn/src/window/sessions.rs:246
 msgid "{} UI session(s), {} tracked session(s)"
 msgstr "{} relací UI, {} sledovaných relací"
+
+#: rustconn/src/window/sessions.rs:307
+msgid "{} — in a separate window"
+msgstr "{} — v samostatném okně"
 
 #: rustconn/src/window/sessions.rs:321
 msgid "Send Text to Session"

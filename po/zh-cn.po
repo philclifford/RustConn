@@ -9246,8 +9246,8 @@ msgid "Pin Tab"
 msgstr "固定标签页"
 
 #: rustconn/src/terminal/tab_menu.rs:705
-msgid "Set Group..."
-msgstr "设置组..."
+msgid "Set Group…"
+msgstr "设置组…"
 
 #: rustconn/src/terminal/tab_menu.rs:707
 msgid "Remove from Group"
@@ -9262,8 +9262,8 @@ msgid "Move to New Window"
 msgstr "移动到新窗口"
 
 #: rustconn/src/terminal/tab_menu.rs:728
-msgid "Move to New Window on…"
-msgstr "移动到指定显示器的新窗口…"
+msgid "Move to New Window on"
+msgstr "移动到指定显示器的新窗口"
 
 #: rustconn/src/terminal/tab_menu.rs:735
 msgid "Close Tab"
@@ -10429,6 +10429,10 @@ msgstr "您确定要终止此会话吗？"
 #: rustconn/src/window/sessions.rs:246
 msgid "{} UI session(s), {} tracked session(s)"
 msgstr "{} 个 UI 会话，{} 个跟踪会话"
+
+#: rustconn/src/window/sessions.rs:307
+msgid "{} — in a separate window"
+msgstr "{} — 在单独窗口中"
 
 #: rustconn/src/window/sessions.rs:321
 msgid "Send Text to Session"

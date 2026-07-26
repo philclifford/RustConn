@@ -69,6 +69,22 @@ impl DetachVerdict {
     }
 }
 
+/// Decides whether the session described by `ctx` may be moved into a split.
+///
+/// The inverse question of [`detach_verdict`], and the one the split "Select
+/// Tab" picker asks: a session whose widget lives in a detached window must not
+/// be pulled into another tab's split layout, because that would empty the
+/// window while the session stayed marked as detached. A split guest already
+/// sits inside a split layout, and a session rendered by an external viewer has
+/// no widget to place, so neither may be placed either.
+///
+/// A split owner is deliberately allowed: its own tab hosts the layout, which is
+/// where a placed session ends up anyway.
+#[must_use]
+pub const fn may_place_in_split(ctx: &DetachContext) -> bool {
+    ctx.renders_in_process && !ctx.is_detached && !ctx.is_split_guest
+}
+
 /// Decides whether the session described by `ctx` may be detached.
 ///
 /// The decision is pure: the same context always yields the same verdict.

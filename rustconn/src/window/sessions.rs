@@ -232,8 +232,11 @@ pub fn populate_sessions_list(
         list.remove(&row);
     }
 
-    // Get sessions from notebook (UI sessions)
-    let session_ids = notebook.session_ids();
+    // Get sessions from notebook (UI sessions). A detached session has no tab,
+    // so it is chained in explicitly — the manager lists and counts it exactly
+    // like a tabbed one (issue #236).
+    let mut session_ids = notebook.session_ids();
+    session_ids.extend(notebook.detached_session_ids());
     let session_count = session_ids.len();
 
     // Also get active sessions from state manager for additional info
@@ -297,8 +300,18 @@ pub fn populate_sessions_list(
             }
 
             // Session type indicator
+            // A detached session is named as such, so the row explains why it
+            // has no tab to switch to (issue #236).
+            let type_text = if notebook.is_detached(session_id) {
+                crate::i18n::i18n_f(
+                    "{} — in a separate window",
+                    &[&info.protocol.to_uppercase()],
+                )
+            } else {
+                info.protocol.to_uppercase()
+            };
             let type_label = Label::builder()
-                .label(info.protocol.to_uppercase())
+                .label(&type_text)
                 .halign(gtk4::Align::Start)
                 .css_classes(["dim-label"])
                 .build();

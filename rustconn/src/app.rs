@@ -148,6 +148,21 @@ fn main_window() -> Option<adw::ApplicationWindow> {
     MAIN_WINDOW.with(|cell| cell.borrow().as_ref().and_then(glib::WeakRef::upgrade))
 }
 
+/// Returns the focused visible application window, for parenting a dialog.
+///
+/// `GtkApplication::active_window` is deliberately not used: it returns any
+/// registered window, which includes a modal `adw::Window` put up by a dialog and
+/// the main window while it sits hidden in the tray. Only a visible
+/// `adw::ApplicationWindow` — the main window or a detached session window — is a
+/// sensible parent, and the focused one is where the user just pressed the
+/// shortcut (issue #236). The caller falls back to the main window.
+fn focused_application_window(app: &adw::Application) -> Option<gtk4::Window> {
+    app.windows()
+        .into_iter()
+        .filter(|window| window.is_visible() && window.is::<adw::ApplicationWindow>())
+        .find(gtk4::prelude::GtkWindowExt::is_active)
+}
+
 /// Application ID for `RustConn`
 pub const APP_ID: &str = "io.github.totoshko88.RustConn";
 
@@ -1144,6 +1159,9 @@ fn setup_app_actions(
     // Quit action - save expanded groups state before quitting
     let quit_action = gio::SimpleAction::new("quit", None);
     let app_weak = app.downgrade();
+    // Second handle: the confirmation dialog is parented to whichever window is
+    // focused, and `app_weak` is moved into the quit closure.
+    let app_for_dialog = app.downgrade();
     let state_clone = state.clone();
     let sidebar_rc = window.sidebar_rc();
     let notebook_for_quit = window.notebook_rc();
@@ -1190,13 +1208,20 @@ fn setup_app_actions(
             notebook_for_quit.detached_count(),
             external_open,
         );
-        if open_sessions > 0
-            && let Some(win) = window_for_quit.upgrade()
-        {
-            let dialog = crate::window::MainWindow::close_confirmation_dialog(open_sessions);
-            dialog.connect_response(Some("close"), move |_, _| do_quit());
-            dialog.present(Some(&win));
-            return;
+        if open_sessions > 0 {
+            // Ctrl+Q can be pressed in a detached window, which is a real
+            // application window: parent the dialog there so it is not raised
+            // behind (or on a tray-hidden) main window (issue #236).
+            let parent = app_for_dialog
+                .upgrade()
+                .and_then(|app| focused_application_window(&app))
+                .or_else(|| window_for_quit.upgrade().map(Cast::upcast));
+            if let Some(parent) = parent {
+                let dialog = crate::window::MainWindow::close_confirmation_dialog(open_sessions);
+                dialog.connect_response(Some("close"), move |_, _| do_quit());
+                dialog.present(Some(&parent));
+                return;
+            }
         }
         do_quit();
     });

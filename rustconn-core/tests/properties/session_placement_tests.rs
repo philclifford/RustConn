@@ -10,7 +10,7 @@
 //! need no display and no GTK.
 
 use proptest::prelude::*;
-use rustconn_core::{DetachContext, DetachVerdict, detach_verdict};
+use rustconn_core::{DetachContext, DetachVerdict, detach_verdict, may_place_in_split};
 
 /// Every verdict variant, for totality checks.
 const ALL_VERDICTS: [DetachVerdict; 5] = [
@@ -21,27 +21,28 @@ const ALL_VERDICTS: [DetachVerdict; 5] = [
     DetachVerdict::SplitGuest,
 ];
 
-/// Independent re-implementation of the documented precedence, used as the
-/// oracle so a change in the predicate cannot silently redefine the contract.
-fn expected_verdict(context: DetachContext) -> DetachVerdict {
-    match context {
-        DetachContext {
-            is_detached: true, ..
-        } => DetachVerdict::AlreadyDetached,
-        DetachContext {
-            renders_in_process: false,
-            ..
-        } => DetachVerdict::ExternalViewer,
-        DetachContext {
-            is_split_owner: true,
-            ..
-        } => DetachVerdict::SplitOwner,
-        DetachContext {
-            is_split_guest: true,
-            ..
-        } => DetachVerdict::SplitGuest,
-        _ => DetachVerdict::Allowed,
+/// Collects every blocking condition a context satisfies.
+///
+/// Stated from the requirements rather than from the predicate's if/else chain:
+/// each of the four blocking verdicts has exactly one flag that justifies it, so
+/// a verdict is only defensible when its own flag is set. Deliberately says
+/// nothing about which blocker wins — precedence is pinned separately, by name,
+/// in the unit tests below.
+fn blockers_of(context: DetachContext) -> Vec<DetachVerdict> {
+    let mut blockers = Vec::new();
+    if context.is_detached {
+        blockers.push(DetachVerdict::AlreadyDetached);
     }
+    if !context.renders_in_process {
+        blockers.push(DetachVerdict::ExternalViewer);
+    }
+    if context.is_split_owner {
+        blockers.push(DetachVerdict::SplitOwner);
+    }
+    if context.is_split_guest {
+        blockers.push(DetachVerdict::SplitGuest);
+    }
+    blockers
 }
 
 /// Builds a context from the four flags in declaration order.
@@ -112,12 +113,30 @@ proptest! {
 
     // **Validates: Requirements 4.6**
     //
-    // *For any* `DetachContext`, the verdict follows the documented precedence
-    // `AlreadyDetached` → `ExternalViewer` → `SplitOwner` → `SplitGuest` →
-    // `Allowed`.
+    // *For any* `DetachContext`, the verdict names exactly one blocking
+    // condition, and that condition holds for the context — so a rejection can
+    // never be explained by a reason the session does not actually have.
     #[test]
-    fn prop_detach_verdict_follows_precedence(context in detach_context_strategy()) {
-        prop_assert_eq!(detach_verdict(&context), expected_verdict(context));
+    fn prop_verdict_names_a_blocker_that_holds(context in detach_context_strategy()) {
+        let verdict = detach_verdict(&context);
+        let blockers = blockers_of(context);
+
+        if blockers.is_empty() {
+            prop_assert_eq!(verdict, DetachVerdict::Allowed);
+        } else {
+            prop_assert_ne!(verdict, DetachVerdict::Allowed);
+            prop_assert!(
+                blockers.contains(&verdict),
+                "{:?} is not a blocker of {:?}",
+                verdict,
+                context
+            );
+            prop_assert_eq!(
+                blockers.iter().filter(|b| **b == verdict).count(),
+                1,
+                "a verdict must name exactly one blocking condition"
+            );
+        }
     }
 
     // **Validates: Requirements 4.6**
@@ -136,16 +155,55 @@ proptest! {
         prop_assert_eq!(verdict == DetachVerdict::Allowed, no_blocker);
     }
 
+    // **Validates: Requirements 7.3, 7.7**
+    //
+    // *For any* `DetachContext`, a split layout only accepts a session whose
+    // in-process widget is free to move: never one that lives in a detached
+    // window (the picker must not rip a widget out of its own window), never one
+    // that already sits in someone else's split, and never one drawn by an
+    // external viewer. Anything the detach path accepts satisfies all three, so
+    // it is placeable too — stated as implications rather than as an equality
+    // with `detach_verdict`, which also ranks reasons this question does not
+    // care about.
+    #[test]
+    fn prop_detached_session_is_never_placed_in_a_split(context in detach_context_strategy()) {
+        let placeable = may_place_in_split(&context);
+        if context.is_detached {
+            prop_assert!(!placeable, "a detached session must be refused: {:?}", context);
+            prop_assert_eq!(detach_verdict(&context), DetachVerdict::AlreadyDetached);
+        }
+        if context.is_split_guest || !context.renders_in_process {
+            prop_assert!(
+                !placeable,
+                "a session with no free in-process widget must be refused: {:?}",
+                context
+            );
+        }
+        if detach_verdict(&context) == DetachVerdict::Allowed {
+            prop_assert!(
+                placeable,
+                "a detachable session must also be placeable: {:?}",
+                context
+            );
+        }
+    }
+
     // **Validates: Requirements 4.6, 10.2**
     //
     // *For any* `DetachContext`, the verdict's reason key is non-empty and
-    // matches the key of the independently derived verdict, so the GUI always
-    // has a translatable explanation to show.
+    // identifies the verdict uniquely, so the GUI always has exactly one
+    // translatable explanation to show.
     #[test]
     fn prop_reason_key_is_available_for_every_context(context in detach_context_strategy()) {
-        let key = detach_verdict(&context).reason_key();
+        let verdict = detach_verdict(&context);
+        let key = verdict.reason_key();
         prop_assert!(!key.is_empty());
-        prop_assert_eq!(key, expected_verdict(context).reason_key());
+
+        let owners: Vec<DetachVerdict> = ALL_VERDICTS
+            .into_iter()
+            .filter(|candidate| candidate.reason_key() == key)
+            .collect();
+        prop_assert_eq!(owners, vec![verdict]);
     }
 }
 
@@ -158,11 +216,19 @@ fn full_flag_matrix_is_covered_and_exhaustive() {
     assert_eq!(unique.len(), 16, "every combination appears exactly once");
 
     for context in contexts {
+        let verdict = detach_verdict(&context);
+        let blockers = blockers_of(context);
         assert_eq!(
-            detach_verdict(&context),
-            expected_verdict(context),
-            "unexpected verdict for {context:?}"
+            verdict.is_allowed(),
+            blockers.is_empty(),
+            "allowed must mean no blocker for {context:?}"
         );
+        if !blockers.is_empty() {
+            assert!(
+                blockers.contains(&verdict),
+                "{verdict:?} is not a blocker of {context:?}"
+            );
+        }
     }
 }
 
@@ -234,6 +300,19 @@ fn plain_in_process_session_is_allowed() {
     assert_eq!(verdict, DetachVerdict::Allowed);
     assert!(verdict.is_allowed());
     assert_eq!(verdict.reason_key(), "detach-allowed");
+}
+
+#[test]
+fn split_placement_refuses_a_detached_session_and_accepts_a_tabbed_one() {
+    // The case the split "Select Tab" picker had to be taught (issue #236).
+    assert!(!may_place_in_split(&ctx(true, false, false, true)));
+    // A plain tabbed session and a split owner are the two placeable states.
+    assert!(may_place_in_split(&ctx(true, false, false, false)));
+    assert!(may_place_in_split(&ctx(true, true, false, false)));
+    // Nothing to place: an external viewer has no in-process widget, and a
+    // guest's widget already sits in someone else's split.
+    assert!(!may_place_in_split(&ctx(false, false, false, false)));
+    assert!(!may_place_in_split(&ctx(true, false, true, false)));
 }
 
 #[test]

@@ -137,7 +137,7 @@ impl DetachHooks {
             );
             return;
         };
-        tracing::debug!(session = %session_id, monitor, "detach requested from the tab menu");
+        tracing::debug!(session = %session_id, monitor, "detach requested");
         callback(session_id, monitor);
     }
 }
@@ -170,9 +170,35 @@ impl TerminalNotebook {
     }
 
     /// Returns the ids of every session that currently has a detached window.
+    ///
+    /// Sorted by session id: the park set is a `HashSet`, and its iteration
+    /// order changes from run to run, which would reorder the session-manager
+    /// rows and the saved workspace entries that chain these ids in.
     #[must_use]
     pub fn detached_session_ids(&self) -> Vec<Uuid> {
-        self.detached.borrow().iter().copied().collect()
+        let mut ids: Vec<Uuid> = self.detached.borrow().iter().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Reports whether a session may be moved into another tab's split layout.
+    ///
+    /// Answered by [`rustconn_core::may_place_in_split`], so the two split
+    /// pickers and the callback that commits their choice cannot disagree about
+    /// a detached session (issue #236).
+    #[must_use]
+    pub fn may_place_in_split(&self, session_id: Uuid) -> bool {
+        rustconn_core::may_place_in_split(&self.detach_hooks().context(session_id))
+    }
+
+    /// Asks the window layer to move a session into a detached window.
+    ///
+    /// Same entry point the tab context menu uses, so a caller outside the
+    /// notebook (the reconnect fallback, which recreates a detached session as a
+    /// tab) does not need the window, the registry, or the application handle.
+    pub fn request_detach(&self, session_id: Uuid, monitor: Option<u32>) {
+        self.detach_hooks()
+            .notify_detach_request(session_id, monitor);
     }
 
     /// Returns how many sessions currently live in a detached window.
@@ -228,20 +254,6 @@ impl TerminalNotebook {
         }
     }
 
-    /// Fires the detach-request callback, if one is installed.
-    ///
-    /// `monitor` selects a monitor for a fullscreen detach; `None` opens a
-    /// normal window.
-    #[expect(
-        dead_code,
-        reason = "the tab context menu entries that fire this land in a follow-up task"
-    )]
-    pub(super) fn notify_detach_request(&self, session_id: Uuid, monitor: Option<u32>) {
-        if let Some(ref callback) = *self.on_detach_request.borrow() {
-            callback(session_id, monitor);
-        }
-    }
-
     /// Hands a session's live content over to a detached window.
     ///
     /// Checks the verdict, marks the session detached so the `close-page`
@@ -277,7 +289,7 @@ impl TerminalNotebook {
         self.detached.borrow_mut().insert(session_id);
         if !self.park_tab_page(session_id) {
             self.detached.borrow_mut().remove(&session_id);
-            self.resume_monitoring_in_tab(monitoring.as_ref(), session_id);
+            self.resume_monitoring_in_place(monitoring.as_ref(), session_id);
             tracing::warn!(session = %session_id, "detach failed: session has no tab page");
             return None;
         }
@@ -287,7 +299,7 @@ impl TerminalNotebook {
             // session its tab back (which also clears the detached mark) so the
             // caller sees no state change.
             self.restore_session_tab(session_id);
-            self.resume_monitoring_in_tab(monitoring.as_ref(), session_id);
+            self.resume_monitoring_in_place(monitoring.as_ref(), session_id);
             tracing::warn!(session = %session_id, "detach failed: could not build content");
             return None;
         };
@@ -327,14 +339,25 @@ impl TerminalNotebook {
         self.remove_welcome_page();
         self.restore_session_tab(session_id);
         if !self.sessions.borrow().contains_key(&session_id) {
-            // No metadata for the session, so the tab could not be recreated:
-            // leave it detached and let the window keep its content.
-            self.detached.borrow_mut().insert(session_id);
+            // No metadata for the session, so the tab could not be recreated.
+            // `restore_session_tab` validates before it clears anything, so the
+            // session is still marked detached and its window keeps the content.
             tracing::warn!(session = %session_id, "attach failed: could not recreate tab");
             return false;
         }
 
         let Some(content) = self.build_session_content(session_id) else {
+            // The tab exists but holds nothing: roll all the way back to
+            // "detached", so the session is never reachable as both a tab and a
+            // window (Requirement 2.7).
+            self.detached.borrow_mut().insert(session_id);
+            if !self.park_tab_page(session_id) {
+                tracing::error!(
+                    session = %session_id,
+                    "attach rollback could not drop the empty tab"
+                );
+            }
+            self.resume_monitoring_in_place(monitoring.as_ref(), session_id);
             tracing::warn!(session = %session_id, "attach failed: could not build content");
             return false;
         };
@@ -372,14 +395,18 @@ impl TerminalNotebook {
             || self.session_widgets.borrow().contains_key(&session_id)
     }
 
-    /// Resumes monitoring into a session's tab container after a failed move.
-    fn resume_monitoring_in_tab(
+    /// Resumes monitoring into wherever a session sits after a failed move.
+    ///
+    /// Resolves the content box through [`TerminalNotebook::session_content_box`],
+    /// so it works for a session rolled back into its tab and for one rolled
+    /// back into its detached window.
+    fn resume_monitoring_in_place(
         &self,
         monitoring: Option<&Rc<MonitoringCoordinator>>,
         session_id: Uuid,
     ) {
         if let Some(coordinator) = monitoring
-            && let Some(container) = self.get_session_container(session_id)
+            && let Some(container) = self.session_content_box(session_id)
         {
             coordinator.resume_monitoring(session_id, &container);
         }
@@ -543,10 +570,31 @@ mod placement_invariant_tests {
             }
         }
 
-        /// Moves a tabbed session into another tab's split (`park_session_tab`).
+        /// Moves a session into another tab's split (`park_session_tab`).
+        ///
+        /// The refusal is not the model's own invention: the placement question
+        /// goes to the production predicate with the same facts the notebook
+        /// derives, so a detached session is rejected here for exactly the
+        /// reason the split pickers reject it (issue #236).
         fn park_in_split(&mut self, id: Uuid) {
+            if !rustconn_core::may_place_in_split(&self.context(id)) {
+                return;
+            }
             if self.tabbed.remove(&id) {
                 self.parked_in_split.insert(id);
+            }
+        }
+
+        /// Builds the placement context of a session from the model's sets.
+        ///
+        /// Every session in this model is an in-process one that owns no split
+        /// layout, which is the shape the split picker offers.
+        fn context(&self, id: Uuid) -> rustconn_core::DetachContext {
+            rustconn_core::DetachContext {
+                renders_in_process: true,
+                is_split_owner: false,
+                is_split_guest: self.parked_in_split.contains(&id),
+                is_detached: self.detached.contains(&id),
             }
         }
 
@@ -651,6 +699,35 @@ mod placement_invariant_tests {
         assert_eq!(model.detached_count(), 1);
     }
 
+    #[test]
+    fn the_split_picker_refuses_a_detached_session() {
+        let mut model = PlacementModel::default();
+        let id = Uuid::from_u128(1);
+        model.open(id);
+        model.detach(id);
+
+        // The transition both split "Select Tab" providers now filter out, and
+        // the Select Tab callback refuses before it reparents anything.
+        model.park_in_split(id);
+        model.assert_invariants();
+
+        assert!(
+            model.detached.contains(&id),
+            "the session must stay in its window"
+        );
+        assert!(
+            model.parked_in_split.is_empty(),
+            "a detached session must never gain a split mark"
+        );
+        assert_eq!(model.detached_count(), 1);
+
+        // Attaching it first makes the same move legal again.
+        model.restore(id);
+        model.park_in_split(id);
+        model.assert_invariants();
+        assert!(model.parked_in_split.contains(&id));
+    }
+
     /// One placement transition, addressed by index into a small id pool.
     #[derive(Debug, Clone, Copy)]
     enum Op {
@@ -709,6 +786,7 @@ mod notebook_park_tests {
             name: "stub".to_owned(),
             protocol: "ssh".to_owned(),
             is_embedded: true,
+            host: None,
             log_file: None,
             history_entry_id: None,
             tab_group: None,
@@ -723,7 +801,7 @@ mod notebook_park_tests {
     // one is opt-in — same convention as the split eligibility tests. Both park
     // sets are checked in one test because a single process must build only one
     // notebook: a second `adw::TabView` in the same run crashes GTK.
-    #[ignore = "requires GTK init on a single thread; run with: cargo test -p rustconn -- --ignored --test-threads=1"]
+    #[ignore = "initialises GTK: needs a display and its own process; run alone with `cargo test -p rustconn --bin rustconn -- --ignored --exact <this test path>`"]
     fn restore_session_tab_clears_the_park_set_the_session_was_in() {
         if gtk4::init().is_err() {
             return;

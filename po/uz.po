@@ -9409,8 +9409,8 @@ msgid "Pin Tab"
 msgstr "Varaqni mahkamlash"
 
 #: rustconn/src/terminal/tab_menu.rs:705
-msgid "Set Group..."
-msgstr "Guruhni belgilash..."
+msgid "Set Group…"
+msgstr "Guruhni belgilash…"
 
 #: rustconn/src/terminal/tab_menu.rs:707
 msgid "Remove from Group"
@@ -9425,8 +9425,8 @@ msgid "Move to New Window"
 msgstr "Yangi oynaga koʻchirish"
 
 #: rustconn/src/terminal/tab_menu.rs:728
-msgid "Move to New Window on…"
-msgstr "Monitorda yangi oynaga koʻchirish…"
+msgid "Move to New Window on"
+msgstr "Monitorda yangi oynaga koʻchirish"
 
 #: rustconn/src/terminal/tab_menu.rs:735
 msgid "Close Tab"
@@ -10626,6 +10626,10 @@ msgstr "Ushbu sessiyani tugatishga ishonchingiz komilmi?"
 #: rustconn/src/window/sessions.rs:246
 msgid "{} UI session(s), {} tracked session(s)"
 msgstr "{} UI seans(lar), {} kuzatilayotgan seans(lar)"
+
+#: rustconn/src/window/sessions.rs:307
+msgid "{} — in a separate window"
+msgstr "{} — alohida oynada"
 
 #: rustconn/src/window/sessions.rs:321
 msgid "Send Text to Session"

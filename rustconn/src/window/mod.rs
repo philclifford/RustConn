@@ -527,6 +527,23 @@ impl MainWindow {
                     );
                 }
 
+                // Requirement 7.6: the reconnected session must end up in the
+                // same window. This fallback closes the session, which for a
+                // detached one destroys its window, so the placement is recorded
+                // here and re-established on the replacement session below
+                // (issue #236).
+                let was_detached = notebook_for_reconnect.is_detached(session_id);
+                let sessions_before: std::collections::HashSet<Uuid> = if was_detached {
+                    notebook_for_reconnect
+                        .get_all_sessions()
+                        .into_iter()
+                        .filter(|session| session.connection_id == connection_id)
+                        .map(|session| session.id)
+                        .collect()
+                } else {
+                    std::collections::HashSet::new()
+                };
+
                 // Fallback for non-SSH protocols or if in-place failed:
                 // close old tab, create new one, reorder to original position
                 let tab_position = {
@@ -559,6 +576,14 @@ impl MainWindow {
                             .tab_view()
                             .reorder_page(&new_page, original_pos);
                     }
+                }
+
+                if was_detached {
+                    detach_actions::redetach_after_reconnect(
+                        &notebook_for_reconnect,
+                        connection_id,
+                        sessions_before,
+                    );
                 }
             });
         }
@@ -3055,8 +3080,9 @@ impl MainWindow {
         window: &adw::ApplicationWindow,
         state: &SharedAppState,
         sidebar: &SharedSidebar,
+        notebook: &SharedNotebook,
     ) {
-        edit_dialogs::rename_selected_item(window.upcast_ref(), state, sidebar);
+        edit_dialogs::rename_selected_item(window.upcast_ref(), state, sidebar, notebook);
     }
 
     /// Deletes the selected connection or group

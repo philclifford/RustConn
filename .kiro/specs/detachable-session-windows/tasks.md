@@ -177,6 +177,8 @@ flowchart TD
 - [x] 12. Quality gate and manual protocol matrix
   - `cargo fmt --all`, `cargo clippy --all-targets` with no new warnings, `cargo test` for both crates.
   - Automated additions: the core predicate tests from task 2 plus a notebook-level check that `restore_session_tab` clears the right park set and that `session_count() + detached_count()` matches the number of live sessions.
+  - The notebook-level check needs a display and a single GTK thread, so it is `#[ignore]`d and runs separately: `cargo test -p rustconn --bin rustconn -- --ignored --exact terminal::detach::notebook_park_tests::restore_session_tab_clears_the_park_set_the_session_was_in`. Run it as part of this gate (and of every later release gate) — without it, nothing exercises the real park sets, including the split-guest regression Requirement 10.3 asks for.
+  - **One process per ignored test.** Each of them calls `gtk4::init()`, and two GTK initialisations in one process abort the test binary (`--ignored` with no filter dies with `signal: 11, SIGSEGV` in `broadcast_gating_tests`), so `--test-threads=1` is not enough. Use one `--exact` invocation per test and add a line here for every new GTK-initialising ignored test. Today's set: `terminal::detach::notebook_park_tests::restore_session_tab_clears_the_park_set_the_session_was_in`, `terminal::split_eligibility_tests::embedded_widget_variants_are_embeddable`, `split_view::bridge::broadcast_gating_tests::terminal_sessions_excludes_embedded_and_flags_embedded_panel`, `split_view::bridge::broadcast_gating_tests::pure_terminal_split_has_no_embedded_panel`. Whatever automates the gate must loop over them the same way.
   - Manual matrix per protocol (SSH, local shell, Telnet, Serial, Kubernetes, Mosh, SFTP, ZeroTrust, embedded RDP, embedded VNC, Web): detach, interact, attach, and confirm no reconnect and no visual corruption; then detach, close the window, and confirm with `ps` that the child process is gone, the sidebar status cleared, and the history entry closed.
   - Negative cases: SPICE and external-mode RDP/VNC show no detach item; a split owner tab explains the restriction; the Welcome tab has no detach item.
   - Cross-window: Ctrl+Shift+M toggles in both directions, Ctrl+W in a detached window closes only that session, closing the main window takes detached windows with it, quitting with a detached session shows the confirmation, and re-activating the app presents the main window.
@@ -229,13 +231,13 @@ flowchart TD
   - Do not push, do not amend, do not tag.
   - _Requirements: 10.5_
 
-- [ ] 21. Critical review round 1, then apply the improvements
+- [x] 21. Critical review round 1, then apply the improvements
   - Dispatch a review subagent with this task: critically assess every change made for 0.19.4, find implementation gaps, missing cases, and possible improvements, and report them as a prioritized list with file references. Give it no write permissions in spirit — it reports, it does not edit.
   - Dispatch a second subagent to apply the accepted findings and add the resulting changes to the `## [0.19.4]` changelog section.
   - Re-run fmt, clippy, and the test suite after the changes land.
   - _Requirements: 10.1, 10.5_
 
-- [ ] 22. Critical review round 2, then apply the improvements
+- [x] 22. Critical review round 2, then apply the improvements
   - Repeat task 21 with a fresh reviewing subagent and the same prompt, so the second pass sees the post-fix state rather than the original diff.
   - Apply the accepted findings through a second applying subagent and extend the `## [0.19.4]` changelog section again.
   - Re-run fmt, clippy, and the test suite.

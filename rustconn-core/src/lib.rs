@@ -276,7 +276,7 @@ pub use session::{
     SessionState, SessionType,
 };
 // Session placement (tab / split / detached window) decisions
-pub use session_placement::{DetachContext, DetachVerdict, detach_verdict};
+pub use session_placement::{DetachContext, DetachVerdict, detach_verdict, may_place_in_split};
 pub use sftp::{
     build_mc_sftp_command, build_sftp_browser_uri, build_sftp_command, build_sftp_uri,
     build_sftp_uri_from_connection, ensure_key_in_agent, get_downloads_dir, get_ssh_key_path,

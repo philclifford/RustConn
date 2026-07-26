@@ -27,6 +27,13 @@ pub struct TerminalSession {
     pub protocol: String,
     /// Whether this is an embedded terminal or external window
     pub is_embedded: bool,
+    /// Host shown on the tab tooltip's second line, when the creation path knew
+    /// one (embedded VNC today).
+    ///
+    /// Carried with the session so a tab rebuilt after a detach or a rename
+    /// keeps the same tooltip the creation path produced (Requirement 2.3,
+    /// issue #236).
+    pub host: Option<String>,
     /// Log file path if logging is enabled
     pub log_file: Option<PathBuf>,
     /// History entry ID for tracking connection history

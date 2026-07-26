@@ -309,10 +309,14 @@ impl MainWindow {
             page.set_indicator_icon(Some(&gio::ThemedIcon::new(icon_name)));
         }
 
-        // 4.4: Show toast via existing ToastOverlay
-        if let Some(root) = notebook.widget().root()
-            && let Some(window) = root.downcast_ref::<gtk4::Window>()
-        {
+        // 4.4: Show toast via existing ToastOverlay — on the window the session
+        // actually lives in, which is its own one while it is detached
+        // (Requirement 5.4, issue #236).
+        let host_window: Option<gtk4::Window> =
+            super::detach_actions::detached_host_window(session_id)
+                .map(gtk4::prelude::Cast::upcast)
+                .or_else(|| notebook.widget().root().and_downcast::<gtk4::Window>());
+        if let Some(ref window) = host_window {
             let toast_type = match ntype {
                 NotificationType::Activity => crate::toast::ToastType::Info,
                 NotificationType::Silence => crate::toast::ToastType::Warning,
@@ -689,11 +693,14 @@ impl MainWindow {
                         if matches!(result, Ok(true)) {
                             // Guard: if the user closed the tab while polling
                             // was active, the session no longer exists — skip
-                            // reconnect to avoid creating an orphan tab.
+                            // reconnect to avoid creating an orphan tab. A
+                            // detached session has no tab but is very much
+                            // alive, so it counts as existing (issue #236).
                             let session_exists = notebook_cleanup
                                 .sessions_map()
                                 .borrow()
-                                .contains_key(&session_id);
+                                .contains_key(&session_id)
+                                || notebook_cleanup.is_detached(session_id);
                             if !session_exists {
                                 tracing::debug!(
                                     %session_id,

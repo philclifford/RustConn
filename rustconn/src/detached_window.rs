@@ -54,8 +54,20 @@ pub struct DetachedWindowParams<'a> {
 /// Builds the window title for a detached session (pure, testable).
 ///
 /// Uses an em dash, matching the GNOME convention of "document — application".
-fn detached_window_title(connection: &str) -> String {
-    i18n_f("{} — RustConn", &[connection])
+/// A connection with no name falls back to its protocol, so the title never
+/// starts with a stray dash.
+fn detached_window_title(connection: &str, protocol: &str) -> String {
+    i18n_f("{} — RustConn", &[display_name(connection, protocol)])
+}
+
+/// Picks what to call a session: its connection name, or its protocol when the
+/// connection has no usable name.
+fn display_name<'a>(connection: &'a str, protocol: &'a str) -> &'a str {
+    if connection.trim().is_empty() {
+        protocol
+    } else {
+        connection
+    }
 }
 
 /// A top-level window hosting exactly one detached session.
@@ -63,8 +75,19 @@ pub struct DetachedSessionWindow {
     window: adw::ApplicationWindow,
     session_id: Uuid,
     connection_id: Uuid,
+    /// Protocol label, kept for the title fallback when a connection is renamed
+    /// to an empty name.
+    protocol: String,
     toast_overlay: adw::ToastOverlay,
     window_title: adw::WindowTitle,
+    /// Persistent "this session dropped its connection" marker.
+    ///
+    /// A detached session has no tab to carry the offline indicator, and an
+    /// embedded viewer gets no reconnect banner either (those protocols cannot
+    /// reconnect in place), so the window itself says so (issue #236). A state
+    /// that needs attention belongs in a banner, per the project's GNOME HIG
+    /// rules.
+    disconnect_banner: adw::Banner,
     /// Kept alive for its `clicked` handler — dropping it breaks the attach
     /// button (see the widget-lifecycle note in `main.rs`).
     attach_button: Button,
@@ -92,22 +115,29 @@ impl DetachedSessionWindow {
     ) -> Self {
         let window = adw::ApplicationWindow::builder()
             .application(app)
-            .title(detached_window_title(params.title))
+            .title(detached_window_title(params.title, params.protocol))
             .default_width(DEFAULT_WIDTH)
             .default_height(DEFAULT_HEIGHT)
             .width_request(MIN_WIDTH)
             .height_request(MIN_HEIGHT)
             .build();
 
-        let window_title = adw::WindowTitle::new(params.title, params.protocol);
+        let window_title =
+            adw::WindowTitle::new(display_name(params.title, params.protocol), params.protocol);
         let attach_button = build_attach_button();
 
         let header = adw::HeaderBar::new();
         header.set_title_widget(Some(&window_title));
         header.pack_start(&attach_button);
 
+        // Hidden until the session's connection drops; reuses the wording of the
+        // tab reconnect banner so both placements say the same thing.
+        let disconnect_banner = adw::Banner::new(&i18n("Session disconnected"));
+        disconnect_banner.set_revealed(false);
+
         let toolbar_view = adw::ToolbarView::new();
         toolbar_view.add_top_bar(&header);
+        toolbar_view.add_top_bar(&disconnect_banner);
         toolbar_view.set_content(Some(content));
 
         let toast_overlay = adw::ToastOverlay::new();
@@ -126,8 +156,10 @@ impl DetachedSessionWindow {
             window,
             session_id: params.session_id,
             connection_id: params.connection_id,
+            protocol: params.protocol.to_owned(),
             toast_overlay,
             window_title,
+            disconnect_banner,
             attach_button,
             attaching: Rc::new(Cell::new(false)),
             on_attach: Rc::new(RefCell::new(None)),
@@ -218,8 +250,37 @@ impl DetachedSessionWindow {
 
     /// Updates the window and header bar title after a connection rename.
     pub fn set_session_title(&self, title: &str) {
-        self.window.set_title(Some(&detached_window_title(title)));
-        self.window_title.set_title(title);
+        self.title_handles().apply(title);
+    }
+
+    /// Clones out everything needed to retitle this window.
+    ///
+    /// Lets [`DetachedWindowRegistry::rename_connection`] drop its map borrow
+    /// before it touches GTK: `set_session_title` needs the window value, and
+    /// reaching it through the registry would hold the borrow across two setters.
+    #[must_use]
+    pub fn title_handles(&self) -> TitleHandles {
+        TitleHandles {
+            window: self.window.clone(),
+            window_title: self.window_title.clone(),
+            protocol: self.protocol.clone(),
+        }
+    }
+
+    /// Reveals or hides the "session disconnected" banner of this window.
+    ///
+    /// The notebook calls this through the registry when a detached session's
+    /// connection drops or comes back, so a window whose session went offline is
+    /// never silently frozen (issue #236).
+    pub fn set_session_disconnected(&self, disconnected: bool) {
+        self.disconnect_banner.set_revealed(disconnected);
+    }
+
+    /// Returns the disconnect banner, for callers that must not hold a registry
+    /// borrow while they change it.
+    #[must_use]
+    pub const fn disconnect_banner(&self) -> &adw::Banner {
+        &self.disconnect_banner
     }
 
     /// Returns the overlay that toasts for this session must be shown on.
@@ -279,6 +340,27 @@ impl DetachedSessionWindow {
     }
 }
 
+/// The widgets a rename has to update, cloned out of a detached window.
+///
+/// GTK objects are reference-counted handles, so cloning them is cheap and the
+/// clone drives the same widget — which is what lets a caller release its
+/// registry borrow before it calls into GTK.
+pub struct TitleHandles {
+    window: adw::ApplicationWindow,
+    window_title: adw::WindowTitle,
+    protocol: String,
+}
+
+impl TitleHandles {
+    /// Applies a new connection name to the window and its header bar.
+    pub fn apply(&self, title: &str) {
+        self.window
+            .set_title(Some(&detached_window_title(title, &self.protocol)));
+        self.window_title
+            .set_title(display_name(title, &self.protocol));
+    }
+}
+
 /// Builds the header bar button that moves the session back into a tab.
 fn build_attach_button() -> Button {
     let button = Button::from_icon_name("view-restore-symbolic");
@@ -320,9 +402,23 @@ impl DetachedWindowRegistry {
     ///
     /// This is what a focus request for a detached session resolves to, so
     /// sidebar activation and the session manager keep working unchanged.
+    ///
+    /// The window is cloned out and the borrow released before it is presented:
+    /// `present` emits signals, and a handler reached from them that inserts
+    /// into or takes from the registry would otherwise panic on the live borrow.
     pub fn present(&self, session_id: Uuid) -> bool {
-        self.with_window(session_id, DetachedSessionWindow::present)
-            .is_some()
+        let window = self
+            .windows
+            .borrow()
+            .get(&session_id)
+            .map(|detached| detached.window().clone());
+        match window {
+            Some(window) => {
+                window.present();
+                true
+            }
+            None => false,
+        }
     }
 
     /// Reports whether a session currently has a detached window.
@@ -331,10 +427,43 @@ impl DetachedWindowRegistry {
         self.windows.borrow().contains_key(&session_id)
     }
 
-    /// Returns how many detached windows are open.
-    #[must_use]
-    pub fn count(&self) -> usize {
-        self.windows.borrow().len()
+    /// Retitles every window of a connection after it was renamed.
+    ///
+    /// Returns how many windows were retitled. The title widgets are cloned out
+    /// first and the map borrow released, so no borrow is held while GTK updates
+    /// a window title — the same shape [`Self::present`] uses.
+    pub fn rename_connection(&self, connection_id: Uuid, new_name: &str) -> usize {
+        let affected: Vec<TitleHandles> = self
+            .windows
+            .borrow()
+            .values()
+            .filter(|window| window.connection_id() == connection_id)
+            .map(DetachedSessionWindow::title_handles)
+            .collect();
+        for handles in &affected {
+            handles.apply(new_name);
+        }
+        affected.len()
+    }
+
+    /// Marks (or unmarks) a session's window as disconnected.
+    ///
+    /// Reports whether a window was found. The banner is cloned out before it is
+    /// revealed, so the map borrow is released before GTK runs any handler that
+    /// could reach back into the registry.
+    pub fn set_session_disconnected(&self, session_id: Uuid, disconnected: bool) -> bool {
+        let banner = self
+            .windows
+            .borrow()
+            .get(&session_id)
+            .map(|window| window.disconnect_banner().clone());
+        match banner {
+            Some(banner) => {
+                banner.set_revealed(disconnected);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Closes every detached window, running the normal session teardown.
@@ -368,11 +497,15 @@ mod tests {
 
     #[test]
     fn window_title_names_the_connection_and_the_application() {
-        assert_eq!(detached_window_title("prod-db"), "prod-db — RustConn");
+        assert_eq!(
+            detached_window_title("prod-db", "SSH"),
+            "prod-db — RustConn"
+        );
     }
 
     #[test]
-    fn window_title_keeps_an_empty_connection_name_harmless() {
-        assert_eq!(detached_window_title(""), " — RustConn");
+    fn window_title_falls_back_to_the_protocol_without_a_connection_name() {
+        assert_eq!(detached_window_title("", "SSH"), "SSH — RustConn");
+        assert_eq!(detached_window_title("   ", "VNC"), "VNC — RustConn");
     }
 }

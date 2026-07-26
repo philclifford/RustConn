@@ -9340,8 +9340,8 @@ msgid "Pin Tab"
 msgstr "Закріпи вкладку"
 
 #: rustconn/src/terminal/tab_menu.rs:705
-msgid "Set Group..."
-msgstr "Установи групу..."
+msgid "Set Group…"
+msgstr "Установи групу…"
 
 #: rustconn/src/terminal/tab_menu.rs:707
 msgid "Remove from Group"
@@ -9356,8 +9356,8 @@ msgid "Move to New Window"
 msgstr "Перемісти до нового вікна"
 
 #: rustconn/src/terminal/tab_menu.rs:728
-msgid "Move to New Window on…"
-msgstr "Перемісти до нового вікна на…"
+msgid "Move to New Window on"
+msgstr "Перемісти до нового вікна на"
 
 #: rustconn/src/terminal/tab_menu.rs:735
 msgid "Close Tab"
@@ -10547,6 +10547,10 @@ msgstr "Ви впевнені, що хочете завершити цього �
 #: rustconn/src/window/sessions.rs:246
 msgid "{} UI session(s), {} tracked session(s)"
 msgstr "{} сеансів UI, {} відстежуваних сеансів"
+
+#: rustconn/src/window/sessions.rs:307
+msgid "{} — in a separate window"
+msgstr "{} — в окремому вікні"
 
 #: rustconn/src/window/sessions.rs:321
 msgid "Send Text to Session"
