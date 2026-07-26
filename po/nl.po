@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: rustconn 0.12.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-26 01:06+0300\n"
+"POT-Creation-Date: 2026-07-26 21:14+0300\n"
 "PO-Revision-Date: 2026-04-25 10:46+0000\n"
 "Last-Translator: RustConn Team\n"
 "Language-Team: Dutch\n"
@@ -18,7 +18,7 @@ msgstr ""
 "Generated-By: Babel 2.10.3\n"
 
 #: rustconn/src/alert.rs:15 rustconn/src/alert.rs:54 rustconn/src/alert.rs:64
-#: rustconn/src/app.rs:1494 rustconn/src/toast.rs:246
+#: rustconn/src/app.rs:1519 rustconn/src/toast.rs:246
 msgid "OK"
 msgstr "OK"
 
@@ -42,10 +42,10 @@ msgstr "OK"
 #: rustconn/src/window/batch_edit.rs:63
 #: rustconn/src/window/connection_dialogs.rs:1055
 #: rustconn/src/window/edit_group.rs:1738
-#: rustconn/src/window/edit_group.rs:1786 rustconn/src/window/mod.rs:3162
+#: rustconn/src/window/edit_group.rs:1786 rustconn/src/window/mod.rs:3245
 #: rustconn/src/window/operations.rs:82 rustconn/src/window/operations.rs:415
-#: rustconn/src/window/operations.rs:584 rustconn/src/window/sessions.rs:326
-#: rustconn/src/window/workspaces.rs:543
+#: rustconn/src/window/operations.rs:584 rustconn/src/window/sessions.rs:339
+#: rustconn/src/window/workspaces.rs:548
 msgid "Cancel"
 msgstr "Annuleren"
 
@@ -68,30 +68,30 @@ msgstr "Niet opslaan"
 #: rustconn/src/dialogs/tunnel_builder/mod.rs:194
 #: rustconn/src/dialogs/variables.rs:131 rustconn/src/dialogs/widgets.rs:461
 #: rustconn/src/window/edit_group.rs:48 rustconn/src/window/edit_group.rs:49
-#: rustconn/src/window/workspaces.rs:544
+#: rustconn/src/window/workspaces.rs:549
 msgid "Save"
 msgstr "Opslaan"
 
-#: rustconn/src/app.rs:226
+#: rustconn/src/app.rs:241
 msgid "Initialization Error"
 msgstr "Initialisatiefout"
 
-#: rustconn/src/app.rs:616
+#: rustconn/src/app.rs:631
 msgid "KeePass password not loaded from keyring — re-enter it in Settings"
 msgstr ""
 "KeePass-wachtwoord niet uit de sleutelbos geladen — voer het opnieuw in bij "
 "Instellingen"
 
-#: rustconn/src/app.rs:621 rustconn/src/embedded_rdp/mod.rs:365
+#: rustconn/src/app.rs:636 rustconn/src/embedded_rdp/mod.rs:368
 #: rustconn/src/split_view/bridge.rs:1842 rustconn/src/window/ui.rs:113
 msgid "Settings"
 msgstr "Instellingen"
 
-#: rustconn/src/app.rs:1084
+#: rustconn/src/app.rs:1099
 msgid "{} backend unavailable. Using fallback."
 msgstr "Backend {} niet beschikbaar. Terugvaloptie wordt gebruikt."
 
-#: rustconn/src/app.rs:1106
+#: rustconn/src/app.rs:1121
 msgid ""
 "{} is selected, but no system keyring is responding.              Open "
 "Settings, then Secrets, to choose a backend that works on this system."
@@ -99,7 +99,7 @@ msgstr ""
 "{} is geselecteerd, maar geen systeemsleutelbos reageert. Open Instellingen "
 "en vervolgens Geheimen om een backend te kiezen dat op dit systeem werkt."
 
-#: rustconn/src/app.rs:1111
+#: rustconn/src/app.rs:1126
 msgid ""
 "{} is selected, but its keyring client is not installed.              Open "
 "Settings, then Secrets, to choose a backend that works on this system."
@@ -108,7 +108,7 @@ msgstr ""
 "Instellingen en vervolgens Geheimen om een backend te kiezen dat op dit "
 "systeem werkt."
 
-#: rustconn/src/app.rs:1390
+#: rustconn/src/app.rs:1415
 msgid ""
 "Modern connection manager for Linux with a GTK4/Wayland-native interface. "
 "Manage SSH, RDP, VNC, SPICE, Telnet, Serial, Kubernetes, and Zero Trust "
@@ -119,43 +119,48 @@ msgstr ""
 "verbindingen vanuit één applicatie."
 
 #. Translators: Replace this with your name and language, e.g. "John Doe (German)"
-#: rustconn/src/app.rs:1426
+#: rustconn/src/app.rs:1451
 msgid "translator-credits"
 msgstr "RustConn-team (Nederlands)"
 
-#: rustconn/src/app.rs:1433
+#: rustconn/src/app.rs:1458
 msgid "User Guide"
 msgstr "Gebruikershandleiding"
 
-#: rustconn/src/app.rs:1437
+#: rustconn/src/app.rs:1462
 msgid "Installation"
 msgstr "Installatie"
 
-#: rustconn/src/app.rs:1441
+#: rustconn/src/app.rs:1466
 msgid "Releases"
 msgstr "Releases"
 
-#: rustconn/src/app.rs:1445
+#: rustconn/src/app.rs:1470
 msgid "Changelog"
 msgstr "Wijzigingslogboek"
 
-#: rustconn/src/app.rs:1455
+#: rustconn/src/app.rs:1480
 msgid "Special Thanks"
 msgstr "Speciale dank"
 
-#: rustconn/src/app.rs:1470
+#: rustconn/src/app.rs:1495
 msgid "Made in Ukraine"
 msgstr "Made in Ukraine"
 
-#: rustconn/src/app.rs:1471
+#: rustconn/src/app.rs:1496
 msgid "All contributors and supporters"
 msgstr "Alle bijdragers en ondersteuners"
 
-#: rustconn/src/detached_window.rs:58
+#: rustconn/src/detached_window.rs:61
 msgid "{} — RustConn"
 msgstr "{} — RustConn"
 
-#: rustconn/src/detached_window.rs:286
+#: rustconn/src/detached_window.rs:137 rustconn/src/embedded_rdp/mod.rs:702
+#: rustconn/src/embedded_vnc/ui.rs:108 rustconn/src/terminal/mod.rs:2035
+msgid "Session disconnected"
+msgstr "Sessie verbroken"
+
+#: rustconn/src/detached_window.rs:408
 msgid "Move to Main Window"
 msgstr "Naar hoofdvenster verplaatsen"
 
@@ -176,7 +181,7 @@ msgid "Enter Password Manually"
 msgstr "Wachtwoord handmatig invoeren"
 
 #: rustconn/src/dialogs/backend_missing.rs:43 rustconn/src/vault_ops.rs:58
-#: rustconn/src/window/mod.rs:624
+#: rustconn/src/window/mod.rs:647
 msgid "Open Settings"
 msgstr "Instellingen openen"
 
@@ -213,7 +218,7 @@ msgstr "Clusterdetails"
 #: rustconn/src/dialogs/template.rs:511
 #: rustconn/src/dialogs/tunnel_builder/step_review.rs:78
 #: rustconn/src/window/connection_dialogs.rs:424
-#: rustconn/src/window/edit_dialogs.rs:257
+#: rustconn/src/window/edit_dialogs.rs:258
 #: rustconn/src/window/edit_group.rs:110
 msgid "Name"
 msgstr "Naam"
@@ -1185,7 +1190,7 @@ msgstr "Verbinding testen"
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:72
 #: rustconn/src/dialogs/export.rs:404 rustconn/src/dialogs/template.rs:193
 #: rustconn/src/dialogs/template.rs:531 rustconn/src/split_view/bridge.rs:1434
-#: rustconn/src/window/edit_dialogs.rs:713
+#: rustconn/src/window/edit_dialogs.rs:720
 msgid "Protocol"
 msgstr "Protocol"
 
@@ -1208,14 +1213,14 @@ msgstr "https://example.com"
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:748
 #: rustconn/src/dialogs/export.rs:392 rustconn/src/dialogs/template.rs:548
 #: rustconn/src/dialogs/template.rs:1768 rustconn/src/split_view/bridge.rs:1441
-#: rustconn/src/window/edit_dialogs.rs:723
+#: rustconn/src/window/edit_dialogs.rs:730
 msgid "Host"
 msgstr "Host"
 
 #: rustconn/src/dialogs/connection/dialog/construction.rs:229
 #: rustconn/src/dialogs/connection/general_tab.rs:135
 #: rustconn/src/dialogs/template.rs:1800
-#: rustconn/src/window/edit_dialogs.rs:719
+#: rustconn/src/window/edit_dialogs.rs:726
 msgid "hostname or IP"
 msgstr "hostnaam of IP"
 
@@ -1673,7 +1678,7 @@ msgstr "Verbinding"
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:78
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:110
 #: rustconn/src/dialogs/export.rs:398 rustconn/src/dialogs/template.rs:557
-#: rustconn/src/dialogs/wol.rs:92 rustconn/src/window/edit_dialogs.rs:735
+#: rustconn/src/dialogs/wol.rs:92 rustconn/src/window/edit_dialogs.rs:742
 msgid "Port"
 msgstr "Poort"
 
@@ -1698,7 +1703,7 @@ msgstr "Authenticatie"
 #: rustconn/src/dialogs/export.rs:410 rustconn/src/dialogs/template.rs:564
 #: rustconn/src/split_view/bridge.rs:1449
 #: rustconn/src/window/connection_dialogs.rs:494
-#: rustconn/src/window/edit_dialogs.rs:745
+#: rustconn/src/window/edit_dialogs.rs:752
 #: rustconn/src/window/edit_group.rs:240
 msgid "Username"
 msgstr "Gebruikersnaam"
@@ -1739,7 +1744,7 @@ msgstr "Windows-authenticatie"
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:335
 #: rustconn/src/dialogs/document.rs:115 rustconn/src/dialogs/template.rs:630
 #: rustconn/src/window/connection_dialogs.rs:513
-#: rustconn/src/window/edit_dialogs.rs:756
+#: rustconn/src/window/edit_dialogs.rs:763
 #: rustconn/src/window/edit_group.rs:268 rustconn/src/window/edit_group.rs:607
 msgid "Password"
 msgstr "Wachtwoord"
@@ -2387,7 +2392,7 @@ msgstr "Indien afwijkend van verbindingsgebruikersnaam"
 #: rustconn/src/dialogs/connection/vnc.rs:306
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:669
 #: rustconn/src/dialogs/tunnel_builder/step_connection.rs:437
-#: rustconn/src/dialogs/widgets.rs:50 rustconn/src/window/edit_dialogs.rs:688
+#: rustconn/src/dialogs/widgets.rs:50 rustconn/src/window/edit_dialogs.rs:695
 #: rustconn/src/window/edit_group.rs:692
 msgid "(None)"
 msgstr "(Geen)"
@@ -2807,7 +2812,7 @@ msgstr "USB-apparaten doorsturen naar extern"
 #: rustconn/src/dialogs/connection/spice.rs:179
 #: rustconn/src/dialogs/connection/vnc.rs:107
 #: rustconn/src/dialogs/snippet.rs:219 rustconn/src/dialogs/template.rs:1244
-#: rustconn/src/embedded_rdp/mod.rs:374
+#: rustconn/src/embedded_rdp/mod.rs:377
 msgid "Auto"
 msgstr "Auto"
 
@@ -4259,7 +4264,7 @@ msgstr ""
 #: rustconn/src/dialogs/settings/cloud_sync_tab.rs:238
 #: rustconn/src/dialogs/tunnel_builder/mod.rs:618
 #: rustconn/src/dialogs/widgets.rs:460 rustconn/src/terminal/tab_menu.rs:400
-#: rustconn/src/vault_ops.rs:57 rustconn/src/window/mod.rs:3163
+#: rustconn/src/vault_ops.rs:57 rustconn/src/window/mod.rs:3246
 msgid "Close"
 msgstr "Sluiten"
 
@@ -4384,8 +4389,8 @@ msgstr "Geschiedenis wissen"
 
 #: rustconn/src/dialogs/history.rs:105 rustconn/src/dialogs/widgets.rs:466
 #: rustconn/src/sidebar_ui.rs:207 rustconn/src/smart_folder_ui.rs:477
-#: rustconn/src/window/edit_dialogs.rs:664
-#: rustconn/src/window/edit_dialogs.rs:665
+#: rustconn/src/window/edit_dialogs.rs:671
+#: rustconn/src/window/edit_dialogs.rs:672
 msgid "Connect"
 msgstr "Verbinden"
 
@@ -5069,8 +5074,8 @@ msgstr "Inloggegevens ophalen..."
 msgid "Domain:"
 msgstr "Domein:"
 
-#: rustconn/src/dialogs/password.rs:163 rustconn/src/window/edit_dialogs.rs:741
-#: rustconn/src/window/edit_dialogs.rs:752
+#: rustconn/src/dialogs/password.rs:163 rustconn/src/window/edit_dialogs.rs:748
+#: rustconn/src/window/edit_dialogs.rs:759
 msgid "(optional)"
 msgstr "(optioneel)"
 
@@ -5165,7 +5170,7 @@ msgstr "Voer een nieuwe weergavenaam in voor deze opname."
 
 #: rustconn/src/dialogs/recording.rs:509 rustconn/src/dialogs/workspace.rs:126
 #: rustconn/src/dialogs/workspace.rs:237 rustconn/src/sidebar_ui.rs:167
-#: rustconn/src/sidebar_ui.rs:211 rustconn/src/window/edit_dialogs.rs:243
+#: rustconn/src/sidebar_ui.rs:211 rustconn/src/window/edit_dialogs.rs:244
 msgid "Rename"
 msgstr "Hernoemen"
 
@@ -5218,8 +5223,8 @@ msgstr "Import mislukt"
 #: rustconn/src/toast.rs:299 rustconn/src/toast.rs:329
 #: rustconn/src/window/clusters.rs:429
 #: rustconn/src/window/connection_dialogs.rs:1001
-#: rustconn/src/window/edit_dialogs.rs:314
-#: rustconn/src/window/edit_dialogs.rs:409
+#: rustconn/src/window/edit_dialogs.rs:316
+#: rustconn/src/window/edit_dialogs.rs:416
 #: rustconn/src/window/edit_group.rs:1664 rustconn/src/window/groups.rs:211
 msgid "Error"
 msgstr "Fout"
@@ -7106,11 +7111,11 @@ msgstr "Doel"
 msgid "Where this snippet can be executed"
 msgstr "Waar dit fragment kan worden uitgevoerd"
 
-#: rustconn/src/dialogs/snippet.rs:220 rustconn/src/embedded_rdp/mod.rs:375
+#: rustconn/src/dialogs/snippet.rs:220 rustconn/src/embedded_rdp/mod.rs:378
 msgid "Clipboard (fast)"
 msgstr "Klembord (snel)"
 
-#: rustconn/src/dialogs/snippet.rs:221 rustconn/src/embedded_rdp/mod.rs:376
+#: rustconn/src/dialogs/snippet.rs:221 rustconn/src/embedded_rdp/mod.rs:379
 msgid "Autotype (reliable)"
 msgstr "Autotype (betrouwbaar)"
 
@@ -7987,14 +7992,14 @@ msgstr "Kan geheim niet laden. Controleer de geheime backend in Instellingen."
 msgid "Fetched from vault at connect time"
 msgstr "Opgehaald uit de kluis bij verbinden"
 
-#: rustconn/src/dialogs/widgets.rs:465 rustconn/src/embedded_rdp/mod.rs:545
+#: rustconn/src/dialogs/widgets.rs:465 rustconn/src/embedded_rdp/mod.rs:548
 #: rustconn/src/embedded_trait.rs:205 rustconn/src/embedded_vnc/ui.rs:47
 #: rustconn/src/terminal/config.rs:162
 msgid "Copy"
 msgstr "Kopiëren"
 
 #: rustconn/src/dialogs/widgets.rs:467 rustconn/src/dialogs/wol.rs:44
-#: rustconn/src/dialogs/wol.rs:45 rustconn/src/window/sessions.rs:328
+#: rustconn/src/dialogs/wol.rs:45 rustconn/src/window/sessions.rs:341
 msgid "Send"
 msgstr "Verzenden"
 
@@ -8152,136 +8157,159 @@ msgstr "Geplakt: {} tekens"
 msgid "Clipboard channel not ready"
 msgstr "Klembordkanaal niet gereed"
 
-#: rustconn/src/embedded_rdp/connection.rs:49
-#: rustconn/src/embedded_rdp/connection.rs:1818
-#: rustconn/src/embedded_rdp/connection.rs:1822
+#: rustconn/src/embedded_rdp/connection.rs:62
+#: rustconn/src/embedded_rdp/connection.rs:2011
+#: rustconn/src/embedded_rdp/connection.rs:2015
 msgid "Authentication failed: invalid username or password."
 msgstr "Authenticatie mislukt: ongeldige gebruikersnaam of wachtwoord."
 
-#: rustconn/src/embedded_rdp/connection.rs:52
+#: rustconn/src/embedded_rdp/connection.rs:65
 msgid ""
 "Access denied: you do not have permission to log on to this server via RDP."
 msgstr ""
 "Toegang geweigerd: u hebt geen toestemming om via RDP in te loggen op deze "
 "server."
 
-#: rustconn/src/embedded_rdp/connection.rs:56
+#: rustconn/src/embedded_rdp/connection.rs:69
 msgid "Account is locked out. Wait a few minutes and try again."
 msgstr ""
 "Het account is vergrendeld. Wacht een paar minuten en probeer het opnieuw."
 
-#: rustconn/src/embedded_rdp/connection.rs:59
+#: rustconn/src/embedded_rdp/connection.rs:72
 msgid "Account is disabled on the server."
 msgstr "Het account is uitgeschakeld op de server."
 
-#: rustconn/src/embedded_rdp/connection.rs:64
+#: rustconn/src/embedded_rdp/connection.rs:77
 msgid "Password expired. Change the password on the server and try again."
 msgstr ""
 "Het wachtwoord is verlopen. Wijzig het op de server en probeer het opnieuw."
 
-#: rustconn/src/embedded_rdp/connection.rs:70
+#: rustconn/src/embedded_rdp/connection.rs:83
 msgid ""
 "Connection failed: server is unreachable. Check the host address and port."
 msgstr ""
 "Verbinding mislukt: de server is onbereikbaar. Controleer het hostadres en "
 "de poort."
 
-#: rustconn/src/embedded_rdp/connection.rs:77
+#: rustconn/src/embedded_rdp/connection.rs:90
 msgid "Server certificate has changed since the last connection."
 msgstr ""
 
-#: rustconn/src/embedded_rdp/connection.rs:81
+#: rustconn/src/embedded_rdp/connection.rs:94
 msgid "RDP connection failed ({}). Run with RUST_LOG=debug for details."
 msgstr "RDP-verbinding mislukt ({}). Start met RUST_LOG=debug voor details."
 
-#: rustconn/src/embedded_rdp/connection.rs:1107
+#: rustconn/src/embedded_rdp/connection.rs:304
+#: rustconn/src/embedded_rdp/connection.rs:1862
+msgid "Connection cancelled because the server requires legacy RDP security."
+msgstr "De verbinding is geannuleerd omdat de server verouderde RDP-beveiliging vereist."
+
+#: rustconn/src/embedded_rdp/connection.rs:1227
 msgid "Copy remote clipboard to local"
 msgstr "Extern klembord naar lokaal kopiëren"
 
-#: rustconn/src/embedded_rdp/connection.rs:1321
-#: rustconn/src/embedded_rdp/connection.rs:1400
+#: rustconn/src/embedded_rdp/connection.rs:1441
+#: rustconn/src/embedded_rdp/connection.rs:1520
 msgid "Save {} Files"
 msgstr "{} bestanden opslaan"
 
-#: rustconn/src/embedded_rdp/connection.rs:1325
+#: rustconn/src/embedded_rdp/connection.rs:1445
 msgid "Save {} files from remote clipboard"
 msgstr "{} bestanden opslaan van extern klembord"
 
-#: rustconn/src/embedded_rdp/connection.rs:1363
+#: rustconn/src/embedded_rdp/connection.rs:1483
 msgid "Downloaded {}/{} files"
 msgstr "{}/{} bestanden gedownload"
 
-#: rustconn/src/embedded_rdp/connection.rs:1405
+#: rustconn/src/embedded_rdp/connection.rs:1525
 msgid "Saved {} files"
 msgstr "{} bestanden opgeslagen"
 
-#: rustconn/src/embedded_rdp/connection.rs:1484
+#: rustconn/src/embedded_rdp/connection.rs:1604
 msgid "RTT: {} ms | {} | MPTCP"
 msgstr "RTT: {} ms | {} | MPTCP"
 
-#: rustconn/src/embedded_rdp/connection.rs:1489
+#: rustconn/src/embedded_rdp/connection.rs:1609
 msgid "RTT: {} ms | {}"
 msgstr "RTT: {} ms | {}"
 
-#: rustconn/src/embedded_rdp/connection.rs:1753
+#: rustconn/src/embedded_rdp/connection.rs:1900
+msgid "Could not prepare the external RDP compatibility client."
+msgstr "De externe RDP-compatibiliteitsclient kon niet worden voorbereid."
+
+#: rustconn/src/embedded_rdp/connection.rs:1917
+#: rustconn/src/embedded_rdp/connection.rs:2397
+msgid "The external RDP client could not be started."
+msgstr "De externe RDP-client kon niet worden gestart."
+
+#: rustconn/src/embedded_rdp/connection.rs:1950
+msgid ""
+"Could not start the external RDP client. Install FreeRDP 3 and try again."
+msgstr "De externe RDP-client kon niet worden gestart. Installeer FreeRDP 3 en probeer het opnieuw."
+
+#: rustconn/src/embedded_rdp/connection.rs:1960
 msgid "Using external RDP client (server incompatible)"
 msgstr "Externe RDP-client wordt gebruikt (server incompatibel)"
 
-#: rustconn/src/embedded_rdp/connection.rs:1780
-msgid ""
-"RDP server sent unsupported data. Install FreeRDP (xfreerdp3) for "
-"compatibility."
-msgstr ""
-"De RDP-server heeft niet-ondersteunde gegevens verzonden. Installeer FreeRDP "
-"(xfreerdp3) voor compatibiliteit."
-
-#: rustconn/src/embedded_rdp/connection.rs:1826
+#: rustconn/src/embedded_rdp/connection.rs:2019
 msgid "Authentication failed: account restrictions prevent this login."
 msgstr "Verificatie mislukt: accountbeperkingen voorkomen deze aanmelding."
 
-#: rustconn/src/embedded_rdp/connection.rs:1830
+#: rustconn/src/embedded_rdp/connection.rs:2023
 msgid "Authentication failed: password must be changed before first login."
 msgstr ""
 "Verificatie mislukt: het wachtwoord moet worden gewijzigd vóór de eerste "
 "aanmelding."
 
-#: rustconn/src/embedded_rdp/connection.rs:1834
+#: rustconn/src/embedded_rdp/connection.rs:2027
 msgid "Authentication failed: account is disabled."
 msgstr "Authenticatie mislukt: account is uitgeschakeld."
 
-#: rustconn/src/embedded_rdp/connection.rs:1838
+#: rustconn/src/embedded_rdp/connection.rs:2031
 msgid "Authentication failed: account is locked out."
 msgstr "Authenticatie mislukt: account is vergrendeld."
 
-#: rustconn/src/embedded_rdp/connection.rs:1842
+#: rustconn/src/embedded_rdp/connection.rs:2035
 msgid "Authentication failed: password has expired."
 msgstr "Authenticatie mislukt: wachtwoord is verlopen."
 
-#: rustconn/src/embedded_rdp/connection.rs:1846
+#: rustconn/src/embedded_rdp/connection.rs:2039
 msgid "Authentication failed: account has expired."
 msgstr "Authenticatie mislukt: account is verlopen."
 
-#: rustconn/src/embedded_rdp/connection.rs:1850
+#: rustconn/src/embedded_rdp/connection.rs:2043
 msgid "Authentication failed: user is not allowed to log on to this computer."
 msgstr "Authenticatie mislukt: gebruiker mag niet aanmelden op deze computer."
 
-#: rustconn/src/embedded_rdp/connection.rs:1854
+#: rustconn/src/embedded_rdp/connection.rs:2047
 msgid "NLA authentication failed. Check username and password."
 msgstr "NLA-authenticatie mislukt. Controleer gebruikersnaam en wachtwoord."
 
-#: rustconn/src/embedded_rdp/connection.rs:1858
+#: rustconn/src/embedded_rdp/connection.rs:2051
 msgid "TLS connection failed. The server may not support this security level."
 msgstr ""
 "TLS-verbinding mislukt. De server ondersteunt mogelijk dit "
 "beveiligingsniveau niet."
 
-#: rustconn/src/embedded_rdp/connection.rs:1862
+#: rustconn/src/embedded_rdp/connection.rs:2055
 msgid "Connection refused. Check host and port."
 msgstr "Verbinding geweigerd. Controleer host en poort."
 
-#: rustconn/src/embedded_rdp/connection.rs:1865
+#: rustconn/src/embedded_rdp/connection.rs:2058
 msgid "Connection timed out. Check that the host is reachable."
 msgstr "Verbinding verlopen. Controleer of de host bereikbaar is."
+
+#: rustconn/src/embedded_rdp/connection.rs:2380
+msgid "RDP session will open in an external window"
+msgstr "De RDP-sessie wordt in een extern venster geopend"
+
+#: rustconn/src/embedded_rdp/connection.rs:2437
+msgid "RDP connection failed. Install FreeRDP 3 for external RDP sessions."
+msgstr "De RDP-verbinding is mislukt. Installeer FreeRDP 3 voor externe RDP-sessies."
+
+#: rustconn/src/embedded_rdp/connection.rs:2440
+msgid "Failed to start FreeRDP: {}"
+msgstr "FreeRDP kon niet worden gestart: {}"
 
 #: rustconn/src/embedded_rdp/file_dnd.rs:220
 msgid "File drag disabled: {}"
@@ -8291,165 +8319,160 @@ msgstr "Bestanden slepen uitgeschakeld: {}"
 msgid "Try Again"
 msgstr "Opnieuw proberen"
 
-#: rustconn/src/embedded_rdp/mod.rs:364
+#: rustconn/src/embedded_rdp/mod.rs:367
 msgid "Task Manager"
 msgstr "Taakbeheer"
 
-#: rustconn/src/embedded_rdp/mod.rs:366
+#: rustconn/src/embedded_rdp/mod.rs:369
 msgid "Registry Editor"
 msgstr "Register-editor"
 
-#: rustconn/src/embedded_rdp/mod.rs:367
+#: rustconn/src/embedded_rdp/mod.rs:370
 msgid "Device Manager"
 msgstr "Apparaatbeheer"
 
-#: rustconn/src/embedded_rdp/mod.rs:368
+#: rustconn/src/embedded_rdp/mod.rs:371
 msgid "Event Viewer"
 msgstr "Logboekviewer"
 
-#: rustconn/src/embedded_rdp/mod.rs:369
+#: rustconn/src/embedded_rdp/mod.rs:372
 msgid "Services"
 msgstr "Services"
 
-#: rustconn/src/embedded_rdp/mod.rs:370
+#: rustconn/src/embedded_rdp/mod.rs:373
 msgid "Disk Management"
 msgstr "Schijfbeheer"
 
-#: rustconn/src/embedded_rdp/mod.rs:371
+#: rustconn/src/embedded_rdp/mod.rs:374
 msgid "Resource Monitor"
 msgstr "Bronmonitor"
 
-#: rustconn/src/embedded_rdp/mod.rs:372
+#: rustconn/src/embedded_rdp/mod.rs:375
 msgid "Computer Management"
 msgstr "Computerbeheer"
 
-#: rustconn/src/embedded_rdp/mod.rs:378 rustconn/src/embedded_rdp/mod.rs:937
+#: rustconn/src/embedded_rdp/mod.rs:381 rustconn/src/embedded_rdp/mod.rs:941
 msgid "Shell Launchers"
 msgstr "Shell-starters"
 
-#: rustconn/src/embedded_rdp/mod.rs:380 rustconn/src/embedded_rdp/mod.rs:954
+#: rustconn/src/embedded_rdp/mod.rs:383 rustconn/src/embedded_rdp/mod.rs:958
 msgid "Scripts"
 msgstr "Scripts"
 
-#: rustconn/src/embedded_rdp/mod.rs:382 rustconn/src/embedded_rdp/mod.rs:932
+#: rustconn/src/embedded_rdp/mod.rs:385 rustconn/src/embedded_rdp/mod.rs:936
 msgid "PowerShell (Admin)"
 msgstr "PowerShell (Admin)"
 
-#: rustconn/src/embedded_rdp/mod.rs:383 rustconn/src/embedded_rdp/mod.rs:936
+#: rustconn/src/embedded_rdp/mod.rs:386 rustconn/src/embedded_rdp/mod.rs:940
 msgid "CMD (Admin)"
 msgstr "CMD (Admin)"
 
-#: rustconn/src/embedded_rdp/mod.rs:526 rustconn/src/embedded_rdp/mod.rs:528
+#: rustconn/src/embedded_rdp/mod.rs:529 rustconn/src/embedded_rdp/mod.rs:531
 msgid "Fit resolution to window"
 msgstr "Extern bureaublad aanpassen aan venstergrootte"
 
-#: rustconn/src/embedded_rdp/mod.rs:547
+#: rustconn/src/embedded_rdp/mod.rs:550
 msgid "Copy remote clipboard to local (waiting for remote data...)"
 msgstr "Extern klembord naar lokaal kopiëren (wachten op externe gegevens...)"
 
-#: rustconn/src/embedded_rdp/mod.rs:553 rustconn/src/embedded_trait.rs:213
+#: rustconn/src/embedded_rdp/mod.rs:556 rustconn/src/embedded_trait.rs:213
 #: rustconn/src/embedded_vnc/ui.rs:52 rustconn/src/terminal/config.rs:163
 msgid "Paste"
 msgstr "Plakken"
 
-#: rustconn/src/embedded_rdp/mod.rs:554 rustconn/src/embedded_trait.rs:214
+#: rustconn/src/embedded_rdp/mod.rs:557 rustconn/src/embedded_trait.rs:214
 #: rustconn/src/embedded_vnc/ui.rs:53
 msgid "Paste from local clipboard to remote session"
 msgstr "Plakken van lokaal klembord naar externe sessie"
 
-#: rustconn/src/embedded_rdp/mod.rs:559 rustconn/src/embedded_rdp/mod.rs:564
+#: rustconn/src/embedded_rdp/mod.rs:562 rustconn/src/embedded_rdp/mod.rs:567
 msgid "Autotype"
 msgstr "Autotype"
 
-#: rustconn/src/embedded_rdp/mod.rs:561
+#: rustconn/src/embedded_rdp/mod.rs:564
 msgid "Send text as keystrokes (bypasses paste restrictions)"
 msgstr "Tekst als toetsaanslagen verzenden (omzeilt plakbeperkingen)"
 
-#: rustconn/src/embedded_rdp/mod.rs:568
+#: rustconn/src/embedded_rdp/mod.rs:571
 msgid "Type Clipboard"
 msgstr "Klembord typen"
 
-#: rustconn/src/embedded_rdp/mod.rs:571
+#: rustconn/src/embedded_rdp/mod.rs:574
 msgid "Type Text…"
 msgstr "Tekst typen…"
 
-#: rustconn/src/embedded_rdp/mod.rs:585
+#: rustconn/src/embedded_rdp/mod.rs:588
 msgid "Run PowerShell script on remote"
 msgstr "PowerShell-script uitvoeren op extern systeem"
 
-#: rustconn/src/embedded_rdp/mod.rs:588
+#: rustconn/src/embedded_rdp/mod.rs:591
 msgid "Run script on remote"
 msgstr "Script uitvoeren op extern systeem"
 
-#: rustconn/src/embedded_rdp/mod.rs:603 rustconn/src/embedded_trait.rs:227
+#: rustconn/src/embedded_rdp/mod.rs:606 rustconn/src/embedded_trait.rs:227
 #: rustconn/src/embedded_vnc/ui.rs:63
 msgid "Ctrl+Alt+Del"
 msgstr "Ctrl+Alt+Del"
 
-#: rustconn/src/embedded_rdp/mod.rs:605 rustconn/src/embedded_trait.rs:229
+#: rustconn/src/embedded_rdp/mod.rs:608 rustconn/src/embedded_trait.rs:229
 #: rustconn/src/embedded_trait.rs:231 rustconn/src/embedded_vnc/ui.rs:65
 msgid "Send Ctrl+Alt+Del to remote session"
 msgstr "Ctrl+Alt+Del naar externe sessie verzenden"
 
-#: rustconn/src/embedded_rdp/mod.rs:611 rustconn/src/embedded_rdp/mod.rs:614
+#: rustconn/src/embedded_rdp/mod.rs:614 rustconn/src/embedded_rdp/mod.rs:617
 msgid "Windows admin tools"
 msgstr "Windows-beheertools"
 
-#: rustconn/src/embedded_rdp/mod.rs:638
+#: rustconn/src/embedded_rdp/mod.rs:641
 msgid "Save Files"
 msgstr "Bestanden opslaan"
 
-#: rustconn/src/embedded_rdp/mod.rs:641
+#: rustconn/src/embedded_rdp/mod.rs:644
 msgid "Save files from remote clipboard"
 msgstr "Bestanden opslaan van extern klembord"
 
-#: rustconn/src/embedded_rdp/mod.rs:699 rustconn/src/embedded_vnc/ui.rs:108
-#: rustconn/src/terminal/mod.rs:1982
-msgid "Session disconnected"
-msgstr "Sessie verbroken"
-
-#: rustconn/src/embedded_rdp/mod.rs:702 rustconn/src/embedded_trait.rs:236
-#: rustconn/src/embedded_vnc/ui.rs:111 rustconn/src/terminal/mod.rs:1448
-#: rustconn/src/terminal/mod.rs:1537 rustconn/src/terminal/mod.rs:1995
+#: rustconn/src/embedded_rdp/mod.rs:705 rustconn/src/embedded_trait.rs:236
+#: rustconn/src/embedded_vnc/ui.rs:111 rustconn/src/terminal/mod.rs:1477
+#: rustconn/src/terminal/mod.rs:1566 rustconn/src/terminal/mod.rs:2048
 msgid "Reconnect"
 msgstr "Opnieuw verbinden"
 
-#: rustconn/src/embedded_rdp/mod.rs:704 rustconn/src/embedded_vnc/ui.rs:113
-#: rustconn/src/terminal/mod.rs:1450 rustconn/src/terminal/mod.rs:1539
-#: rustconn/src/terminal/mod.rs:1997
+#: rustconn/src/embedded_rdp/mod.rs:707 rustconn/src/embedded_vnc/ui.rs:113
+#: rustconn/src/terminal/mod.rs:1479 rustconn/src/terminal/mod.rs:1568
+#: rustconn/src/terminal/mod.rs:2050
 msgid "Reconnect to this session"
 msgstr "Opnieuw verbinden met deze sessie"
 
-#: rustconn/src/embedded_rdp/mod.rs:871
+#: rustconn/src/embedded_rdp/mod.rs:875
 msgid "{} file(s) ready to paste on remote"
 msgstr "{} bestand(en) klaar om te plakken op extern"
 
-#: rustconn/src/embedded_rdp/mod.rs:930
+#: rustconn/src/embedded_rdp/mod.rs:934
 msgid "PowerShell"
 msgstr "PowerShell"
 
-#: rustconn/src/embedded_rdp/mod.rs:935
+#: rustconn/src/embedded_rdp/mod.rs:939
 msgid "CMD"
 msgstr "CMD"
 
-#: rustconn/src/embedded_rdp/mod.rs:1011 rustconn/src/embedded_rdp/mod.rs:1082
-#: rustconn/src/embedded_rdp/mod.rs:1285
+#: rustconn/src/embedded_rdp/mod.rs:1015 rustconn/src/embedded_rdp/mod.rs:1086
+#: rustconn/src/embedded_rdp/mod.rs:1289
 msgid "Channel not ready"
 msgstr "Kanaal niet gereed"
 
-#: rustconn/src/embedded_rdp/mod.rs:1056 rustconn/src/embedded_rdp/mod.rs:1109
+#: rustconn/src/embedded_rdp/mod.rs:1060 rustconn/src/embedded_rdp/mod.rs:1113
 msgid "Script sent"
 msgstr "Script verzonden"
 
-#: rustconn/src/embedded_rdp/mod.rs:1330
+#: rustconn/src/embedded_rdp/mod.rs:1334
 msgid "Select folder to save files"
 msgstr "Map selecteren om bestanden op te slaan"
 
-#: rustconn/src/embedded_rdp/mod.rs:1359
+#: rustconn/src/embedded_rdp/mod.rs:1363
 msgid "Downloading..."
 msgstr "Downloaden..."
 
-#: rustconn/src/embedded_rdp/mod.rs:1392
+#: rustconn/src/embedded_rdp/mod.rs:1396
 msgid "Downloading files..."
 msgstr "Bestanden downloaden..."
 
@@ -8518,11 +8541,11 @@ msgstr "Dit tabblad wordt automatisch gesloten wanneer de sessie eindigt"
 msgid "Session running in separate window"
 msgstr "Sessie draait in apart venster"
 
-#: rustconn/src/embedded.rs:460
+#: rustconn/src/embedded.rs:443
 msgid "Connecting to {}…"
 msgstr "Verbinding maken met {}…"
 
-#: rustconn/src/embedded.rs:527
+#: rustconn/src/embedded.rs:510
 msgid "Connected to {}"
 msgstr "Verbonden met {}"
 
@@ -8939,7 +8962,7 @@ msgid "Stop tracking"
 msgstr "Volgen stoppen"
 
 #: rustconn/src/sidebar_ui.rs:311 rustconn/src/split_view/bridge.rs:1675
-#: rustconn/src/window/edit_dialogs.rs:657 rustconn/src/window/ui.rs:69
+#: rustconn/src/window/edit_dialogs.rs:664 rustconn/src/window/ui.rs:69
 #: rustconn/src/window/ui.rs:241
 msgid "Quick Connect"
 msgstr "Snelverbinding"
@@ -9260,32 +9283,32 @@ msgstr "Tabbladoverzicht (Ctrl+Shift+O)"
 msgid "Tab Overview"
 msgstr "Tabbladoverzicht"
 
-#: rustconn/src/terminal/mod.rs:308 rustconn/src/terminal/mod.rs:576
-#: rustconn/src/terminal/mod.rs:607 rustconn/src/window/mod.rs:2893
+#: rustconn/src/terminal/mod.rs:308 rustconn/src/terminal/mod.rs:608
+#: rustconn/src/terminal/mod.rs:623 rustconn/src/window/mod.rs:2975
 msgid "Welcome"
 msgstr "Welkom"
 
-#: rustconn/src/terminal/mod.rs:1412 rustconn/src/terminal/mod.rs:1533
+#: rustconn/src/terminal/mod.rs:1441 rustconn/src/terminal/mod.rs:1562
 msgid "Command not found: {}"
 msgstr "Opdracht niet gevonden: {}"
 
-#: rustconn/src/terminal/mod.rs:1414
+#: rustconn/src/terminal/mod.rs:1443
 msgid "Failed to start '{}'"
 msgstr "Kan “{}” niet starten"
 
-#: rustconn/src/terminal/mod.rs:1467 rustconn/src/terminal/mod.rs:1555
+#: rustconn/src/terminal/mod.rs:1496 rustconn/src/terminal/mod.rs:1584
 msgid "'{}' is not installed"
 msgstr "“{}” is niet geïnstalleerd"
 
-#: rustconn/src/terminal/mod.rs:1469
+#: rustconn/src/terminal/mod.rs:1498
 msgid "Failed to start '{}': {}"
 msgstr "Kan “{}” niet starten: {}"
 
-#: rustconn/src/terminal/mod.rs:1989 rustconn/src/terminal/mod.rs:2054
+#: rustconn/src/terminal/mod.rs:2042 rustconn/src/terminal/mod.rs:2097
 msgid "Auto-reconnecting…"
 msgstr "Automatisch opnieuw verbinden…"
 
-#: rustconn/src/terminal/mod.rs:2104 rustconn/src/terminal/mod.rs:2114
+#: rustconn/src/terminal/mod.rs:2137 rustconn/src/terminal/mod.rs:2147
 msgid "Auto-reconnecting (attempt {}/{})"
 msgstr "Automatisch opnieuw verbinden (poging {}/{})"
 
@@ -9357,7 +9380,7 @@ msgstr "of voer een nieuwe naam in:"
 msgid "Apply"
 msgstr "Toepassen"
 
-#: rustconn/src/terminal/tab_menu.rs:393 rustconn/src/terminal/tab_menu.rs:709
+#: rustconn/src/terminal/tab_menu.rs:393 rustconn/src/terminal/tab_menu.rs:722
 msgid "Close All in Group"
 msgstr "Alles in groep sluiten"
 
@@ -9365,63 +9388,63 @@ msgstr "Alles in groep sluiten"
 msgid "Close {} tabs in group '{}'?"
 msgstr "{} tabbladen in groep '{}' sluiten?"
 
-#: rustconn/src/terminal/tab_menu.rs:682
+#: rustconn/src/terminal/tab_menu.rs:693
 msgid "Monitor {} ({})"
 msgstr "Monitor {} ({})"
 
-#: rustconn/src/terminal/tab_menu.rs:683
+#: rustconn/src/terminal/tab_menu.rs:694
 msgid "Monitor {}"
 msgstr "Monitor {}"
 
-#: rustconn/src/terminal/tab_menu.rs:697
+#: rustconn/src/terminal/tab_menu.rs:708
 msgid "Unpin Tab"
 msgstr "Tabblad losmaken"
 
-#: rustconn/src/terminal/tab_menu.rs:699
+#: rustconn/src/terminal/tab_menu.rs:710
 msgid "Pin Tab"
 msgstr "Tabblad vastmaken"
 
-#: rustconn/src/terminal/tab_menu.rs:705
+#: rustconn/src/terminal/tab_menu.rs:718
 msgid "Set Group…"
 msgstr "Groep instellen…"
 
-#: rustconn/src/terminal/tab_menu.rs:707
+#: rustconn/src/terminal/tab_menu.rs:720
 msgid "Remove from Group"
 msgstr "Uit groep verwijderen"
 
-#: rustconn/src/terminal/tab_menu.rs:718
+#: rustconn/src/terminal/tab_menu.rs:731
 msgid "Monitor: {}"
 msgstr "Monitor: {}"
 
-#: rustconn/src/terminal/tab_menu.rs:726
+#: rustconn/src/terminal/tab_menu.rs:739
 msgid "Move to New Window"
 msgstr "Naar nieuw venster verplaatsen"
 
-#: rustconn/src/terminal/tab_menu.rs:728
+#: rustconn/src/terminal/tab_menu.rs:742
 msgid "Move to New Window on"
 msgstr "Naar nieuw venster verplaatsen op"
 
-#: rustconn/src/terminal/tab_menu.rs:735
+#: rustconn/src/terminal/tab_menu.rs:749
 msgid "Close Tab"
 msgstr "Tabblad sluiten"
 
-#: rustconn/src/terminal/tab_menu.rs:736
+#: rustconn/src/terminal/tab_menu.rs:750
 msgid "Close Others"
 msgstr "Overige sluiten"
 
-#: rustconn/src/terminal/tab_menu.rs:737
+#: rustconn/src/terminal/tab_menu.rs:751
 msgid "Close to the Left"
 msgstr "Links sluiten"
 
-#: rustconn/src/terminal/tab_menu.rs:738
+#: rustconn/src/terminal/tab_menu.rs:752
 msgid "Close to the Right"
 msgstr "Rechts sluiten"
 
-#: rustconn/src/terminal/tab_menu.rs:741
+#: rustconn/src/terminal/tab_menu.rs:755
 msgid "Close All Ungrouped"
 msgstr "Alle ongegroepeerde sluiten"
 
-#: rustconn/src/terminal/tab_menu.rs:745
+#: rustconn/src/terminal/tab_menu.rs:759
 msgid "Close All Tabs"
 msgstr "Alle tabbladen sluiten"
 
@@ -9745,30 +9768,30 @@ msgstr "Geïmporteerd: {} verbindingen en {} snippets naar groep '{}'"
 msgid "Imported {} connections to '{}' group"
 msgstr "Geïmporteerd: {} verbindingen naar groep '{}'"
 
-#: rustconn/src/window/credentials.rs:289
+#: rustconn/src/window/credentials.rs:327
 msgid "Encrypted file"
 msgstr "Versleuteld bestand"
 
-#: rustconn/src/window/credentials.rs:346
+#: rustconn/src/window/credentials.rs:385
 msgid "Failed to save variable to vault: {}"
 msgstr "Kan variabele niet opslaan in kluis: {}"
 
-#: rustconn/src/window/credentials.rs:441
+#: rustconn/src/window/credentials.rs:483
 msgid "Vault entry not found for '{}'. You will be prompted for a password."
 msgstr ""
 "Kluisvermelding niet gevonden voor '{}'. U wordt om een wachtwoord gevraagd."
 
-#: rustconn/src/window/credentials.rs:642
-#: rustconn/src/window/credentials.rs:857
-#: rustconn/src/window/edit_actions.rs:1209
+#: rustconn/src/window/credentials.rs:697
+#: rustconn/src/window/credentials.rs:920
+#: rustconn/src/window/edit_actions.rs:1229
 msgid "Connection failed. Host unreachable."
 msgstr "Verbinding mislukt. Host onbereikbaar."
 
-#: rustconn/src/window/detach_actions.rs:71
+#: rustconn/src/window/detach_actions.rs:77
 msgid "This session already has its own window."
 msgstr "Deze sessie heeft al een eigen venster."
 
-#: rustconn/src/window/detach_actions.rs:73
+#: rustconn/src/window/detach_actions.rs:79
 msgid ""
 "This session is displayed by a separate viewer, which already runs in its "
 "own window."
@@ -9776,7 +9799,7 @@ msgstr ""
 "Deze sessie wordt weergegeven door een externe viewer, die al in een eigen "
 "venster draait."
 
-#: rustconn/src/window/detach_actions.rs:76
+#: rustconn/src/window/detach_actions.rs:82
 msgid ""
 "Remove the split layout from this tab before moving the session to its own "
 "window."
@@ -9784,20 +9807,20 @@ msgstr ""
 "Verwijder de gesplitste weergave uit dit tabblad voordat u de sessie naar "
 "een eigen venster verplaatst."
 
-#: rustconn/src/window/detach_actions.rs:79
+#: rustconn/src/window/detach_actions.rs:85
 msgid ""
 "This session is displayed in a split layout. Return it to its own tab first."
 msgstr ""
 "Deze sessie wordt in een gesplitste weergave weergegeven. Verplaats deze "
 "eerst terug naar een eigen tabblad."
 
-#: rustconn/src/window/detach_actions.rs:144
-#: rustconn/src/window/detach_actions.rs:157
-#: rustconn/src/window/detach_actions.rs:164
+#: rustconn/src/window/detach_actions.rs:224
+#: rustconn/src/window/detach_actions.rs:235
+#: rustconn/src/window/detach_actions.rs:242
 msgid "Could not move the session to its own window."
 msgstr "Kan de sessie niet naar een eigen venster verplaatsen."
 
-#: rustconn/src/window/detach_actions.rs:199
+#: rustconn/src/window/detach_actions.rs:290
 msgid "Could not move the session back to the main window."
 msgstr "Kan de sessie niet terugverplaatsen naar het hoofdvenster."
 
@@ -9860,81 +9883,81 @@ msgstr "Geen wachtwoord geconfigureerd voor deze verbinding"
 msgid "Could not retrieve password from secret backend"
 msgstr "Kan wachtwoord niet ophalen uit geheime backend"
 
-#: rustconn/src/window/edit_actions.rs:328
+#: rustconn/src/window/edit_actions.rs:334
 msgid "Item restored"
 msgstr "Item hersteld"
 
-#: rustconn/src/window/edit_actions.rs:418
+#: rustconn/src/window/edit_actions.rs:424
 msgid "No Wake On LAN configured. Edit the connection to set a MAC address."
 msgstr ""
 "Geen Wake On LAN geconfigureerd. Bewerk de verbinding om een MAC-adres in te "
 "stellen."
 
-#: rustconn/src/window/edit_actions.rs:446
+#: rustconn/src/window/edit_actions.rs:452
 msgid "Wake On LAN sent to {} — waiting for host to come online..."
 msgstr "Wake On LAN verzonden naar {} — wachten tot host online komt..."
 
-#: rustconn/src/window/edit_actions.rs:487
+#: rustconn/src/window/edit_actions.rs:493
 msgid "{} is online — connecting..."
 msgstr "{} is online — verbinden..."
 
-#: rustconn/src/window/edit_actions.rs:502
+#: rustconn/src/window/edit_actions.rs:508
 msgid "{} did not come online after WoL"
 msgstr "{} kwam niet online na WoL"
 
-#: rustconn/src/window/edit_actions.rs:514
+#: rustconn/src/window/edit_actions.rs:520
 msgid "Failed to send Wake On LAN packet. Check network permissions."
 msgstr "Kan Wake On LAN-pakket niet verzenden. Controleer de netwerkrechten."
 
-#: rustconn/src/window/edit_actions.rs:560
+#: rustconn/src/window/edit_actions.rs:566
 msgid "Checking if {} is online..."
 msgstr "Controleren of {} online is..."
 
-#: rustconn/src/window/edit_actions.rs:591
+#: rustconn/src/window/edit_actions.rs:597
 msgid "{} is online"
 msgstr "{} is online"
 
-#: rustconn/src/window/edit_actions.rs:606
+#: rustconn/src/window/edit_actions.rs:612
 msgid "{} did not come online within timeout"
 msgstr "{} kwam niet online binnen de timeout"
 
-#: rustconn/src/window/edit_actions.rs:613
+#: rustconn/src/window/edit_actions.rs:619
 msgid "Host check failed: {}"
 msgstr "Hostcontrole mislukt: {}"
 
-#: rustconn/src/window/edit_actions.rs:677
-#: rustconn/src/window/edit_actions.rs:794
+#: rustconn/src/window/edit_actions.rs:683
+#: rustconn/src/window/edit_actions.rs:800
 msgid "SFTP is only available for SSH connections."
 msgstr "SFTP is alleen beschikbaar voor SSH-verbindingen."
 
-#: rustconn/src/window/edit_actions.rs:687
+#: rustconn/src/window/edit_actions.rs:693
 msgid "mc requires SSH key in agent. Password auth is not supported."
 msgstr ""
 "mc vereist een SSH-sleutel in de agent. Wachtwoordauthenticatie wordt niet "
 "ondersteund."
 
-#: rustconn/src/window/edit_actions.rs:695
+#: rustconn/src/window/edit_actions.rs:701
 msgid "SSH agent not running. Run 'eval $(ssh-agent)' and retry."
 msgstr ""
 "SSH-agent draait niet. Voer «eval $(ssh-agent)» uit en probeer het opnieuw."
 
-#: rustconn/src/window/edit_actions.rs:721
+#: rustconn/src/window/edit_actions.rs:727
 msgid "SSH key not available"
 msgstr "SSH-sleutel niet beschikbaar"
 
-#: rustconn/src/window/edit_actions.rs:729
+#: rustconn/src/window/edit_actions.rs:735
 msgid "Failed to add SSH key to agent."
 msgstr "Kan SSH-sleutel niet aan agent toevoegen."
 
-#: rustconn/src/window/edit_actions.rs:744
+#: rustconn/src/window/edit_actions.rs:750
 msgid "Midnight Commander (mc) is not installed."
 msgstr "Midnight Commander (mc) is niet geïnstalleerd."
 
-#: rustconn/src/window/edit_actions.rs:749
+#: rustconn/src/window/edit_actions.rs:755
 msgid "Opening mc SFTP..."
 msgstr "mc SFTP openen..."
 
-#: rustconn/src/window/edit_actions.rs:811
+#: rustconn/src/window/edit_actions.rs:817
 msgid ""
 "External file managers cannot access SSH agent in "
 "Flatpak.                          Enable \"SFTP via mc\" in Settings for "
@@ -9944,27 +9967,27 @@ msgstr ""
 "Flatpak.                          Schakel \"SFTP via mc\" in bij "
 "Instellingen voor betrouwbare toegang."
 
-#: rustconn/src/window/edit_actions.rs:817
+#: rustconn/src/window/edit_actions.rs:823
 msgid "Opening SFTP..."
 msgstr "SFTP openen..."
 
-#: rustconn/src/window/edit_actions.rs:882
+#: rustconn/src/window/edit_actions.rs:888
 msgid "SSH agent not running — file manager may not authenticate."
 msgstr ""
 "SSH-agent draait niet — bestandsbeheerder kan mogelijk niet authenticeren."
 
-#: rustconn/src/window/edit_actions.rs:996
-#: rustconn/src/window/edit_actions.rs:1041
-#: rustconn/src/window/edit_actions.rs:1060
+#: rustconn/src/window/edit_actions.rs:1016
+#: rustconn/src/window/edit_actions.rs:1061
+#: rustconn/src/window/edit_actions.rs:1080
 msgid "Failed to open URL: {}"
 msgstr "Kan URL niet openen: {}"
 
-#: rustconn/src/window/edit_actions.rs:1032
-#: rustconn/src/window/edit_actions.rs:1074
+#: rustconn/src/window/edit_actions.rs:1052
+#: rustconn/src/window/edit_actions.rs:1094
 msgid "Opened in browser"
 msgstr "Geopend in browser"
 
-#: rustconn/src/window/edit_actions.rs:1363
+#: rustconn/src/window/edit_actions.rs:1383
 msgid ""
 "External file managers cannot access SSH agent in "
 "Flatpak.                              Enable \"SFTP via mc\" in Settings for "
@@ -9978,32 +10001,32 @@ msgstr ""
 msgid "Error Updating Connection"
 msgstr "Fout bij het bijwerken van verbinding"
 
-#: rustconn/src/window/edit_dialogs.rs:234
+#: rustconn/src/window/edit_dialogs.rs:235
 msgid "Rename Group"
 msgstr "Groep hernoemen"
 
-#: rustconn/src/window/edit_dialogs.rs:236
+#: rustconn/src/window/edit_dialogs.rs:237
 msgid "Rename Connection"
 msgstr "Verbinding hernoemen"
 
-#: rustconn/src/window/edit_dialogs.rs:277
+#: rustconn/src/window/edit_dialogs.rs:279
 msgid "Name cannot be empty"
 msgstr "Naam mag niet leeg zijn"
 
-#: rustconn/src/window/edit_dialogs.rs:293
+#: rustconn/src/window/edit_dialogs.rs:295
 #: rustconn/src/window/edit_group.rs:1479
 msgid "Group with name '{}' already exists"
 msgstr "Groep met naam '{}' bestaat al"
 
-#: rustconn/src/window/edit_dialogs.rs:677
+#: rustconn/src/window/edit_dialogs.rs:684
 msgid "⚠ This connection will not be saved"
 msgstr "⚠ Deze verbinding wordt niet opgeslagen"
 
-#: rustconn/src/window/edit_dialogs.rs:699
+#: rustconn/src/window/edit_dialogs.rs:706
 msgid "Template"
 msgstr "Sjabloon"
 
-#: rustconn/src/window/edit_dialogs.rs:764
+#: rustconn/src/window/edit_dialogs.rs:771
 msgid "Recent"
 msgstr "Recent"
 
@@ -10259,64 +10282,64 @@ msgstr ""
 "Geheim kon niet in de kluis worden opgeslagen. Controleer de geheim-backend "
 "in de instellingen."
 
-#: rustconn/src/window/mod.rs:611
+#: rustconn/src/window/mod.rs:634
 msgid "Dismiss"
 msgstr "Negeren"
 
-#: rustconn/src/window/mod.rs:1931
+#: rustconn/src/window/mod.rs:1954
 msgid "Already running in an external window"
 msgstr "Wordt al uitgevoerd in een extern venster"
 
-#: rustconn/src/window/mod.rs:2037
+#: rustconn/src/window/mod.rs:2093
 msgid "Connection to ‘{}’ failed"
 msgstr "Verbinding met ‘{}’ mislukt"
 
-#: rustconn/src/window/mod.rs:2237 rustconn/src/window/mod.rs:2251
+#: rustconn/src/window/mod.rs:2305 rustconn/src/window/mod.rs:2319
 msgid "Pre-connect task failed: {}"
 msgstr "Taak vóór verbinding mislukt: {}"
 
-#: rustconn/src/window/mod.rs:2285
+#: rustconn/src/window/mod.rs:2353
 msgid "Port knock failed: {}"
 msgstr "Port knock mislukt: {}"
 
-#: rustconn/src/window/mod.rs:2334
+#: rustconn/src/window/mod.rs:2402
 msgid "SPA failed: {}"
 msgstr "SPA mislukt: {}"
 
-#: rustconn/src/window/mod.rs:2519 rustconn/src/window/mod.rs:2694
+#: rustconn/src/window/mod.rs:2601 rustconn/src/window/mod.rs:2776
 msgid "Connection “{}” created"
 msgstr "Verbinding “{}” aangemaakt"
 
-#: rustconn/src/window/mod.rs:2898
+#: rustconn/src/window/mod.rs:2980
 msgid "RustConn - {}"
 msgstr "RustConn — {}"
 
-#: rustconn/src/window/mod.rs:3156
+#: rustconn/src/window/mod.rs:3239
 msgid "Close RustConn?"
 msgstr "RustConn sluiten?"
 
-#: rustconn/src/window/mod.rs:3158
+#: rustconn/src/window/mod.rs:3241
 msgid "{} session tab(s) are open. Active connections will be disconnected."
 msgstr ""
 "{} sessietabblad(en) zijn geopend. Actieve verbindingen worden verbroken."
 
-#: rustconn/src/window/mod.rs:3193
+#: rustconn/src/window/mod.rs:3276
 msgid "Cloud sync failed for '{}': {}"
 msgstr "Cloudsynchronisatie mislukt voor ‘{}’: {}"
 
-#: rustconn/src/window/mod.rs:3355
+#: rustconn/src/window/mod.rs:3438
 msgid "Startup connection not found"
 msgstr "Opstartverbinding niet gevonden"
 
-#: rustconn/src/window/mod.rs:3391
+#: rustconn/src/window/mod.rs:3474
 msgid "Failed to open .rdp file"
 msgstr "Kan .rdp-bestand niet openen"
 
-#: rustconn/src/window/mod.rs:3427
+#: rustconn/src/window/mod.rs:3510
 msgid "Failed to open .vv file"
 msgstr "Kan .vv-bestand niet openen"
 
-#: rustconn/src/window/mod.rs:3810
+#: rustconn/src/window/mod.rs:3893
 msgid "Successfully exported {} connection(s). {} skipped."
 msgstr "{} verbinding(en) succesvol geëxporteerd. {} overgeslagen."
 
@@ -10507,47 +10530,61 @@ msgstr "{} item(s) verplaatst."
 msgid "Failed to move {} item(s):"
 msgstr "Kan {} item(s) niet verplaatsen:"
 
-#: rustconn/src/window/protocols.rs:121
+#: rustconn/src/window/protocols.rs:123
 msgid "Could not launch external viewer ‘{}’: {}"
 msgstr "Kan externe viewer ‘{}’ niet starten: {}"
 
-#: rustconn/src/window/protocols.rs:545 rustconn/src/window/rdp_vnc.rs:1302
+#: rustconn/src/window/protocols.rs:561 rustconn/src/window/rdp_vnc.rs:1454
 msgid "No VNC viewer found. Install TigerVNC or Remmina."
 msgstr "Geen VNC-viewer gevonden. Installeer TigerVNC of Remmina."
 
-#: rustconn/src/window/protocols.rs:864
+#: rustconn/src/window/protocols.rs:883
 msgid "No SPICE viewer found. Install virt-viewer."
 msgstr "Geen SPICE-viewer gevonden. Installeer virt-viewer."
 
-#: rustconn/src/window/protocols.rs:1348
+#: rustconn/src/window/protocols.rs:1395
 msgid "Invalid config: {}"
 msgstr "Ongeldige configuratie: {}"
 
-#: rustconn/src/window/protocols.rs:1562
+#: rustconn/src/window/protocols.rs:1609
 msgid "Install picocom for Serial connections"
 msgstr "Installeer picocom voor seriële verbindingen"
 
-#: rustconn/src/window/protocols.rs:1720
+#: rustconn/src/window/protocols.rs:1767
 msgid "Install kubectl for Kubernetes connections"
 msgstr "Installeer kubectl voor Kubernetes-verbindingen"
 
-#: rustconn/src/window/protocols.rs:1738
+#: rustconn/src/window/protocols.rs:1785
 msgid "Configure pod and container for Kubernetes"
 msgstr "Configureer pod en container voor Kubernetes"
 
-#: rustconn/src/window/protocols.rs:1977
+#: rustconn/src/window/protocols.rs:2052
 msgid "Install mosh for MOSH connections"
 msgstr "Installeer mosh voor MOSH-verbindingen"
 
-#: rustconn/src/window/rdp_vnc.rs:382
+#: rustconn/src/window/rdp_vnc.rs:441
 msgid "SSH tunnel failed: {}"
 msgstr "SSH-tunnel mislukt: {}"
 
-#: rustconn/src/window/rdp_vnc.rs:699
+#: rustconn/src/window/rdp_vnc.rs:757
+msgid "Use Legacy RDP Security?"
+msgstr "Verouderde RDP-beveiliging gebruiken?"
+
+#: rustconn/src/window/rdp_vnc.rs:759
+msgid ""
+"This server only supports Standard RDP Security, which is weaker than TLS or "
+"Network Level Authentication. Continue with the external RDP client?"
+msgstr "Deze server ondersteunt alleen standaard-RDP-beveiliging, die zwakker is dan TLS of verificatie op netwerkniveau. Doorgaan met de externe RDP-client?"
+
+#: rustconn/src/window/rdp_vnc.rs:761
+msgid "Connect Anyway"
+msgstr "Toch verbinden"
+
+#: rustconn/src/window/rdp_vnc.rs:790
 msgid "Certificate changed"
 msgstr ""
 
-#: rustconn/src/window/rdp_vnc.rs:701
+#: rustconn/src/window/rdp_vnc.rs:792
 msgid "Accept new certificate"
 msgstr ""
 
@@ -10599,7 +10636,7 @@ msgstr "Sessie beëindigen?"
 msgid "Are you sure you want to terminate this session?"
 msgstr "Weet u zeker dat u deze sessie wilt beëindigen?"
 
-#: rustconn/src/window/sessions.rs:246
+#: rustconn/src/window/sessions.rs:249
 msgid "{} UI session(s), {} tracked session(s)"
 msgstr "{} UI-sessie(s), {} bijgehouden sessie(s)"
 
@@ -10607,19 +10644,19 @@ msgstr "{} UI-sessie(s), {} bijgehouden sessie(s)"
 msgid "{} — in a separate window"
 msgstr "{} — in apart venster"
 
-#: rustconn/src/window/sessions.rs:321
+#: rustconn/src/window/sessions.rs:334
 msgid "Send Text to Session"
 msgstr "Tekst naar sessie verzenden"
 
-#: rustconn/src/window/sessions.rs:341
+#: rustconn/src/window/sessions.rs:354
 msgid "Enter text to send to the session:"
 msgstr "Voer tekst in om naar de sessie te verzenden:"
 
-#: rustconn/src/window/sessions.rs:347
+#: rustconn/src/window/sessions.rs:360
 msgid "Text to send..."
 msgstr "Te verzenden tekst..."
 
-#: rustconn/src/window/sessions.rs:353
+#: rustconn/src/window/sessions.rs:366
 msgid "Append newline (press Enter)"
 msgstr "Nieuwe regel toevoegen (druk op Enter)"
 
@@ -10721,7 +10758,7 @@ msgstr "Variabelewaarden invoeren"
 msgid "Favorites"
 msgstr "Favorieten"
 
-#: rustconn/src/window/split_view_actions.rs:75
+#: rustconn/src/window/split_view_actions.rs:99
 msgid ""
 "Tip: press Ctrl+Shift+B or use the Broadcast button to mirror keystrokes "
 "across split panels"
@@ -10729,8 +10766,8 @@ msgstr ""
 "Tip: druk op Ctrl+Shift+B of gebruik de knop „Broadcast” om toetsaanslagen "
 "te dupliceren naar alle gesplitste panelen"
 
-#: rustconn/src/window/split_view_actions.rs:114
-#: rustconn/src/window/split_view_actions.rs:420
+#: rustconn/src/window/split_view_actions.rs:138
+#: rustconn/src/window/split_view_actions.rs:456
 msgid ""
 "Split view is not available for external-viewer sessions. Switch this "
 "connection to embedded mode to use split."
@@ -10944,27 +10981,27 @@ msgstr "Toetsenbord-passthrough"
 msgid "Keyboard Shortcuts..."
 msgstr "Sneltoetsen..."
 
-#: rustconn/src/window/workspaces.rs:445
+#: rustconn/src/window/workspaces.rs:450
 msgid "No active sessions to save"
 msgstr "Geen actieve sessies om op te slaan"
 
-#: rustconn/src/window/workspaces.rs:540
+#: rustconn/src/window/workspaces.rs:545
 msgid "Save Workspace"
 msgstr "Werkruimte opslaan"
 
-#: rustconn/src/window/workspaces.rs:541
+#: rustconn/src/window/workspaces.rs:546
 msgid "Enter a name for this workspace profile:"
 msgstr "Voer een naam in voor dit werkruimteprofiel:"
 
-#: rustconn/src/window/workspaces.rs:550
+#: rustconn/src/window/workspaces.rs:555
 msgid "Workspace name"
 msgstr "Werkruimtenaam"
 
-#: rustconn/src/window/workspaces.rs:582
+#: rustconn/src/window/workspaces.rs:587
 msgid "Workspace '{}' saved"
 msgstr "Werkruimte ‘{}’ opgeslagen"
 
-#: rustconn/src/window/workspaces.rs:593
+#: rustconn/src/window/workspaces.rs:598
 msgid "Failed to save workspace"
 msgstr "Kan werkruimte niet opslaan"
 
@@ -10975,6 +11012,13 @@ msgstr "RustConn"
 #: rustconn/assets/io.github.totoshko88.RustConn.desktop:15
 msgid "ssh;rdp;vnc;spice;mosh;telnet;zerotrust;connection;terminal;remote;kubernetes;k8s;serial;sftp;"
 msgstr "ssh;rdp;vnc;spice;mosh;telnet;zerotrust;connection;terminal;remote;kubernetes;k8s;serial;sftp;"
+
+#~ msgid ""
+#~ "RDP server sent unsupported data. Install FreeRDP (xfreerdp3) for "
+#~ "compatibility."
+#~ msgstr ""
+#~ "De RDP-server heeft niet-ondersteunde gegevens verzonden. Installeer "
+#~ "FreeRDP (xfreerdp3) voor compatibiliteit."
 
 #~ msgid "Connection rejected: server certificate was not accepted."
 #~ msgstr "Verbinding geweigerd: het servercertificaat is niet geaccepteerd."

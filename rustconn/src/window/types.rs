@@ -206,6 +206,36 @@ pub type SharedMonitoring = Rc<MonitoringCoordinator>;
 /// Uses `Rc` because GTK is single-threaded; no need for `Arc`.
 pub type SharedActivityCoordinator = Rc<ActivityCoordinator>;
 
+/// Cloneable one-shot notification for the exact session a start creates.
+///
+/// Clones share one callback. Completion takes the callback out of the
+/// `RefCell` before invoking it, so the callback may safely re-enter through a
+/// clone. Only the first completion is observed.
+#[derive(Clone)]
+pub struct SessionStartObserver {
+    callback: Rc<RefCell<Option<Box<dyn FnOnce(Uuid)>>>>,
+}
+
+impl SessionStartObserver {
+    /// Creates an observer that invokes `callback` at most once.
+    pub fn new<F>(callback: F) -> Self
+    where
+        F: FnOnce(Uuid) + 'static,
+    {
+        Self {
+            callback: Rc::new(RefCell::new(Some(Box::new(callback)))),
+        }
+    }
+
+    /// Completes the observer with the exact UUID of the created session.
+    pub fn complete(&self, session_id: Uuid) {
+        let callback = self.callback.borrow_mut().take();
+        if let Some(callback) = callback {
+            callback(session_id);
+        }
+    }
+}
+
 /// Result of starting a connection
 ///
 /// Distinguishes between a synchronously started session, an asynchronous
@@ -258,5 +288,49 @@ pub fn get_protocol_string(config: &rustconn_core::ProtocolConfig) -> String {
             };
             format!("zerotrust:{provider}")
         }
+    }
+}
+
+#[cfg(test)]
+mod session_start_observer_tests {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use uuid::Uuid;
+
+    use super::SessionStartObserver;
+
+    #[test]
+    fn clones_complete_once_with_the_exact_uuid() {
+        let expected = Uuid::from_u128(0x1234);
+        let completed_ids = Rc::new(RefCell::new(Vec::new()));
+        let completed_ids_for_callback = Rc::clone(&completed_ids);
+        let observer = SessionStartObserver::new(move |id| {
+            completed_ids_for_callback.borrow_mut().push(id);
+        });
+
+        observer.clone().complete(expected);
+        observer.complete(Uuid::from_u128(0x5678));
+
+        assert_eq!(&*completed_ids.borrow(), &[expected]);
+    }
+
+    #[test]
+    fn callback_may_reenter_an_observer_clone() {
+        let callback_ran = Rc::new(Cell::new(false));
+        let observer_slot = Rc::new(RefCell::new(None::<SessionStartObserver>));
+        let slot_for_callback = Rc::clone(&observer_slot);
+        let ran_for_callback = Rc::clone(&callback_ran);
+        let observer = SessionStartObserver::new(move |_| {
+            ran_for_callback.set(true);
+            if let Some(observer) = slot_for_callback.borrow().as_ref() {
+                observer.complete(Uuid::from_u128(2));
+            }
+        });
+        *observer_slot.borrow_mut() = Some(observer.clone());
+
+        observer.complete(Uuid::from_u128(1));
+
+        assert!(callback_ran.get());
     }
 }

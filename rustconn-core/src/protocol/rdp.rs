@@ -140,11 +140,17 @@ impl RdpProtocol {
                     folder.local_path.display()
                 ));
             }
-            let dangerous_prefixes = ["/p:", "/password:", "/shell:", "/proxy:"];
+            let mut drop_next_value = false;
             for arg in &rdp_config.custom_args {
-                let lower = arg.to_lowercase();
-                if dangerous_prefixes.iter().any(|p| lower.starts_with(p)) {
-                    tracing::warn!(arg = %arg, "Blocked dangerous RDP custom arg");
+                if drop_next_value {
+                    drop_next_value = false;
+                    continue;
+                }
+                if super::freerdp::contains_freerdp_secret_field(arg)
+                    || super::freerdp::is_freerdp_shell_or_proxy_arg(arg)
+                {
+                    drop_next_value = super::freerdp::is_standalone_freerdp_blocked_field(arg);
+                    tracing::warn!("Blocked dangerous RDP custom arg");
                     continue;
                 }
                 args.push(arg.clone());
@@ -247,5 +253,51 @@ mod tests {
         };
         let connection = create_rdp_connection(config);
         assert!(protocol.validate_connection(&connection).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod custom_argument_security_tests {
+    use super::*;
+
+    #[test]
+    fn build_args_filters_composite_aliases_and_normalized_blocked_prefixes() {
+        let config = RdpConfig {
+            custom_args: vec![
+                "/gateway:g:host,p:session-secret".to_string(),
+                "/gateway:g:host,PASSWORD:password-secret".to_string(),
+                "/gateway:g:host, gp:gateway-secret".to_string(),
+                "/gateway:g:host,/GATEWAY-PASSWORD:alias-secret".to_string(),
+                " //PTH:hash-secret".to_string(),
+                "--password".to_string(),
+                "split-secret".to_string(),
+                "  /SHELL:command-secret".to_string(),
+                "\t//PrOxY:proxy-secret".to_string(),
+                "/gateway:g:host,u:user".to_string(),
+            ],
+            ..RdpConfig::default()
+        };
+        let connection = Connection::new(
+            "Test RDP".to_string(),
+            "windows.example.com".to_string(),
+            3389,
+            ProtocolConfig::Rdp(config),
+        );
+
+        let args = RdpProtocol::build_args(&connection).expect("RDP arguments");
+
+        assert!(args.iter().any(|arg| arg == "/gateway:g:host,u:user"));
+        for secret in [
+            "session-secret",
+            "password-secret",
+            "gateway-secret",
+            "alias-secret",
+            "hash-secret",
+            "split-secret",
+            "command-secret",
+            "proxy-secret",
+        ] {
+            assert!(args.iter().all(|arg| !arg.contains(secret)));
+        }
     }
 }

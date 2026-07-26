@@ -10,6 +10,73 @@ use rustconn_core::{DetachContext, DetachVerdict, detach_verdict};
 
 use super::*;
 
+/// Stable monitor preference for a detached fullscreen window.
+///
+/// The connector is preferred because display-list indices change after
+/// hotplug. Manufacturer/model are a fallback for backends that expose no
+/// connector; `index` is used only when no identity is available at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetachMonitor {
+    /// Monitor-list index when the preference was captured.
+    pub index: u32,
+    /// Stable display connector, such as `DP-1`, when available.
+    pub connector: Option<String>,
+    /// Display manufacturer, used with `model` as a fallback identity.
+    pub manufacturer: Option<String>,
+    /// Display model, used with `manufacturer` as a fallback identity.
+    pub model: Option<String>,
+}
+
+impl DetachMonitor {
+    /// Captures the identity exposed by a currently connected monitor.
+    #[must_use]
+    pub fn from_monitor(index: u32, monitor: Option<&gtk4::gdk::Monitor>) -> Self {
+        Self {
+            index,
+            connector: monitor
+                .and_then(gtk4::gdk::Monitor::connector)
+                .map(|value| value.to_string()),
+            manufacturer: monitor
+                .and_then(gtk4::gdk::Monitor::manufacturer)
+                .map(|value| value.to_string()),
+            model: monitor
+                .and_then(gtk4::gdk::Monitor::model)
+                .map(|value| value.to_string()),
+        }
+    }
+
+    /// Reports whether this preference carries a stable monitor identity.
+    #[must_use]
+    pub fn has_identity(&self) -> bool {
+        self.connector.is_some() || self.manufacturer.is_some() || self.model.is_some()
+    }
+
+    /// Matches identity properties from a currently connected monitor.
+    #[must_use]
+    pub fn matches_identity(
+        &self,
+        connector: Option<&str>,
+        manufacturer: Option<&str>,
+        model: Option<&str>,
+    ) -> bool {
+        if let Some(expected) = self.connector.as_deref() {
+            return connector == Some(expected);
+        }
+        self.has_identity()
+            && self.manufacturer.as_deref() == manufacturer
+            && self.model.as_deref() == model
+    }
+}
+
+/// Requested presentation for a detached session window.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DetachPresentation {
+    /// Whether the detached window should be fullscreen.
+    pub fullscreen: bool,
+    /// Preferred monitor identity for fullscreen presentation.
+    pub monitor: Option<DetachMonitor>,
+}
+
 /// Where a session sits relative to a split layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SplitMembership {
@@ -97,7 +164,7 @@ pub(super) struct DetachHooks {
     parked_in_split: Rc<RefCell<HashSet<Uuid>>>,
     split_session_colors: Rc<RefCell<HashMap<Uuid, usize>>>,
     detached: Rc<RefCell<HashSet<Uuid>>>,
-    on_detach_request: Rc<RefCell<Option<Box<dyn Fn(Uuid, Option<u32>)>>>>,
+    on_detach_request: Rc<RefCell<Option<Box<dyn Fn(Uuid, DetachPresentation) -> bool>>>>,
 }
 
 impl DetachHooks {
@@ -125,20 +192,23 @@ impl DetachHooks {
     }
 
     /// Fires the detach-request callback, if one is installed.
-    ///
-    /// `monitor` selects a monitor for a fullscreen detach; `None` opens a
-    /// normal window.
-    pub(super) fn notify_detach_request(&self, session_id: Uuid, monitor: Option<u32>) {
-        let slot = self.on_detach_request.borrow();
-        let Some(ref callback) = *slot else {
+    pub(super) fn notify_detach_request(
+        &self,
+        session_id: Uuid,
+        presentation: DetachPresentation,
+    ) -> bool {
+        let callback = self.on_detach_request.borrow_mut().take();
+        let Some(callback) = callback else {
             tracing::debug!(
                 session = %session_id,
                 "detach request dropped: no handler installed"
             );
-            return;
+            return false;
         };
-        tracing::debug!(session = %session_id, monitor, "detach requested");
-        callback(session_id, monitor);
+        tracing::debug!(session = %session_id, ?presentation, "detach requested");
+        let result = callback(session_id, presentation);
+        *self.on_detach_request.borrow_mut() = Some(callback);
+        result
     }
 }
 
@@ -193,12 +263,10 @@ impl TerminalNotebook {
 
     /// Asks the window layer to move a session into a detached window.
     ///
-    /// Same entry point the tab context menu uses, so a caller outside the
-    /// notebook (the reconnect fallback, which recreates a detached session as a
-    /// tab) does not need the window, the registry, or the application handle.
-    pub fn request_detach(&self, session_id: Uuid, monitor: Option<u32>) {
+    /// Returns `true` only when the exact session is detached and registered.
+    pub fn request_detach(&self, session_id: Uuid, presentation: DetachPresentation) -> bool {
         self.detach_hooks()
-            .notify_detach_request(session_id, monitor);
+            .notify_detach_request(session_id, presentation)
     }
 
     /// Returns how many sessions currently live in a detached window.
@@ -223,12 +291,9 @@ impl TerminalNotebook {
     }
 
     /// Sets the callback invoked when the tab context menu requests a detach.
-    ///
-    /// The callback receives the session id and an optional monitor index for
-    /// the "Move to New Window on…" submenu.
     pub fn set_on_detach_request<F>(&self, callback: F)
     where
-        F: Fn(Uuid, Option<u32>) + 'static,
+        F: Fn(Uuid, DetachPresentation) -> bool + 'static,
     {
         *self.on_detach_request.borrow_mut() = Some(Box::new(callback));
     }
@@ -298,7 +363,7 @@ impl TerminalNotebook {
             // The widget vanished between the guard and the move: give the
             // session its tab back (which also clears the detached mark) so the
             // caller sees no state change.
-            self.restore_session_tab(session_id);
+            let _ = self.restore_session_tab(session_id);
             self.resume_monitoring_in_place(monitoring.as_ref(), session_id);
             tracing::warn!(session = %session_id, "detach failed: could not build content");
             return None;
@@ -337,11 +402,9 @@ impl TerminalNotebook {
         // Order matters: `remove_welcome_page` only fires while the session map
         // is empty, so it has to run before the tab is inserted.
         self.remove_welcome_page();
-        self.restore_session_tab(session_id);
-        if !self.sessions.borrow().contains_key(&session_id) {
-            // No metadata for the session, so the tab could not be recreated.
-            // `restore_session_tab` validates before it clears anything, so the
-            // session is still marked detached and its window keeps the content.
+        if !self.restore_session_tab(session_id) {
+            self.resume_monitoring_in_place(monitoring.as_ref(), session_id);
+            self.ensure_welcome_page();
             tracing::warn!(session = %session_id, "attach failed: could not recreate tab");
             return false;
         }
@@ -358,6 +421,7 @@ impl TerminalNotebook {
                 );
             }
             self.resume_monitoring_in_place(monitoring.as_ref(), session_id);
+            self.ensure_welcome_page();
             tracing::warn!(session = %session_id, "attach failed: could not build content");
             return false;
         };
@@ -457,6 +521,89 @@ mod detach_context_tests {
         let ctx = detach_context_from(false, SplitMembership::Outside, true);
         assert!(!ctx.renders_in_process);
         assert!(ctx.is_detached);
+    }
+}
+
+#[cfg(test)]
+mod detach_request_tests {
+    use super::*;
+
+    fn hooks_without_handler() -> DetachHooks {
+        DetachHooks {
+            session_info: Rc::new(RefCell::new(HashMap::new())),
+            parked_in_split: Rc::new(RefCell::new(HashSet::new())),
+            split_session_colors: Rc::new(RefCell::new(HashMap::new())),
+            detached: Rc::new(RefCell::new(HashSet::new())),
+            on_detach_request: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    #[test]
+    fn request_without_handler_returns_false() {
+        let hooks = hooks_without_handler();
+
+        assert!(!hooks.notify_detach_request(Uuid::from_u128(1), DetachPresentation::default(),));
+    }
+
+    #[test]
+    fn request_returns_the_callback_result() {
+        let hooks = hooks_without_handler();
+        *hooks.on_detach_request.borrow_mut() = Some(Box::new(|_, _| false));
+        assert!(!hooks.notify_detach_request(Uuid::from_u128(1), DetachPresentation::default(),));
+
+        *hooks.on_detach_request.borrow_mut() = Some(Box::new(|_, _| true));
+        assert!(hooks.notify_detach_request(Uuid::from_u128(1), DetachPresentation::default(),));
+    }
+
+    #[test]
+    fn request_forwards_session_and_presentation() {
+        let hooks = hooks_without_handler();
+        let observed = Rc::new(RefCell::new(None));
+        let observed_for_callback = Rc::clone(&observed);
+        *hooks.on_detach_request.borrow_mut() = Some(Box::new(move |session_id, presentation| {
+            *observed_for_callback.borrow_mut() = Some((session_id, presentation));
+            true
+        }));
+        let session_id = Uuid::from_u128(0xD37A_C4ED);
+        let presentation = DetachPresentation {
+            fullscreen: true,
+            monitor: Some(DetachMonitor {
+                index: 2,
+                connector: Some("DP-1".to_string()),
+                manufacturer: Some("Acme".to_string()),
+                model: Some("Panel".to_string()),
+            }),
+        };
+        let expected = presentation.clone();
+
+        assert!(hooks.notify_detach_request(session_id, presentation));
+        assert_eq!(observed.borrow().as_ref(), Some(&(session_id, expected)));
+    }
+
+    #[test]
+    fn monitor_connector_survives_index_reordering() {
+        let preference = DetachMonitor {
+            index: 2,
+            connector: Some("DP-1".to_string()),
+            manufacturer: Some("Acme".to_string()),
+            model: Some("Panel".to_string()),
+        };
+
+        assert!(preference.matches_identity(Some("DP-1"), Some("Other"), Some("Display")));
+        assert!(!preference.matches_identity(Some("HDMI-1"), Some("Acme"), Some("Panel")));
+    }
+
+    #[test]
+    fn monitor_without_identity_uses_index_fallback() {
+        let preference = DetachMonitor {
+            index: 2,
+            connector: None,
+            manufacturer: None,
+            model: None,
+        };
+
+        assert!(!preference.has_identity());
+        assert!(!preference.matches_identity(None, None, None));
     }
 }
 

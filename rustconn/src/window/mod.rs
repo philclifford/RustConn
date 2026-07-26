@@ -464,12 +464,15 @@ impl MainWindow {
         // the user's tab arrangement intact (#89).
         {
             let state_for_reconnect = state.clone();
-            let notebook_for_reconnect = terminal_notebook.clone();
+            let notebook_for_reconnect = Rc::downgrade(&terminal_notebook);
             let split_view_for_reconnect = split_view.clone();
             let sidebar_for_reconnect = sidebar.clone();
             let monitoring_for_reconnect = monitoring.clone();
             let activity_for_reconnect = activity_coordinator.clone();
             terminal_notebook.set_on_reconnect(move |session_id, connection_id| {
+                let Some(notebook_for_reconnect) = notebook_for_reconnect.upgrade() else {
+                    return;
+                };
                 tracing::info!(
                     %session_id,
                     %connection_id,
@@ -527,26 +530,16 @@ impl MainWindow {
                     );
                 }
 
-                // Requirement 7.6: the reconnected session must end up in the
-                // same window. This fallback closes the session, which for a
-                // detached one destroys its window, so the placement is recorded
-                // here and re-established on the replacement session below
-                // (issue #236).
+                // Snapshot placement before close tears down the old tab/window.
                 let was_detached = notebook_for_reconnect.is_detached(session_id);
-                let sessions_before: std::collections::HashSet<Uuid> = if was_detached {
-                    notebook_for_reconnect
-                        .get_all_sessions()
-                        .into_iter()
-                        .filter(|session| session.connection_id == connection_id)
-                        .map(|session| session.id)
-                        .collect()
+                let presentation = was_detached.then(|| {
+                    detached_window_registry()
+                        .and_then(|registry| registry.presentation(session_id))
+                        .unwrap_or_default()
+                });
+                let tab_position = if was_detached {
+                    None
                 } else {
-                    std::collections::HashSet::new()
-                };
-
-                // Fallback for non-SSH protocols or if in-place failed:
-                // close old tab, create new one, reorder to original position
-                let tab_position = {
                     let sessions = notebook_for_reconnect.sessions_map();
                     let sessions_ref = sessions.borrow();
                     sessions_ref
@@ -556,35 +549,40 @@ impl MainWindow {
 
                 notebook_for_reconnect.close_tab(session_id);
 
-                let tabs_before = notebook_for_reconnect.tab_view().n_pages();
+                let notebook_for_observer = Rc::downgrade(&notebook_for_reconnect);
+                let observer = types::SessionStartObserver::new(move |new_session_id| {
+                    let Some(notebook) = notebook_for_observer.upgrade() else {
+                        return;
+                    };
+                    if let Some(presentation) = presentation {
+                        if !notebook.request_detach(new_session_id, presentation) {
+                            tracing::warn!(
+                                session = %new_session_id,
+                                "could not restore detached placement after reconnect"
+                            );
+                        }
+                    } else if let Some(original_pos) = tab_position {
+                        let page = notebook
+                            .sessions_map()
+                            .borrow()
+                            .get(&new_session_id)
+                            .cloned();
+                        if let Some(page) = page {
+                            notebook.tab_view().reorder_page(&page, original_pos);
+                        }
+                    }
+                });
 
-                Self::start_connection_with_credential_resolution(
+                Self::start_connection_with_credential_resolution_observed(
                     state_for_reconnect.clone(),
-                    notebook_for_reconnect.clone(),
+                    notebook_for_reconnect,
                     split_view_for_reconnect.clone(),
                     sidebar_for_reconnect.clone(),
                     monitoring_for_reconnect.clone(),
                     connection_id,
                     Some(activity_for_reconnect.clone()),
+                    Some(observer),
                 );
-
-                if let Some(original_pos) = tab_position {
-                    let tabs_after = notebook_for_reconnect.tab_view().n_pages();
-                    if tabs_after > tabs_before {
-                        let new_page = notebook_for_reconnect.tab_view().nth_page(tabs_after - 1);
-                        notebook_for_reconnect
-                            .tab_view()
-                            .reorder_page(&new_page, original_pos);
-                    }
-                }
-
-                if was_detached {
-                    detach_actions::redetach_after_reconnect(
-                        &notebook_for_reconnect,
-                        connection_id,
-                        sessions_before,
-                    );
-                }
             });
         }
 
@@ -2039,33 +2037,66 @@ impl MainWindow {
         connection_id: Uuid,
         activity: Option<&types::SharedActivityCoordinator>,
     ) -> Option<Uuid> {
+        Self::start_connection_with_split_observed(
+            state,
+            notebook,
+            split_view,
+            sidebar,
+            monitoring,
+            connection_id,
+            activity,
+            None,
+        )
+    }
+
+    /// Starts a connection with split integration and an exact-session observer.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "extends the stable start wrapper with one optional observer"
+    )]
+    pub fn start_connection_with_split_observed(
+        state: &SharedAppState,
+        notebook: &SharedNotebook,
+        split_view: &SharedSplitView,
+        sidebar: &SharedSidebar,
+        monitoring: &types::SharedMonitoring,
+        connection_id: Uuid,
+        activity: Option<&types::SharedActivityCoordinator>,
+        observer: Option<types::SessionStartObserver>,
+    ) -> Option<Uuid> {
         // Update status to connecting
         sidebar.update_connection_status(&connection_id.to_string(), "connecting");
 
-        let session_id =
-            match Self::start_connection(state, notebook, sidebar, monitoring, connection_id) {
-                types::ConnectionStartResult::Started(id) => id,
-                types::ConnectionStartResult::Pending => {
-                    // Async port check in progress — keep "connecting" status.
-                    // The protocol callback will set "connected" or "failed".
-                    return None;
+        let session_id = match Self::start_connection_observed(
+            state,
+            notebook,
+            sidebar,
+            monitoring,
+            connection_id,
+            observer,
+        ) {
+            types::ConnectionStartResult::Started(id) => id,
+            types::ConnectionStartResult::Pending => {
+                // Async port check in progress — keep "connecting" status.
+                // The protocol callback will set "connected" or "failed".
+                return None;
+            }
+            types::ConnectionStartResult::Failed => {
+                sidebar.update_connection_status(&connection_id.to_string(), "failed");
+                // Show connection failure toast with connection name
+                if let Ok(state_ref) = state.try_borrow()
+                    && let Some(conn) = state_ref.get_connection(connection_id)
+                {
+                    let name = conn.name.clone();
+                    drop(state_ref);
+                    crate::toast::show_error_toast_on_active_window(&crate::i18n::i18n_f(
+                        "Connection to ‘{}’ failed",
+                        &[&name],
+                    ));
                 }
-                types::ConnectionStartResult::Failed => {
-                    sidebar.update_connection_status(&connection_id.to_string(), "failed");
-                    // Show connection failure toast with connection name
-                    if let Ok(state_ref) = state.try_borrow()
-                        && let Some(conn) = state_ref.get_connection(connection_id)
-                    {
-                        let name = conn.name.clone();
-                        drop(state_ref);
-                        crate::toast::show_error_toast_on_active_window(&crate::i18n::i18n_f(
-                            "Connection to ‘{}’ failed",
-                            &[&name],
-                        ));
-                    }
-                    return None;
-                }
-            };
+                return None;
+            }
+        };
 
         // Get session info to check protocol
         if let Some(info) = notebook.get_session_info(session_id) {
@@ -2149,6 +2180,18 @@ impl MainWindow {
         sidebar: &SharedSidebar,
         monitoring: &types::SharedMonitoring,
         connection_id: Uuid,
+    ) -> types::ConnectionStartResult {
+        Self::start_connection_observed(state, notebook, sidebar, monitoring, connection_id, None)
+    }
+
+    /// Starts a connection and observes the exact session UUID it creates.
+    pub fn start_connection_observed(
+        state: &SharedAppState,
+        notebook: &SharedNotebook,
+        sidebar: &SharedSidebar,
+        monitoring: &types::SharedMonitoring,
+        connection_id: Uuid,
+        observer: Option<types::SessionStartObserver>,
     ) -> types::ConnectionStartResult {
         let state_ref = state.borrow();
 
@@ -2373,7 +2416,7 @@ impl MainWindow {
         );
 
         let session_id = match protocol.as_str() {
-            "ssh" => protocols::start_ssh_connection(
+            "ssh" => protocols::start_ssh_connection_observed(
                 state,
                 notebook,
                 sidebar,
@@ -2381,13 +2424,15 @@ impl MainWindow {
                 connection_id,
                 &conn_clone,
                 logging_enabled,
+                observer.clone(),
             ),
-            "vnc" => protocols::start_vnc_connection(
+            "vnc" => protocols::start_vnc_connection_observed(
                 state,
                 notebook,
                 sidebar,
                 connection_id,
                 &conn_clone,
+                observer.clone(),
             ),
             "rdp" => {
                 // RDP connections are handled by start_rdp_session_with_credentials
@@ -2405,13 +2450,14 @@ impl MainWindow {
                 connection_id,
                 &conn_clone,
             ),
-            "telnet" => protocols::start_telnet_connection(
+            "telnet" => protocols::start_telnet_connection_observed(
                 state,
                 notebook,
                 sidebar,
                 connection_id,
                 &conn_clone,
                 logging_enabled,
+                observer.clone(),
             ),
             "serial" => protocols::start_serial_connection(
                 state,
@@ -2429,13 +2475,14 @@ impl MainWindow {
                 &conn_clone,
                 logging_enabled,
             ),
-            "mosh" => protocols::start_mosh_connection(
+            "mosh" => protocols::start_mosh_connection_observed(
                 state,
                 notebook,
                 sidebar,
                 connection_id,
                 &conn_clone,
                 logging_enabled,
+                observer.clone(),
             ),
             p if p == "zerotrust" || p.starts_with("zerotrust:") => {
                 protocols::start_zerotrust_connection(
@@ -2454,7 +2501,13 @@ impl MainWindow {
             }
             "web" => {
                 // Web: Embedded mode opens in-tab, System/Custom open externally
-                Self::handle_web_connect(state, notebook, sidebar, connection_id);
+                Self::handle_web_connect_observed(
+                    state,
+                    notebook,
+                    sidebar,
+                    connection_id,
+                    observer.clone(),
+                );
                 None
             }
             _ => {
@@ -2462,6 +2515,10 @@ impl MainWindow {
                 None
             }
         };
+
+        if let (Some(session_id), Some(observer)) = (session_id, observer) {
+            observer.complete(session_id);
+        }
 
         // Execute key sequence after connection is established (terminal protocols only)
         if let Some(sid) = session_id

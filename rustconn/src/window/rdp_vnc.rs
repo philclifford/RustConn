@@ -3,6 +3,7 @@
 //! This module contains functions for starting RDP and VNC connections
 //! with password dialogs and credential handling.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
@@ -26,14 +27,15 @@ pub type SharedNotebook = Rc<TerminalNotebook>;
 /// Type alias for shared split view reference
 pub type SharedSplitView = Rc<SplitViewBridge>;
 
-/// Starts an RDP connection with password dialog
-pub fn start_rdp_with_password_dialog(
+/// Starts an RDP password flow and observes an embedded session it creates.
+pub fn start_rdp_with_password_dialog_observed(
     state: SharedAppState,
     notebook: SharedNotebook,
     split_view: SharedSplitView,
     sidebar: SharedSidebar,
     connection_id: Uuid,
     window: &gtk4::Window,
+    observer: Option<super::types::SessionStartObserver>,
 ) {
     use rustconn_core::variables::{VariableManager, VariableScope};
 
@@ -67,7 +69,7 @@ pub fn start_rdp_with_password_dialog(
 
     if let Some((username, password, domain)) = cached {
         // Use cached credentials directly
-        start_rdp_session_with_credentials(
+        start_rdp_session_with_credentials_observed(
             &state,
             &notebook,
             &split_view,
@@ -76,6 +78,7 @@ pub fn start_rdp_with_password_dialog(
             &username,
             &password,
             &domain,
+            observer.clone(),
         );
         return;
     }
@@ -161,7 +164,7 @@ pub fn start_rdp_with_password_dialog(
             }
 
             // Start RDP with credentials
-            start_rdp_session_with_credentials(
+            start_rdp_session_with_credentials_observed(
                 &state,
                 &notebook,
                 &split_view,
@@ -170,17 +173,18 @@ pub fn start_rdp_with_password_dialog(
                 &creds.username,
                 creds.password.expose_secret(),
                 &creds.domain,
+                observer.clone(),
             );
         }
     });
 }
 
-/// Starts RDP session with provided credentials
+/// Starts RDP and observes the embedded session UUID it creates.
 #[expect(
     clippy::too_many_arguments,
-    reason = "function parameters mirror upstream API or struct fields 1:1; bundling into a struct only restates the field list"
+    reason = "RDP startup requires four UI owners, connection identity, three credential fields, and observer state"
 )]
-pub fn start_rdp_session_with_credentials(
+pub fn start_rdp_session_with_credentials_observed(
     state: &SharedAppState,
     notebook: &SharedNotebook,
     split_view: &SharedSplitView,
@@ -189,6 +193,7 @@ pub fn start_rdp_session_with_credentials(
     username: &str,
     password: &str,
     domain: &str,
+    observer: Option<super::types::SessionStartObserver>,
 ) {
     // Port check is now done earlier in handle_rdp_credentials
     start_rdp_session_internal(
@@ -200,6 +205,7 @@ pub fn start_rdp_session_with_credentials(
         username,
         password,
         domain,
+        observer,
     );
 }
 
@@ -217,6 +223,7 @@ fn start_rdp_session_internal(
     username: &str,
     password: &str,
     domain: &str,
+    observer: Option<super::types::SessionStartObserver>,
 ) {
     use rustconn_core::models::RdpClientMode;
     use rustconn_core::variables::{VariableManager, VariableScope};
@@ -355,6 +362,7 @@ fn start_rdp_session_internal(
                             &rdp_config,
                             history_entry_id,
                             Some(tunnel),
+                            observer.clone(),
                         );
                     } else {
                         start_external_rdp_session(
@@ -422,6 +430,7 @@ fn start_rdp_session_internal(
             &rdp_config,
             history_entry_id,
             ssh_tunnel,
+            observer,
         );
         return;
     }
@@ -466,6 +475,7 @@ fn start_embedded_rdp_session(
     rdp_config: &rustconn_core::models::RdpConfig,
     history_entry_id: Option<Uuid>,
     ssh_tunnel: Option<rustconn_core::ssh_tunnel::SshTunnel>,
+    observer: Option<super::types::SessionStartObserver>,
 ) {
     use gtk4::glib;
 
@@ -677,6 +687,36 @@ fn start_embedded_rdp_session(
         }
     });
 
+    // Standard RDP Security is weaker than TLS/NLA. Never retry with it until
+    // the user explicitly approves this connection attempt.
+    let notebook_for_legacy_security = notebook.clone();
+    embedded_widget.connect_legacy_security_required(move |decision| {
+        let Some(window) = notebook_for_legacy_security
+            .widget()
+            .ancestor(gtk4::Window::static_type())
+            .and_then(|widget| widget.downcast::<gtk4::Window>().ok())
+        else {
+            decision(false);
+            return;
+        };
+
+        let decision = Rc::new(RefCell::new(Some(decision)));
+        crate::alert::show_confirm(
+            &window,
+            &crate::i18n::i18n("Use Legacy RDP Security?"),
+            &crate::i18n::i18n(
+                "This server only supports Standard RDP Security, which is weaker than TLS or Network Level Authentication. Continue with the external RDP client?",
+            ),
+            &crate::i18n::i18n("Connect Anyway"),
+            false,
+            move |accepted| {
+                if let Some(decision) = decision.borrow_mut().take() {
+                    decision(accepted);
+                }
+            },
+        );
+    });
+
     // Connect certificate-changed callback — shows a confirmation dialog when
     // FreeRDP detects the server certificate has changed since the last connection.
     // On acceptance, removes the old certificate from FreeRDP's TOFU store and
@@ -718,6 +758,9 @@ fn start_embedded_rdp_session(
         conn_name,
         embedded_widget.clone(),
     );
+    if let Some(observer) = observer {
+        observer.complete(session_id);
+    }
 
     // Store SSH tunnel so it stays alive for the duration of the session
     if let Some(tunnel) = ssh_tunnel {
@@ -933,8 +976,11 @@ fn start_external_rdp_session(
         None => {
             tracing::error!(
                 %connection_id,
-                "External session registry unavailable; RDP viewer left untracked"
+                "External session registry unavailable; terminating untracked RDP viewer"
             );
+            if let Some(child) = child {
+                crate::embedded_rdp::launcher::cleanup_child_without_blocking(child);
+            }
         }
     }
 
@@ -946,14 +992,15 @@ fn start_external_rdp_session(
     }
 }
 
-/// Starts a VNC connection with password dialog
-pub fn start_vnc_with_password_dialog(
+/// Starts a VNC password flow and observes an embedded session it creates.
+pub fn start_vnc_with_password_dialog_observed(
     state: SharedAppState,
     notebook: SharedNotebook,
     split_view: SharedSplitView,
     sidebar: SharedSidebar,
     connection_id: Uuid,
     window: &gtk4::Window,
+    observer: Option<super::types::SessionStartObserver>,
 ) {
     // Check if we have cached credentials (fast, non-blocking)
     let cached_password = {
@@ -967,13 +1014,14 @@ pub fn start_vnc_with_password_dialog(
 
     if let Some(password) = cached_password {
         // Use cached credentials directly
-        start_vnc_session_with_password(
+        start_vnc_session_with_password_observed(
             &state,
             &notebook,
             &split_view,
             &sidebar,
             connection_id,
             &password,
+            observer.clone(),
         );
         return;
     }
@@ -1108,26 +1156,28 @@ pub fn start_vnc_with_password_dialog(
             }
 
             // Start VNC with password
-            start_vnc_session_with_password(
+            start_vnc_session_with_password_observed(
                 &state,
                 &notebook,
                 &split_view,
                 &sidebar_clone,
                 connection_id,
                 creds.password.expose_secret(),
+                observer.clone(),
             );
         }
     });
 }
 
-/// Starts VNC session with provided password
-pub fn start_vnc_session_with_password(
+/// Starts VNC and observes the embedded session UUID it creates.
+pub fn start_vnc_session_with_password_observed(
     state: &SharedAppState,
     notebook: &SharedNotebook,
     split_view: &SharedSplitView,
     sidebar: &SharedSidebar,
     connection_id: Uuid,
     password: &str,
+    observer: Option<super::types::SessionStartObserver>,
 ) {
     // Port check is now done earlier in handle_vnc_credentials
     start_vnc_session_internal(
@@ -1137,6 +1187,7 @@ pub fn start_vnc_session_with_password(
         sidebar,
         connection_id,
         password,
+        observer,
     );
 }
 
@@ -1148,6 +1199,7 @@ fn start_vnc_session_internal(
     sidebar: &SharedSidebar,
     connection_id: Uuid,
     password: &str,
+    observer: Option<super::types::SessionStartObserver>,
 ) {
     use rustconn_core::models::{VncClientMode, WindowMode};
     use rustconn_core::variables::{VariableManager, VariableScope};
@@ -1334,6 +1386,9 @@ fn start_vnc_session_internal(
 
     // Create VNC session tab with native widget
     let session_id = notebook.create_vnc_session_tab(connection_id, &conn_name);
+    if let Some(observer) = observer {
+        observer.complete(session_id);
+    }
 
     // Store history entry ID in session for later use
     if let Some(entry_id) = history_entry_id {

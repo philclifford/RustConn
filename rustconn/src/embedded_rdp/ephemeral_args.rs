@@ -1,26 +1,4 @@
 //! Ephemeral FreeRDP args file for connection arguments.
-//!
-//! FreeRDP requires that `/args-from:` is the **only** argument on the command
-//! line — it cannot be combined with other CLI arguments ([FreeRDP#12697]).
-//! All connection parameters (including secrets like `/p:<password>`) are
-//! written into a single-use file in `$XDG_RUNTIME_DIR` (mode 0600), keeping
-//! everything out of `/proc/<pid>/cmdline`.
-//!
-//! The switch itself is spelled differently across FreeRDP releases —
-//! `/args-from:<path>` everywhere, `/args-from:file:<path>` only from 3.26 on.
-//! [`super::detect::args_from_argument`] picks the form the installed binary
-//! understands.
-//!
-//! [FreeRDP#12697]: https://github.com/FreeRDP/FreeRDP/pull/12697
-//!
-//! # Lifecycle
-//!
-//! [`EphemeralRdpArgs`] writes the args file in [`Self::write_all`] and
-//! removes it on `Drop` (best-effort). Callers must hold the guard
-//! alive until the spawned FreeRDP process has actually consumed
-//! the file (a fraction of a second after `spawn`). Because FreeRDP
-//! reads the file during argument parsing, dropping the guard
-//! immediately after `child.try_wait()` returns `None` is safe.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -32,51 +10,31 @@ use secrecy::{ExposeSecret, SecretString};
 
 /// Single-use args file containing all FreeRDP connection arguments.
 ///
-/// FreeRDP requires `/args-from:` to be the sole CLI argument.
-/// All parameters (secret and plain) are written one-per-line into this
-/// file. The file is created with mode `0600` so only the owning user can
-/// read it. It is removed when the guard is dropped, even if the
-/// launcher panics partway through `spawn`.
+/// The mode is `0600`; dropping the guard removes complete or partial files.
 pub(super) struct EphemeralRdpArgs {
     path: PathBuf,
 }
 
 impl EphemeralRdpArgs {
-    /// Returns the path the spawned FreeRDP client should read its args
-    /// from via `/args-from:`.
+    /// Returns the path used by the FreeRDP `/args-from:` switch.
     pub(super) fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Writes all connection arguments (plain + secret) to a fresh file in
-    /// `$XDG_RUNTIME_DIR` and returns a guard that removes the file on drop.
+    /// Writes plain and secret arguments to a fresh runtime file.
     ///
-    /// FreeRDP requires `/args-from:` to be the **only** CLI argument — it
-    /// cannot be combined with other arguments. All connection parameters are
-    /// therefore written into this file, one per line.
-    ///
-    /// # Arguments
-    ///
-    /// * `plain_args` — non-secret arguments (e.g. `/v:host`, `/w:1920`)
-    /// * `secret_args` — secret arguments written as `/<flag>:<secret>`
-    ///   (e.g. `/p:<password>`); the in-memory copy is zeroized after write
+    /// All line components are validated before the file is opened.
     ///
     /// # Errors
-    ///
-    /// Returns `SecretError::Pass` when the runtime directory cannot
-    /// be located or the file cannot be created with the requested
-    /// permissions.
+    /// Returns `SecretError::Pass` if validation, creation, or writing fails.
     pub(super) fn write_all(
         plain_args: &[String],
         secret_args: &[(&str, &SecretString)],
     ) -> SecretResult<Self> {
         use rustconn_core::error::SecretError;
-
-        // $XDG_RUNTIME_DIR is the natural choice on Linux desktops:
-        // tmpfs, mode 0700, owned by the user, cleared on logout.
         let dir = std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
-            .filter(|p| p.is_dir())
+            .filter(|path| path.is_dir())
             .ok_or_else(|| {
                 SecretError::Pass(
                     "XDG_RUNTIME_DIR is not set or is not a directory; \
@@ -84,79 +42,102 @@ impl EphemeralRdpArgs {
                         .to_string(),
                 )
             })?;
-
         Self::write_all_in_dir(&dir, plain_args, secret_args)
     }
 
-    /// Writes all connection arguments into a specific directory.
-    /// Used by `write_all` (with `$XDG_RUNTIME_DIR`) and by the tests.
+    fn validate_line_component(kind: &str, value: &str) -> SecretResult<()> {
+        use rustconn_core::error::SecretError;
+        if value.contains(['\r', '\n', '\0']) {
+            return Err(SecretError::Pass(format!(
+                "RDP {kind} contains a forbidden CR, LF, or NUL byte"
+            )));
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_plain_args(plain_args: &[String]) -> SecretResult<()> {
+        use rustconn_core::error::SecretError;
+        use rustconn_core::protocol::{
+            contains_freerdp_secret_field, is_freerdp_shell_or_proxy_arg,
+        };
+
+        for arg in plain_args {
+            Self::validate_line_component("argument", arg)?;
+            if contains_freerdp_secret_field(arg) {
+                return Err(SecretError::Pass(
+                    "RDP password arguments must use the protected secret path".to_string(),
+                ));
+            }
+            if is_freerdp_shell_or_proxy_arg(arg) {
+                return Err(SecretError::Pass(
+                    "RDP shell or proxy arguments are not allowed".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_args(
+        plain_args: &[String],
+        secret_args: &[(&str, &SecretString)],
+    ) -> SecretResult<()> {
+        Self::validate_plain_args(plain_args)?;
+        for (flag, secret) in secret_args {
+            Self::validate_line_component("secret flag", flag)?;
+            Self::validate_line_component("secret value", secret.expose_secret())?;
+        }
+        Ok(())
+    }
+
     fn write_all_in_dir(
         dir: &Path,
         plain_args: &[String],
         secret_args: &[(&str, &SecretString)],
     ) -> SecretResult<Self> {
         use rustconn_core::error::SecretError;
-
-        // Avoid name collisions across concurrent RDP launches by
-        // suffixing with a random UUID.
+        Self::validate_args(plain_args, secret_args)?;
         let path = dir.join(format!("rustconn-rdp-{}.args", uuid::Uuid::new_v4()));
-
         let mut file: File = OpenOptions::new()
             .create_new(true)
             .write(true)
             .mode(0o600)
             .open(&path)
-            .map_err(|e| {
+            .map_err(|error| {
                 SecretError::Pass(format!(
-                    "failed to create ephemeral RDP args file at {}: {e}",
+                    "failed to create ephemeral RDP args file at {}: {error}",
                     path.display()
                 ))
             })?;
 
-        // The FreeRDP args-file format is one argument per line. The file must
-        // contain ALL arguments — nothing else may appear on the command line
-        // alongside the `/args-from:` switch.
-
-        // Write plain-text arguments first (non-secret, e.g. /v:host)
+        // Install cleanup immediately after open so every partial write path
+        // removes the file before propagating its error.
+        let guard = Self { path };
         for arg in plain_args {
-            file.write_all(arg.as_bytes()).map_err(|e| {
+            file.write_all(arg.as_bytes()).map_err(|error| {
                 SecretError::Pass(format!(
-                    "failed to write ephemeral RDP args file at {}: {e}",
-                    path.display()
+                    "failed to write ephemeral RDP args file at {}: {error}",
+                    guard.path.display()
                 ))
             })?;
-            file.write_all(b"\n").map_err(|e| {
+            file.write_all(b"\n").map_err(|error| {
                 SecretError::Pass(format!(
-                    "failed to write ephemeral RDP args file at {}: {e}",
-                    path.display()
-                ))
-            })?;
-        }
-
-        // Write secret arguments last; wrap in Zeroizing so the heap copy
-        // is wiped once the write completes.
-        if !secret_args.is_empty() {
-            let mut secret_content = String::new();
-            for (flag, secret) in secret_args {
-                secret_content.push('/');
-                secret_content.push_str(flag);
-                secret_content.push(':');
-                secret_content.push_str(secret.expose_secret());
-                secret_content.push('\n');
-            }
-            let zline = zeroize::Zeroizing::new(secret_content);
-            file.write_all(zline.as_bytes()).map_err(|e| {
-                SecretError::Pass(format!(
-                    "failed to write ephemeral RDP args file at {}: {e}",
-                    path.display()
+                    "failed to write ephemeral RDP args file at {}: {error}",
+                    guard.path.display()
                 ))
             })?;
         }
-
-        Ok(Self { path })
+        for (flag, secret) in secret_args {
+            let line = zeroize::Zeroizing::new(format!("/{flag}:{}\n", secret.expose_secret()));
+            file.write_all(line.as_bytes()).map_err(|error| {
+                SecretError::Pass(format!(
+                    "failed to write ephemeral RDP args file at {}: {error}",
+                    guard.path.display()
+                ))
+            })?;
+        }
+        Ok(guard)
     }
 
-    /// Legacy helper used by tests.
     #[cfg(test)]
     fn write_in_dir(dir: &Path, args: &[(&str, &SecretString)]) -> SecretResult<Self> {
         Self::write_all_in_dir(dir, &[], args)
@@ -165,17 +146,13 @@ impl EphemeralRdpArgs {
 
 impl Drop for EphemeralRdpArgs {
     fn drop(&mut self) {
-        // Best-effort: if the file was already moved or the runtime
-        // directory was wiped under our feet, there is nothing
-        // sensible we can do here. We deliberately ignore the result.
         if self.path.exists()
-            && let Err(e) = std::fs::remove_file(&self.path)
+            && let Err(error) = std::fs::remove_file(&self.path)
         {
             tracing::warn!(
                 path = %self.path.display(),
-                error = %e,
-                "failed to remove ephemeral RemoteApp args file; \
-                 it will be cleaned up at logout via XDG_RUNTIME_DIR"
+                %error,
+                "failed to remove ephemeral RDP args file; it will be cleaned up at logout"
             );
         }
     }
@@ -195,26 +172,29 @@ mod tests {
 
     use super::*;
 
-    /// Creates a temporary directory mode 0700 to mimic `$XDG_RUNTIME_DIR`.
-    /// The directory and its contents are removed when the returned guard
-    /// drops.
     struct TempRuntimeDir(PathBuf);
-
     impl TempRuntimeDir {
         fn new() -> Self {
             let path =
                 std::env::temp_dir().join(format!("rustconn-test-rt-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&path).expect("create test runtime dir");
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
-                .expect("set 0700 on test runtime dir");
+                .expect("set test runtime permissions");
             Self(path)
         }
-
         fn path(&self) -> &Path {
             &self.0
         }
+        fn assert_empty(&self) {
+            assert_eq!(
+                std::fs::read_dir(&self.0)
+                    .expect("read test runtime dir")
+                    .count(),
+                0,
+                "rejected arguments must not create a file"
+            );
+        }
     }
-
     impl Drop for TempRuntimeDir {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
@@ -226,79 +206,131 @@ mod tests {
         let dir = TempRuntimeDir::new();
         let path_after_drop;
         {
-            let pwd = SecretString::from("hunter2".to_string());
-            let guard = EphemeralRdpArgs::write_in_dir(dir.path(), &[("p", &pwd)])
+            let password = SecretString::from("hunter2".to_string());
+            let guard = EphemeralRdpArgs::write_in_dir(dir.path(), &[("p", &password)])
                 .expect("write args file");
-            let p = guard.path().to_path_buf();
-            assert!(p.starts_with(dir.path()));
-            assert!(p.exists(), "args file should exist while guard is alive");
-            path_after_drop = p;
-        }
-        assert!(
-            !path_after_drop.exists(),
-            "args file should be removed when guard drops"
-        );
-    }
-
-    #[test]
-    fn file_mode_is_0600() {
-        let dir = TempRuntimeDir::new();
-        let pwd = SecretString::from("any".to_string());
-        let guard =
-            EphemeralRdpArgs::write_in_dir(dir.path(), &[("p", &pwd)]).expect("write args file");
-        let mode = std::fs::metadata(guard.path())
-            .expect("stat")
-            .permissions()
-            .mode();
-        assert_eq!(
-            mode & 0o777,
-            0o600,
-            "args file must be readable only by the owner"
-        );
-    }
-
-    #[test]
-    fn drop_removes_file_for_password_with_special_characters() {
-        // Tests a payload that includes characters which would historically
-        // have been awkward on the command line (`'`, `"`, `\n`, `\t`, etc.).
-        // The file format is line-based but xfreerdp consumes the whole line
-        // verbatim, so we only need to ensure the cleanup path runs.
-        let dir = TempRuntimeDir::new();
-        let path_after_drop;
-        {
-            let pwd = SecretString::from(
-                "p@ss\twith\nnew\rlines and 'quotes' and \"escapes\\\"".to_string(),
-            );
-            let guard = EphemeralRdpArgs::write_in_dir(dir.path(), &[("p", &pwd)])
-                .expect("write args file");
-            let p = guard.path().to_path_buf();
-            assert!(p.exists());
-            path_after_drop = p;
+            path_after_drop = guard.path().to_path_buf();
+            assert!(path_after_drop.exists());
         }
         assert!(!path_after_drop.exists());
     }
 
     #[test]
-    fn write_fails_for_nonexistent_dir() {
-        let pwd = SecretString::from("any".to_string());
-        let nope = std::path::Path::new("/this/path/does/not/exist/and/should/not");
-        let res = EphemeralRdpArgs::write_in_dir(nope, &[("p", &pwd)]);
-        assert!(res.is_err());
+    fn file_mode_is_0600() {
+        let dir = TempRuntimeDir::new();
+        let password = SecretString::from("any".to_string());
+        let guard = EphemeralRdpArgs::write_in_dir(dir.path(), &[("p", &password)])
+            .expect("write args file");
+        let mode = std::fs::metadata(guard.path())
+            .expect("read args file metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn safe_special_characters_are_written_and_cleaned_up() {
+        let dir = TempRuntimeDir::new();
+        let path_after_drop;
+        {
+            let password =
+                SecretString::from("p@ss\twith spaces and 'quotes' and \"escapes\\\"".to_string());
+            let guard = EphemeralRdpArgs::write_in_dir(dir.path(), &[("p", &password)])
+                .expect("write args file");
+            path_after_drop = guard.path().to_path_buf();
+        }
+        assert!(!path_after_drop.exists());
+    }
+
+    #[test]
+    fn rejects_cr_lf_and_nul_in_plain_arguments_before_open() {
+        for suffix in ["\r/injected", "\n/injected", "\0/injected"] {
+            let dir = TempRuntimeDir::new();
+            let plain = vec![format!("/v:host{suffix}")];
+            assert!(EphemeralRdpArgs::write_all_in_dir(dir.path(), &plain, &[]).is_err());
+            dir.assert_empty();
+        }
+    }
+
+    #[test]
+    fn rejects_passwords_in_plain_arguments_before_open() {
+        for argument in [
+            "/p:secret",
+            "/PASSWORD:secret",
+            "  /gp:secret",
+            "/gateway-password:secret",
+            "/pth:secret-hash",
+        ] {
+            let dir = TempRuntimeDir::new();
+            let plain = vec![argument.to_string()];
+            assert!(EphemeralRdpArgs::write_all_in_dir(dir.path(), &plain, &[]).is_err());
+            dir.assert_empty();
+        }
+    }
+
+    #[test]
+    fn rejects_composite_password_fields_before_open() {
+        for argument in [
+            "/gateway:g:host,p:secret",
+            "/gateway:g:host,PASSWORD:secret",
+            "/gateway:g:host, gp:secret",
+            "/gateway:g:host,GATEWAY-PASSWORD:secret",
+            "/gateway:g:host,  PTH:secret-hash",
+        ] {
+            let dir = TempRuntimeDir::new();
+            let plain = vec![argument.to_string()];
+            assert!(EphemeralRdpArgs::write_all_in_dir(dir.path(), &plain, &[]).is_err());
+            dir.assert_empty();
+        }
+    }
+
+    #[test]
+    fn accepts_generated_gateway_host_and_user_fields() {
+        let dir = TempRuntimeDir::new();
+        let plain = vec!["/gateway:g:host,u:user".to_string()];
+        let guard = EphemeralRdpArgs::write_all_in_dir(dir.path(), &plain, &[])
+            .expect("generated gateway argument should be accepted");
+        assert_eq!(
+            std::fs::read_to_string(guard.path()).expect("read args file"),
+            "/gateway:g:host,u:user\n"
+        );
+    }
+
+    #[test]
+    fn rejects_cr_lf_and_nul_in_secret_flags_before_open() {
+        let password = SecretString::from("safe".to_string());
+        for flag in ["p\r/injected", "p\n/injected", "p\0/injected"] {
+            let dir = TempRuntimeDir::new();
+            assert!(
+                EphemeralRdpArgs::write_all_in_dir(dir.path(), &[], &[(flag, &password)]).is_err()
+            );
+            dir.assert_empty();
+        }
+    }
+
+    #[test]
+    fn rejects_cr_lf_and_nul_in_secret_values_before_open() {
+        for value in [
+            "secret\r/injected",
+            "secret\n/injected",
+            "secret\0/injected",
+        ] {
+            let dir = TempRuntimeDir::new();
+            let password = SecretString::from(value.to_string());
+            assert!(
+                EphemeralRdpArgs::write_all_in_dir(dir.path(), &[], &[("p", &password)]).is_err()
+            );
+            dir.assert_empty();
+        }
     }
 
     #[test]
     fn debug_does_not_leak_password() {
         let dir = TempRuntimeDir::new();
-        let pwd = SecretString::from("hunter2-secret".to_string());
-        let guard =
-            EphemeralRdpArgs::write_in_dir(dir.path(), &[("p", &pwd)]).expect("write args file");
-        let rendered = format!("{guard:?}");
-        // Path is non-secret (it's in $XDG_RUNTIME_DIR with a UUID), so it
-        // may appear; the password must not.
-        assert!(
-            !rendered.contains("hunter2-secret"),
-            "Debug output leaked the password: {rendered}"
-        );
+        let password = SecretString::from("hunter2-secret".to_string());
+        let guard = EphemeralRdpArgs::write_in_dir(dir.path(), &[("p", &password)])
+            .expect("write args file");
+        assert!(!format!("{guard:?}").contains("hunter2-secret"));
     }
 
     #[test]
@@ -309,8 +341,23 @@ mod tests {
         let guard =
             EphemeralRdpArgs::write_in_dir(dir.path(), &[("p", &session), ("gp", &gateway)])
                 .expect("write args file");
-        let content = std::fs::read_to_string(guard.path()).expect("read args file");
-        assert_eq!(content, "/p:session-pw\n/gp:gateway-pw\n");
+        assert_eq!(
+            std::fs::read_to_string(guard.path()).expect("read args file"),
+            "/p:session-pw\n/gp:gateway-pw\n"
+        );
+    }
+
+    #[test]
+    fn blocks_shell_proxy_and_split_passwords_before_open() {
+        for plain in [
+            vec!["  /SHELL:command".to_string()],
+            vec!["\t//PrOxY:command".to_string()],
+            vec!["--password".to_string(), "split-secret".to_string()],
+        ] {
+            let dir = TempRuntimeDir::new();
+            assert!(EphemeralRdpArgs::write_all_in_dir(dir.path(), &plain, &[]).is_err());
+            dir.assert_empty();
+        }
     }
 
     #[test]
@@ -319,27 +366,14 @@ mod tests {
         let plain = vec![
             "/v:myhost".to_string(),
             "/u:admin".to_string(),
-            "/w:1920".to_string(),
-            "/h:1080".to_string(),
             "+clipboard".to_string(),
         ];
         let password = SecretString::from("s3cret".to_string());
         let guard = EphemeralRdpArgs::write_all_in_dir(dir.path(), &plain, &[("p", &password)])
             .expect("write args file");
-        let content = std::fs::read_to_string(guard.path()).expect("read args file");
         assert_eq!(
-            content,
-            "/v:myhost\n/u:admin\n/w:1920\n/h:1080\n+clipboard\n/p:s3cret\n"
+            std::fs::read_to_string(guard.path()).expect("read args file"),
+            "/v:myhost\n/u:admin\n+clipboard\n/p:s3cret\n"
         );
-    }
-
-    #[test]
-    fn write_all_no_secrets_writes_only_plain_args() {
-        let dir = TempRuntimeDir::new();
-        let plain = vec!["/v:host".to_string(), "/cert:ignore".to_string()];
-        let guard =
-            EphemeralRdpArgs::write_all_in_dir(dir.path(), &plain, &[]).expect("write args file");
-        let content = std::fs::read_to_string(guard.path()).expect("read args file");
-        assert_eq!(content, "/v:host\n/cert:ignore\n");
     }
 }

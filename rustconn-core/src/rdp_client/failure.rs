@@ -27,30 +27,14 @@
 pub enum RdpFailureClass {
     /// The server rejected the supplied credentials (CredSSP/NLA `NTSTATUS`
     /// logon failure, disabled or locked account, expired password).
-    ///
-    /// Retrying with the external client uses the same credentials, so a
-    /// fallback is pointless — the GUI must report the auth error instead.
     Authentication,
-
-    /// The GFX (EGFX) pipeline produced no decodable frame or failed to decode.
-    ///
-    /// Worth one retry with Legacy graphics before falling back.
+    /// The GFX pipeline produced no decodable frame or failed to decode.
     GraphicsPipeline,
-
-    /// The server offers only a security protocol IronRDP does not implement
-    /// (Standard RDP Security — the legacy RC4 "Encrypted" mode).
-    ///
-    /// Permanent incompatibility — the external `FreeRDP` client supports it.
+    /// The server offers only a security protocol IronRDP does not implement.
     SecurityUnsupported,
-
-    /// IronRDP and the server disagree on the wire protocol (unexpected PDU,
-    /// connector state machine bug, undecodable update).
-    ///
-    /// The external `FreeRDP` client usually copes, so fall back.
+    /// IronRDP and the server disagree on the wire protocol.
     ProtocolIncompatible,
-
     /// Anything else: unreachable host, timeout, TLS failure, local error.
-    /// No fallback — the message is shown to the user as-is.
     Other,
 }
 
@@ -63,15 +47,18 @@ impl RdpFailureClass {
             Self::SecurityUnsupported | Self::ProtocolIncompatible | Self::GraphicsPipeline
         )
     }
+
+    /// Returns `true` when fallback would weaken the negotiated security.
+    #[must_use]
+    pub const fn requires_explicit_consent(self) -> bool {
+        matches!(self, Self::SecurityUnsupported)
+    }
 }
 
 /// `NTSTATUS` codes CredSSP/NLA returns for credential problems.
-///
-/// The values arrive inside the `sspi` error debug output as
-/// `nstatus: Some(NStatusCode(0xc000006d))`, so they are matched as text.
-/// Kept lowercase — [`is_authentication_failure`] lowercases the haystack.
 const AUTH_NSTATUS_CODES: &[&str] = &[
-    "0xc000006d", // STATUS_LOGON_FAILURE — wrong user name or password
+    "0xc0000064", // STATUS_NO_SUCH_USER
+    "0xc000006d", // STATUS_LOGON_FAILURE
     "0xc000006a", // STATUS_WRONG_PASSWORD
     "0xc000006e", // STATUS_ACCOUNT_RESTRICTION
     "0xc000006f", // STATUS_INVALID_LOGON_HOURS
@@ -79,196 +66,229 @@ const AUTH_NSTATUS_CODES: &[&str] = &[
     "0xc0000071", // STATUS_PASSWORD_EXPIRED
     "0xc0000072", // STATUS_ACCOUNT_DISABLED
     "0xc000015b", // STATUS_LOGON_TYPE_NOT_GRANTED
+    "0xc0000193", // STATUS_ACCOUNT_EXPIRED
     "0xc0000224", // STATUS_PASSWORD_MUST_CHANGE
     "0xc0000234", // STATUS_ACCOUNT_LOCKED_OUT
 ];
 
 /// Symbolic `NTSTATUS` names and other markers of a credential rejection.
 const AUTH_MARKERS: &[&str] = &[
-    "Authentication failed",
-    "STATUS_LOGON_FAILURE",
-    "STATUS_WRONG_PASSWORD",
-    "STATUS_PASSWORD_EXPIRED",
-    "STATUS_PASSWORD_MUST_CHANGE",
-    "STATUS_ACCOUNT_DISABLED",
-    "STATUS_ACCOUNT_LOCKED_OUT",
-    "STATUS_ACCOUNT_RESTRICTION",
-    "STATUS_LOGON_TYPE_NOT_GRANTED",
-    "AccessDenied",
+    "authentication failed",
+    "status_no_such_user",
+    "status_logon_failure",
+    "status_wrong_password",
+    "status_password_expired",
+    "status_password_must_change",
+    "status_account_disabled",
+    "status_account_expired",
+    "status_account_locked_out",
+    "status_account_restriction",
+    "status_logon_type_not_granted",
+    "accessdenied",
 ];
 
-/// Markers of a GFX/EGFX pipeline problem (see [`RdpFailureClass::GraphicsPipeline`]).
-const GRAPHICS_MARKERS: &[&str] = &["no-frame-watchdog", "GFX pipeline decode failure"];
+/// TLS, certificate, and transport failures that must not trigger fallback.
+const NON_FALLBACK_MARKERS: &[&str] = &[
+    "tls",
+    "certificate",
+    "ssl_cert_not_on_server",
+    "unknown issuer",
+    "x509",
+    "transport",
+    "connection refused",
+    "connection reset",
+    "connection timed out",
+    "operation timed out",
+    "dns_name_not_found",
+    "host not found",
+    "network is unreachable",
+    "no route to host",
+];
 
-/// Markers of a security protocol IronRDP cannot speak.
-///
-/// `SSL_NOT_ALLOWED_BY_SERVER` is reported by `ironrdp-connector` as
-/// "negotiation failure: server only supports Standard RDP Security"
-/// (issue #235); the remaining codes cover the other negotiation refusals
-/// that no amount of retrying inside IronRDP can satisfy.
+/// Markers of a GFX/EGFX pipeline problem.
+const GRAPHICS_MARKERS: &[&str] = &["no-frame-watchdog", "gfx pipeline decode failure"];
+
+/// Explicit security protocols IronRDP cannot speak.
 const SECURITY_MARKERS: &[&str] = &[
-    "Standard RDP Security",
-    "SSL_NOT_ALLOWED_BY_SERVER",
-    "SSL_CERT_NOT_ON_SERVER",
-    "HYBRID_REQUIRED_BY_SERVER",
-    "Unsupported security protocol",
+    "standard rdp security",
+    "ssl_not_allowed_by_server",
+    "hybrid_required_by_server",
+    "unsupported security protocol",
 ];
 
-/// Markers of an IronRDP/server protocol mismatch that external `FreeRDP`
-/// is likely to survive.
+/// Specific IronRDP/server protocol mismatches that justify fallback.
+/// Generic finalize and negotiation wrappers are intentionally excluded.
 const PROTOCOL_MARKERS: &[&str] = &[
-    "ServerDemandActive",
-    "ServerDeactivateAll",
-    "connect_finalize",
-    "Connection finalize failed",
+    "serverdemandactive",
+    "serverdeactivateall",
     "invalid state (this is a bug)",
-    "unexpected Share Control Pdu",
-    "Unsupported PDU",
-    "negotiation failure", // current ironrdp wording
-    "negotiation failed",  // older/alternate wording
-    "NegotiationError",
+    "unexpected share control pdu",
+    "unsupported pdu",
     "decode error",
     "unsupported fast-path update code",
 ];
 
 /// Classifies an embedded RDP failure message into a [`RdpFailureClass`].
 ///
-/// Authentication is checked first — a CredSSP logon failure also mentions
-/// "Connection finalize failed", and treating it as a protocol problem caused
-/// a pointless `FreeRDP` fallback with the very same credentials.
+/// Authentication is checked first. TLS, certificate, and transport roots then
+/// take precedence over fallback-worthy protocol markers.
 #[must_use]
 pub fn classify_rdp_failure(msg: &str) -> RdpFailureClass {
-    if is_authentication_failure(msg) {
+    let lower = msg.to_ascii_lowercase();
+
+    if is_authentication_failure_lower(&lower) {
         return RdpFailureClass::Authentication;
     }
-    if GRAPHICS_MARKERS.iter().any(|m| msg.contains(m)) {
+    if NON_FALLBACK_MARKERS.iter().any(|m| lower.contains(m)) {
+        return RdpFailureClass::Other;
+    }
+    if GRAPHICS_MARKERS.iter().any(|m| lower.contains(m)) {
         return RdpFailureClass::GraphicsPipeline;
     }
-    if SECURITY_MARKERS.iter().any(|m| msg.contains(m)) {
+    if SECURITY_MARKERS.iter().any(|m| lower.contains(m)) {
         return RdpFailureClass::SecurityUnsupported;
     }
-    if PROTOCOL_MARKERS.iter().any(|m| msg.contains(m)) {
+    if PROTOCOL_MARKERS.iter().any(|m| lower.contains(m)) {
         return RdpFailureClass::ProtocolIncompatible;
     }
     RdpFailureClass::Other
 }
 
 /// Returns `true` when the message describes a rejected credential.
-///
-/// Exposed separately so the embedded client can map the failure to
-/// `RdpClientError::AuthenticationFailed` at the source, before the error is
-/// flattened into a string for the GUI channel.
 #[must_use]
 pub fn is_authentication_failure(msg: &str) -> bool {
-    let lower = msg.to_ascii_lowercase();
+    is_authentication_failure_lower(&msg.to_ascii_lowercase())
+}
+
+fn is_authentication_failure_lower(lower: &str) -> bool {
     AUTH_NSTATUS_CODES.iter().any(|c| lower.contains(c))
-        || AUTH_MARKERS.iter().any(|m| msg.contains(m))
+        || AUTH_MARKERS.iter().any(|m| lower.contains(m))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Real message from issue #235 (Windows Server 2022, NLA disabled).
     const ISSUE_235: &str = "Connection failed: Connection begin failed: \
-         [negotiation failure @ ironrdp-connector-0.10.0/src/connection.rs:352] \
          negotiation failure: server only supports Standard RDP Security";
 
-    /// Real message from a CredSSP `STATUS_LOGON_FAILURE`, with the connector
-    /// error kind appended by the embedded client.
     const CREDSSP_LOGON_FAILURE: &str = "Connection failed: Connection finalize failed: \
-         [CredSSP @ ironrdp-async-0.10.0/src/connector.rs:107] CredSSP \
-         [kind: Credssp(Error { error_type: InvalidToken, \
-         description: \"CredSSP server returned an error status\", \
-         nstatus: Some(NStatusCode(0xc000006d)) })]";
+         CredSSP server returned an error status; \
+         nstatus: Some(NStatusCode(0xc000006d))";
 
     #[test]
     fn standard_rdp_security_is_security_unsupported() {
+        let class = classify_rdp_failure(ISSUE_235);
+        assert_eq!(class, RdpFailureClass::SecurityUnsupported);
+        assert!(class.warrants_freerdp_fallback());
+    }
+
+    #[test]
+    fn classification_is_case_insensitive() {
         assert_eq!(
-            classify_rdp_failure(ISSUE_235),
-            RdpFailureClass::SecurityUnsupported
+            classify_rdp_failure("UNEXPECTED SHARE CONTROL PDU"),
+            RdpFailureClass::ProtocolIncompatible
         );
-        assert!(
-            classify_rdp_failure(ISSUE_235).warrants_freerdp_fallback(),
-            "issue #235 must fall back to external FreeRDP"
+        assert_eq!(
+            classify_rdp_failure("GfX PiPeLiNe DeCoDe FaIlUrE"),
+            RdpFailureClass::GraphicsPipeline
+        );
+        assert_eq!(
+            classify_rdp_failure("SERVER ONLY SUPPORTS STANDARD RDP SECURITY"),
+            RdpFailureClass::SecurityUnsupported
         );
     }
 
     #[test]
     fn credssp_logon_failure_is_authentication() {
-        assert_eq!(
-            classify_rdp_failure(CREDSSP_LOGON_FAILURE),
-            RdpFailureClass::Authentication
-        );
-        assert!(
-            !classify_rdp_failure(CREDSSP_LOGON_FAILURE).warrants_freerdp_fallback(),
-            "auth failures must not trigger a fallback with the same credentials"
-        );
+        let class = classify_rdp_failure(CREDSSP_LOGON_FAILURE);
+        assert_eq!(class, RdpFailureClass::Authentication);
+        assert!(!class.warrants_freerdp_fallback());
     }
 
     #[test]
-    fn typed_authentication_error_display_is_detected() {
-        // `RdpClientError::AuthenticationFailed` renders with this prefix.
-        assert_eq!(
-            classify_rdp_failure("Authentication failed: CredSSP rejected the credentials"),
-            RdpFailureClass::Authentication
-        );
+    fn missing_account_statuses_are_authentication() {
+        for marker in [
+            "nstatus: Some(NStatusCode(0xC0000064))",
+            "nstatus: Some(NStatusCode(0xc0000193))",
+            "STATUS_NO_SUCH_USER",
+            "status_account_expired",
+        ] {
+            assert_eq!(
+                classify_rdp_failure(marker),
+                RdpFailureClass::Authentication,
+                "marker was not classified as authentication: {marker}"
+            );
+        }
     }
 
     #[test]
-    fn nstatus_case_is_ignored() {
-        assert!(is_authentication_failure(
-            "nstatus: Some(NStatusCode(0xC000006D))"
-        ));
+    fn tls_and_certificate_failures_never_fall_back() {
+        for msg in [
+            "Connection finalize failed: TLS handshake failed: invalid peer certificate",
+            "Unexpected Share Control Pdu after certificate verification failed",
+            "SSL_CERT_NOT_ON_SERVER during negotiation",
+        ] {
+            let class = classify_rdp_failure(msg);
+            assert_eq!(class, RdpFailureClass::Other, "message: {msg}");
+            assert!(!class.warrants_freerdp_fallback(), "message: {msg}");
+        }
     }
 
     #[test]
-    fn gnome_remote_desktop_finalize_bug_is_protocol_incompatible() {
-        let msg = "Connection failed: Connection finalize failed: invalid state (this is a bug)";
+    fn transport_failures_never_fall_back() {
+        for msg in [
+            "negotiation failed: ERRCONNECT_CONNECT_TRANSPORT_FAILED",
+            "ServerDemandActive: connection reset by peer",
+            "Connection refused (os error 111)",
+        ] {
+            let class = classify_rdp_failure(msg);
+            assert_eq!(class, RdpFailureClass::Other, "message: {msg}");
+            assert!(!class.warrants_freerdp_fallback(), "message: {msg}");
+        }
+    }
+
+    #[test]
+    fn generic_finalize_and_negotiation_are_not_protocol_markers() {
+        for msg in [
+            "Connection finalize failed",
+            "connect_finalize failed",
+            "negotiation failure",
+            "NegotiationError",
+        ] {
+            assert_eq!(classify_rdp_failure(msg), RdpFailureClass::Other);
+        }
+    }
+
+    #[test]
+    fn specific_protocol_and_graphics_markers_still_fall_back() {
         assert_eq!(
-            classify_rdp_failure(msg),
+            classify_rdp_failure("invalid state (this is a bug)"),
             RdpFailureClass::ProtocolIncompatible
         );
-    }
-
-    #[test]
-    fn share_control_pdu_is_protocol_incompatible() {
-        let msg = "Session error: unexpected Share Control Pdu (expected ServerDemandActive)";
         assert_eq!(
-            classify_rdp_failure(msg),
-            RdpFailureClass::ProtocolIncompatible
-        );
-    }
-
-    #[test]
-    fn no_frame_watchdog_is_graphics_pipeline() {
-        assert_eq!(
-            classify_rdp_failure("no-frame-watchdog: no decodable frame within 12s"),
+            classify_rdp_failure("NO-FRAME-WATCHDOG: no decodable frame"),
             RdpFailureClass::GraphicsPipeline
         );
     }
 
     #[test]
-    fn unreachable_host_is_other() {
-        let msg = "Connection failed: failed to connect to 10.0.0.1:3389: \
-                   Connection refused (os error 111)";
-        assert_eq!(classify_rdp_failure(msg), RdpFailureClass::Other);
-        assert!(!classify_rdp_failure(msg).warrants_freerdp_fallback());
+    fn only_legacy_security_fallback_requires_explicit_consent() {
+        assert!(RdpFailureClass::SecurityUnsupported.requires_explicit_consent());
+        for class in [
+            RdpFailureClass::Authentication,
+            RdpFailureClass::GraphicsPipeline,
+            RdpFailureClass::ProtocolIncompatible,
+            RdpFailureClass::Other,
+        ] {
+            assert!(!class.requires_explicit_consent(), "class: {class:?}");
+        }
     }
 
     #[test]
-    fn timeout_is_other() {
-        assert_eq!(
-            classify_rdp_failure("Operation timed out"),
-            RdpFailureClass::Other
-        );
-    }
-
-    #[test]
-    fn auth_wins_over_protocol_marker() {
-        // Both markers present: "Connection finalize failed" (protocol) and
-        // the logon-failure NTSTATUS (auth). Auth must win.
-        let msg = "Connection finalize failed: CredSSP nstatus: Some(NStatusCode(0xc000006d))";
+    fn auth_wins_over_non_fallback_and_protocol_markers() {
+        let msg = "TLS handshake; unexpected Share Control Pdu; \
+                   nstatus: Some(NStatusCode(0xc000006d))";
         assert_eq!(classify_rdp_failure(msg), RdpFailureClass::Authentication);
     }
 }

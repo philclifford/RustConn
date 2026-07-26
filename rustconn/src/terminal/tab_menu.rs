@@ -559,7 +559,8 @@ impl TerminalNotebook {
             if let Some(session_id) =
                 Self::context_menu_session_id(&context_page_detach, &sessions_for_detach)
             {
-                detach_hooks.notify_detach_request(session_id, None);
+                let _ = detach_hooks
+                    .notify_detach_request(session_id, super::DetachPresentation::default());
             }
         });
         action_group.add_action(&detach_action);
@@ -580,7 +581,17 @@ impl TerminalNotebook {
                 &context_page_detach_monitor,
                 &sessions_for_detach_monitor,
             ) {
-                detach_hooks_monitor.notify_detach_request(session_id, Some(monitor));
+                let selected = gdk::Display::default()
+                    .and_then(|display| display.monitors().item(monitor))
+                    .and_downcast::<gdk::Monitor>();
+                let preference = super::DetachMonitor::from_monitor(monitor, selected.as_ref());
+                let _ = detach_hooks_monitor.notify_detach_request(
+                    session_id,
+                    super::DetachPresentation {
+                        fullscreen: true,
+                        monitor: Some(preference),
+                    },
+                );
             }
         });
         action_group.add_action(&detach_monitor_action);

@@ -12,7 +12,7 @@ use gtk4::prelude::*;
 use rustconn_core::rdp_client::RdpClientCommand;
 use secrecy::ExposeSecret;
 
-use super::launcher::{SafeFreeRdpLauncher, StderrLines};
+use super::launcher::{FreeRdpLaunchResult, SafeFreeRdpLauncher, StderrLines};
 use super::thread::FreeRdpThread;
 use super::types::{
     EmbeddedRdpError, FreeRdpThreadState, RdpCommand, RdpConfig, RdpConnectionState, RdpEvent,
@@ -29,6 +29,20 @@ pub(super) enum FreerdpFailure {
     CertificateMismatch(String),
     /// A regular connection error (auth, transport, codec, etc.)
     Error(String),
+}
+
+// Poll background FreeRDP startup often enough to keep the UI responsive without
+// busy-looping on the GTK main thread.
+const EXTERNAL_LAUNCH_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Terminates a process that finished launching after its connection attempt became stale.
+fn discard_stale_external_launch(result: FreeRdpLaunchResult) {
+    if let Ok((mut child, _)) = result {
+        std::thread::spawn(move || {
+            let _ = child.kill();
+            let _ = child.wait();
+        });
+    }
 }
 
 /// Classifies FreeRDP stderr output into a user-friendly error message.
@@ -186,6 +200,7 @@ fn arm_external_exit_watchdog(
 /// Replaces the 13-parameter function signature with a single context struct,
 /// improving readability and reducing clippy `too_many_arguments` warnings.
 #[cfg(feature = "rdp-embedded")]
+#[derive(Clone)]
 pub(super) struct RdpConnectionContext {
     pub state: Rc<RefCell<RdpConnectionState>>,
     pub drawing_area: gtk4::DrawingArea,
@@ -193,6 +208,7 @@ pub(super) struct RdpConnectionContext {
     pub on_state_changed: Rc<RefCell<Option<super::types::StateCallback>>>,
     pub on_error: Rc<RefCell<Option<super::types::ErrorCallback>>>,
     pub on_fallback: Rc<RefCell<Option<super::types::FallbackCallback>>>,
+    pub on_legacy_security_required: Rc<RefCell<Option<super::types::LegacySecurityCallback>>>,
     pub on_cert_changed: Rc<RefCell<Option<super::types::CertChangedCallback>>>,
     pub is_embedded: Rc<RefCell<bool>>,
     pub is_ironrdp: Rc<RefCell<bool>>,
@@ -207,6 +223,32 @@ pub(super) struct RdpConnectionContext {
     /// Reconnect callback — triggers a fresh `connect()` with the (now-modified)
     /// stored config. Shared with the reconnect button.
     pub on_reconnect: Rc<RefCell<Option<Box<dyn Fn() + 'static>>>>,
+    /// Current widget connection generation, used to invalidate stale consent.
+    pub connection_generation: Rc<RefCell<u64>>,
+    /// Generation that produced this error and consent request.
+    pub generation: u64,
+}
+
+/// Shared widget state needed to launch an external RDP process after consent.
+#[derive(Clone)]
+struct ExternalLaunchContext {
+    process: Rc<RefCell<Option<std::process::Child>>>,
+    stderr_lines: Rc<RefCell<Option<StderrLines>>>,
+    state: Rc<RefCell<RdpConnectionState>>,
+    is_embedded: Rc<RefCell<bool>>,
+    drawing_area: gtk4::DrawingArea,
+    on_state_changed: Rc<RefCell<Option<super::types::StateCallback>>>,
+    on_error: Rc<RefCell<Option<super::types::ErrorCallback>>>,
+    on_fallback: Rc<RefCell<Option<super::types::FallbackCallback>>>,
+    on_cert_changed: Rc<RefCell<Option<super::types::CertChangedCallback>>>,
+    connection_generation: Rc<RefCell<u64>>,
+    generation: u64,
+}
+
+impl ExternalLaunchContext {
+    fn is_current(&self) -> bool {
+        *self.connection_generation.borrow() == self.generation
+    }
 }
 
 impl super::EmbeddedRdpWidget {
@@ -222,6 +264,74 @@ impl super::EmbeddedRdpWidget {
         crate::embedded_rdp::detect::detect_xfreerdp()
     }
 
+    /// Captures the widget state an external-launch continuation needs.
+    fn external_launch_context(&self, generation: u64) -> ExternalLaunchContext {
+        ExternalLaunchContext {
+            process: self.process.clone(),
+            stderr_lines: self.stderr_lines.clone(),
+            state: self.state.clone(),
+            is_embedded: self.is_embedded.clone(),
+            drawing_area: self.drawing_area.clone(),
+            on_state_changed: self.on_state_changed.clone(),
+            on_error: self.on_error.clone(),
+            on_fallback: self.on_fallback.clone(),
+            on_cert_changed: self.on_cert_changed.clone(),
+            connection_generation: self.connection_generation.clone(),
+            generation,
+        }
+    }
+
+    /// Requests consent for a connection explicitly configured for RDP Security.
+    fn request_configured_legacy_security_consent(&self, config: &RdpConfig, generation: u64) {
+        let context = self.external_launch_context(generation);
+        let config = config.clone();
+        let decision_context = context.clone();
+        let decision: super::types::LegacySecurityDecision = Box::new(move |accepted| {
+            if !decision_context.is_current() {
+                tracing::debug!(
+                    protocol = "rdp",
+                    generation,
+                    "Ignoring stale legacy-security decision"
+                );
+                return;
+            }
+            if accepted {
+                let _ = Self::launch_external_with_context(&decision_context, &config, true);
+            } else {
+                Self::report_external_error(
+                    &decision_context,
+                    &i18n("Connection cancelled because the server requires legacy RDP security."),
+                );
+            }
+        });
+        Self::invoke_legacy_security_callback(
+            &self.on_legacy_security_required,
+            decision,
+            &context,
+        );
+    }
+
+    /// Invokes the UI consent callback, rejecting safely when none is installed.
+    fn invoke_legacy_security_callback(
+        callback_cell: &Rc<RefCell<Option<super::types::LegacySecurityCallback>>>,
+        decision: super::types::LegacySecurityDecision,
+        context: &ExternalLaunchContext,
+    ) {
+        let callback = callback_cell.borrow_mut().take();
+        if let Some(callback) = callback {
+            callback(decision);
+            *callback_cell.borrow_mut() = Some(callback);
+        } else {
+            tracing::warn!(
+                protocol = "rdp",
+                "Legacy security consent handler is missing"
+            );
+            if context.is_current() {
+                decision(false);
+            }
+        }
+    }
+
     /// Connects to an RDP server
     ///
     /// This method attempts to use wlfreerdp for embedded mode first.
@@ -235,10 +345,17 @@ impl super::EmbeddedRdpWidget {
     ///
     /// Returns error if connection fails or no FreeRDP client is available
     pub fn connect(&self, config: &RdpConfig) -> Result<(), EmbeddedRdpError> {
+        // Every attempt gets a generation, including direct external launches,
+        // so decisions from an older consent dialog cannot reuse credentials.
+        let generation = {
+            let mut counter = self.connection_generation.borrow_mut();
+            *counter += 1;
+            *counter
+        };
         tracing::debug!(
             protocol = "rdp",
             widget_id = self.widget_id,
-            generation = *self.connection_generation.borrow(),
+            generation,
             "connect() called"
         );
 
@@ -247,6 +364,14 @@ impl super::EmbeddedRdpWidget {
 
         // Update state
         self.set_state(RdpConnectionState::Connecting);
+
+        if matches!(
+            config.security_layer,
+            rustconn_core::models::RdpSecurityLayer::Rdp
+        ) {
+            self.request_configured_legacy_security_consent(config, generation);
+            return Ok(());
+        }
 
         // Check if IronRDP embedded mode is available
         // This is determined at compile time via the rdp-embedded feature flag
@@ -298,8 +423,8 @@ impl super::EmbeddedRdpWidget {
         // Skip embedded wlfreerdp when an RD Gateway is configured. The embedded
         // thread (see `thread.rs`) does not emit `/g:` gateway arguments, so it
         // would connect straight to the gateway host on 3389 without tunnelling
-        // and render a broken session. Only the external launcher
-        // (`launcher::add_connection_args`) wires up gateway routing.
+        // and render a broken session. Only the external launcher's argument
+        // builder wires up gateway routing.
         let has_gateway = config
             .gateway_hostname
             .as_ref()
@@ -366,17 +491,9 @@ impl super::EmbeddedRdpWidget {
             return Err(EmbeddedRdpError::GatewayNotSupported);
         }
 
-        // Increment connection generation to invalidate any stale polling loops
-        let generation = {
-            let mut counter = self.connection_generation.borrow_mut();
-            *counter += 1;
-            *counter
-        };
-        tracing::debug!(
-            protocol = "rdp",
-            generation,
-            "Starting connection generation"
-        );
+        // The public connect entry point already assigned this attempt's
+        // generation; direct tests may use generation zero.
+        let generation = *self.connection_generation.borrow();
 
         // Get actual widget size for initial resolution. The remote desktop is
         // requested at the widget's LOGICAL size (Auto = 1.0×) so we don't push
@@ -656,6 +773,7 @@ impl super::EmbeddedRdpWidget {
         // Capture fallback-related state for auto-fallback on protocol errors
         // (e.g. xrdp ServerDemandActive incompatibility — IronRDP issue #139)
         let on_fallback = self.on_fallback.clone();
+        let on_legacy_security_required = self.on_legacy_security_required.clone();
         let on_cert_changed = self.on_cert_changed.clone();
         let fallback_config = self.config.clone();
         let fallback_process = self.process.clone();
@@ -1576,6 +1694,7 @@ impl super::EmbeddedRdpWidget {
                         on_state_changed: on_state_changed.clone(),
                         on_error: on_error.clone(),
                         on_fallback: on_fallback.clone(),
+                        on_legacy_security_required: on_legacy_security_required.clone(),
                         on_cert_changed: on_cert_changed.clone(),
                         is_embedded: is_embedded.clone(),
                         is_ironrdp: is_ironrdp.clone(),
@@ -1586,6 +1705,8 @@ impl super::EmbeddedRdpWidget {
                         clipboard_handler_id: clipboard_handler_id.clone(),
                         gfx_retry_attempted: gfx_retry_attempted.clone(),
                         on_reconnect: on_reconnect.clone(),
+                        connection_generation: connection_generation.clone(),
+                        generation,
                     };
                     Self::handle_ironrdp_error(error_msg, &ctx);
                 }
@@ -1636,174 +1757,238 @@ impl super::EmbeddedRdpWidget {
             "[IronRDP] Failure classified"
         );
 
-        if class.warrants_freerdp_fallback() {
-            // GFX errors get one retry with Legacy graphics before the session
-            // is handed over to the external client.
-            let should_retry_without_gfx = class
-                == rustconn_core::rdp_client::RdpFailureClass::GraphicsPipeline
-                && !*ctx.gfx_retry_attempted.borrow()
-                // Skip retry if user already selected a non-GFX graphics mode
-                // (Legacy/RemoteFx) — there's nothing to fall back to.
-                && ctx
-                    .fallback_config
-                    .borrow()
-                    .as_ref()
-                    .is_none_or(|cfg| {
-                        matches!(cfg.graphics_mode, rustconn_core::rdp_client::graphics::GraphicsMode::Auto)
-                    });
+        if !class.warrants_freerdp_fallback() {
+            Self::report_ironrdp_error(ctx, &Self::parse_ironrdp_error(msg));
+            return;
+        }
 
-            if should_retry_without_gfx {
-                // Mark retry as attempted to prevent infinite loops
-                *ctx.gfx_retry_attempted.borrow_mut() = true;
+        // GFX errors get one retry with Legacy graphics before the session is
+        // handed over to the external client.
+        let should_retry_without_gfx = class
+            == rustconn_core::rdp_client::RdpFailureClass::GraphicsPipeline
+            && !*ctx.gfx_retry_attempted.borrow()
+            && ctx.fallback_config.borrow().as_ref().is_none_or(|cfg| {
+                matches!(
+                    cfg.graphics_mode,
+                    rustconn_core::rdp_client::graphics::GraphicsMode::Auto
+                )
+            });
 
-                tracing::info!(
+        if should_retry_without_gfx {
+            *ctx.gfx_retry_attempted.borrow_mut() = true;
+            tracing::info!(
+                protocol = "rdp",
+                error = %msg,
+                "[IronRDP] GFX pipeline failed — retrying with Legacy graphics"
+            );
+            *ctx.ironrdp_tx.borrow_mut() = None;
+            if let Some(mut client) = ctx.client_ref.borrow_mut().take() {
+                client.disconnect();
+            }
+            if let Some(ref mut config) = *ctx.fallback_config.borrow_mut() {
+                config.force_legacy_graphics = true;
+            }
+
+            // Give single-session servers one second to tear down the previous
+            // NLA session before reconnecting with the legacy graphics path.
+            let on_reconnect = ctx.on_reconnect.clone();
+            let state = ctx.state.clone();
+            let on_state_changed = ctx.on_state_changed.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_secs(1), move || {
+                *state.borrow_mut() = RdpConnectionState::Connecting;
+                if let Some(ref callback) = *on_state_changed.borrow() {
+                    callback(RdpConnectionState::Connecting);
+                }
+                if let Some(ref callback) = *on_reconnect.borrow() {
+                    callback();
+                }
+            });
+            return;
+        }
+
+        tracing::warn!(
+            protocol = "rdp",
+            failure_class = ?class,
+            error = %msg,
+            "[IronRDP] Server incompatible with the embedded client"
+        );
+        Self::prepare_freerdp_fallback(ctx);
+
+        if class.requires_explicit_consent() {
+            Self::request_legacy_security_consent(ctx);
+        } else {
+            Self::launch_freerdp_fallback(ctx);
+        }
+    }
+
+    /// Clears embedded-client state before an external fallback or consent prompt.
+    #[cfg(feature = "rdp-embedded")]
+    fn prepare_freerdp_fallback(ctx: &RdpConnectionContext) {
+        *ctx.is_embedded.borrow_mut() = false;
+        *ctx.is_ironrdp.borrow_mut() = false;
+        *ctx.ironrdp_tx.borrow_mut() = None;
+        ctx.toolbar.set_visible(false);
+        if let Some(mut client) = ctx.client_ref.borrow_mut().take() {
+            client.disconnect();
+        }
+    }
+
+    /// Requests explicit consent before retrying with legacy Standard RDP Security.
+    #[cfg(feature = "rdp-embedded")]
+    fn request_legacy_security_consent(ctx: &RdpConnectionContext) {
+        let decision_ctx = ctx.clone();
+        let decision: super::types::LegacySecurityDecision = Box::new(move |accepted| {
+            if *decision_ctx.connection_generation.borrow() != decision_ctx.generation {
+                tracing::debug!(
                     protocol = "rdp",
-                    error = %msg,
-                    "[IronRDP] GFX pipeline failed — retrying with Legacy graphics \
-                     (skipping EGFX channel)"
+                    generation = decision_ctx.generation,
+                    "Ignoring stale legacy-security decision"
                 );
-
-                // Disconnect the current IronRDP session
-                *ctx.ironrdp_tx.borrow_mut() = None;
-                if let Some(mut c) = ctx.client_ref.borrow_mut().take() {
-                    c.disconnect();
-                }
-
-                // Modify the stored config to force Legacy graphics on retry
-                if let Some(ref mut cfg) = *ctx.fallback_config.borrow_mut() {
-                    cfg.force_legacy_graphics = true;
-                }
-
-                // Schedule reconnect after a brief delay (1s) to allow the
-                // server to fully tear down the previous session. This avoids
-                // NLA rejection on single-session servers. (Issue #218)
-                let on_reconnect = ctx.on_reconnect.clone();
-                let state = ctx.state.clone();
-                let on_state_changed = ctx.on_state_changed.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_secs(1), move || {
-                    *state.borrow_mut() = RdpConnectionState::Connecting;
-                    if let Some(ref cb) = *on_state_changed.borrow() {
-                        cb(RdpConnectionState::Connecting);
-                    }
-                    if let Some(ref callback) = *on_reconnect.borrow() {
-                        callback();
-                    }
-                });
                 return;
             }
+            if accepted {
+                Self::launch_freerdp_fallback(&decision_ctx);
+            } else {
+                tracing::info!(protocol = "rdp", "Legacy RDP security fallback rejected");
+                Self::report_ironrdp_error(
+                    &decision_ctx,
+                    &i18n("Connection cancelled because the server requires legacy RDP security."),
+                );
+            }
+        });
 
+        // Take-invoke-restore allows the UI callback to synchronously create a
+        // modal dialog without keeping the RefCell borrowed.
+        let callback = ctx.on_legacy_security_required.borrow_mut().take();
+        if let Some(callback) = callback {
+            callback(decision);
+            *ctx.on_legacy_security_required.borrow_mut() = Some(callback);
+        } else {
             tracing::warn!(
                 protocol = "rdp",
-                failure_class = ?class,
-                error = %msg,
-                "[IronRDP] Server incompatible with the embedded client — \
-                 attempting fallback to FreeRDP"
+                "Legacy RDP security required but no consent handler is installed"
             );
-
-            // Clean up IronRDP state
-            *ctx.is_embedded.borrow_mut() = false;
-            *ctx.is_ironrdp.borrow_mut() = false;
-            *ctx.ironrdp_tx.borrow_mut() = None;
-            ctx.toolbar.set_visible(false);
-
-            // Disconnect the IronRDP client
-            if let Some(mut c) = ctx.client_ref.borrow_mut().take() {
-                c.disconnect();
-            }
-
-            // Attempt FreeRDP external fallback via SafeFreeRdpLauncher
-            // (uses ephemeral args file to avoid exposing password in /proc/PID/cmdline)
-            let fallback_result = ctx
-                .fallback_config
-                .borrow()
-                .as_ref()
-                .cloned()
-                .and_then(|cfg| {
-                    let launcher = SafeFreeRdpLauncher::new();
-                    match launcher.launch(&cfg) {
-                        Ok((child, stderr_buf)) => {
-                            tracing::info!(
-                                protocol = "rdp",
-                                host = %cfg.host,
-                                port = %cfg.port,
-                                "[IronRDP] Fallback to external FreeRDP"
-                            );
-                            *ctx.fallback_process.borrow_mut() = Some(child);
-                            Some(stderr_buf)
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                protocol = "rdp",
-                                error = %e,
-                                host = %cfg.host,
-                                "[IronRDP] External FreeRDP fallback failed"
-                            );
-                            None
-                        }
-                    }
-                });
-
-            if let Some(stderr_buf) = fallback_result {
-                *ctx.state.borrow_mut() = RdpConnectionState::Connected;
-                if let Some(ref cb) = *ctx.on_state_changed.borrow() {
-                    cb(RdpConnectionState::Connected);
-                }
-                let fb_cb = ctx.on_fallback.borrow_mut().take();
-                if let Some(cb) = fb_cb {
-                    cb(&i18n("Using external RDP client (server incompatible)"));
-                    *ctx.on_fallback.borrow_mut() = Some(cb);
-                }
-                // The external client may itself fail to connect (auth, cert,
-                // codec). Detect an immediate exit and surface it as an error
-                // instead of leaving a phantom "Connected" state.
-                arm_external_exit_watchdog(
-                    ctx.fallback_process.clone(),
-                    ctx.state.clone(),
-                    ctx.on_state_changed.clone(),
-                    ctx.on_error.clone(),
-                    ctx.on_cert_changed.clone(),
-                    ctx.drawing_area.clone(),
-                    stderr_buf,
-                    ctx.fallback_config
-                        .borrow()
-                        .as_ref()
-                        .map_or_else(String::new, |c| c.host.clone()),
-                    ctx.fallback_config
-                        .borrow()
-                        .as_ref()
-                        .map_or(3389, |c| c.port),
-                );
-            } else {
-                *ctx.state.borrow_mut() = RdpConnectionState::Error;
-                if let Some(ref cb) = *ctx.on_error.borrow() {
-                    cb(&i18n(
-                        "RDP server sent unsupported data. Install FreeRDP (xfreerdp3) for compatibility.",
-                    ));
-                }
-            }
-        } else {
-            // Non-protocol error — report normally with user-friendly message
-            *ctx.state.borrow_mut() = RdpConnectionState::Error;
-            ctx.toolbar.set_visible(false);
-
-            // Parse IronRDP error into user-friendly message
-            let user_msg = Self::parse_ironrdp_error(msg);
-
-            // Use take-invoke-restore to avoid RefCell re-entrancy panic:
-            // the state_changed callback may close the tab, which fires
-            // Disconnected and tries to borrow the same cell again.
-            let state_cb = ctx.on_state_changed.borrow_mut().take();
-            if let Some(ref callback) = state_cb {
-                callback(RdpConnectionState::Error);
-            }
-            *ctx.on_state_changed.borrow_mut() = state_cb;
-
-            let error_cb = ctx.on_error.borrow_mut().take();
-            if let Some(ref callback) = error_cb {
-                callback(&user_msg);
-            }
-            *ctx.on_error.borrow_mut() = error_cb;
+            decision(false);
         }
+    }
+
+    /// Launches the external FreeRDP compatibility path after policy approval.
+    #[cfg(feature = "rdp-embedded")]
+    fn launch_freerdp_fallback(ctx: &RdpConnectionContext) {
+        if *ctx.connection_generation.borrow() != ctx.generation {
+            tracing::debug!(
+                protocol = "rdp",
+                generation = ctx.generation,
+                "External RDP fallback cancelled because the attempt is stale"
+            );
+            return;
+        }
+        let Some(config) = ctx.fallback_config.borrow().as_ref().cloned() else {
+            Self::report_ironrdp_error(
+                ctx,
+                &i18n("Could not prepare the external RDP compatibility client."),
+            );
+            return;
+        };
+
+        let launch_handle = SafeFreeRdpLauncher::new().launch_background(config.clone());
+        let context = ctx.clone();
+        glib::timeout_add_local(EXTERNAL_LAUNCH_POLL_INTERVAL, move || {
+            if *context.connection_generation.borrow() != context.generation {
+                return glib::ControlFlow::Break;
+            }
+            let result = match launch_handle.try_recv() {
+                Ok(result) => result,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    return glib::ControlFlow::Continue;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    if *context.connection_generation.borrow() == context.generation {
+                        Self::report_ironrdp_error(
+                            &context,
+                            &i18n("The external RDP client could not be started."),
+                        );
+                    }
+                    return glib::ControlFlow::Break;
+                }
+            };
+
+            if *context.connection_generation.borrow() != context.generation {
+                discard_stale_external_launch(result);
+                return glib::ControlFlow::Break;
+            }
+
+            let stderr_buf = match result {
+                Ok((child, stderr_buf)) => {
+                    tracing::info!(
+                        protocol = "rdp",
+                        host = %config.host,
+                        port = %config.port,
+                        "[IronRDP] Fallback to external FreeRDP"
+                    );
+                    *context.fallback_process.borrow_mut() = Some(child);
+                    stderr_buf
+                }
+                Err(error) => {
+                    tracing::error!(
+                        protocol = "rdp",
+                        %error,
+                        host = %config.host,
+                        "[IronRDP] External FreeRDP fallback failed"
+                    );
+                    Self::report_ironrdp_error(
+                        &context,
+                        &i18n(
+                            "Could not start the external RDP client. Install FreeRDP 3 and try again.",
+                        ),
+                    );
+                    return glib::ControlFlow::Break;
+                }
+            };
+
+            Self::notify_ironrdp_state(&context, RdpConnectionState::Connected);
+            let callback = context.on_fallback.borrow_mut().take();
+            if let Some(ref callback) = callback {
+                callback(&i18n("Using external RDP client (server incompatible)"));
+            }
+            *context.on_fallback.borrow_mut() = callback;
+
+            arm_external_exit_watchdog(
+                context.fallback_process.clone(),
+                context.state.clone(),
+                context.on_state_changed.clone(),
+                context.on_error.clone(),
+                context.on_cert_changed.clone(),
+                context.drawing_area.clone(),
+                stderr_buf,
+                config.host.clone(),
+                config.port,
+            );
+            glib::ControlFlow::Break
+        });
+    }
+
+    /// Updates state without holding a callback cell across user code.
+    #[cfg(feature = "rdp-embedded")]
+    fn notify_ironrdp_state(ctx: &RdpConnectionContext, state: RdpConnectionState) {
+        *ctx.state.borrow_mut() = state;
+        let callback = ctx.on_state_changed.borrow_mut().take();
+        if let Some(ref callback) = callback {
+            callback(state);
+        }
+        *ctx.on_state_changed.borrow_mut() = callback;
+    }
+
+    /// Reports a terminal IronRDP failure without RefCell re-entrancy.
+    #[cfg(feature = "rdp-embedded")]
+    fn report_ironrdp_error(ctx: &RdpConnectionContext, message: &str) {
+        ctx.toolbar.set_visible(false);
+        Self::notify_ironrdp_state(ctx, RdpConnectionState::Error);
+        let callback = ctx.on_error.borrow_mut().take();
+        if let Some(ref callback) = callback {
+            callback(message);
+        }
+        *ctx.on_error.borrow_mut() = callback;
     }
 
     /// Parses IronRDP error messages into user-friendly descriptions.
@@ -2166,38 +2351,120 @@ impl super::EmbeddedRdpWidget {
         Ok(())
     }
 
+    /// Launches FreeRDP using a generation-bound context.
+    fn launch_external_with_context(
+        context: &ExternalLaunchContext,
+        config: &RdpConfig,
+        notify_fallback: bool,
+    ) -> Result<(), EmbeddedRdpError> {
+        if !context.is_current() {
+            tracing::debug!(
+                protocol = "rdp",
+                generation = context.generation,
+                "External RDP launch cancelled because the attempt is stale"
+            );
+            return Ok(());
+        }
+
+        if notify_fallback {
+            let callback = context.on_fallback.borrow_mut().take();
+            if let Some(ref callback) = callback {
+                callback(&i18n("RDP session will open in an external window"));
+            }
+            *context.on_fallback.borrow_mut() = callback;
+        }
+
+        let launch_handle = SafeFreeRdpLauncher::new().launch_background(config.clone());
+        let launch_context = context.clone();
+        let launch_config = config.clone();
+        glib::timeout_add_local(EXTERNAL_LAUNCH_POLL_INTERVAL, move || {
+            if !launch_context.is_current() {
+                return glib::ControlFlow::Break;
+            }
+            let result = match launch_handle.try_recv() {
+                Ok(result) => result,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    return glib::ControlFlow::Continue;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Self::report_external_error(
+                        &launch_context,
+                        &i18n("The external RDP client could not be started."),
+                    );
+                    return glib::ControlFlow::Break;
+                }
+            };
+
+            if !launch_context.is_current() {
+                discard_stale_external_launch(result);
+                return glib::ControlFlow::Break;
+            }
+
+            match result {
+                Ok((child, stderr_buf)) => {
+                    *launch_context.process.borrow_mut() = Some(child);
+                    *launch_context.stderr_lines.borrow_mut() = Some(stderr_buf.clone());
+                    *launch_context.is_embedded.borrow_mut() = false;
+                    *launch_context.state.borrow_mut() = RdpConnectionState::Connected;
+                    let callback = launch_context.on_state_changed.borrow_mut().take();
+                    if let Some(ref callback) = callback {
+                        callback(RdpConnectionState::Connected);
+                    }
+                    *launch_context.on_state_changed.borrow_mut() = callback;
+                    launch_context.drawing_area.queue_draw();
+                    arm_external_exit_watchdog(
+                        launch_context.process.clone(),
+                        launch_context.state.clone(),
+                        launch_context.on_state_changed.clone(),
+                        launch_context.on_error.clone(),
+                        launch_context.on_cert_changed.clone(),
+                        launch_context.drawing_area.clone(),
+                        stderr_buf,
+                        launch_config.host.clone(),
+                        launch_config.port,
+                    );
+                }
+                Err(error) => {
+                    let message = if error.to_string().contains("not found")
+                        || error.to_string().contains("No such file")
+                    {
+                        i18n("RDP connection failed. Install FreeRDP 3 for external RDP sessions.")
+                    } else {
+                        i18n_f("Failed to start FreeRDP: {}", &[&error.to_string()])
+                    };
+                    Self::report_external_error(&launch_context, &message);
+                }
+            }
+            glib::ControlFlow::Break
+        });
+        Ok(())
+    }
+
+    /// Reports an external-launch failure without retaining callback borrows.
+    fn report_external_error(context: &ExternalLaunchContext, message: &str) {
+        if !context.is_current() {
+            return;
+        }
+        *context.state.borrow_mut() = RdpConnectionState::Error;
+        let state_callback = context.on_state_changed.borrow_mut().take();
+        if let Some(ref callback) = state_callback {
+            callback(RdpConnectionState::Error);
+        }
+        *context.on_state_changed.borrow_mut() = state_callback;
+
+        let error_callback = context.on_error.borrow_mut().take();
+        if let Some(ref callback) = error_callback {
+            callback(message);
+        }
+        *context.on_error.borrow_mut() = error_callback;
+    }
+
     /// Connects using external mode (xfreerdp)
     ///
     /// Uses `SafeFreeRdpLauncher` to handle Qt/Wayland warning suppression.
     fn connect_external(&self, config: &RdpConfig) -> Result<(), EmbeddedRdpError> {
-        // Use SafeFreeRdpLauncher for Qt error suppression
-        let launcher = SafeFreeRdpLauncher::new();
-
-        match launcher.launch(config) {
-            Ok((child, stderr_buf)) => {
-                *self.process.borrow_mut() = Some(child);
-                *self.stderr_lines.borrow_mut() = Some(stderr_buf);
-                *self.is_embedded.borrow_mut() = false;
-                self.set_state(RdpConnectionState::Connected);
-                // Trigger redraw to show "Session running in external window"
-                self.drawing_area.queue_draw();
-                // Detect an immediate exit (auth/cert/codec failure) so the user
-                // sees an error instead of a window that flashed and closed.
-                self.arm_external_exit_watchdog();
-                Ok(())
-            }
-            Err(e) => {
-                let msg = if e.to_string().contains("not found")
-                    || e.to_string().contains("No such file")
-                {
-                    "RDP connection failed. Install FreeRDP 3.x (xfreerdp3 or wlfreerdp3) for external mode.".to_string()
-                } else {
-                    format!("Failed to start FreeRDP: {e}")
-                };
-                self.report_error(&msg);
-                Err(EmbeddedRdpError::Connection(msg))
-            }
-        }
+        let generation = *self.connection_generation.borrow();
+        Self::launch_external_with_context(&self.external_launch_context(generation), config, false)
     }
 
     /// Disconnects from the RDP server
@@ -2285,34 +2552,6 @@ impl super::EmbeddedRdpWidget {
                 "No previous configuration to reconnect".to_string(),
             ))
         }
-    }
-
-    /// Arms a short-lived watchdog detecting an external client that exits
-    /// immediately after launch (auth/certificate/codec failure).
-    ///
-    /// See [`arm_external_exit_watchdog`] for the rationale.
-    fn arm_external_exit_watchdog(&self) {
-        use std::sync::{Arc, Mutex};
-
-        let stderr_buf = self
-            .stderr_lines
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| Arc::new(Mutex::new(Vec::new())));
-        arm_external_exit_watchdog(
-            self.process.clone(),
-            self.state.clone(),
-            self.on_state_changed.clone(),
-            self.on_error.clone(),
-            self.on_cert_changed.clone(),
-            self.drawing_area.clone(),
-            stderr_buf,
-            self.config
-                .borrow()
-                .as_ref()
-                .map_or_else(String::new, |c| c.host.clone()),
-            self.config.borrow().as_ref().map_or(3389, |c| c.port),
-        );
     }
 
     /// Terminates the external FreeRDP process if running

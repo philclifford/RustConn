@@ -221,12 +221,12 @@ flowchart TD
   - No git commands in this task — it only leaves a clean, consistent working tree.
   - _Requirements: 10.5_
 
-- [ ] 19. Validate `scripts/release.sh` without pushing
+- [x] 19. Validate `scripts/release.sh` without pushing
   - Run `./scripts/release.sh --dry-run` and confirm it passes every validation: branch name matches the workspace version (`0.19.4`), the changelog section and its date agree with `debian/changelog` and the metainfo XML, the tag `v0.19.4` does not exist yet, and fmt/clippy/tests succeed.
   - Fix whatever the script reports and re-run until it exits 0. Do not run it without `--dry-run`, and do not use `--no-push` (which merges and tags locally) without explicit approval — no push in either case.
   - _Requirements: 10.1, 10.5_
 
-- [ ] 20. Commit the implementation
+- [x] 20. Commit the implementation
   - Stage the specific files changed by tasks 1–19 (no `git add -A`) and create one commit following the project commit-message convention, referencing issue #236.
   - Do not push, do not amend, do not tag.
   - _Requirements: 10.5_
@@ -243,7 +243,7 @@ flowchart TD
   - Re-run fmt, clippy, and the test suite.
   - _Requirements: 10.1, 10.5_
 
-- [ ] 23. Final commit
+- [x] 23. Final commit
   - Stage the review-driven changes explicitly and create a final commit referencing issue #236.
   - Report what changed since task 20 so manual testing can start from a known state. No push.
   - _Requirements: 10.5_

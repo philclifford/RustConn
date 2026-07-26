@@ -21,7 +21,6 @@
 //! module. `MainWindow::setup_detach_actions` can be `pub(crate)` because it is
 //! a method on a type that is public elsewhere.
 
-use std::collections::HashSet;
 use std::rc::Weak;
 
 use gtk4::gdk;
@@ -114,6 +113,45 @@ fn monitor_at(index: u32) -> Option<gdk::Monitor> {
     monitor
 }
 
+/// Captures a monitor identity that survives display-list reordering.
+fn monitor_preference(index: u32) -> crate::terminal::DetachMonitor {
+    let monitor = monitor_at(index);
+    crate::terminal::DetachMonitor::from_monitor(index, monitor.as_ref())
+}
+
+/// Resolves a saved monitor by stable identity, using its index only when no
+/// identity was available from the display backend.
+fn monitor_for_preference(preference: &crate::terminal::DetachMonitor) -> Option<gdk::Monitor> {
+    if !preference.has_identity() {
+        return monitor_at(preference.index);
+    }
+
+    let monitors = gdk::Display::default()?.monitors();
+    for index in 0..monitors.n_items() {
+        let Some(monitor) = monitors.item(index).and_downcast::<gdk::Monitor>() else {
+            continue;
+        };
+        let connector = monitor.connector();
+        let manufacturer = monitor.manufacturer();
+        let model = monitor.model();
+        if preference.matches_identity(
+            connector.as_ref().map(|value| value.as_str()),
+            manufacturer.as_ref().map(|value| value.as_str()),
+            model.as_ref().map(|value| value.as_str()),
+        ) {
+            return Some(monitor);
+        }
+    }
+
+    tracing::debug!(
+        connector = ?preference.connector,
+        manufacturer = ?preference.manufacturer,
+        model = ?preference.model,
+        "preferred monitor is no longer connected"
+    );
+    None
+}
+
 /// Returns the window hosting a session, when that session is detached.
 ///
 /// Session-scoped feedback belongs on the window the user is looking at, so
@@ -145,89 +183,6 @@ pub fn rename_open_sessions(notebook: &SharedNotebook, connection_id: Uuid, new_
     }
 }
 
-/// How long to keep looking for the session a reconnect creates.
-///
-/// The close+create reconnect fallback usually has the replacement tab in place
-/// by the time it returns, but a connection that resolves its credentials from a
-/// vault or waits for a port check creates it later. Ten polls of 300 ms cover
-/// those without waiting on a session that never arrives (a cancelled password
-/// prompt, say).
-const REDETACH_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(300);
-/// Number of [`REDETACH_POLL_INTERVAL`] polls before giving up.
-const REDETACH_POLL_ATTEMPTS: u8 = 10;
-
-/// Moves the session a reconnect just created back into its own window.
-///
-/// Requirement 7.6: a detached session that reconnects must show up in the same
-/// detached window. The close+create fallback in `MainWindow`'s reconnect handler
-/// cannot honour that literally — closing the session takes its window with it —
-/// so the placement is recorded before the close and re-established here, on the
-/// replacement session, as soon as it exists (issue #236).
-///
-/// `known_sessions` are the sessions this connection already had before the
-/// reconnect, so an unrelated tab of the same connection is never mistaken for
-/// the replacement.
-pub fn redetach_after_reconnect(
-    notebook: &SharedNotebook,
-    connection_id: Uuid,
-    known_sessions: HashSet<Uuid>,
-) {
-    if try_redetach(notebook, connection_id, &known_sessions) {
-        return;
-    }
-    // Nothing yet: the connection is still being set up. Poll, because there is
-    // no per-connection "session created" signal to hook — `on_tab_added` is a
-    // single slot owned by workspace restore.
-    let notebook = Rc::clone(notebook);
-    let attempts = std::cell::Cell::new(0_u8);
-    glib::timeout_add_local(REDETACH_POLL_INTERVAL, move || {
-        attempts.set(attempts.get() + 1);
-        if try_redetach(&notebook, connection_id, &known_sessions) {
-            return glib::ControlFlow::Break;
-        }
-        if attempts.get() >= REDETACH_POLL_ATTEMPTS {
-            tracing::warn!(
-                connection = %connection_id,
-                attempts = attempts.get(),
-                "reconnected session did not appear in time; it stays in a tab"
-            );
-            return glib::ControlFlow::Break;
-        }
-        glib::ControlFlow::Continue
-    });
-}
-
-/// One attempt of [`redetach_after_reconnect`]; reports whether it is finished.
-fn try_redetach(
-    notebook: &SharedNotebook,
-    connection_id: Uuid,
-    known_sessions: &HashSet<Uuid>,
-) -> bool {
-    let target = notebook
-        .get_all_sessions()
-        .into_iter()
-        .filter(|session| {
-            session.connection_id == connection_id && !known_sessions.contains(&session.id)
-        })
-        .max_by_key(|session| session.connected_at)
-        .map(|session| session.id);
-    let Some(target) = target else {
-        return false;
-    };
-    if notebook.is_detached(target) {
-        // Someone was faster (a manual detach, or a second poll racing the
-        // first): the requirement is met either way.
-        return true;
-    }
-    tracing::info!(
-        connection = %connection_id,
-        session = %target,
-        "moving the reconnected session back into its own window"
-    );
-    notebook.request_detach(target, None);
-    true
-}
-
 /// Shows a high-priority error toast inside a detached window.
 fn show_error_in_window(window: &DetachedSessionWindow, message: &str) {
     let toast = adw::Toast::new(message);
@@ -240,9 +195,13 @@ fn show_error_in_window(window: &DetachedSessionWindow, message: &str) {
 /// A rejected verdict is explained as a toast and changes nothing. Every other
 /// failure leaves the session in its tab, because `take_session_content` rolls
 /// itself back (Requirement 1.8).
-fn detach_session(handles: &DetachHandles, session_id: Uuid, monitor: Option<u32>) {
+fn detach_session(
+    handles: &DetachHandles,
+    session_id: Uuid,
+    presentation: crate::terminal::DetachPresentation,
+) -> bool {
     let Some(targets) = handles.upgrade() else {
-        return;
+        return false;
     };
 
     let verdict = targets.notebook.detach_verdict(session_id);
@@ -255,7 +214,7 @@ fn detach_session(handles: &DetachHandles, session_id: Uuid, monitor: Option<u32
         handles
             .toasts
             .show_toast_with_type(&explanation, ToastType::Warning);
-        return;
+        return false;
     }
 
     let Some(info) = targets.notebook.get_session_info(session_id) else {
@@ -263,10 +222,8 @@ fn detach_session(handles: &DetachHandles, session_id: Uuid, monitor: Option<u32
         handles
             .toasts
             .show_error(&i18n("Could not move the session to its own window."));
-        return;
+        return false;
     };
-    // Resolved before the content is taken, so a missing application cannot
-    // leave the session without a home.
     let Some(app) = targets
         .main_window
         .application()
@@ -276,14 +233,14 @@ fn detach_session(handles: &DetachHandles, session_id: Uuid, monitor: Option<u32
         handles
             .toasts
             .show_error(&i18n("Could not move the session to its own window."));
-        return;
+        return false;
     };
 
     let Some(content) = targets.notebook.take_session_content(session_id) else {
         handles
             .toasts
             .show_error(&i18n("Could not move the session to its own window."));
-        return;
+        return false;
     };
 
     let params = DetachedWindowParams {
@@ -296,11 +253,24 @@ fn detach_session(handles: &DetachHandles, session_id: Uuid, monitor: Option<u32
     install_detached_window_actions(&detached, handles);
     wire_detached_window_callbacks(&detached, handles);
 
-    match monitor.and_then(monitor_at) {
-        Some(ref monitor) => detached.present_fullscreen_on(monitor),
-        None => detached.present(),
+    if presentation.fullscreen {
+        if let Some(preference) = presentation.monitor {
+            if let Some(monitor) = monitor_for_preference(&preference) {
+                detached.present_fullscreen_on(&monitor, preference);
+            } else {
+                // Keep the identity so a later reconnect can target the same
+                // display if it returns; do not silently use a reordered index.
+                detached.present_fullscreen_preferred(preference);
+            }
+        } else {
+            detached.present_fullscreen();
+        }
+    } else {
+        detached.present();
     }
     targets.registry.insert(detached);
+
+    targets.notebook.is_detached(session_id) && targets.registry.contains(session_id)
 }
 
 /// Moves a detached session back into a tab of the main window.
@@ -493,6 +463,7 @@ fn install_detached_window_actions(detached: &DetachedSessionWindow, handles: &D
     let fullscreen_action =
         gio::SimpleAction::new_stateful("toggle-fullscreen", None, &false.to_variant());
     let window_fullscreen = window.downgrade();
+    let presentation = detached.presentation_handle();
     fullscreen_action.connect_activate(move |action, _| {
         if let Some(window) = window_fullscreen.upgrade() {
             let is_fullscreen = window.is_fullscreen();
@@ -501,6 +472,10 @@ fn install_detached_window_actions(detached: &DetachedSessionWindow, handles: &D
             } else {
                 window.fullscreen();
             }
+            *presentation.borrow_mut() = crate::terminal::DetachPresentation {
+                fullscreen: !is_fullscreen,
+                monitor: None,
+            };
             action.set_state(&(!is_fullscreen).to_variant());
         }
     });
@@ -537,7 +512,11 @@ impl MainWindow {
                 .as_deref()
                 .and_then(session_id_from)
             {
-                detach_session(&handles_detach, session_id, None);
+                let _ = detach_session(
+                    &handles_detach,
+                    session_id,
+                    crate::terminal::DetachPresentation::default(),
+                );
             }
         });
         window.add_action(&detach_action);
@@ -552,7 +531,14 @@ impl MainWindow {
                         param.and_then(glib::Variant::get::<(String, u32)>)
                         && let Some(session_id) = session_id_from(&session)
                     {
-                        detach_session(&handles_monitor, session_id, Some(monitor));
+                        let _ = detach_session(
+                            &handles_monitor,
+                            session_id,
+                            crate::terminal::DetachPresentation {
+                                fullscreen: true,
+                                monitor: Some(monitor_preference(monitor)),
+                            },
+                        );
                     }
                 });
                 window.add_action(&monitor_action);
@@ -587,7 +573,11 @@ impl MainWindow {
                 tracing::debug!("toggle-detach ignored: no active session");
                 return;
             };
-            detach_session(&handles_toggle, session_id, None);
+            let _ = detach_session(
+                &handles_toggle,
+                session_id,
+                crate::terminal::DetachPresentation::default(),
+            );
         });
         window.add_action(&toggle_action);
 
@@ -619,8 +609,8 @@ impl MainWindow {
 
         let handles_request = handles;
         self.terminal_notebook
-            .set_on_detach_request(move |session_id, monitor| {
-                detach_session(&handles_request, session_id, monitor);
+            .set_on_detach_request(move |session_id, presentation| {
+                detach_session(&handles_request, session_id, presentation)
             });
     }
 }

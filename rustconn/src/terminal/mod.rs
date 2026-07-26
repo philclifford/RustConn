@@ -10,6 +10,7 @@
 
 mod config;
 mod detach;
+pub use detach::{DetachMonitor, DetachPresentation};
 pub mod file_drop;
 pub mod highlight_overlay;
 pub mod playback;
@@ -225,9 +226,8 @@ pub struct TerminalNotebook {
     /// Invoked by [`Self::switch_to_tab`] when the target session is detached,
     /// so the window layer can present its window instead of selecting a tab.
     on_focus_detached: Rc<RefCell<Option<Box<dyn Fn(Uuid)>>>>,
-    /// Invoked when the tab context menu requests a detach
-    /// (`session_id`, optional monitor index).
-    on_detach_request: Rc<RefCell<Option<Box<dyn Fn(Uuid, Option<u32>)>>>>,
+    /// Invoked when the tab context menu requests a detach.
+    on_detach_request: Rc<RefCell<Option<Box<dyn Fn(Uuid, DetachPresentation) -> bool>>>>,
     /// Invoked once a session's teardown has run, whatever ended it: a tab
     /// close, a remote disconnect, a child exit, or a terminate from the
     /// session manager. Parked and detached sessions do not reach it, because
@@ -625,6 +625,16 @@ impl TerminalNotebook {
                     break;
                 }
             }
+        }
+    }
+
+    /// Restores the Welcome page when the configured empty-notebook conditions hold.
+    pub(super) fn ensure_welcome_page(&self) {
+        if self.show_welcome.get()
+            && self.sessions.borrow().is_empty()
+            && self.tab_view.n_pages() == 0
+        {
+            Self::append_welcome_page(&self.tab_view);
         }
     }
 
@@ -2694,9 +2704,9 @@ impl TerminalNotebook {
     ///
     /// The fresh tab starts with an empty single-mode container; the caller's
     /// subsequent [`Self::reparent_terminal_to_tab`] moves the live widget in.
-    pub(crate) fn restore_session_tab(&self, session_id: Uuid) {
+    pub(crate) fn restore_session_tab(&self, session_id: Uuid) -> bool {
         if !self.is_parked(session_id) {
-            return;
+            return false;
         }
         // Resolve the metadata *before* touching the park marks: a session
         // without metadata would otherwise lose its mark and gain no tab, which
@@ -2715,7 +2725,7 @@ impl TerminalNotebook {
                 session = %session_id,
                 "cannot restore a tab for a session without metadata; park mark kept"
             );
-            return;
+            return false;
         };
 
         let container = GtkBox::new(Orientation::Vertical, 0);
@@ -2741,6 +2751,7 @@ impl TerminalNotebook {
             .insert(session_id, tab_container);
         // The session has a home again, so the park mark may go.
         self.clear_park_marks(session_id);
+        true
     }
 
     /// Builds a tab tooltip from a session title, its host, and its group.

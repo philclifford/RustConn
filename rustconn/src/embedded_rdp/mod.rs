@@ -290,6 +290,9 @@ pub struct EmbeddedRdpWidget {
     on_error: Rc<RefCell<Option<ErrorCallback>>>,
     /// Fallback notification callback
     on_fallback: Rc<RefCell<Option<FallbackCallback>>>,
+    /// Explicit consent callback for legacy Standard RDP Security.
+    on_legacy_security_required:
+        Rc<RefCell<Option<super::embedded_rdp::types::LegacySecurityCallback>>>,
     /// Certificate changed callback — shown as a dialog instead of a toast
     on_cert_changed: Rc<RefCell<Option<super::embedded_rdp::types::CertChangedCallback>>>,
     /// Reconnect callback
@@ -748,6 +751,7 @@ impl EmbeddedRdpWidget {
             on_state_changed: Rc::new(RefCell::new(None)),
             on_error: Rc::new(RefCell::new(None)),
             on_fallback: Rc::new(RefCell::new(None)),
+            on_legacy_security_required: Rc::new(RefCell::new(None)),
             on_cert_changed: Rc::new(RefCell::new(None)),
             on_reconnect: Rc::new(RefCell::new(None)),
             reconnect_banner,
@@ -1537,6 +1541,17 @@ impl EmbeddedRdpWidget {
         *self.on_fallback.borrow_mut() = Some(Box::new(callback));
     }
 
+    /// Connects the explicit-consent handler for legacy Standard RDP Security.
+    ///
+    /// The handler must resolve the supplied one-shot decision. Rejecting it,
+    /// closing the dialog, or having no handler all fail closed.
+    pub fn connect_legacy_security_required<F>(&self, callback: F)
+    where
+        F: Fn(super::embedded_rdp::types::LegacySecurityDecision) + 'static,
+    {
+        *self.on_legacy_security_required.borrow_mut() = Some(Box::new(callback));
+    }
+
     /// Connects a callback for certificate change notifications.
     ///
     /// Called when FreeRDP detects that the server certificate has changed.
@@ -1606,13 +1621,6 @@ impl EmbeddedRdpWidget {
     /// Stops the mouse jiggler timer. See [`JigglerHandles::stop`].
     pub fn stop_jiggler(&self) {
         self.jiggler_handles().stop();
-    }
-
-    /// Reports an error and notifies listeners
-    fn report_error(&self, message: &str) {
-        self.set_state(RdpConnectionState::Error);
-
-        with_callback(&self.on_error, |cb| cb(message));
     }
 }
 

@@ -4,7 +4,9 @@
 //! with environment variables set to suppress Qt/Wayland warnings.
 
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use secrecy::{ExposeSecret, SecretString};
 
@@ -16,6 +18,121 @@ use super::types::{EmbeddedRdpError, RdpConfig};
 /// user-friendly error messages (e.g. "authentication failed") instead of
 /// the generic "client exited unexpectedly" toast.
 pub(crate) type StderrLines = Arc<Mutex<Vec<String>>>;
+
+/// Shared result returned by a background FreeRDP launch.
+pub(crate) type FreeRdpLaunchResult = Result<(Child, StderrLines), EmbeddedRdpError>;
+
+/// Maximum time to reap a FreeRDP process after requesting termination.
+const CANCELLED_CHILD_REAP_TIMEOUT: Duration = Duration::from_millis(500);
+/// Poll interval keeps child cleanup bounded without busy-waiting.
+const CANCELLED_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+fn kill_and_reap_child(mut child: Child) {
+    if let Err(error) = child.kill() {
+        tracing::debug!(protocol = "rdp", %error, "FreeRDP process exited before cancellation");
+    }
+    let deadline = Instant::now() + CANCELLED_CHILD_REAP_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(CANCELLED_CHILD_POLL_INTERVAL);
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    protocol = "rdp",
+                    "FreeRDP did not exit promptly after kill; reaping in background"
+                );
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(protocol = "rdp", %error, "Failed to poll cancelled FreeRDP process");
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                return;
+            }
+        }
+    }
+}
+
+pub(crate) fn cleanup_child_without_blocking(child: Child) {
+    std::thread::spawn(move || kill_and_reap_child(child));
+}
+
+struct PendingFreeRdpLaunch {
+    result: Option<FreeRdpLaunchResult>,
+}
+
+impl PendingFreeRdpLaunch {
+    fn new(result: FreeRdpLaunchResult) -> Self {
+        Self {
+            result: Some(result),
+        }
+    }
+
+    fn into_result(mut self) -> FreeRdpLaunchResult {
+        self.result
+            .take()
+            .expect("pending launch result must exist until delivery")
+    }
+}
+
+impl Drop for PendingFreeRdpLaunch {
+    fn drop(&mut self) {
+        if let Some(Ok((child, _))) = self.result.take() {
+            cleanup_child_without_blocking(child);
+        }
+    }
+}
+
+/// Drop-cancelling handle for a background FreeRDP launch.
+pub(crate) struct FreeRdpLaunchHandle {
+    receiver: std::sync::mpsc::Receiver<PendingFreeRdpLaunch>,
+    cancellation: Arc<AtomicBool>,
+}
+
+impl FreeRdpLaunchHandle {
+    pub(crate) fn try_recv(&self) -> Result<FreeRdpLaunchResult, std::sync::mpsc::TryRecvError> {
+        self.receiver
+            .try_recv()
+            .map(PendingFreeRdpLaunch::into_result)
+    }
+}
+
+impl Drop for FreeRdpLaunchHandle {
+    fn drop(&mut self) {
+        self.cancellation.store(true, Ordering::Release);
+    }
+}
+
+// FreeRDP variants may open `/args-from:` asynchronously after spawn, so keep
+// the credential file alive briefly while still guaranteeing prompt cleanup.
+const ARGS_FILE_CLEANUP_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Prepared `/args-from:` switch plus the cleanup guard backing its file.
+pub(crate) struct PreparedFreeRdpArgs {
+    argument: String,
+    _guard: super::ephemeral_args::EphemeralRdpArgs,
+}
+
+impl PreparedFreeRdpArgs {
+    /// Returns the sole command-line argument FreeRDP should receive.
+    pub(crate) fn argument(&self) -> &str {
+        &self.argument
+    }
+
+    /// Retains the args file while FreeRDP asynchronously opens it after spawn.
+    pub(crate) fn retain_for_post_spawn_parse(self) {
+        std::thread::spawn(move || {
+            std::thread::sleep(ARGS_FILE_CLEANUP_DELAY);
+            drop(self);
+        });
+    }
+}
 
 /// Safe FreeRDP launcher with Qt error suppression
 ///
@@ -84,6 +201,52 @@ impl SafeFreeRdpLauncher {
         env
     }
 
+    /// Resolves args-file syntax, then creates a guarded credential file.
+    ///
+    /// `binary` must be the original target, including any `host:` marker.
+    ///
+    /// # Errors
+    /// Returns an initialization error if the args file cannot be prepared.
+    pub(crate) fn prepare_args_file(
+        binary: &str,
+        plain_args: &[String],
+        secret_args: &[(&str, &SecretString)],
+    ) -> Result<PreparedFreeRdpArgs, EmbeddedRdpError> {
+        Self::prepare_args_file_with_cancel(binary, plain_args, secret_args, None)
+    }
+
+    fn prepare_args_file_with_cancel(
+        binary: &str,
+        plain_args: &[String],
+        secret_args: &[(&str, &SecretString)],
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<PreparedFreeRdpArgs, EmbeddedRdpError> {
+        // Probe before opening the credential file so a hung version command
+        // cannot extend the on-disk secret lifetime.
+        let form = super::detect::resolve_args_from_form_with_cancel(binary, cancellation);
+        Self::ensure_not_cancelled(cancellation)?;
+        let guard = super::ephemeral_args::EphemeralRdpArgs::write_all(plain_args, secret_args)
+            .map_err(|error| {
+                EmbeddedRdpError::FreeRdpInit(format!("could not prepare RDP args file: {error}"))
+            })?;
+        Self::ensure_not_cancelled(cancellation)?;
+        let argument = super::detect::args_from_argument_for_form(form, guard.path());
+        Ok(PreparedFreeRdpArgs {
+            argument,
+            _guard: guard,
+        })
+    }
+
+    fn ensure_not_cancelled(cancellation: Option<&AtomicBool>) -> Result<(), EmbeddedRdpError> {
+        if cancellation.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            Err(EmbeddedRdpError::FreeRdpInit(
+                "FreeRDP launch cancelled".to_string(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Launches xfreerdp with Qt error suppression
     ///
     /// # Arguments
@@ -98,6 +261,22 @@ impl SafeFreeRdpLauncher {
     ///
     /// Returns error if FreeRDP cannot be launched.
     pub fn launch(&self, config: &RdpConfig) -> Result<(Child, StderrLines), EmbeddedRdpError> {
+        self.launch_with_cancel(config, None)
+    }
+
+    fn launch_with_cancel(
+        &self,
+        config: &RdpConfig,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<(Child, StderrLines), EmbeddedRdpError> {
+        Self::ensure_not_cancelled(cancellation)?;
+        super::ephemeral_args::EphemeralRdpArgs::validate_plain_args(&config.extra_args).map_err(
+            |error| {
+                EmbeddedRdpError::FreeRdpInit(format!(
+                    "could not validate additional RDP arguments: {error}"
+                ))
+            },
+        )?;
         // RemoteApp (RAIL) is not supported by wlfreerdp — it requires a window
         // manager that can create individual app windows. Use xfreerdp/sdl-freerdp.
         let is_remote_app = config
@@ -106,27 +285,29 @@ impl SafeFreeRdpLauncher {
             .is_some_and(|p| !p.is_empty());
 
         let binary = if is_remote_app {
-            Self::detect_freerdp_for_remoteapp()
+            super::detect::detect_best_freerdp_for_remoteapp_with_cancel(cancellation)
         } else {
-            Self::detect_freerdp()
-        }
-        .ok_or_else(|| {
+            super::detect::detect_best_freerdp_with_cancel(cancellation)
+        };
+        Self::ensure_not_cancelled(cancellation)?;
+        let binary = binary.ok_or_else(|| {
             EmbeddedRdpError::FreeRdpInit(
                 "No FreeRDP client found. Install sdl-freerdp3, xfreerdp, or wlfreerdp."
                     .to_string(),
             )
         })?;
 
-        // Check if we need to launch via flatpak-spawn --host
+        // Keep the original target (including a `host:` marker) for version
+        // probing and cache identity. The stripped name is only for spawning.
         let (actual_binary, via_host) = if let Some(host_bin) = binary.strip_prefix("host:") {
             (host_bin.to_string(), true)
         } else {
-            (binary, false)
+            (binary.clone(), false)
         };
 
         let mut cmd = if via_host {
             let mut c = Command::new("flatpak-spawn");
-            c.arg("--host");
+            c.args(["--host", "--watch-bus"]);
             // Pass environment variables via flatpak-spawn --env
             for (key, value) in self.build_env() {
                 c.arg(format!("--env={key}={value}"));
@@ -185,21 +366,9 @@ impl SafeFreeRdpLauncher {
         // Collect all plain-text connection arguments into a Vec<String>
         let plain_args = Self::build_connection_args(config);
 
-        let _args_guard =
-            match super::ephemeral_args::EphemeralRdpArgs::write_all(&plain_args, &secret_args) {
-                Ok(guard) => {
-                    cmd.arg(super::detect::args_from_argument(
-                        &actual_binary,
-                        guard.path(),
-                    ));
-                    guard
-                }
-                Err(e) => {
-                    return Err(EmbeddedRdpError::FreeRdpInit(format!(
-                        "could not prepare RDP args file: {e}"
-                    )));
-                }
-            };
+        let prepared_args =
+            Self::prepare_args_file_with_cancel(&binary, &plain_args, &secret_args, cancellation)?;
+        cmd.arg(prepared_args.argument());
 
         // Capture stderr instead of discarding it. The real FreeRDP failure
         // reason (authentication failure, rejected certificate, missing codec,
@@ -220,9 +389,14 @@ impl SafeFreeRdpLauncher {
             "[FreeRDP] Launching external client"
         );
 
+        Self::ensure_not_cancelled(cancellation)?;
         let mut child = cmd
             .spawn()
             .map_err(|e| EmbeddedRdpError::FreeRdpInit(e.to_string()))?;
+        if let Err(error) = Self::ensure_not_cancelled(cancellation) {
+            kill_and_reap_child(child);
+            return Err(error);
+        }
 
         // Drain the client's stderr on a background thread and forward every
         // non-empty line to `tracing`. Also accumulate lines in a shared buffer
@@ -246,10 +420,40 @@ impl SafeFreeRdpLauncher {
             });
         }
 
-        // _args_guard is dropped here, removing the temp args file.
-        // FreeRDP reads the file during argument parsing (a fraction of a
-        // second after spawn), so removing it shortly after is safe.
+        if let Err(error) = Self::ensure_not_cancelled(cancellation) {
+            kill_and_reap_child(child);
+            return Err(error);
+        }
+
+        // Keep the credential file alive briefly after spawn. Some FreeRDP
+        // variants open `/args-from:` asynchronously, so unlinking immediately
+        // can race their argument parser. The guard still guarantees cleanup.
+        prepared_args.retain_for_post_spawn_parse();
+
         Ok((child, stderr_lines))
+    }
+
+    /// Runs FreeRDP detection, version probing, args-file creation, and spawn
+    /// away from the GTK main thread.
+    pub(crate) fn launch_background(self, config: RdpConfig) -> FreeRdpLaunchHandle {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let worker_cancellation = Arc::clone(&cancellation);
+        std::thread::spawn(move || {
+            let result = self.launch_with_cancel(&config, Some(&worker_cancellation));
+            let pending = PendingFreeRdpLaunch::new(result);
+            if worker_cancellation.load(Ordering::Acquire) {
+                drop(pending);
+                return;
+            }
+            // Failed delivery drops the pending guard, which kills and reaps
+            // any process that the stale GTK continuation no longer owns.
+            let _ = sender.send(pending);
+        });
+        FreeRdpLaunchHandle {
+            receiver,
+            cancellation,
+        }
     }
 
     /// Detects the best available FreeRDP binary (Wayland-first)
@@ -327,7 +531,20 @@ impl SafeFreeRdpLauncher {
             args.push("/printer".to_string());
         }
 
+        let mut skip_next_value = false;
         for arg in &config.extra_args {
+            if skip_next_value {
+                skip_next_value = false;
+                continue;
+            }
+            if rustconn_core::protocol::contains_freerdp_secret_field(arg)
+                || rustconn_core::protocol::is_freerdp_shell_or_proxy_arg(arg)
+            {
+                skip_next_value =
+                    rustconn_core::protocol::freerdp::is_standalone_freerdp_blocked_field(arg);
+                tracing::warn!("Blocked dangerous FreeRDP extra arg");
+                continue;
+            }
             args.push(arg.clone());
         }
 
@@ -382,118 +599,6 @@ impl SafeFreeRdpLauncher {
 
         args
     }
-
-    /// Adds connection arguments to the command
-    ///
-    /// Legacy wrapper around [`Self::build_connection_args`] for code that
-    /// still passes arguments directly on the command line (e.g. tests).
-    pub fn add_connection_args(cmd: &mut Command, config: &RdpConfig) {
-        if let Some(ref domain) = config.domain
-            && !domain.is_empty()
-        {
-            cmd.arg(format!("/d:{domain}"));
-        }
-
-        if let Some(ref username) = config.username {
-            cmd.arg(format!("/u:{username}"));
-        }
-
-        // The password is passed via a single-use args file
-        // (`/args-from:<path>`) in `launch()` — it never appears on
-        // argv or stdin. This survives RD Connection Broker redirects
-        // because FreeRDP reads the file once into memory (issue #218).
-
-        cmd.arg(format!("/w:{}", config.width));
-        cmd.arg(format!("/h:{}", config.height));
-        if config.ignore_certificate {
-            cmd.arg("/cert:ignore");
-        } else {
-            cmd.arg("/cert:tofu");
-        }
-        cmd.arg("/dynamic-resolution");
-
-        // Add decorations flag for window controls
-        cmd.arg("/decorations");
-
-        // Add window geometry if saved and remember_window_position is enabled
-        if config.remember_window_position
-            && let Some((x, y, _width, _height)) = config.window_geometry
-        {
-            cmd.arg(format!("/x:{x}"));
-            cmd.arg(format!("/y:{y}"));
-        }
-
-        if config.clipboard_enabled {
-            cmd.arg("+clipboard");
-        }
-
-        // Add shared folders for drive redirection
-        for folder in &config.shared_folders {
-            let path = folder.local_path.display();
-            // FreeRDP `/drive:<name>,<path>` is comma-delimited; a comma in the
-            // share name would split the argument and corrupt the path.
-            let safe_name = folder.share_name.replace(',', "_");
-            cmd.arg(format!("/drive:{safe_name},{path}"));
-        }
-
-        // Map the local default printer into the session via CUPS.
-        if config.printer_enabled {
-            cmd.arg("/printer");
-        }
-
-        for arg in &config.extra_args {
-            cmd.arg(arg);
-        }
-
-        // Add gateway configuration for RD Gateway connections.
-        //
-        // FreeRDP 3.x removed the short `/g:` / `/gu:` / `/gp:` aliases in
-        // favour of the unified `/gateway:` option (see xfreerdp3(1)); the old
-        // aliases are rejected as "Unexpected keyword" and the client exits
-        // before connecting (issue #187). FreeRDP reuses the session
-        // credentials (`/u:`, `/d:` and the `/p:` from the args file) for the
-        // gateway, exactly like the working manual command
-        // `xfreerdp /gateway:g:HOST /u:NAME /d:DOMAIN`. We only add an explicit
-        // gateway user when it differs from the session user; a distinct
-        // gateway account would also need its own password, which RustConn does
-        // not store yet (future work).
-        if let Some(ref gw_host) = config.gateway_hostname
-            && !gw_host.is_empty()
-        {
-            let mut gateway = format!("g:{gw_host}:{}", config.gateway_port);
-            if let Some(ref gw_user) = config.gateway_username
-                && !gw_user.is_empty()
-                && config.username.as_deref() != Some(gw_user.as_str())
-            {
-                gateway.push_str(",u:");
-                gateway.push_str(gw_user);
-            }
-            cmd.arg(format!("/gateway:{gateway}"));
-        }
-
-        // Add RemoteApp arguments for launching individual applications
-        for arg in config.remote_app_freerdp_args() {
-            cmd.arg(arg);
-        }
-
-        // When RemoteApp is used with xfreerdp3, force NTLM authentication.
-        // xfreerdp3 on the host often lacks Kerberos realm configuration,
-        // causing NLA to fail even with correct credentials. NTLM works
-        // reliably for standalone (non-domain) Windows servers.
-        if config
-            .remote_app_program
-            .as_ref()
-            .is_some_and(|p| !p.is_empty())
-        {
-            cmd.arg("/auth-pkg-list:ntlm");
-        }
-
-        if config.port == 3389 {
-            cmd.arg(format!("/v:{}", config.host));
-        } else {
-            cmd.arg(format!("/v:{}:{}", config.host, config.port));
-        }
-    }
 }
 
 impl Default for SafeFreeRdpLauncher {
@@ -505,6 +610,59 @@ impl Default for SafeFreeRdpLauncher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sleeping_child() -> Child {
+        Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn test child")
+    }
+
+    fn assert_process_reaped(pid: u32) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let proc_path = std::path::PathBuf::from(format!("/proc/{pid}"));
+        while proc_path.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!proc_path.exists(), "cancelled child {pid} was not reaped");
+    }
+
+    fn pending_child(child: Child) -> PendingFreeRdpLaunch {
+        PendingFreeRdpLaunch::new(Ok((child, Arc::new(Mutex::new(Vec::new())))))
+    }
+
+    #[test]
+    fn background_handle_drop_requests_cancellation() {
+        let (_sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let handle = FreeRdpLaunchHandle {
+            receiver,
+            cancellation: Arc::clone(&cancellation),
+        };
+        drop(handle);
+        assert!(cancellation.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn dropped_pending_delivery_kills_and_reaps_child() {
+        let child = sleeping_child();
+        let pid = child.id();
+        drop(pending_child(child));
+        assert_process_reaped(pid);
+    }
+
+    #[test]
+    fn failed_result_delivery_kills_and_reaps_child() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        drop(receiver);
+        let child = sleeping_child();
+        let pid = child.id();
+        let error = sender
+            .send(pending_child(child))
+            .expect_err("delivery must fail after receiver drop");
+        drop(error);
+        assert_process_reaped(pid);
+    }
 
     #[test]
     fn test_safe_freerdp_launcher_default_wayland_first() {
@@ -560,14 +718,37 @@ mod tests {
         assert!(env.is_empty());
     }
 
-    /// Collects the argument vector that `add_connection_args` would pass to
-    /// FreeRDP, as owned `String`s for easy assertions.
+    /// Collects connection arguments from the production builder.
     fn connection_args(config: &RdpConfig) -> Vec<String> {
-        let mut cmd = Command::new("xfreerdp3");
-        SafeFreeRdpLauncher::add_connection_args(&mut cmd, config);
-        cmd.get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect()
+        SafeFreeRdpLauncher::build_connection_args(config)
+    }
+
+    #[test]
+    fn connection_args_filter_secret_aliases_and_execution_options() {
+        let config = RdpConfig {
+            extra_args: vec![
+                "/gateway:g:host,p:session-secret".to_string(),
+                "/gateway:g:host,GATEWAY-PASSWORD:gateway-secret".to_string(),
+                "--pth".to_string(),
+                "hash-secret".to_string(),
+                "--shell".to_string(),
+                "command-secret".to_string(),
+                "/gateway:g:host,u:user".to_string(),
+            ],
+            ..RdpConfig::default()
+        };
+
+        let args = connection_args(&config);
+
+        assert!(args.iter().any(|arg| arg == "/gateway:g:host,u:user"));
+        for secret in [
+            "session-secret",
+            "gateway-secret",
+            "hash-secret",
+            "command-secret",
+        ] {
+            assert!(args.iter().all(|arg| !arg.contains(secret)));
+        }
     }
 
     #[test]

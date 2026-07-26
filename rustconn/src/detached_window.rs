@@ -25,6 +25,7 @@ use libadwaita::prelude::*;
 use uuid::Uuid;
 
 use crate::i18n::{i18n, i18n_f};
+use crate::terminal::{DetachMonitor, DetachPresentation};
 
 /// Default window width, matching a comfortable 80-column terminal plus chrome.
 const DEFAULT_WIDTH: i32 = 900;
@@ -95,6 +96,7 @@ pub struct DetachedSessionWindow {
     /// tab, so the close handler skips teardown. Same distinction
     /// `parked_in_split` makes for tabs.
     attaching: Rc<Cell<bool>>,
+    presentation: Rc<RefCell<DetachPresentation>>,
     on_attach: SessionCallback,
     on_close: SessionCallback,
 }
@@ -162,6 +164,7 @@ impl DetachedSessionWindow {
             disconnect_banner,
             attach_button,
             attaching: Rc::new(Cell::new(false)),
+            presentation: Rc::new(RefCell::new(DetachPresentation::default())),
             on_attach: Rc::new(RefCell::new(None)),
             on_close: Rc::new(RefCell::new(None)),
         };
@@ -234,8 +237,29 @@ impl DetachedSessionWindow {
         });
     }
 
-    /// Shows the window and gives it keyboard focus.
+    /// Shows the window normally and gives it keyboard focus.
     pub fn present(&self) {
+        *self.presentation.borrow_mut() = DetachPresentation::default();
+        self.window.present();
+    }
+
+    /// Shows the window fullscreen without a monitor preference.
+    pub fn present_fullscreen(&self) {
+        *self.presentation.borrow_mut() = DetachPresentation {
+            fullscreen: true,
+            monitor: None,
+        };
+        self.window.fullscreen();
+        self.window.present();
+    }
+
+    /// Shows the window fullscreen while retaining an unavailable monitor preference.
+    pub fn present_fullscreen_preferred(&self, preference: DetachMonitor) {
+        *self.presentation.borrow_mut() = DetachPresentation {
+            fullscreen: true,
+            monitor: Some(preference),
+        };
+        self.window.fullscreen();
         self.window.present();
     }
 
@@ -243,9 +267,25 @@ impl DetachedSessionWindow {
     ///
     /// Wayland offers no window positioning by coordinates, so a monitor choice
     /// is expressed as fullscreen-on-monitor, which the compositor honors.
-    pub fn present_fullscreen_on(&self, monitor: &gdk::Monitor) {
+    pub fn present_fullscreen_on(&self, monitor: &gdk::Monitor, preference: DetachMonitor) {
+        *self.presentation.borrow_mut() = DetachPresentation {
+            fullscreen: true,
+            monitor: Some(preference),
+        };
         self.window.fullscreen_on_monitor(monitor);
         self.window.present();
+    }
+
+    /// Returns the current detached-window presentation.
+    #[must_use]
+    pub fn presentation(&self) -> DetachPresentation {
+        self.presentation.borrow().clone()
+    }
+
+    /// Returns the shared presentation state for window-scoped actions.
+    #[must_use]
+    pub fn presentation_handle(&self) -> Rc<RefCell<DetachPresentation>> {
+        Rc::clone(&self.presentation)
     }
 
     /// Updates the window and header bar title after a connection rename.
@@ -425,6 +465,15 @@ impl DetachedWindowRegistry {
     #[must_use]
     pub fn contains(&self, session_id: Uuid) -> bool {
         self.windows.borrow().contains_key(&session_id)
+    }
+
+    /// Snapshots a detached session's presentation state.
+    #[must_use]
+    pub fn presentation(&self, session_id: Uuid) -> Option<DetachPresentation> {
+        self.windows
+            .borrow()
+            .get(&session_id)
+            .map(DetachedSessionWindow::presentation)
     }
 
     /// Retitles every window of a connection after it was renamed.

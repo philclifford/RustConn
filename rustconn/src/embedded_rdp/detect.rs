@@ -1,38 +1,47 @@
-//! FreeRDP detection utilities
-//!
-//! This module provides functions for detecting available FreeRDP clients.
-//! Detection prefers the maintained SDL3 client (`sdl-freerdp3`); the
-//! deprecated `wlfreerdp` is kept only as a fallback and for embedded mode.
+//! FreeRDP detection utilities.
 
+use std::collections::HashMap;
+use std::io::Read;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-/// Ordered candidate list for FreeRDP detection.
-///
-/// SDL3 (`sdl-freerdp3`) comes first: it is the maintained FreeRDP 3.x client
-/// and works natively on both Wayland and X11. The Wayland-native `wlfreerdp`
-/// is deprecated upstream (FreeRDP 3.x prints a deprecation warning and points
-/// users at the SDL3 client), so it is only a fallback here. X11 `xfreerdp`
-/// variants come last on Wayland sessions.
 const WAYLAND_FIRST_CANDIDATES: &[&str] = &[
-    "sdl-freerdp3", // FreeRDP 3.x SDL3 — maintained, Wayland + X11 (versioned)
-    "sdl-freerdp",  // FreeRDP SDL3 (unversioned, e.g. Flatpak)
-    "wlfreerdp3",   // FreeRDP 3.x Wayland-native — deprecated, fallback
-    "wlfreerdp",    // FreeRDP Wayland-native (unversioned) — deprecated, fallback
-    "xfreerdp3",    // FreeRDP 3.x X11
-    "xfreerdp",     // FreeRDP 2.x X11
+    "sdl-freerdp3",
+    "sdl-freerdp",
+    "wlfreerdp3",
+    "wlfreerdp",
+    "xfreerdp3",
+    "xfreerdp",
 ];
-
-/// X11-first candidate order (used when not running under Wayland).
 const X11_FIRST_CANDIDATES: &[&str] = &[
-    "xfreerdp3",    // FreeRDP 3.x X11
-    "xfreerdp",     // FreeRDP 2.x X11
-    "sdl-freerdp3", // FreeRDP 3.x SDL3 (versioned)
-    "sdl-freerdp",  // FreeRDP SDL3 (unversioned, e.g. Flatpak)
-    "wlfreerdp3",   // FreeRDP 3.x Wayland (still usable as fallback)
-    "wlfreerdp",    // FreeRDP Wayland (unversioned)
+    "xfreerdp3",
+    "xfreerdp",
+    "sdl-freerdp3",
+    "sdl-freerdp",
+    "wlfreerdp3",
+    "wlfreerdp",
 ];
 
-/// Returns `true` if the current session is Wayland.
+/// Maximum time allowed for a FreeRDP `--version` process.
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+/// Maximum time allowed for one `which` process during binary detection.
+const BINARY_DETECTION_TIMEOUT: Duration = Duration::from_millis(500);
+/// Maximum time allowed to reap a probe after sending it a kill request.
+const PROBE_REAP_TIMEOUT: Duration = Duration::from_millis(500);
+/// Poll interval avoids busy-waiting while keeping probes and cancellation responsive.
+const PROBE_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+type FreeRdpVersion = (u32, u32, u32);
+
+/// Includes failed probes. Exact keys distinguish host and sandbox targets.
+static VERSION_CACHE: OnceLock<Mutex<HashMap<String, Option<FreeRdpVersion>>>> = OnceLock::new();
+
+fn is_cancelled(cancellation: Option<&AtomicBool>) -> bool {
+    cancellation.is_some_and(|flag| flag.load(Ordering::Acquire))
+}
+
 fn is_wayland_session() -> bool {
     std::env::var("XDG_SESSION_TYPE")
         .map(|v| v == "wayland")
@@ -41,55 +50,41 @@ fn is_wayland_session() -> bool {
 }
 
 /// Syntax accepted by the installed FreeRDP for `/args-from:`.
-///
-/// FreeRDP has two spellings for reading arguments from a file:
-///
-/// * `/args-from:<path>` — accepted by every FreeRDP 3.x release. Marked
-///   deprecated from 3.26 on, but still functional unless the distro builds
-///   with `WITHOUT_FREERDP_3x_DEPRECATED`.
-/// * `/args-from:file:<path>` — only exists from FreeRDP 3.26 on. Older
-///   releases (3.24, 3.25 — the versions shipped by current Debian/Ubuntu)
-///   try to open a file literally named `file:/run/...` and exit with 255.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArgsFromForm {
-    /// `/args-from:<path>` — universal, deprecated from 3.26 on.
+    /// `/args-from:<path>` — accepted by every FreeRDP 3.x release.
     BarePath,
     /// `/args-from:file:<path>` — FreeRDP 3.26 and newer only.
     FilePrefix,
 }
 
-/// First FreeRDP 3.x minor release that understands the `file:` prefix.
 const ARGS_FROM_FILE_PREFIX_MIN_MINOR: u32 = 26;
 
-/// Extracts `(major, minor, patch)` from a FreeRDP `--version` banner.
-///
-/// The banner looks like `This is FreeRDP version 3.24.2 (3.24.2)`; a missing
-/// patch component is treated as `0`.
-fn parse_freerdp_version(output: &str) -> Option<(u32, u32, u32)> {
-    let tail = output.split("version").nth(1)?;
-    let token = tail.split_whitespace().next()?;
-    let mut parts = token.split('.');
+fn parse_freerdp_version(output: &str) -> Option<FreeRdpVersion> {
+    let lower = output.to_ascii_lowercase();
+    let freerdp_offset = lower.find("freerdp")?;
+    output[freerdp_offset..]
+        .split_whitespace()
+        .find_map(parse_version_token)
+}
+
+fn parse_version_token(token: &str) -> Option<FreeRdpVersion> {
+    let start = token.find(|c: char| c.is_ascii_digit())?;
+    let numeric: String = token[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let mut parts = numeric.split('.');
     let major = parts.next()?.parse().ok()?;
-    let minor = parts.next().unwrap_or("0").parse().ok()?;
-    // The patch component may carry a suffix (e.g. "2-rc1"); keep the digits.
+    let minor = parts.next()?.parse().ok()?;
     let patch = parts
         .next()
-        .map(|p| {
-            p.chars()
-                .take_while(char::is_ascii_digit)
-                .collect::<String>()
-        })
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(0);
+        .filter(|part| !part.is_empty())
+        .map_or(Some(0), |part| part.parse().ok())?;
     Some((major, minor, patch))
 }
 
-/// Picks the `/args-from:` syntax for a detected FreeRDP version.
-///
-/// An unknown version falls back to [`ArgsFromForm::BarePath`]: it is the form
-/// that works on every FreeRDP 3.x released so far, whereas `file:` silently
-/// breaks the launch on anything older than 3.26.
-const fn args_from_form_for_version(version: Option<(u32, u32, u32)>) -> ArgsFromForm {
+const fn args_from_form_for_version(version: Option<FreeRdpVersion>) -> ArgsFromForm {
     match version {
         Some((major, minor, _))
             if major > 3 || (major == 3 && minor >= ARGS_FROM_FILE_PREFIX_MIN_MINOR) =>
@@ -100,154 +95,318 @@ const fn args_from_form_for_version(version: Option<(u32, u32, u32)>) -> ArgsFro
     }
 }
 
-/// Queries `binary --version` and parses the FreeRDP version.
-///
-/// A `host:` prefix (Flatpak) is resolved through `flatpak-spawn --host`.
-/// Returns `None` when the binary cannot be run or the banner is unparseable.
-#[must_use]
-pub fn freerdp_version(binary: &str) -> Option<(u32, u32, u32)> {
-    let output = if let Some(host_bin) = binary.strip_prefix("host:") {
-        Command::new("flatpak-spawn")
-            .args(["--host", host_bin, "--version"])
-            .output()
+fn version_probe_command(binary: &str) -> (String, Vec<String>) {
+    if let Some(host_binary) = binary.strip_prefix("host:") {
+        (
+            "flatpak-spawn".to_string(),
+            vec![
+                "--host".to_string(),
+                "--watch-bus".to_string(),
+                host_binary.to_string(),
+                "--version".to_string(),
+            ],
+        )
     } else {
-        Command::new(binary).arg("--version").output()
+        (binary.to_string(), vec!["--version".to_string()])
     }
-    .ok()?;
+}
 
-    let version = parse_freerdp_version(&String::from_utf8_lossy(&output.stdout))
-        .or_else(|| parse_freerdp_version(&String::from_utf8_lossy(&output.stderr)));
+fn terminate_and_reap_probe(mut child: std::process::Child, target: &str, operation: &str) {
+    if let Err(error) = child.kill() {
+        tracing::debug!(protocol = "rdp", target, operation, %error, "Probe exited before kill");
+    }
+    let deadline = Instant::now() + PROBE_REAP_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(PROBE_POLL_INTERVAL),
+            Ok(None) => {
+                tracing::warn!(
+                    protocol = "rdp",
+                    target,
+                    operation,
+                    "Probe did not exit promptly after kill; reaping in background"
+                );
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(protocol = "rdp", target, operation, %error, "Failed to poll probe");
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                return;
+            }
+        }
+    }
+}
+
+fn probe_freerdp_version_with_timeout(
+    binary: &str,
+    timeout: Duration,
+    cancellation: Option<&AtomicBool>,
+) -> Option<FreeRdpVersion> {
+    if is_cancelled(cancellation) {
+        return None;
+    }
+    let (program, args) = version_probe_command(binary);
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        if is_cancelled(cancellation) {
+            terminate_and_reap_probe(child, binary, "version");
+            return None;
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(PROBE_POLL_INTERVAL),
+            Ok(None) => {
+                tracing::warn!(
+                    protocol = "rdp",
+                    binary,
+                    timeout_ms = timeout.as_millis(),
+                    "FreeRDP version probe timed out"
+                );
+                terminate_and_reap_probe(child, binary, "version");
+                return None;
+            }
+            Err(error) => {
+                tracing::debug!(protocol = "rdp", binary, %error, "Version probe failed");
+                terminate_and_reap_probe(child, binary, "version");
+                return None;
+            }
+        }
+    }
+
+    let mut stdout = Vec::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        let _ = pipe.read_to_end(&mut stdout);
+    }
+    let mut stderr = Vec::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_end(&mut stderr);
+    }
+    if is_cancelled(cancellation) {
+        return None;
+    }
+    parse_freerdp_version(&String::from_utf8_lossy(&stdout))
+        .or_else(|| parse_freerdp_version(&String::from_utf8_lossy(&stderr)))
+}
+
+fn freerdp_version_with_cancel(
+    binary: &str,
+    cancellation: Option<&AtomicBool>,
+) -> Option<FreeRdpVersion> {
+    if is_cancelled(cancellation) {
+        return None;
+    }
+    let cache = VERSION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cached = {
+        let guard = cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.get(binary).copied()
+    };
+    if let Some(version) = cached {
+        return version;
+    }
+    let version = probe_freerdp_version_with_timeout(binary, VERSION_PROBE_TIMEOUT, cancellation);
+    if is_cancelled(cancellation) {
+        return None;
+    }
+    cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(binary.to_string(), version);
     tracing::debug!(
         protocol = "rdp",
-        binary = %binary,
-        version = ?version,
+        binary,
+        ?version,
         "Detected FreeRDP version"
     );
     version
 }
 
-/// Builds the `/args-from:` argument for `binary`, using the syntax that this
-/// binary's FreeRDP version actually understands.
+/// Queries `binary --version` with a bounded probe and caches the result.
 ///
-/// See [`ArgsFromForm`] for why this cannot be a single hardcoded string.
+/// The original target, including a `host:` marker, is the cache key.
 #[must_use]
-pub fn args_from_argument(binary: &str, path: &std::path::Path) -> String {
-    match args_from_form_for_version(freerdp_version(binary)) {
+pub fn freerdp_version(binary: &str) -> Option<FreeRdpVersion> {
+    freerdp_version_with_cancel(binary, None)
+}
+
+/// Resolves the args-file syntax before a credential file is created.
+#[must_use]
+pub fn resolve_args_from_form(binary: &str) -> ArgsFromForm {
+    resolve_args_from_form_with_cancel(binary, None)
+}
+
+pub(crate) fn resolve_args_from_form_with_cancel(
+    binary: &str,
+    cancellation: Option<&AtomicBool>,
+) -> ArgsFromForm {
+    args_from_form_for_version(freerdp_version_with_cancel(binary, cancellation))
+}
+
+/// Builds an args-file switch from a previously resolved form.
+#[must_use]
+pub fn args_from_argument_for_form(form: ArgsFromForm, path: &std::path::Path) -> String {
+    match form {
         ArgsFromForm::FilePrefix => format!("/args-from:file:{}", path.display()),
         ArgsFromForm::BarePath => format!("/args-from:{}", path.display()),
     }
 }
 
-/// Checks whether a binary is available on `PATH`.
-fn binary_exists(name: &str) -> bool {
-    Command::new("which")
-        .arg(name)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+/// Builds an args-file switch for callers that did not pre-resolve the form.
+#[must_use]
+pub fn args_from_argument(binary: &str, path: &std::path::Path) -> String {
+    args_from_argument_for_form(resolve_args_from_form(binary), path)
 }
 
-/// Detects the best available FreeRDP binary.
-///
-/// On Wayland sessions, Wayland-native variants (`wlfreerdp3`, `wlfreerdp`)
-/// are tried first. On X11 sessions, `xfreerdp` variants take priority.
-/// Returns `None` if no FreeRDP client is found.
-#[must_use]
-pub fn detect_best_freerdp() -> Option<String> {
+fn command_succeeds_with_timeout(
+    program: &str,
+    args: &[&str],
+    target: &str,
+    timeout: Duration,
+    cancellation: Option<&AtomicBool>,
+) -> bool {
+    if is_cancelled(cancellation) {
+        return false;
+    }
+    let Ok(mut child) = Command::new(program)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let deadline = Instant::now() + timeout;
+    loop {
+        if is_cancelled(cancellation) {
+            terminate_and_reap_probe(child, target, "binary detection");
+            return false;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(PROBE_POLL_INTERVAL),
+            Ok(None) => {
+                tracing::debug!(
+                    protocol = "rdp",
+                    target,
+                    timeout_ms = timeout.as_millis(),
+                    "FreeRDP binary detection timed out"
+                );
+                terminate_and_reap_probe(child, target, "binary detection");
+                return false;
+            }
+            Err(error) => {
+                tracing::debug!(protocol = "rdp", target, %error, "Binary detection failed");
+                terminate_and_reap_probe(child, target, "binary detection");
+                return false;
+            }
+        }
+    }
+}
+
+fn binary_exists(name: &str, cancellation: Option<&AtomicBool>) -> bool {
+    command_succeeds_with_timeout(
+        "which",
+        &[name],
+        name,
+        BINARY_DETECTION_TIMEOUT,
+        cancellation,
+    )
+}
+
+pub(crate) fn detect_best_freerdp_with_cancel(cancellation: Option<&AtomicBool>) -> Option<String> {
     let wayland = is_wayland_session();
     let candidates = if wayland {
         WAYLAND_FIRST_CANDIDATES
     } else {
         X11_FIRST_CANDIDATES
     };
-
     for candidate in candidates {
-        if binary_exists(candidate) {
-            tracing::debug!(
-                protocol = "rdp",
-                binary = %candidate,
-                wayland,
-                "Selected external FreeRDP binary"
-            );
+        if is_cancelled(cancellation) {
+            return None;
+        }
+        if binary_exists(candidate, cancellation) {
             return Some((*candidate).to_string());
         }
     }
-    tracing::warn!(
-        protocol = "rdp",
-        wayland,
-        "No FreeRDP client found on PATH (wlfreerdp3/sdl-freerdp3/xfreerdp3)"
-    );
+    if !is_cancelled(cancellation) {
+        tracing::warn!(protocol = "rdp", wayland, "No FreeRDP client found on PATH");
+    }
     None
 }
 
-/// Detects if a Wayland-native FreeRDP variant is available for embedded mode.
-///
-/// Embedded mode (the managed `wlfreerdp` subsurface in [`super::thread`]) only
-/// makes sense on a Wayland session with an actual `wlfreerdp` binary, so this
-/// checks both directly instead of going through [`detect_best_freerdp`] — that
-/// now prefers the maintained SDL3 client, which cannot do subsurface embedding.
+/// Detects the best available FreeRDP binary.
 #[must_use]
-pub fn detect_wlfreerdp() -> bool {
-    is_wayland_session() && (binary_exists("wlfreerdp3") || binary_exists("wlfreerdp"))
+pub fn detect_best_freerdp() -> Option<String> {
+    detect_best_freerdp_with_cancel(None)
 }
 
-/// Detects the best FreeRDP binary for RemoteApp (RAIL) sessions.
-///
-/// `wlfreerdp` and `sdl-freerdp` do not support RAIL/RemoteApp — they render
-/// a full desktop into their own surface and cannot create individual
-/// application windows. Only `xfreerdp` variants support RAIL because they
-/// use X11 window management for per-app windows.
-///
-/// In Flatpak, `xfreerdp` is typically not bundled (only `wlfreerdp`/`sdl-freerdp`
-/// are included). This function checks the host system via `flatpak-spawn --host`
-/// when running inside a Flatpak sandbox.
+/// Detects if a Wayland-native FreeRDP variant is available for embedded mode.
 #[must_use]
-pub fn detect_best_freerdp_for_remoteapp() -> Option<String> {
-    // Only xfreerdp variants support RAIL/RemoteApp
-    const REMOTEAPP_CANDIDATES: &[&str] = &["xfreerdp3", "xfreerdp"];
+pub fn detect_wlfreerdp() -> bool {
+    is_wayland_session() && (binary_exists("wlfreerdp3", None) || binary_exists("wlfreerdp", None))
+}
 
-    // First check inside the sandbox
+pub(crate) fn detect_best_freerdp_for_remoteapp_with_cancel(
+    cancellation: Option<&AtomicBool>,
+) -> Option<String> {
+    const REMOTEAPP_CANDIDATES: &[&str] = &["xfreerdp3", "xfreerdp"];
     for candidate in REMOTEAPP_CANDIDATES {
-        if binary_exists(candidate) {
+        if is_cancelled(cancellation) {
+            return None;
+        }
+        if binary_exists(candidate, cancellation) {
             return Some((*candidate).to_string());
         }
     }
-
-    // In Flatpak, check host system via flatpak-spawn
     if rustconn_core::flatpak::is_flatpak() {
         for candidate in REMOTEAPP_CANDIDATES {
-            if host_binary_exists(candidate) {
-                // Return a marker that launch() will interpret as host-side binary
+            if is_cancelled(cancellation) {
+                return None;
+            }
+            if host_binary_exists(candidate, cancellation) {
                 return Some(format!("host:{candidate}"));
             }
         }
     }
-
     None
 }
 
-/// Checks whether a binary exists on the host system (via flatpak-spawn --host).
-fn host_binary_exists(name: &str) -> bool {
-    Command::new("flatpak-spawn")
-        .args(["--host", "which", name])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+/// Detects the best FreeRDP binary for RemoteApp sessions.
+#[must_use]
+pub fn detect_best_freerdp_for_remoteapp() -> Option<String> {
+    detect_best_freerdp_for_remoteapp_with_cancel(None)
 }
 
-/// Detects if any FreeRDP client is available for external mode
-///
-/// Returns the name of the best available FreeRDP client.
+fn host_binary_exists(name: &str, cancellation: Option<&AtomicBool>) -> bool {
+    command_succeeds_with_timeout(
+        "flatpak-spawn",
+        &["--host", "--watch-bus", "which", name],
+        name,
+        BINARY_DETECTION_TIMEOUT,
+        cancellation,
+    )
+}
+
+/// Detects any FreeRDP client available for external mode.
 #[must_use]
 pub fn detect_xfreerdp() -> Option<String> {
     detect_best_freerdp()
 }
 
-/// Checks if IronRDP native client is available
-///
-/// This is determined at compile time via the rdp-embedded feature flag.
+/// Checks if the native IronRDP client is compiled in.
 #[must_use]
 pub fn is_ironrdp_available() -> bool {
     rustconn_core::is_embedded_rdp_available()
@@ -255,126 +414,182 @@ pub fn is_ironrdp_available() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Arc;
+
     use super::*;
 
+    fn executable_script(body: &str) -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().expect("create temporary directory");
+        let path = dir.path().join("probe.sh");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write probe script");
+        let mut permissions = std::fs::metadata(&path)
+            .expect("read probe script metadata")
+            .permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).expect("make probe script executable");
+        (dir, path.to_string_lossy().into_owned())
+    }
+
     #[test]
-    fn test_wayland_candidates_prefer_sdl3() {
-        assert!(WAYLAND_FIRST_CANDIDATES.contains(&"wlfreerdp3"));
-        assert!(WAYLAND_FIRST_CANDIDATES.contains(&"wlfreerdp"));
-        assert!(WAYLAND_FIRST_CANDIDATES.contains(&"sdl-freerdp3"));
-        assert!(WAYLAND_FIRST_CANDIDATES.contains(&"sdl-freerdp"));
-        // Maintained SDL3 first, deprecated wlfreerdp as fallback, X11 last.
-        let sdl_pos = WAYLAND_FIRST_CANDIDATES
+    fn candidates_have_expected_precedence() {
+        let sdl = WAYLAND_FIRST_CANDIDATES
             .iter()
             .position(|c| *c == "sdl-freerdp3")
-            .unwrap();
-        let wl_pos = WAYLAND_FIRST_CANDIDATES
+            .expect("SDL candidate must exist");
+        let wl = WAYLAND_FIRST_CANDIDATES
             .iter()
             .position(|c| *c == "wlfreerdp3")
-            .unwrap();
-        let x11_pos = WAYLAND_FIRST_CANDIDATES
+            .expect("Wayland candidate must exist");
+        let x11 = WAYLAND_FIRST_CANDIDATES
             .iter()
             .position(|c| *c == "xfreerdp3")
-            .unwrap();
-        assert!(sdl_pos < wl_pos);
-        assert!(wl_pos < x11_pos);
+            .expect("X11 candidate must exist");
+        assert!(sdl < wl && wl < x11);
+        assert_eq!(X11_FIRST_CANDIDATES.first(), Some(&"xfreerdp3"));
     }
 
     #[test]
-    fn test_x11_candidates_prefer_xfreerdp() {
-        let x11_pos = X11_FIRST_CANDIDATES
-            .iter()
-            .position(|c| *c == "xfreerdp3")
-            .unwrap();
-        let sdl_pos = X11_FIRST_CANDIDATES
-            .iter()
-            .position(|c| *c == "sdl-freerdp3")
-            .unwrap();
-        let wl_pos = X11_FIRST_CANDIDATES
-            .iter()
-            .position(|c| *c == "wlfreerdp3")
-            .unwrap();
-        assert!(x11_pos < sdl_pos);
-        assert!(sdl_pos < wl_pos);
-    }
-
-    #[test]
-    fn test_binary_exists_returns_false_for_nonexistent() {
-        assert!(!binary_exists("this_binary_does_not_exist_12345"));
-    }
-
-    #[test]
-    fn parses_freerdp_version_banner() {
-        assert_eq!(
-            parse_freerdp_version("This is FreeRDP version 3.24.2 (3.24.2)"),
-            Some((3, 24, 2))
-        );
-        assert_eq!(
-            parse_freerdp_version("This is FreeRDP version 3.26.0 (3.26.0)"),
-            Some((3, 26, 0))
-        );
-    }
-
-    #[test]
-    fn parses_freerdp_version_with_suffix_and_missing_patch() {
-        assert_eq!(
-            parse_freerdp_version("This is FreeRDP version 3.27.0-rc1"),
-            Some((3, 27, 0))
-        );
-        assert_eq!(
-            parse_freerdp_version("FreeRDP version 4.0"),
-            Some((4, 0, 0))
-        );
+    fn parses_robust_freerdp_version_banners() {
+        for (banner, expected) in [
+            ("This is FreeRDP version 3.24.2 (3.24.2)", (3, 24, 2)),
+            ("THIS IS FREERDP VERSION v3.26.0", (3, 26, 0)),
+            ("FreeRDP build: 3.27.0-rc1", (3, 27, 0)),
+            ("FreeRDP version 4.0", (4, 0, 0)),
+        ] {
+            assert_eq!(parse_freerdp_version(banner), Some(expected));
+        }
     }
 
     #[test]
     fn rejects_unparseable_version_output() {
         assert_eq!(parse_freerdp_version(""), None);
-        assert_eq!(parse_freerdp_version("command not found"), None);
-        assert_eq!(parse_freerdp_version("version unknown"), None);
+        assert_eq!(parse_freerdp_version("FreeRDP version unknown"), None);
+        assert_eq!(parse_freerdp_version("version 3.26.0"), None);
     }
 
     #[test]
-    fn old_freerdp_gets_bare_args_from_path() {
-        // 3.24/3.25 do not know the `file:` prefix.
+    fn host_probe_preserves_original_target_construction() {
         assert_eq!(
-            args_from_form_for_version(Some((3, 24, 2))),
-            ArgsFromForm::BarePath
+            version_probe_command("host:xfreerdp3"),
+            (
+                "flatpak-spawn".to_string(),
+                vec![
+                    "--host".into(),
+                    "--watch-bus".into(),
+                    "xfreerdp3".into(),
+                    "--version".into()
+                ]
+            )
         );
+    }
+
+    #[test]
+    fn version_probe_is_bounded_and_kills_hung_process() {
+        let (_dir, binary) = executable_script("exec sleep 5");
+        let started = Instant::now();
+        assert_eq!(
+            probe_freerdp_version_with_timeout(&binary, Duration::from_millis(50), None),
+            None
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn version_probe_honors_cancellation() {
+        let (_dir, binary) = executable_script("exec sleep 5");
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let trigger = Arc::clone(&cancellation);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            trigger.store(true, Ordering::Release);
+        });
+        let started = Instant::now();
+        assert_eq!(
+            probe_freerdp_version_with_timeout(
+                &binary,
+                Duration::from_secs(5),
+                Some(&cancellation)
+            ),
+            None
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn binary_detection_is_bounded() {
+        let (_dir, binary) = executable_script("exec sleep 5");
+        let started = Instant::now();
+        assert!(!command_succeeds_with_timeout(
+            &binary,
+            &[],
+            "test-probe",
+            Duration::from_millis(50),
+            None
+        ));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn binary_detection_honors_cancellation() {
+        let (_dir, binary) = executable_script("exec sleep 5");
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let trigger = Arc::clone(&cancellation);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            trigger.store(true, Ordering::Release);
+        });
+        let started = Instant::now();
+        assert!(!command_succeeds_with_timeout(
+            &binary,
+            &[],
+            "test-probe",
+            Duration::from_secs(5),
+            Some(&cancellation)
+        ));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn version_is_cached_per_original_target() {
+        let counter_dir = tempfile::tempdir().expect("create counter directory");
+        let counter = counter_dir.path().join("count");
+        let body = format!(
+            "printf x >> '{}'; printf 'This is FreeRDP version 3.26.1\\n'",
+            counter.display()
+        );
+        let (_script_dir, binary) = executable_script(&body);
+        assert_eq!(freerdp_version(&binary), Some((3, 26, 1)));
+        assert_eq!(freerdp_version(&binary), Some((3, 26, 1)));
+        assert_eq!(
+            std::fs::read_to_string(counter).expect("read probe count"),
+            "x"
+        );
+    }
+
+    #[test]
+    fn version_selects_compatible_args_from_form() {
         assert_eq!(
             args_from_form_for_version(Some((3, 25, 0))),
             ArgsFromForm::BarePath
         );
-    }
-
-    #[test]
-    fn new_freerdp_gets_file_prefix() {
         assert_eq!(
             args_from_form_for_version(Some((3, 26, 0))),
             ArgsFromForm::FilePrefix
         );
-        assert_eq!(
-            args_from_form_for_version(Some((4, 0, 0))),
-            ArgsFromForm::FilePrefix
-        );
-    }
-
-    #[test]
-    fn unknown_version_falls_back_to_bare_path() {
         assert_eq!(args_from_form_for_version(None), ArgsFromForm::BarePath);
-        // FreeRDP 2.x never had the prefix either.
-        assert_eq!(
-            args_from_form_for_version(Some((2, 11, 7))),
-            ArgsFromForm::BarePath
-        );
     }
 
     #[test]
-    fn args_from_argument_uses_bare_path_for_unknown_binary() {
-        let arg = args_from_argument(
-            "this_binary_does_not_exist_12345",
-            std::path::Path::new("/run/user/1000/rustconn-rdp.args"),
+    fn formats_pre_resolved_args_from_form() {
+        let path = std::path::Path::new("/run/user/1000/rustconn-rdp.args");
+        assert_eq!(
+            args_from_argument_for_form(ArgsFromForm::BarePath, path),
+            "/args-from:/run/user/1000/rustconn-rdp.args"
         );
-        assert_eq!(arg, "/args-from:/run/user/1000/rustconn-rdp.args");
+        assert_eq!(
+            args_from_argument_for_form(ArgsFromForm::FilePrefix, path),
+            "/args-from:file:/run/user/1000/rustconn-rdp.args"
+        );
     }
 }

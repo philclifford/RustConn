@@ -432,6 +432,12 @@ pub type ErrorCallback = Box<dyn Fn(&str) + 'static>;
 /// Callback type for fallback notifications
 pub type FallbackCallback = Box<dyn Fn(&str) + 'static>;
 
+/// Resolves an explicit legacy-security decision exactly once.
+pub type LegacySecurityDecision = Box<dyn FnOnce(bool) + 'static>;
+
+/// Callback invoked when Standard RDP Security requires explicit consent.
+pub type LegacySecurityCallback = Box<dyn Fn(LegacySecurityDecision) + 'static>;
+
 /// Callback type for certificate change notifications.
 ///
 /// Called when FreeRDP detects a server certificate mismatch. The callback
