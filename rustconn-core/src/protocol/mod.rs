@@ -30,7 +30,9 @@ pub use detection::{
     detect_vnc_viewer_name, detect_vnc_viewer_path, detect_waypipe,
 };
 pub use freerdp::{
-    FreeRdpConfig, build_freerdp_args, extract_geometry_from_args, has_decorations_flag,
+    FreeRdpConfig, build_freerdp_args, contains_freerdp_secret_field, extract_geometry_from_args,
+    freerdp_secret_field_takes_following_value, has_decorations_flag,
+    is_freerdp_shell_or_proxy_arg,
 };
 pub use icons::{
     CloudProvider, PROTOCOL_TAB_CSS_CLASSES, ProviderIconCache, all_protocol_icons,

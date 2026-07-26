@@ -252,9 +252,15 @@ impl MainWindow {
         let window_weak = window.downgrade();
         let state_clone = state.clone();
         let sidebar_clone = sidebar.clone();
+        let notebook_for_rename = Rc::clone(&self.terminal_notebook);
         rename_action.connect_activate(move |_, _| {
             if let Some(win) = window_weak.upgrade() {
-                Self::rename_selected_item(win.upcast_ref(), &state_clone, &sidebar_clone);
+                Self::rename_selected_item(
+                    win.upcast_ref(),
+                    &state_clone,
+                    &sidebar_clone,
+                    &notebook_for_rename,
+                );
             }
         });
         window.add_action(&rename_action);
@@ -889,17 +895,13 @@ impl MainWindow {
         window.add_action(&sftp_action);
     }
 
-    /// Opens a Web bookmark connection.
-    ///
-    /// When Browser Mode is Embedded (and the `web-embedded` feature is active),
-    /// creates an `EmbeddedWebWidget` inside a new tab. Otherwise launches the
-    /// URL in a custom browser subprocess or the system default browser via
-    /// `gtk4::UriLauncher`.
-    pub(crate) fn handle_web_connect(
+    /// Opens a Web bookmark and observes an embedded session it creates.
+    pub(crate) fn handle_web_connect_observed(
         state: &SharedAppState,
         notebook: &SharedNotebook,
         sidebar: &SharedSidebar,
         connection_id: Uuid,
+        observer: Option<types::SessionStartObserver>,
     ) {
         let (url, web_config, conn_name) = {
             let Ok(state_ref) = state.try_borrow() else {
@@ -978,6 +980,9 @@ impl MainWindow {
                     });
 
                     notebook.add_embedded_web_tab(session_id, connection_id, &conn_name, widget);
+                    if let Some(observer) = observer {
+                        observer.complete(session_id);
+                    }
                     sidebar.update_connection_status(&connection_id.to_string(), "connected");
                     tracing::info!(
                         connection = %conn_name,

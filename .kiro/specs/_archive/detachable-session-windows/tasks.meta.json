@@ -1,0 +1,211 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Add the detachability predicate in rustconn-core": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006218215
+      },
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006230711
+      },
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006754422
+      }
+    ],
+    "2. Unit and property tests for the predicate": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006218336
+      },
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006768382
+      },
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785007683746
+      }
+    ],
+    "3. Register the toggle keybinding in the core registry": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006218433
+      },
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006242042
+      },
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785007690303
+      }
+    ],
+    "4. Extract `build_session_content` and generalize tab parking": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006218526
+      },
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006246369
+      },
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785007694239
+      }
+    ],
+    "5. Add the notebook detach/attach API": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006218595
+      },
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785007698875
+      }
+    ],
+    "6. Create the detached window shell and registry": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006218681
+      }
+    ],
+    "7. Add the detach/attach actions and wire MainWindow": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006218782
+      }
+    ],
+    "8. Add the tab context menu entries": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006218914
+      }
+    ],
+    "9. Wire the window lifecycle": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219000
+      }
+    ],
+    "10. Add the shortcuts dialog entry": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219080
+      }
+    ],
+    "11. Localize all new strings": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219156
+      }
+    ],
+    "12. Quality gate and manual protocol matrix": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219246
+      }
+    ],
+    "13. Draft the CHANGELOG entry for 0.19.4": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219327
+      }
+    ],
+    "14. Consolidate every 0.19.4 change in the CHANGELOG": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219392
+      }
+    ],
+    "15. Update the documentation": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219475
+      }
+    ],
+    "16. Update the README": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219580
+      }
+    ],
+    "17. Translate all new strings for every language via subagents": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219650
+      }
+    ],
+    "18. Run the full release preparation cycle for 0.19.4": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219732
+      }
+    ],
+    "19. Validate `scripts/release.sh` without pushing": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219817
+      }
+    ],
+    "20. Commit the implementation": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219906
+      }
+    ],
+    "21. Critical review round 1, then apply the improvements": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006219999
+      }
+    ],
+    "22. Critical review round 2, then apply the improvements": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006220098
+      }
+    ],
+    "23. Final commit": [
+      {
+        "executionId": "e2e060cc-804c-483e-8896-e07e362fd406",
+        "chatSessionId": "sess_ab15e89d-e337-458f-bd2e-d8a9ab5cbd4a",
+        "timestamp": 1785006220199
+      }
+    ]
+  }
+}

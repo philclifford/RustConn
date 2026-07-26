@@ -1,0 +1,129 @@
+# Kiro global permissions (all workspaces)
+# Copy to: ~/.kiro/settings/permissions.yaml
+#
+# Curated from the grown-by-clicking version: reads allowed everywhere, junk
+# patterns dropped, destructive and cloud-mutating commands moved back to
+# "ask". Per-project extras belong in the workspace file, not here.
+
+rules:
+  # ─── Reads: always allowed, any path, any workspace ───────────────
+  # This is the rule that stops "allow read?" prompts outside a configured
+  # workspace. Shell-based reads (cat/grep/rg) fall under `shell` below.
+  - capability: fs_read
+    effect: allow
+
+  # ─── Shell: read-only inspection, build and packaging tooling ─────
+  - capability: shell
+    effect: allow
+    match:
+      - "/home/totoshko88/.cargo/bin/cargo *"
+      - "/home/totoshko88/.cargo/bin/rustfmt *"
+      - "GIT_PAGER=cat *"
+      - 'GIT_SSH_COMMAND="true" *'
+      - "LANG=C *"
+      - "LC_TIME=C *"
+      - "PAGER=cat *"
+      - 'RUSTFLAGS="-W *'
+      - "TERM=dumb *"
+      - "appstreamcli *"
+      - "apt-cache *"
+      - "awk *"
+      - "cargo *"
+      - "cat *"
+      - "cd *"
+      - "comm *"
+      - "convert *"
+      - "cp *"
+      - "curl *"
+      - "date *"
+      - "df *"
+      - "diff *"
+      - "du *"
+      - "echo *"
+      - "env *"
+      - "fd *"
+      - "file *"
+      - "find *"
+      - "flatpak *"
+      - "flatpak-builder *"
+      - "gh *"
+      - "git *"
+      - "grep *"
+      - "head *"
+      - "identify *"
+      - "kirograph *"
+      - "locale *"
+      - "md5sum *"
+      - "mkdir *"
+      - "msgattrib *"
+      - "msgcat *"
+      - "msgcmp *"
+      - "msgfmt *"
+      - "msgmerge *"
+      - "msgunfmt *"
+      - "nl *"
+      - "node *"
+      - "osc *"
+      - "perl *"
+      - "pgrep *"
+      - "pkg-config *"
+      - "printf *"
+      - "ps *"
+      - "pwd *"
+      - "python3 *"
+      - "readlink *"
+      - "reset *"
+      - "rg *"
+      - "rustc *"
+      - "rustfmt *"
+      - "rustup *"
+      - "sed *"
+      - "sha256sum *"
+      - "sleep *"
+      - "soffice *"
+      - "sort *"
+      - "stat *"
+      - "strings *"
+      - "tail *"
+      - "tar *"
+      - "tee *"
+      - "test *"
+      - "timeout *"
+      - "touch *"
+      - "true *"
+      - "uv *"
+      - "wc *"
+      - "which *"
+      - "whoami *"
+      - "xargs *"
+      - "xgettext *"
+      - "xmllint *"
+    exclude:
+      # History rewrites and publishing stay behind a prompt even though
+      # "git *" and "cargo *" are allowed above.
+      - "cargo publish*"
+      - "git clean*"
+      - "git push --force*"
+      - "git rebase*"
+      - "git reset --hard*"
+
+  # ─── MCP servers ─────────────────────────────────────────────────
+  - capability: mcp
+    effect: allow
+    match:
+      - "fetch/fetch"
+      - "kirograph/*"
+
+  # ─── Web ─────────────────────────────────────────────────────────
+  - capability: web_fetch
+    effect: allow
+
+  - capability: web_search
+    effect: allow
+
+# Intentionally NOT allowed globally (each will prompt):
+#   rm, rmdir, mv, ln, chmod, kill, pkill, killall, fuser, fusermount
+#   ssh, sshpass, nc
+#   apt, dpkg, brew, snap, snapcraft, pacman, dnf, pip, pip3, npx
+#   aws, az, azure-nuke, kubectl, lxc, tofu, gnome-extensions
+# Add a narrow pattern to the *workspace* file if a specific project needs one.

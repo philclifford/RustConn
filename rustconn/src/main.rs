@@ -65,6 +65,7 @@ pub mod async_utils;
 pub mod audio;
 pub mod automation;
 pub mod cairo_buffer;
+pub mod detached_window;
 pub mod dialogs;
 pub mod display;
 pub mod embedded;
@@ -76,7 +77,6 @@ pub mod embedded_vnc_types;
 #[cfg(feature = "web-embedded")]
 pub mod embedded_web;
 pub mod external_session;
-pub mod external_window;
 pub mod i18n;
 mod i18n_markers;
 #[cfg(target_os = "macos")]

@@ -1,3 +1,17 @@
+rustconn (0.19.4-1) unstable; urgency=medium
+
+  * Version bump to 0.19.4
+  * Added detachable session windows (issue #236)
+  * Fixed RDP connection failing when the server only supports Standard RDP Security (issue #235)
+  * Fixed FreeRDP fallback broken on FreeRDP 3.24/3.25 due to the args-from file: prefix
+  * Fixed CredSSP logon failures triggering a pointless FreeRDP fallback
+  * Removed dead external_window module (ExternalWindowManager)
+  * Improved RDP failure classification moved into rustconn-core
+  * Improved single code path for building a session's tab content
+  * Improved localization: new strings translated in all 16 languages
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Mon, 27 Jul 2026 01:57:32 +0300
+
 rustconn (0.19.3-1) unstable; urgency=medium
 
   * Version bump to 0.19.3

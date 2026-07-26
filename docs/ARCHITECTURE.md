@@ -1,6 +1,6 @@
 # RustConn Architecture Guide
 
-**Version 0.19.3** | Last updated: July 2026
+**Version 0.19.4** | Last updated: July 2026
 
 This document describes the internal architecture of RustConn for contributors and maintainers.
 
@@ -992,6 +992,47 @@ rustconn/src/embedded_rdp/
 
 ## GTK4/Libadwaita Patterns
 
+### Session Placement Model
+
+A live session can sit in one of three places, and only one at a time:
+
+| Placement | Where the widget lives | Tab in the main `adw::TabView`? |
+|-----------|------------------------|---------------------------------|
+| **Tab** | its own `TabPageContainer` | yes |
+| **Split** | a panel of another tab's `SplitViewBridge` (the session is *parked*) | no (the guest tab is closed, state kept) |
+| **Detached window** | the content area of an `adw::ApplicationWindow` hosting exactly one session | no (the tab is parked the same way) |
+
+`TerminalNotebook` (`rustconn/src/terminal/`) remains the **single owner of session state** in every
+placement — `sessions`, `terminals`, `session_widgets`, `session_info`, `tab_containers`, the park
+sets, and the detached set. A split panel or a detached window only *borrows* the session's widget
+subtree; it never owns session bookkeeping, and teardown always runs through the notebook's
+`close-page` path. Both moves reuse the same primitives: `park_tab_page` removes the page while the
+`close-page` handler skips teardown, `build_session_content` rewraps the live widget for its new
+host, and `restore_session_tab` clears whichever park set the session was in.
+
+`DetachedWindowRegistry` (`rustconn/src/detached_window.rs`) is the **window registry**: it owns the
+`DetachedSessionWindow` values keyed by session id (`insert`, `take`, `contains`, `count`, `present`,
+`with_window`, `close_all`), while the per-window operations — `present_fullscreen_on`,
+`begin_attach`, `set_session_title`, `close` — sit on `DetachedSessionWindow`. `MainWindow` holds it as
+`detached_windows: Rc<DetachedWindowRegistry>`; every callback back into the notebook or the registry
+captures `Weak` handles only, so a closed window and its session drop cleanly (no `Rc` cycle).
+
+The decision "may this session be detached" is GUI-free and lives in
+`rustconn-core/src/session_placement.rs` — `detach_verdict(&DetachContext) -> DetachVerdict`, a pure
+predicate over `renders_in_process`, `is_split_owner`, `is_split_guest`, `is_detached`. Every call
+site (tab context menu, keyboard action, sidebar routing) goes through it, and `reason_key()` names
+the translated explanation shown when a verdict is not `Allowed` (external viewer, split owner, split
+guest, already detached). The notebook-side API is `rustconn/src/terminal/detach.rs`
+(`take_session_content`, `attach_session`, `is_detached`, `detached_count`); the window actions
+(`win.detach-session`, `win.detach-session-to-monitor`, `win.attach-session`, `win.toggle-detach`)
+live in `rustconn/src/window/detach_actions.rs`.
+
+Two consequences worth remembering when touching session code:
+- `session_count()` counts tabbed sessions only, so any "open sessions" figure must add
+  `detached_count()` (close confirmation, quit path).
+- Wayland cannot position a toplevel, so a monitor choice is honoured with
+  `present_fullscreen_on()` (fullscreen on the chosen `gdk::Monitor`), never with coordinates.
+
 ### Sidebar Module Structure
 
 The sidebar is decomposed into focused submodules for maintainability:
@@ -1068,6 +1109,7 @@ rustconn/src/
 ├── app.rs                 # Application setup, CSS, actions
 ├── window/                # Main window (modular structure)
 │   ├── mod.rs             # Module exports, MainWindow struct
+│   ├── detach_actions.rs  # win.detach-session / win.attach-session / win.toggle-detach
 │   └── ...                # Domain-specific window functionality
 ├── state.rs               # SharedAppState
 ├── async_utils.rs         # Async helpers (spawn_async, block_on_async_with_timeout)
@@ -1080,6 +1122,11 @@ rustconn/src/
 ├── sidebar_types.rs       # Sidebar data types
 ├── sidebar_ui.rs          # Sidebar widget helpers
 ├── terminal/              # VTE terminal integration
+│   ├── mod.rs             # TerminalNotebook — single owner of all session state
+│   ├── detach.rs          # Detach/attach API (take_session_content, attach_session)
+│   ├── tab_menu.rs        # Tab context menu (incl. Move to New Window)
+│   └── ...                # Split view, monitoring, highlighting helpers
+├── detached_window.rs     # DetachedSessionWindow + DetachedWindowRegistry (one session per window)
 ├── dialogs/               # Modal dialogs
 │   ├── widgets.rs         # Shared widget builders (CheckboxRow, EntryRow, SwitchRow, etc.)
 │   ├── connection/        # Connection dialog (modular)
@@ -1199,6 +1246,7 @@ rustconn-core/src/
 ├── cli_download/          # Flatpak CLI download manager
 ├── dynamic_folder.rs      # Dynamic folder executor — script execution, JSON parsing, entry→Connection conversion
 ├── highlight.rs           # Text highlighting rules engine (CompiledHighlightRules, find_matches)
+├── session_placement.rs   # detach_verdict() — GUI-free "can this session be detached" predicate
 ├── smart_folder.rs        # SmartFolderManager — dynamic connection grouping with filter evaluation
 ├── sftp.rs                # SFTP URI/command builders, ssh-add, mc FISH VFS
 ├── flatpak.rs             # Flatpak sandbox detection, portal key path resolution, stable key copy

@@ -415,8 +415,13 @@ fn save_current_workspace(
 
     // Collect open sessions from the terminal notebook (the live source of
     // truth for the GUI — the core SessionManager is not populated here).
-    let entries: Vec<WorkspaceEntry> = notebook
-        .ordered_session_ids()
+    // A detached session has no tab, so it is not in the ordered list; it is
+    // appended as an ordinary entry, which restores it as a tab. Persisting the
+    // detached layout itself is out of scope (issue #236), losing the session
+    // from the workspace is not.
+    let mut ordered = notebook.ordered_session_ids();
+    ordered.extend(notebook.detached_session_ids());
+    let entries: Vec<WorkspaceEntry> = ordered
         .iter()
         .filter_map(|id| notebook.get_session_info(*id).map(|s| (*id, s)))
         .enumerate()

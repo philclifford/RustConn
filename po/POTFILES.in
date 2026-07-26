@@ -22,6 +22,7 @@ rustconn/src/window/clusters.rs
 rustconn/src/window/connection_actions.rs
 rustconn/src/window/credentials.rs
 rustconn/src/window/connection_dialogs.rs
+rustconn/src/window/detach_actions.rs
 rustconn/src/window/document_actions.rs
 rustconn/src/window/edit_actions.rs
 rustconn/src/window/edit_dialogs.rs
@@ -125,6 +126,7 @@ rustconn/src/terminal/recording.rs
 rustconn/src/terminal/tab_menu.rs
 rustconn/src/validation.rs
 rustconn/src/vault_ops.rs
+rustconn/src/detached_window.rs
 rustconn/src/empty_state.rs
 rustconn/src/dashboard.rs
 rustconn/src/automation.rs

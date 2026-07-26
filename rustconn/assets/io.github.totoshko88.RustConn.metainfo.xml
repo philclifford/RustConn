@@ -140,6 +140,20 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.4" date="2026-07-27">
+      <description>
+        <p>Version 0.19.4 - Detachable session windows and RDP fallback fixes:</p>
+        <ul>
+          <li>Added detachable session windows: move a session to its own window and back</li>
+          <li>Added Ctrl+Shift+M to toggle a session between a tab and its own window</li>
+          <li>Added per-monitor fullscreen option for detached sessions</li>
+          <li>Fixed RDP connection failing when the server only supports Standard RDP Security</li>
+          <li>Fixed FreeRDP fallback broken on FreeRDP 3.24 and 3.25</li>
+          <li>Fixed CredSSP logon failures triggering a pointless FreeRDP fallback</li>
+          <li>Improved RDP failure classification with unit-tested rules</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.3" date="2026-07-23">
       <description>
         <p>Version 0.19.3 - FreeRDP compatibility and startup improvements:</p>

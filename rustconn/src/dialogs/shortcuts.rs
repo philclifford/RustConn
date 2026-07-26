@@ -188,6 +188,12 @@ const SHORTCUTS: &[ShortcutEntry] = &[
         description: "Reset zoom",
         category: "Terminal",
     },
+    ShortcutEntry {
+        accel: "<Control><Shift>m",
+        keys: "Ctrl+Shift+M",
+        description: "Move session to new window",
+        category: "Terminal",
+    },
     // Split view shortcuts
     ShortcutEntry {
         accel: "<Control><Shift>h",
@@ -638,6 +644,7 @@ fn _i18n_markers() {
     i18n("Zoom in (font size)");
     i18n("Zoom out (font size)");
     i18n("Reset zoom");
+    i18n("Move session to new window");
     i18n("Split horizontal");
     i18n("Split vertical");
     i18n("Close pane");

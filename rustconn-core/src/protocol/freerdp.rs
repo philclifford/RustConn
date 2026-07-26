@@ -143,6 +143,82 @@ impl FreeRdpConfig {
     }
 }
 
+/// Returns whether an argument contains a `FreeRDP` secret field.
+///
+/// Matching is case-insensitive for `p`, `password`, `gp`, `gateway-password`,
+/// and `pth`. Top-level, standalone, colon-, equals-, whitespace-, and
+/// comma-delimited fields are checked after leading ASCII whitespace, slashes,
+/// and GNU-style option hyphens are removed.
+#[must_use]
+pub fn contains_freerdp_secret_field(arg: &str) -> bool {
+    arg.split(',').any(|field| {
+        let (name, _) = split_freerdp_field(field);
+        is_freerdp_secret_name(name)
+    })
+}
+
+/// Returns whether an argument selects a `FreeRDP` shell or proxy command.
+///
+/// Leading ASCII whitespace, slashes, and option hyphens are ignored, and
+/// matching is case-insensitive across top-level and composite fields.
+#[must_use]
+pub fn is_freerdp_shell_or_proxy_arg(arg: &str) -> bool {
+    arg.split(',').any(|field| {
+        let (name, _) = split_freerdp_field(field);
+        is_freerdp_shell_or_proxy_name(name)
+    })
+}
+
+/// Returns whether a `FreeRDP` secret field consumes the following argument.
+///
+/// This detects standalone top-level fields and trailing standalone fields in
+/// comma-delimited composites after the same normalization as the main helper.
+#[must_use]
+pub fn freerdp_secret_field_takes_following_value(arg: &str) -> bool {
+    let trailing_field = arg.rsplit(',').next().unwrap_or(arg);
+    let (name, has_value_delimiter) = split_freerdp_field(trailing_field);
+    !has_value_delimiter && is_freerdp_secret_name(name)
+}
+
+fn normalize_freerdp_field(field: &str) -> &str {
+    field.trim_start_matches(|character: char| {
+        character.is_ascii_whitespace() || character == '/' || character == '-'
+    })
+}
+
+fn split_freerdp_field(field: &str) -> (&str, bool) {
+    let normalized = normalize_freerdp_field(field);
+    normalized
+        .find(|character: char| {
+            character == ':' || character == '=' || character.is_ascii_whitespace()
+        })
+        .map_or((normalized, false), |name_end| {
+            (&normalized[..name_end], true)
+        })
+}
+
+fn is_freerdp_secret_name(name: &str) -> bool {
+    const SECRET_FIELDS: [&str; 5] = ["p", "password", "gp", "gateway-password", "pth"];
+    SECRET_FIELDS
+        .iter()
+        .any(|secret| name.eq_ignore_ascii_case(secret))
+}
+
+fn is_freerdp_shell_or_proxy_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("shell") || name.eq_ignore_ascii_case("proxy")
+}
+
+/// Returns whether the trailing blocked `FreeRDP` field consumes the next argument.
+///
+/// This covers standalone secret, shell, and proxy fields after the same
+/// normalization used by the other `FreeRDP` argument helpers.
+#[must_use]
+pub fn is_standalone_freerdp_blocked_field(arg: &str) -> bool {
+    let trailing_field = arg.rsplit(',').next().unwrap_or(arg);
+    let (name, has_value_delimiter) = split_freerdp_field(trailing_field);
+    !has_value_delimiter && (is_freerdp_secret_name(name) || is_freerdp_shell_or_proxy_name(name))
+}
+
 /// Builds `FreeRDP` command-line arguments from configuration
 ///
 /// This function generates the command-line arguments for `FreeRDP` (xfreerdp/wlfreerdp)
@@ -175,10 +251,10 @@ pub fn build_freerdp_args(config: &FreeRdpConfig) -> Vec<String> {
         args.push(format!("/u:{username}"));
     }
 
-    // Password — handled externally via ephemeral args file (/args-from:file:)
+    // Password — handled externally via ephemeral args file (/args-from:)
     // to survive RD Connection Broker redirects (issue #218). The password
     // never appears on argv or stdin. The caller is responsible for writing
-    // the args file and passing /args-from:file:<path> separately.
+    // the args file and passing the /args-from: switch separately.
 
     // Resolution
     args.push(format!("/w:{}", config.width));
@@ -223,12 +299,16 @@ pub fn build_freerdp_args(config: &FreeRdpConfig) -> Vec<String> {
         }
     }
 
-    // Extra arguments — filter dangerous prefixes matching rdp.rs custom_args
-    let dangerous_prefixes = ["/p:", "/password:", "/shell:", "/proxy:"];
+    // Extra arguments — reject secret-bearing fields and execution-changing options.
+    let mut skip_next_value = false;
     for arg in &config.extra_args {
-        let lower = arg.to_lowercase();
-        if dangerous_prefixes.iter().any(|p| lower.starts_with(p)) {
-            tracing::warn!(arg = %arg, "Blocked dangerous FreeRDP extra arg");
+        if skip_next_value {
+            skip_next_value = false;
+            continue;
+        }
+        if contains_freerdp_secret_field(arg) || is_freerdp_shell_or_proxy_arg(arg) {
+            skip_next_value = is_standalone_freerdp_blocked_field(arg);
+            tracing::warn!("Blocked dangerous FreeRDP extra arg");
             continue;
         }
         args.push(arg.clone());
@@ -422,5 +502,77 @@ mod tests {
 
         // Non-existent paths should be skipped
         assert!(!args.iter().any(|a| a.starts_with("/drive:")));
+    }
+}
+
+#[cfg(test)]
+mod secret_argument_tests {
+    use super::*;
+
+    #[test]
+    fn detects_top_level_and_composite_secret_aliases() {
+        for argument in [
+            " /P:session-secret",
+            "//PASSWORD:password-secret",
+            "/gateway:g:host, /Gp:gateway-secret",
+            "/gateway:g:host,//GATEWAY-PASSWORD:alias-secret",
+            "/gateway:g:host,PTH:hash-secret",
+            "/p whitespace-secret",
+            "/gateway:g:host,gp whitespace-gateway-secret",
+        ] {
+            assert!(
+                contains_freerdp_secret_field(argument),
+                "expected secret field in {argument:?}"
+            );
+        }
+
+        for argument in [
+            "/gateway:g:host,u:user",
+            "/drive:Documents,/home/user/Documents",
+            "/u:alice",
+        ] {
+            assert!(
+                !contains_freerdp_secret_field(argument),
+                "unexpected secret field in {argument:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn filters_secret_aliases_and_normalized_blocked_prefixes() {
+        let blocked = [
+            " /P:session-secret",
+            "//PASSWORD:password-secret",
+            "/gateway:g:host, /Gp:gateway-secret",
+            "/gateway:g:host,//GATEWAY-PASSWORD:alias-secret",
+            "/gateway:g:host,PTH:hash-secret",
+            "/p whitespace-secret",
+            "/gateway:g:host,gp whitespace-gateway-secret",
+            "--password",
+            "split-secret",
+            "  /SHELL:command-secret",
+            "\t//PrOxY:proxy-secret",
+        ];
+        let mut extra_args = blocked.iter().map(ToString::to_string).collect::<Vec<_>>();
+        extra_args.push("/gateway:g:host,u:user".to_string());
+
+        let args = build_freerdp_args(
+            &FreeRdpConfig::new("server.example.com").with_extra_args(extra_args),
+        );
+
+        assert!(args.iter().any(|arg| arg == "/gateway:g:host,u:user"));
+        for secret in [
+            "session-secret",
+            "password-secret",
+            "gateway-secret",
+            "alias-secret",
+            "hash-secret",
+            "whitespace-secret",
+            "split-secret",
+            "command-secret",
+            "proxy-secret",
+        ] {
+            assert!(args.iter().all(|arg| !arg.contains(secret)));
+        }
     }
 }

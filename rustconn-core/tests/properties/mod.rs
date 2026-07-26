@@ -68,6 +68,7 @@ mod security_tests;
 mod selection_tests;
 mod serial_tests;
 mod serialization_tests;
+mod session_placement_tests;
 mod session_restore_tests;
 mod shell_escape_tests;
 mod smart_folder_tests;

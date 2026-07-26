@@ -9,6 +9,8 @@
 //! - `config` - Terminal appearance and behavior configuration
 
 mod config;
+mod detach;
+pub use detach::{DetachMonitor, DetachPresentation};
 pub mod file_drop;
 pub mod highlight_overlay;
 pub mod playback;
@@ -52,6 +54,7 @@ use crate::activity_coordinator::ActivityCoordinator;
 use crate::automation::{AutomationSession, prepare_rules_from_config};
 use crate::embedded_rdp::EmbeddedRdpWidget;
 use crate::i18n::{i18n, i18n_f};
+use crate::monitoring::MonitoringCoordinator;
 use crate::session::{SessionState, SessionWidget, VncSessionWidget};
 use crate::terminal::highlight_overlay::HighlightOverlay;
 use crate::terminal::tab_container::TabPageContainer;
@@ -216,6 +219,26 @@ pub struct TerminalNotebook {
     /// Tab Overview). Their session data (widget, terminal, info) stays alive;
     /// `restore_session_tab` recreates the tab when the session leaves the split.
     parked_in_split: Rc<RefCell<HashSet<Uuid>>>,
+    /// Sessions whose widget currently lives in a detached window and which
+    /// therefore have no `TabPage`. Session data stays alive, exactly as for
+    /// `parked_in_split`; the `close-page` handler skips teardown for them.
+    detached: Rc<RefCell<HashSet<Uuid>>>,
+    /// Invoked by [`Self::switch_to_tab`] when the target session is detached,
+    /// so the window layer can present its window instead of selecting a tab.
+    on_focus_detached: Rc<RefCell<Option<Box<dyn Fn(Uuid)>>>>,
+    /// Invoked when the tab context menu requests a detach.
+    on_detach_request: Rc<RefCell<Option<Box<dyn Fn(Uuid, DetachPresentation) -> bool>>>>,
+    /// Invoked once a session's teardown has run, whatever ended it: a tab
+    /// close, a remote disconnect, a child exit, or a terminate from the
+    /// session manager. Parked and detached sessions do not reach it, because
+    /// their `close-page` pass skips teardown. The window layer uses it to
+    /// close a detached window whose session disappeared, so no empty window
+    /// is left behind (issue #236).
+    on_session_ended: Rc<RefCell<Option<Box<dyn Fn(Uuid)>>>>,
+    /// Monitoring coordinator, set after construction. Detach and attach
+    /// suspend and resume the monitoring bar around the widget move, exactly
+    /// as the split path does.
+    monitoring: Rc<RefCell<Option<Rc<MonitoringCoordinator>>>>,
     /// Shared snippet menu section for terminal context menus.
     /// Updated when snippets are created/edited/deleted; all terminals
     /// share the same live `gio::Menu` model so changes propagate automatically.
@@ -322,6 +345,11 @@ impl TerminalNotebook {
             activity_coordinator: Rc::new(RefCell::new(None)),
             tab_containers: Rc::new(RefCell::new(HashMap::new())),
             parked_in_split: Rc::new(RefCell::new(HashSet::new())),
+            detached: Rc::new(RefCell::new(HashSet::new())),
+            on_focus_detached: Rc::new(RefCell::new(None)),
+            on_detach_request: Rc::new(RefCell::new(None)),
+            on_session_ended: Rc::new(RefCell::new(None)),
+            monitoring: Rc::new(RefCell::new(None)),
             snippet_menu_section: Rc::new(gio::Menu::new()),
             vte_child_pids: Rc::new(RefCell::new(HashMap::new())),
             show_welcome: Rc::new(std::cell::Cell::new(show_welcome)),
@@ -351,6 +379,8 @@ impl TerminalNotebook {
         let ssh_tunnels = self.ssh_tunnels.clone();
         let tab_containers = self.tab_containers.clone();
         let parked_in_split = self.parked_in_split.clone();
+        let detached_close = Rc::clone(&self.detached);
+        let on_session_ended = Rc::clone(&self.on_session_ended);
         let vte_child_pids = self.vte_child_pids.clone();
         let show_welcome_on_close = self.show_welcome.clone();
 
@@ -382,15 +412,26 @@ impl TerminalNotebook {
                     .unwrap_or((Uuid::nil(), None))
             };
 
-            // Parked into a split (Option B): the tab is being removed because the
-            // session moved into another tab's split, NOT closed. Its live widget
-            // lives in the split and its session data must survive, so drop only
-            // the tab page and its (now-stale) container mapping — skip all
-            // teardown. `restore_session_tab` recreates the tab on split-leave.
-            if !session_id.is_nil() && parked_in_split.borrow().contains(&session_id) {
+            // Parked (Option B): the tab is being removed because the session
+            // moved into another tab's split or into a detached window, NOT
+            // closed. Its live widget lives elsewhere and its session data must
+            // survive, so drop only the tab page and its (now-stale) container
+            // mapping — skip all teardown. `restore_session_tab` recreates the
+            // tab when the session comes back.
+            let is_parked = !session_id.is_nil()
+                && (parked_in_split.borrow().contains(&session_id)
+                    || detached_close.borrow().contains(&session_id));
+            if is_parked {
                 sessions.borrow_mut().remove(&session_id);
                 tab_containers.borrow_mut().remove(&session_id);
                 view.close_page_finish(page, true);
+                // Parking the *last* tab leaves the content area empty, which
+                // only detaching can do — a split guest's owner tab always
+                // survives. Give the main window its Welcome tab back, exactly
+                // as a normal close does (issue #236).
+                if show_welcome_on_close.get() && tab_view.n_pages() == 0 {
+                    Self::append_welcome_page(&tab_view);
+                }
                 return glib::Propagation::Stop;
             }
 
@@ -519,6 +560,13 @@ impl TerminalNotebook {
 
                 // Remove tab page container
                 tab_containers.borrow_mut().remove(&session_id);
+
+                // The session is gone for good now. Fired last, and outside
+                // every borrow above, so a handler may freely re-enter the
+                // notebook (issue #236: closing a leftover detached window).
+                if let Some(ref callback) = *on_session_ended.borrow() {
+                    callback(session_id);
+                }
             }
 
             // Confirm close
@@ -529,11 +577,7 @@ impl TerminalNotebook {
                 && sessions.borrow().is_empty()
                 && tab_view.n_pages() == 0
             {
-                let welcome = Self::create_welcome_tab();
-                let welcome_wrap = TabPageContainer::welcome(&welcome.upcast::<gtk4::Widget>());
-                let welcome_page = tab_view.append(welcome_wrap.widget());
-                welcome_page.set_title(&i18n("Welcome"));
-                welcome_page.set_icon(Some(&gio::ThemedIcon::new("go-home-symbolic")));
+                Self::append_welcome_page(&tab_view);
             }
 
             glib::Propagation::Stop
@@ -552,6 +596,19 @@ impl TerminalNotebook {
         container
     }
 
+    /// Appends the Welcome tab to an empty `TabView`.
+    ///
+    /// Shared by both paths that can empty the tab bar: a normal tab close and
+    /// parking the last tab into a detached window (issue #236). The caller
+    /// checks the user preference and that no pages are left.
+    fn append_welcome_page(tab_view: &adw::TabView) {
+        let welcome = Self::create_welcome_tab();
+        let welcome_wrap = TabPageContainer::welcome(&welcome.upcast::<gtk4::Widget>());
+        let welcome_page = tab_view.append(welcome_wrap.widget());
+        welcome_page.set_title(&i18n("Welcome"));
+        welcome_page.set_icon(Some(&gio::ThemedIcon::new("go-home-symbolic")));
+    }
+
     /// Gets the icon name for a protocol
     fn get_protocol_icon(protocol: &str) -> &'static str {
         rustconn_core::get_protocol_icon_by_name(protocol)
@@ -568,6 +625,16 @@ impl TerminalNotebook {
                     break;
                 }
             }
+        }
+    }
+
+    /// Restores the Welcome page when the configured empty-notebook conditions hold.
+    pub(super) fn ensure_welcome_page(&self) {
+        if self.show_welcome.get()
+            && self.sessions.borrow().is_empty()
+            && self.tab_view.n_pages() == 0
+        {
+            Self::append_welcome_page(&self.tab_view);
         }
     }
 
@@ -726,6 +793,7 @@ impl TerminalNotebook {
                 name: title.to_string(),
                 protocol: protocol.to_string(),
                 is_embedded: true,
+                host: None,
                 log_file: None,
                 history_entry_id: None,
                 tab_group: None,
@@ -803,12 +871,10 @@ impl TerminalNotebook {
         page.set_icon(Some(&gio::ThemedIcon::new(
             "video-joined-displays-symbolic",
         )));
-        let tooltip = if host.is_empty() {
-            title.to_string()
-        } else {
-            format!("{title}\n{host}")
-        };
-        page.set_tooltip(&tooltip);
+        // The host is stored on the session below, so a tab rebuilt after a
+        // detach or a rename produces this very tooltip again.
+        let session_host = (!host.is_empty()).then(|| host.to_owned());
+        page.set_tooltip(&Self::tab_tooltip(title, session_host.as_deref(), None));
 
         self.sessions.borrow_mut().insert(session_id, page.clone());
         // Register the container so split (switch_tab_to_split) and unsplit /
@@ -828,6 +894,7 @@ impl TerminalNotebook {
                 name: title.to_string(),
                 protocol: "vnc".to_string(),
                 is_embedded: true,
+                host: session_host,
                 log_file: None,
                 history_entry_id: None,
                 tab_group: None,
@@ -894,6 +961,7 @@ impl TerminalNotebook {
                 name: title.to_string(),
                 protocol: "rdp".to_string(),
                 is_embedded: true,
+                host: None,
                 log_file: None,
                 history_entry_id: None,
                 tab_group: None,
@@ -954,6 +1022,7 @@ impl TerminalNotebook {
                 name: title.to_string(),
                 protocol: "web".to_string(),
                 is_embedded: true,
+                host: None,
                 log_file: None,
                 history_entry_id: None,
                 tab_group: None,
@@ -1007,6 +1076,7 @@ impl TerminalNotebook {
                 name: title.to_string(),
                 protocol: protocol.to_string(),
                 is_embedded: false,
+                host: None,
                 log_file: None,
                 history_entry_id: None,
                 tab_group: None,
@@ -1716,6 +1786,14 @@ impl TerminalNotebook {
         self.reconnect_shown.borrow_mut().remove(&session_id);
         // Cancel any background polling (auto-reconnect, host check) for this session
         self.cancel_poll(session_id);
+        // A detached session has no tab page to close, so route it through the
+        // tabless path — otherwise "close this session" from the session
+        // manager or a clean exit with close-on-clean-exit would silently do
+        // nothing and leave the detached window behind (issue #236).
+        if self.is_detached(session_id) {
+            self.close_session(session_id);
+            return;
+        }
         let page = self.sessions.borrow().get(&session_id).cloned();
         if let Some(page) = page {
             self.tab_view.close_page(&page);
@@ -1735,23 +1813,23 @@ impl TerminalNotebook {
     /// After calling this, the caller can re-use the same `session_id` to
     /// spawn a new process in the existing terminal via `spawn_ssh()` etc.
     ///
-    /// Returns `true` if the tab was successfully prepared, `false` if the
-    /// session no longer exists (tab was closed by user).
+    /// Returns `true` if the session was successfully prepared — in its tab or
+    /// in its detached window — and `false` if the session no longer exists
+    /// (closed by the user).
     pub fn prepare_for_reconnect(&self, session_id: Uuid) -> bool {
-        // Check that the session still exists
+        // Check that the session still has a place to reconnect into: a tab, or
+        // a detached window (issue #236) — the latter keeps the reconnected
+        // session in the same window instead of falling back to close+create.
         let page = self.sessions.borrow().get(&session_id).cloned();
-        let Some(page) = page else {
+        if page.is_none() && !self.is_detached(session_id) {
             return false;
-        };
+        }
 
         // Cancel any background polling (auto-reconnect)
         self.cancel_poll(session_id);
 
-        // Remove reconnect banner from the tab container
-        if let Ok(outer) = page.child().downcast::<GtkBox>()
-            && let Some(inner) = outer.first_child()
-            && let Ok(container) = inner.downcast::<GtkBox>()
-        {
+        // Remove the reconnect banner from wherever the session currently lives
+        if let Some(container) = self.session_content_box(session_id) {
             // Find and remove the reconnect-banner widget
             let mut child = container.first_child();
             while let Some(widget) = child {
@@ -1768,8 +1846,10 @@ impl TerminalNotebook {
             terminal.reset(true, true);
         }
 
-        // Clear disconnected indicator
-        page.set_indicator_icon(gio::Icon::NONE);
+        // Clear disconnected indicator (a detached session has no tab to clear)
+        if let Some(ref page) = page {
+            page.set_indicator_icon(gio::Icon::NONE);
+        }
 
         // Allow a new reconnect banner to be shown if this reconnect also fails
         self.reconnect_shown.borrow_mut().remove(&session_id);
@@ -1812,7 +1892,15 @@ impl TerminalNotebook {
     }
 
     /// Marks a tab as disconnected (changes indicator)
+    ///
+    /// A detached session has no tab to carry the indicator, so its window is
+    /// marked instead: the reconnect banner only covers protocols that can
+    /// reconnect in place, which leaves an embedded RDP/VNC session with no
+    /// signal at all otherwise (issue #236).
     pub fn mark_tab_disconnected(&self, session_id: Uuid) {
+        if self.is_detached(session_id) {
+            Self::mark_detached_window_disconnected(session_id, true);
+        }
         if let Some(page) = self.sessions.borrow().get(&session_id) {
             page.set_indicator_icon(Some(&gio::ThemedIcon::new("network-offline-symbolic")));
             page.set_indicator_activatable(false);
@@ -1836,6 +1924,9 @@ impl TerminalNotebook {
     /// connection-state events (RDP fires "connected" on every resolution change)
     /// would wipe the split-color indicator.
     pub fn mark_tab_connected(&self, session_id: Uuid) {
+        if self.is_detached(session_id) {
+            Self::mark_detached_window_disconnected(session_id, false);
+        }
         if let Some(&color_index) = self.split_session_colors.borrow().get(&session_id) {
             if let Some(page) = self.sessions.borrow().get(&session_id)
                 && let Some(icon) = crate::split_view::create_colored_circle_icon(color_index, 16)
@@ -1848,6 +1939,23 @@ impl TerminalNotebook {
         if let Some(page) = self.sessions.borrow().get(&session_id) {
             page.set_indicator_icon(gio::Icon::NONE);
         }
+    }
+
+    /// Reveals or hides the disconnect banner of a detached session's window.
+    ///
+    /// Goes through the thread-local registry rather than a callback, because
+    /// the notebook is constructed before any window exists and holds no handle
+    /// to one. A session whose window has already gone (its close is what ended
+    /// the session) is simply not found.
+    fn mark_detached_window_disconnected(session_id: Uuid, disconnected: bool) {
+        let marked = crate::window::detached_window_registry()
+            .is_some_and(|registry| registry.set_session_disconnected(session_id, disconnected));
+        tracing::debug!(
+            session = %session_id,
+            disconnected,
+            marked,
+            "detached window connection state updated"
+        );
     }
 
     /// Forces every VTE terminal to drop and rebuild its cached font state.
@@ -1888,8 +1996,10 @@ impl TerminalNotebook {
         session_id: Uuid,
         auto_reconnect_active: bool,
     ) {
-        // Guard: child-exited can fire twice for the same session; show only one banner
-        if !self.reconnect_shown.borrow_mut().insert(session_id) {
+        // Guard: child-exited can fire twice for the same session; show only one
+        // banner. Checked without marking, so a session whose banner could not
+        // be placed yet is not locked out of ever showing one (issue #236).
+        if self.reconnect_shown.borrow().contains(&session_id) {
             // If banner already shown but auto-reconnect just started, update it
             if auto_reconnect_active {
                 self.update_reconnect_banner_status(session_id, true);
@@ -1897,9 +2007,6 @@ impl TerminalNotebook {
             return;
         }
 
-        let Some(page) = self.sessions.borrow().get(&session_id).cloned() else {
-            return;
-        };
         let Some(info) = self.session_info.borrow().get(&session_id).cloned() else {
             return;
         };
@@ -1909,17 +2016,12 @@ impl TerminalNotebook {
             return;
         }
 
-        let outer = page.child().downcast::<GtkBox>().ok();
-        let Some(outer) = outer else {
+        // Resolves the tab's content box, or the detached window's one for a
+        // session that currently lives outside the main window.
+        let Some(container) = self.session_content_box(session_id) else {
             return;
         };
-        // Navigate through TabPageContainer outer box to inner content container
-        let Some(inner_widget) = outer.first_child() else {
-            return;
-        };
-        let Some(container) = inner_widget.downcast::<GtkBox>().ok() else {
-            return;
-        };
+        self.reconnect_shown.borrow_mut().insert(session_id);
 
         // Build the reconnect banner
         let banner = GtkBox::new(Orientation::Horizontal, 6);
@@ -1968,17 +2070,7 @@ impl TerminalNotebook {
 
     /// Updates the auto-reconnect status label in an existing reconnect banner
     pub fn update_reconnect_banner_status(&self, session_id: Uuid, active: bool) {
-        let Some(page) = self.sessions.borrow().get(&session_id).cloned() else {
-            return;
-        };
-        let outer = page.child().downcast::<GtkBox>().ok();
-        let Some(outer) = outer else {
-            return;
-        };
-        let Some(inner_widget) = outer.first_child() else {
-            return;
-        };
-        let Some(container) = inner_widget.downcast::<GtkBox>().ok() else {
+        let Some(container) = self.session_content_box(session_id) else {
             return;
         };
 
@@ -2027,17 +2119,7 @@ impl TerminalNotebook {
         attempt: u32,
         max_attempts: u32,
     ) {
-        let Some(page) = self.sessions.borrow().get(&session_id).cloned() else {
-            return;
-        };
-        let outer = page.child().downcast::<GtkBox>().ok();
-        let Some(outer) = outer else {
-            return;
-        };
-        let Some(inner_widget) = outer.first_child() else {
-            return;
-        };
-        let Some(container) = inner_widget.downcast::<GtkBox>().ok() else {
+        let Some(container) = self.session_content_box(session_id) else {
             return;
         };
 
@@ -2371,6 +2453,36 @@ impl TerminalNotebook {
         outer_box.first_child()?.downcast::<GtkBox>().ok()
     }
 
+    /// Returns the content box that currently hosts a session's live widget.
+    ///
+    /// A tabbed session resolves through its page, exactly as
+    /// [`Self::get_session_container`] does. A detached session has no page, so
+    /// its box is the parent of the widget [`Self::build_session_content`]
+    /// wrapped — which is the very box handed to its window. Split guests
+    /// deliberately resolve to `None`: their widget lives inside another
+    /// session's layout, which is not theirs to add chrome to.
+    ///
+    /// Used by everything that decorates a session in place (reconnect banner,
+    /// monitoring bar) so the decoration follows the session between windows
+    /// (issue #236).
+    #[must_use]
+    pub fn session_content_box(&self, session_id: Uuid) -> Option<GtkBox> {
+        if let Some(container) = self.get_session_container(session_id) {
+            return Some(container);
+        }
+        if !self.is_detached(session_id) {
+            return None;
+        }
+        // A VTE session sits one level deeper than an embedded viewer: its
+        // overlay is the direct child of the content box.
+        let overlay = self.terminal_overlays.borrow().get(&session_id).cloned();
+        let anchor: Widget = match overlay {
+            Some(overlay) => overlay.upcast(),
+            None => self.get_session_display_widget(session_id)?,
+        };
+        anchor.parent()?.downcast::<GtkBox>().ok()
+    }
+
     /// Gets all active sessions
     #[must_use]
     pub fn get_all_sessions(&self) -> Vec<TerminalSession> {
@@ -2524,13 +2636,66 @@ impl TerminalNotebook {
     /// recreated by [`Self::restore_session_tab`] when the session leaves the
     /// split. No-op if the session has no tab (already parked).
     pub fn park_session_tab(&self, session_id: Uuid) {
-        let Some(page) = self.sessions.borrow().get(&session_id).cloned() else {
+        // A session that is already parked for another reason lives somewhere
+        // else entirely — a detached window today. Silently doing nothing would
+        // leave it marked detached while its widget moved into a split, so
+        // refuse loudly instead (issue #236).
+        if self.is_detached(session_id) {
+            tracing::warn!(
+                session = %session_id,
+                "refusing to park a session that lives in a detached window"
+            );
             return;
-        };
+        }
+        if !self.sessions.borrow().contains_key(&session_id) {
+            tracing::debug!(session = %session_id, "park skipped: session has no tab");
+            return;
+        }
         // Mark before closing so the close-page handler skips teardown and only
         // removes the tab page (see `setup_tab_view_signals`).
         self.parked_in_split.borrow_mut().insert(session_id);
+        if !self.park_tab_page(session_id) {
+            // Mirror `take_session_content`: an un-parkable session must not be
+            // left marked as parked.
+            self.parked_in_split.borrow_mut().remove(&session_id);
+            tracing::warn!(session = %session_id, "park failed: no tab page to close");
+        }
+    }
+
+    /// Closes a session's tab page without running session teardown.
+    ///
+    /// The shared half of parking: the caller must have already marked the
+    /// session in one of the park sets (`parked_in_split` today) so the
+    /// `close-page` handler drops only the page and its container mapping.
+    /// Returns `false` when the session has no tab page to close.
+    fn park_tab_page(&self, session_id: Uuid) -> bool {
+        let Some(page) = self.sessions.borrow().get(&session_id).cloned() else {
+            return false;
+        };
         self.tab_view.close_page(&page);
+        true
+    }
+
+    /// Reports whether a session is currently parked for any reason.
+    ///
+    /// Read-only counterpart of [`Self::clear_park_marks`], so a caller can
+    /// validate before it changes any state.
+    fn is_parked(&self, session_id: Uuid) -> bool {
+        self.parked_in_split.borrow().contains(&session_id)
+            || self.detached.borrow().contains(&session_id)
+    }
+
+    /// Clears every park marker for a session, returning whether one was set.
+    ///
+    /// The set arithmetic lives in [`detach::take_park_mark`] so it can be
+    /// checked without a display; this method only hands it the two live sets.
+    fn clear_park_marks(&self, session_id: Uuid) -> bool {
+        detach::take_park_mark(
+            &mut self.parked_in_split.borrow_mut(),
+            &mut self.detached.borrow_mut(),
+            session_id,
+        )
+        .is_some()
     }
 
     /// Recreates the standalone tab for a session that was parked by
@@ -2539,17 +2704,28 @@ impl TerminalNotebook {
     ///
     /// The fresh tab starts with an empty single-mode container; the caller's
     /// subsequent [`Self::reparent_terminal_to_tab`] moves the live widget in.
-    fn restore_session_tab(&self, session_id: Uuid) {
-        if !self.parked_in_split.borrow_mut().remove(&session_id) {
-            return;
+    pub(crate) fn restore_session_tab(&self, session_id: Uuid) -> bool {
+        if !self.is_parked(session_id) {
+            return false;
         }
-        let Some((title, protocol)) = self
-            .session_info
-            .borrow()
-            .get(&session_id)
-            .map(|info| (info.name.clone(), info.protocol.clone()))
+        // Resolve the metadata *before* touching the park marks: a session
+        // without metadata would otherwise lose its mark and gain no tab, which
+        // leaves it in no placement at all (issue #236).
+        let Some((title, protocol, group, host)) =
+            self.session_info.borrow().get(&session_id).map(|info| {
+                (
+                    info.name.clone(),
+                    info.protocol.clone(),
+                    info.tab_group.clone(),
+                    info.host.clone(),
+                )
+            })
         else {
-            return;
+            tracing::warn!(
+                session = %session_id,
+                "cannot restore a tab for a session without metadata; park mark kept"
+            );
+            return false;
         };
 
         let container = GtkBox::new(Orientation::Vertical, 0);
@@ -2561,11 +2737,43 @@ impl TerminalNotebook {
         page.set_icon(Some(&gio::ThemedIcon::new(Self::get_protocol_icon(
             &protocol,
         ))));
+        // The creation path sets a tooltip too, and a grouped tab carries the
+        // group name as a second line (Requirement 2.3).
+        page.set_tooltip(&Self::tab_tooltip(
+            &title,
+            host.as_deref(),
+            group.as_deref(),
+        ));
 
         self.sessions.borrow_mut().insert(session_id, page);
         self.tab_containers
             .borrow_mut()
             .insert(session_id, tab_container);
+        // The session has a home again, so the park mark may go.
+        self.clear_park_marks(session_id);
+        true
+    }
+
+    /// Builds a tab tooltip from a session title, its host, and its group.
+    ///
+    /// One place decides the layout — title, then the host line the embedded
+    /// creation paths add, then the group line `set_tab_group` appends — so a tab
+    /// recreated after a park or a rename is indistinguishable from the original
+    /// (Requirement 2.3).
+    fn tab_tooltip(title: &str, host: Option<&str>, group: Option<&str>) -> String {
+        use std::fmt::Write;
+
+        let mut tooltip = title.to_owned();
+        if let Some(host) = host.filter(|host| !host.is_empty()) {
+            tooltip.push('\n');
+            tooltip.push_str(host);
+        }
+        if let Some(group) = group {
+            // Writing into a String never fails; the result is discarded the
+            // same way the other string builders in the GUI do it.
+            let _ = write!(tooltip, "\n[{group}]");
+        }
+        tooltip
     }
 
     /// Closes (terminates) a session by id, running the standard tab-close
@@ -2644,8 +2852,17 @@ impl TerminalNotebook {
         self.sessions.borrow().len()
     }
 
-    /// Switches to a specific tab by session ID
+    /// Switches to a specific tab by session ID.
+    ///
+    /// A detached session has no tab, so the request is routed to the
+    /// `on_focus_detached` callback instead, which presents its window. Every
+    /// existing focus call site (sidebar activation, session manager, workspace
+    /// restore) therefore works unchanged for detached sessions.
     pub fn switch_to_tab(&self, session_id: Uuid) {
+        if self.is_detached(session_id) {
+            self.notify_focus_detached(session_id);
+            return;
+        }
         if let Some(page) = self.sessions.borrow().get(&session_id).cloned() {
             self.tab_view.set_selected_page(&page);
         }
@@ -2798,30 +3015,53 @@ impl TerminalNotebook {
         // no-op for a session that still has its tab.
         self.restore_session_tab(session_id);
 
-        // Embedded viewers have no VTE terminal — they travel as their own
-        // widget instance (carrying their in-container toolbar and reconnect
-        // banner). Handle them first; fall through to the VTE path otherwise.
-        if self.reparent_embedded_to_tab(session_id) {
-            return;
-        }
-
-        let Some(terminal) = self.terminals.borrow().get(&session_id).cloned() else {
+        // Rebuild a fresh single-session content box around the live widget and
+        // switch TabPageContainer back to single mode. This correctly handles the
+        // case where the tab was previously in split mode (TabPageContainer
+        // contained the split bridge widget).
+        let Some(content) = self.build_session_content(session_id) else {
             return;
         };
 
-        // Remove terminal from current parent (split pane wrapper, etc.)
-        if let Some(parent) = terminal.parent()
-            && let Some(box_widget) = parent.downcast_ref::<GtkBox>()
-        {
-            box_widget.remove(&terminal);
+        let mut containers = self.tab_containers.borrow_mut();
+        if let Some(tab_container) = containers.get_mut(&session_id) {
+            tab_container.switch_to_single(&content);
         }
+    }
 
-        // Rebuild a fresh single-terminal content box and switch TabPageContainer
-        // back to single mode. This correctly handles the case where the tab was
-        // previously in split mode (TabPageContainer contained the split bridge widget).
+    /// Builds a fresh single-session content box around a session's live widget.
+    ///
+    /// The widget instance is unparented from wherever it currently lives (split
+    /// panel, tab container) and rewrapped exactly as the creation path does, so
+    /// every caller ends up with an identical layout: a VTE terminal goes into a
+    /// horizontal `terminal_row` inside a `gtk4::Overlay` (re-registered in
+    /// `terminal_overlays` for highlight support), an embedded viewer is
+    /// appended directly. The live protocol connection is never touched.
+    ///
+    /// Returns `None` when the session has neither a terminal nor an embedded
+    /// widget, in which case nothing was moved.
+    fn build_session_content(&self, session_id: Uuid) -> Option<GtkBox> {
         let container = GtkBox::new(Orientation::Vertical, 0);
         container.set_hexpand(true);
         container.set_vexpand(true);
+
+        // Embedded viewers have no VTE terminal — they travel as their own
+        // widget instance (carrying their in-container toolbar and reconnect
+        // banner). Handle them first; fall through to the VTE path otherwise.
+        if self.append_embedded_content(session_id, &container) {
+            return Some(container);
+        }
+
+        let Some(terminal) = self.terminals.borrow().get(&session_id).cloned() else {
+            tracing::warn!(
+                session = %session_id,
+                "no live widget for session, cannot build content"
+            );
+            return None;
+        };
+
+        // Remove terminal from current parent (split pane wrapper, etc.)
+        Self::detach_widget_from_parent(terminal.upcast_ref());
 
         // Re-wrap terminal with scrollbar (matching create_terminal_tab_with_settings layout)
         let terminal_row = GtkBox::new(Orientation::Horizontal, 0);
@@ -2841,22 +3081,18 @@ impl TerminalNotebook {
             .borrow_mut()
             .insert(session_id, terminal_overlay);
 
-        // Switch TabPageContainer to single mode with the new content
-        let mut containers = self.tab_containers.borrow_mut();
-        if let Some(tab_container) = containers.get_mut(&session_id) {
-            tab_container.switch_to_single(&container);
-        }
-
         terminal.set_visible(true);
+
+        Some(container)
     }
 
-    /// Reparents an embedded viewer back into its single-session tab.
+    /// Appends a session's embedded viewer widget into a fresh content box.
     ///
-    /// Returns `true` when `session_id` is an embedded RDP/VNC/SPICE viewer and
+    /// Returns `true` when `session_id` is an embedded RDP/VNC/Web viewer and
     /// was handled; `false` when it is not embedded (the caller then falls back
     /// to the VTE terminal path). The same widget instance is moved, so the
     /// live protocol connection is preserved — nothing is disconnected.
-    fn reparent_embedded_to_tab(&self, session_id: Uuid) -> bool {
+    fn append_embedded_content(&self, session_id: Uuid, container: &GtkBox) -> bool {
         // Resolve the concrete widget while scoping the borrow, so no
         // `session_widgets` borrow is held across GTK reparenting.
         enum Embedded {
@@ -2876,12 +3112,8 @@ impl TerminalNotebook {
             }
         };
 
-        // Rebuild the single-mode content, mirroring the creation path so the
-        // embedded widget is wrapped exactly as when its tab was first built.
-        let container = GtkBox::new(Orientation::Vertical, 0);
-        container.set_hexpand(true);
-        container.set_vexpand(true);
-
+        // Mirror the creation path so the embedded widget is wrapped exactly as
+        // when its tab was first built.
         match embedded {
             Embedded::Vnc(w) => {
                 let widget = w.widget();
@@ -2917,18 +3149,13 @@ impl TerminalNotebook {
             }
         }
 
-        {
-            let mut containers = self.tab_containers.borrow_mut();
-            if let Some(tab_container) = containers.get_mut(&session_id) {
-                tab_container.switch_to_single(&container);
-            }
-        }
-
         // Nudge a repaint once the re-parented viewer has settled into its new
         // allocation (the live frame lives in a Rust-side buffer, not GTK's
-        // surface cache).
+        // surface cache). The idle runs after the caller has placed the content,
+        // so the queue_draw hits the final allocation.
+        let content = container.clone();
         glib::idle_add_local_once(move || {
-            container.queue_draw();
+            content.queue_draw();
         });
         true
     }
@@ -2993,6 +3220,51 @@ impl TerminalNotebook {
         }
 
         tracing::debug!(session_id = %session_id, group = group_name, color_index, "Tab assigned to group");
+    }
+
+    /// Renames every open session of a connection, returning the ids it touched.
+    ///
+    /// A connection rename used to leave open sessions showing the old name.
+    /// Updates the session metadata and the tab chrome (title, tooltip, group
+    /// prefix); the caller updates whatever else names the session — the title
+    /// of a detached window, for one (issue #236).
+    pub fn rename_connection_sessions(&self, connection_id: Uuid, new_name: &str) -> Vec<Uuid> {
+        let affected: Vec<(Uuid, Option<String>, Option<String>)> = self
+            .session_info
+            .borrow_mut()
+            .iter_mut()
+            .filter(|(_, info)| info.connection_id == connection_id)
+            .map(|(id, info)| {
+                info.name = new_name.to_owned();
+                (*id, info.tab_group.clone(), info.host.clone())
+            })
+            .collect();
+
+        for (session_id, group, host) in &affected {
+            // The page is bound to its own `let` first: an `if let` scrutinee
+            // temporary would keep the `sessions` borrow alive across the two
+            // GTK setters below.
+            let page = self.sessions.borrow().get(session_id).cloned();
+            if let Some(page) = page {
+                page.set_title(&match group {
+                    Some(group) => format!("[{group}] {new_name}"),
+                    None => new_name.to_owned(),
+                });
+                page.set_tooltip(&Self::tab_tooltip(
+                    new_name,
+                    host.as_deref(),
+                    group.as_deref(),
+                ));
+            }
+        }
+        if !affected.is_empty() {
+            tracing::debug!(
+                connection = %connection_id,
+                sessions = affected.len(),
+                "renamed open sessions after a connection rename"
+            );
+        }
+        affected.into_iter().map(|(id, _, _)| id).collect()
     }
 
     /// Returns the group name for a session, if any.
@@ -3318,6 +3590,16 @@ impl TerminalNotebook {
     pub fn set_activity_coordinator(&self, coordinator: Rc<ActivityCoordinator>) {
         *self.activity_coordinator.borrow_mut() = Some(coordinator);
     }
+
+    /// Sets the monitoring coordinator used by the detach and attach paths.
+    ///
+    /// Must be called after construction so moving a session between its tab
+    /// and a detached window suspends the monitoring bar before the widget move
+    /// and resumes it into the new content box afterwards. Without it the
+    /// detach paths simply leave monitoring untouched.
+    pub fn set_monitoring_coordinator(&self, coordinator: Rc<MonitoringCoordinator>) {
+        *self.monitoring.borrow_mut() = Some(coordinator);
+    }
 }
 
 impl Default for TerminalNotebook {
@@ -3361,6 +3643,42 @@ fn cursor_line_text(terminal: &Terminal) -> Option<String> {
 }
 
 #[cfg(test)]
+mod tab_tooltip_tests {
+    use super::TerminalNotebook;
+
+    #[test]
+    fn title_only_tooltip_is_just_the_title() {
+        assert_eq!(
+            TerminalNotebook::tab_tooltip("prod-db", None, None),
+            "prod-db"
+        );
+        // An empty host must not add a blank second line.
+        assert_eq!(
+            TerminalNotebook::tab_tooltip("prod-db", Some(""), None),
+            "prod-db"
+        );
+    }
+
+    #[test]
+    fn host_and_group_each_get_their_own_line() {
+        assert_eq!(
+            TerminalNotebook::tab_tooltip("prod-db", Some("10.0.0.5"), None),
+            "prod-db\n10.0.0.5"
+        );
+        assert_eq!(
+            TerminalNotebook::tab_tooltip("prod-db", None, Some("Production")),
+            "prod-db\n[Production]"
+        );
+        // The group line stays last, so the group strip/append logic in
+        // `set_tab_group` keeps finding it and leaves the host line alone.
+        assert_eq!(
+            TerminalNotebook::tab_tooltip("prod-db", Some("10.0.0.5"), Some("Production")),
+            "prod-db\n10.0.0.5\n[Production]"
+        );
+    }
+}
+
+#[cfg(test)]
 mod split_eligibility_tests {
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -3401,7 +3719,7 @@ mod split_eligibility_tests {
     // GTK can only be initialized from one thread per process; the default
     // multi-threaded test harness makes this unsafe, so this widget-constructing
     // test is opt-in.
-    #[ignore = "requires GTK init on a single thread; run with: cargo test -p rustconn -- --ignored --test-threads=1"]
+    #[ignore = "initialises GTK: needs a display and its own process; run alone with `cargo test -p rustconn --bin rustconn -- --ignored --exact <this test path>`"]
     fn embedded_widget_variants_are_embeddable() {
         // The Vnc/EmbeddedRdp arms need real GTK widgets to
         // construct, so gate on a display; skip cleanly when headless.

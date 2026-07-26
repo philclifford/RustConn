@@ -214,6 +214,7 @@ pub fn rename_selected_item(
     window: &gtk4::Window,
     state: &SharedAppState,
     sidebar: &SharedSidebar,
+    notebook: &SharedNotebook,
 ) {
     // Get selected item
     let Some(conn_item) = sidebar.get_selected_item() else {
@@ -269,6 +270,7 @@ pub fn rename_selected_item(
     // Save button
     let state_clone = state.clone();
     let sidebar_clone = sidebar.clone();
+    let notebook_clone = Rc::clone(notebook);
     let window_clone = rename_dialog.clone();
     let name_row_clone = name_row.clone();
     save_btn.connect_clicked(move |_| {
@@ -360,6 +362,11 @@ pub fn rename_selected_item(
                 match state_mut.update_connection(id, updated.clone()) {
                     Ok(()) => {
                         drop(state_mut);
+
+                        // Open sessions of this connection keep their own copy of
+                        // the name: a tab title and tooltip, and the title bar of
+                        // a detached window (issue #236).
+                        super::detach_actions::rename_open_sessions(&notebook_clone, id, &new_name);
 
                         // Rename credentials in secret backend if needed
                         match password_source {

@@ -13,7 +13,7 @@ use rustconn_core::variables::{Variable, VariableManager, VariableScope};
 use uuid::Uuid;
 
 use super::MainWindow;
-pub use super::protocols_ssh::{reconnect_ssh_in_place, start_ssh_connection};
+pub use super::protocols_ssh::{reconnect_ssh_in_place, start_ssh_connection_observed};
 use crate::i18n::{i18n, i18n_f};
 use crate::sidebar::ConnectionSidebar;
 use crate::state::SharedAppState;
@@ -422,16 +422,14 @@ pub fn resolve_jump_chain_for_tunnel(
     }
 }
 
-/// Starts an SSH connection
-///
-///
-/// Creates a VNC session tab with native widget and initiates connection.
-pub fn start_vnc_connection(
+/// Starts VNC and observes a session created after asynchronous setup.
+pub fn start_vnc_connection_observed(
     state: &SharedAppState,
     notebook: &SharedNotebook,
     sidebar: &SharedSidebar,
     connection_id: Uuid,
     conn: &rustconn_core::Connection,
+    observer: Option<super::types::SessionStartObserver>,
 ) -> Option<Uuid> {
     // Check if port check is needed — skip when jump host is configured
     let settings = state.borrow().settings().clone();
@@ -459,6 +457,7 @@ pub fn start_vnc_connection(
                             &sidebar_clone,
                             connection_id,
                             &conn_clone,
+                            observer,
                         );
                     }
                     Err(e) => {
@@ -490,7 +489,7 @@ pub fn start_vnc_connection(
         None
     } else {
         // Port check disabled, proceed directly
-        start_vnc_connection_internal(state, notebook, sidebar, connection_id, conn)
+        start_vnc_connection_internal(state, notebook, sidebar, connection_id, conn, observer)
     }
 }
 
@@ -501,6 +500,7 @@ fn start_vnc_connection_internal(
     sidebar: &SharedSidebar,
     connection_id: Uuid,
     conn: &rustconn_core::Connection,
+    observer: Option<super::types::SessionStartObserver>,
 ) -> Option<Uuid> {
     use rustconn_core::models::{VncClientMode, WindowMode};
 
@@ -583,6 +583,9 @@ fn start_vnc_connection_internal(
 
     // Create VNC session tab with native widget
     let session_id = notebook.create_vnc_session_tab(connection_id, &conn_name);
+    if let Some(observer) = observer {
+        observer.complete(session_id);
+    }
 
     // Record connection start in history
     let history_entry_id = if let Ok(mut state_mut) = state.try_borrow_mut() {
@@ -1080,16 +1083,15 @@ pub fn reconnect_generic_vte_in_place(
     true
 }
 
-/// Starts a Telnet connection
-///
-/// Creates a terminal tab and spawns the telnet process.
-pub fn start_telnet_connection(
+/// Starts Telnet and observes a session created after asynchronous setup.
+pub fn start_telnet_connection_observed(
     state: &SharedAppState,
     notebook: &SharedNotebook,
     sidebar: &SharedSidebar,
     connection_id: Uuid,
     conn: &rustconn_core::Connection,
     logging_enabled: bool,
+    observer: Option<super::types::SessionStartObserver>,
 ) -> Option<Uuid> {
     // Check if port check is needed
     let settings = state.borrow().settings().clone();
@@ -1109,13 +1111,14 @@ pub fn start_telnet_connection(
             move || check_port(&host, port, timeout),
             move |result| match result {
                 Ok(_) => {
-                    start_telnet_connection_internal(
+                    let _ = start_telnet_connection_internal(
                         &state_clone,
                         &notebook_clone,
                         &sidebar_clone,
                         connection_id,
                         &conn_clone,
                         logging_enabled,
+                        observer,
                     );
                 }
                 Err(e) => {
@@ -1155,6 +1158,7 @@ pub fn start_telnet_connection(
             connection_id,
             conn,
             logging_enabled,
+            observer,
         )
     }
 }
@@ -1169,6 +1173,7 @@ fn start_telnet_connection_internal(
     connection_id: Uuid,
     conn: &rustconn_core::Connection,
     logging_enabled: bool,
+    observer: Option<super::types::SessionStartObserver>,
 ) -> Option<Uuid> {
     use rustconn_core::protocol::{format_command_message, format_connection_message};
 
@@ -1202,6 +1207,9 @@ fn start_telnet_connection_internal(
         conn.theme_override.as_ref(),
         &global_variables,
     );
+    if let Some(observer) = observer {
+        observer.complete(session_id);
+    }
 
     // Apply highlight rules (built-in defaults + global + per-connection)
     {
@@ -1864,18 +1872,15 @@ pub fn start_kubernetes_connection(
     Some(session_id)
 }
 
-/// Starts a MOSH connection
-///
-/// Creates a terminal tab and spawns the `mosh` process with SSH port,
-/// predict mode, server binary, and port range from `MoshConfig`.
-/// Uses `MoshProtocol::build_command()` to generate the argv.
-pub fn start_mosh_connection(
+/// Starts MOSH and observes a session created after asynchronous setup.
+pub fn start_mosh_connection_observed(
     state: &SharedAppState,
     notebook: &SharedNotebook,
     sidebar: &SharedSidebar,
     connection_id: Uuid,
     conn: &rustconn_core::Connection,
     logging_enabled: bool,
+    observer: Option<super::types::SessionStartObserver>,
 ) -> Option<Uuid> {
     // Port check uses the SSH port (mosh handshake goes over SSH)
     let settings = state.borrow().settings().clone();
@@ -1898,13 +1903,14 @@ pub fn start_mosh_connection(
             move || check_port(&host, ssh_port, timeout),
             move |result| match result {
                 Ok(_) => {
-                    start_mosh_connection_internal(
+                    let _ = start_mosh_connection_internal(
                         &state_clone,
                         &notebook_clone,
                         &sidebar_clone,
                         connection_id,
                         &conn_clone,
                         logging_enabled,
+                        observer,
                     );
                 }
                 Err(e) => {
@@ -1943,6 +1949,7 @@ pub fn start_mosh_connection(
             connection_id,
             conn,
             logging_enabled,
+            observer,
         )
     }
 }
@@ -1955,6 +1962,7 @@ fn start_mosh_connection_internal(
     connection_id: Uuid,
     conn: &rustconn_core::Connection,
     logging_enabled: bool,
+    observer: Option<super::types::SessionStartObserver>,
 ) -> Option<Uuid> {
     use rustconn_core::protocol::{
         MoshProtocol, Protocol, detect_mosh, format_command_message, format_connection_message,
@@ -2023,6 +2031,9 @@ fn start_mosh_connection_internal(
         conn.theme_override.as_ref(),
         &global_variables,
     );
+    if let Some(observer) = observer {
+        observer.complete(session_id);
+    }
 
     // Apply highlight rules (built-in defaults + global + per-connection)
     {

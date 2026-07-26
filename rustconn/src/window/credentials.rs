@@ -24,6 +24,33 @@ impl MainWindow {
         connection_id: Uuid,
         activity: Option<types::SharedActivityCoordinator>,
     ) {
+        Self::start_connection_with_credential_resolution_observed(
+            state,
+            notebook,
+            split_view,
+            sidebar,
+            monitoring,
+            connection_id,
+            activity,
+            None,
+        );
+    }
+
+    /// Starts a connection and observes the exact session UUID it creates.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "extends the stable start wrapper with one optional observer"
+    )]
+    pub(crate) fn start_connection_with_credential_resolution_observed(
+        state: SharedAppState,
+        notebook: SharedNotebook,
+        split_view: SharedSplitView,
+        sidebar: SharedSidebar,
+        monitoring: types::SharedMonitoring,
+        connection_id: Uuid,
+        activity: Option<types::SharedActivityCoordinator>,
+        observer: Option<types::SessionStartObserver>,
+    ) {
         // Acquire busy guard — spinner shows while connection is in progress.
         // The guard is moved into closures so it stays alive until the
         // connection completes (or the credential dialog is dismissed).
@@ -93,7 +120,13 @@ impl MainWindow {
             if !needs_web_credentials || cached_credentials.is_some() {
                 // No vault credentials needed, or already cached — launch immediately
                 drop(busy_guard);
-                Self::handle_web_connect(&state, &notebook, &sidebar, connection_id);
+                Self::handle_web_connect_observed(
+                    &state,
+                    &notebook,
+                    &sidebar,
+                    connection_id,
+                    observer.clone(),
+                );
                 return;
             }
             // Fall through to async vault resolution below — after resolution
@@ -149,6 +182,7 @@ impl MainWindow {
                 None,
                 None,
                 activity,
+                observer.clone(),
             );
             return;
         }
@@ -169,6 +203,7 @@ impl MainWindow {
                 )),
                 Some((username, password, domain)),
                 activity,
+                observer.clone(),
             );
             return;
         }
@@ -180,6 +215,7 @@ impl MainWindow {
         let sidebar_clone = sidebar.clone();
         let monitoring_clone = monitoring.clone();
         let activity_clone = activity;
+        let observer_clone = observer;
 
         {
             let Ok(state_ref) = state.try_borrow() else {
@@ -215,6 +251,7 @@ impl MainWindow {
                             Some(creds),
                             None,
                             activity_clone,
+                            observer_clone.clone(),
                         );
                     }
                     CredentialResolutionResult::NotNeeded => {
@@ -229,6 +266,7 @@ impl MainWindow {
                             None,
                             None,
                             activity_clone,
+                            observer_clone.clone(),
                         );
                     }
                     CredentialResolutionResult::VariableMissing {
@@ -308,6 +346,7 @@ impl MainWindow {
                             let sidebar_var = sidebar_clone.clone();
                             let monitoring_var = monitoring_clone.clone();
                             let activity_var = activity_clone.clone();
+                            let observer_var = observer_clone.clone();
                             let variable_name_owned = variable_name.clone();
 
                             crate::dialogs::show_variable_setup_dialog(
@@ -368,6 +407,7 @@ impl MainWindow {
                                                 None,
                                                 None,
                                                 activity_var.clone(),
+                                                observer_var.clone(),
                                             );
                                         }
                                     }
@@ -385,6 +425,7 @@ impl MainWindow {
                             let sidebar_be = sidebar_clone.clone();
                             let monitoring_be = monitoring_clone.clone();
                             let activity_be = activity_clone.clone();
+                            let observer_be = observer_clone.clone();
 
                             crate::dialogs::show_backend_missing_dialog(
                                 notebook_clone.widget(),
@@ -403,6 +444,7 @@ impl MainWindow {
                                                 None,
                                                 None,
                                                 activity_be.clone(),
+                                                observer_be.clone(),
                                             );
                                         }
                                         crate::dialogs::BackendMissingResponse::OpenSettings => {
@@ -455,6 +497,7 @@ impl MainWindow {
                             None,
                             None,
                             activity_clone,
+                            observer_clone.clone(),
                         );
                     }
                 }
@@ -481,6 +524,7 @@ impl MainWindow {
         resolved_credentials: Option<rustconn_core::Credentials>,
         cached_credentials: Option<(String, zeroize::Zeroizing<String>, String)>,
         activity: Option<types::SharedActivityCoordinator>,
+        observer: Option<types::SessionStartObserver>,
     ) {
         use rustconn_core::models::ProtocolType;
 
@@ -494,6 +538,7 @@ impl MainWindow {
                     connection_id,
                     resolved_credentials,
                     cached_credentials,
+                    observer,
                 );
             }
             ProtocolType::Vnc => {
@@ -506,6 +551,7 @@ impl MainWindow {
                     connection_id,
                     resolved_credentials,
                     cached_credentials,
+                    observer,
                 );
             }
             ProtocolType::Ssh
@@ -523,7 +569,7 @@ impl MainWindow {
                 {
                     state_mut.cache_credentials(connection_id, username, password, "");
                 }
-                Self::start_connection_with_split(
+                Self::start_connection_with_split_observed(
                     &state,
                     &notebook,
                     &split_view,
@@ -531,6 +577,7 @@ impl MainWindow {
                     &monitoring,
                     connection_id,
                     activity.as_ref(),
+                    observer,
                 );
             }
             ProtocolType::Sftp => {
@@ -553,12 +600,22 @@ impl MainWindow {
                 {
                     state_mut.cache_credentials(connection_id, username, password, "");
                 }
-                Self::handle_web_connect(&state, &notebook, &sidebar, connection_id);
+                Self::handle_web_connect_observed(
+                    &state,
+                    &notebook,
+                    &sidebar,
+                    connection_id,
+                    observer.clone(),
+                );
             }
         }
     }
 
     /// Handles RDP credential resolution and connection start
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the credential flow carries four UI owners, connection identity, resolved and cached credentials, and observer state"
+    )]
     fn handle_rdp_credentials(
         state: SharedAppState,
         notebook: SharedNotebook,
@@ -567,6 +624,7 @@ impl MainWindow {
         connection_id: Uuid,
         resolved_credentials: Option<rustconn_core::Credentials>,
         cached_credentials: Option<(String, zeroize::Zeroizing<String>, String)>,
+        observer: Option<types::SessionStartObserver>,
     ) {
         // Check if port check is needed BEFORE prompting for credentials
         let (should_check, host, port, timeout) = {
@@ -615,6 +673,7 @@ impl MainWindow {
                                 connection_id,
                                 resolved_credentials,
                                 cached_credentials,
+                                observer.clone(),
                             );
                         }
                         Err(e) => {
@@ -657,11 +716,16 @@ impl MainWindow {
                 connection_id,
                 resolved_credentials,
                 cached_credentials,
+                observer,
             );
         }
     }
 
     /// Internal RDP credential handling (after port check)
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the credential flow carries four UI owners, connection identity, resolved and cached credentials, and observer state"
+    )]
     fn handle_rdp_credentials_internal(
         state: SharedAppState,
         notebook: SharedNotebook,
@@ -670,6 +734,7 @@ impl MainWindow {
         connection_id: Uuid,
         resolved_credentials: Option<rustconn_core::Credentials>,
         cached_credentials: Option<(String, zeroize::Zeroizing<String>, String)>,
+        observer: Option<types::SessionStartObserver>,
     ) {
         // Use resolved credentials if available
         if let Some(ref creds) = resolved_credentials
@@ -706,6 +771,7 @@ impl MainWindow {
                 username,
                 password,
                 &domain,
+                observer.clone(),
             );
             return;
         }
@@ -721,6 +787,7 @@ impl MainWindow {
                 &username,
                 &password,
                 &domain,
+                observer.clone(),
             );
             return;
         }
@@ -753,6 +820,7 @@ impl MainWindow {
                     &username,
                     "",
                     "",
+                    observer.clone(),
                 );
                 return;
             }
@@ -770,6 +838,7 @@ impl MainWindow {
                 sidebar,
                 connection_id,
                 app_window,
+                observer,
             );
         }
     }
@@ -788,6 +857,7 @@ impl MainWindow {
         connection_id: Uuid,
         resolved_credentials: Option<rustconn_core::Credentials>,
         cached_credentials: Option<(String, zeroize::Zeroizing<String>, String)>,
+        observer: Option<types::SessionStartObserver>,
     ) {
         // Check if port check is needed BEFORE prompting for credentials
         let (should_check, host, port, timeout) = {
@@ -830,6 +900,7 @@ impl MainWindow {
                                 connection_id,
                                 resolved_credentials,
                                 cached_credentials,
+                                observer.clone(),
                             );
                         }
                         Err(e) => {
@@ -873,6 +944,7 @@ impl MainWindow {
                 connection_id,
                 resolved_credentials,
                 cached_credentials,
+                observer,
             );
         }
     }
@@ -891,6 +963,7 @@ impl MainWindow {
         connection_id: Uuid,
         resolved_credentials: Option<rustconn_core::Credentials>,
         cached_credentials: Option<(String, zeroize::Zeroizing<String>, String)>,
+        observer: Option<types::SessionStartObserver>,
     ) {
         // Use resolved credentials if available (VNC only needs password)
         if let Some(ref creds) = resolved_credentials
@@ -899,7 +972,7 @@ impl MainWindow {
             if let Ok(mut state_mut) = state.try_borrow_mut() {
                 state_mut.cache_credentials(connection_id, "", password, "");
             }
-            Self::start_connection_with_split(
+            Self::start_connection_with_split_observed(
                 &state,
                 &notebook,
                 &split_view,
@@ -907,13 +980,14 @@ impl MainWindow {
                 &monitoring,
                 connection_id,
                 None,
+                observer.clone(),
             );
             return;
         }
 
         // Use cached credentials if available
         if cached_credentials.is_some() {
-            Self::start_connection_with_split(
+            Self::start_connection_with_split_observed(
                 &state,
                 &notebook,
                 &split_view,
@@ -921,6 +995,7 @@ impl MainWindow {
                 &monitoring,
                 connection_id,
                 None,
+                observer.clone(),
             );
             return;
         }
@@ -939,13 +1014,14 @@ impl MainWindow {
             if try_empty {
                 // Use start_vnc_session_with_password (not start_connection_with_split)
                 // because it handles SSH tunnel creation for jump host connections.
-                rdp_vnc::start_vnc_session_with_password(
+                rdp_vnc::start_vnc_session_with_password_observed(
                     &state,
                     &notebook,
                     &split_view,
                     &sidebar,
                     connection_id,
                     "",
+                    observer.clone(),
                 );
                 return;
             }
@@ -963,6 +1039,7 @@ impl MainWindow {
                 sidebar,
                 connection_id,
                 app_window,
+                observer,
             );
         }
     }
@@ -975,14 +1052,16 @@ impl MainWindow {
         sidebar: SharedSidebar,
         connection_id: Uuid,
         window: &adw::ApplicationWindow,
+        observer: Option<types::SessionStartObserver>,
     ) {
-        rdp_vnc::start_rdp_with_password_dialog(
+        rdp_vnc::start_rdp_with_password_dialog_observed(
             state,
             notebook,
             split_view,
             sidebar,
             connection_id,
             window.upcast_ref(),
+            observer,
         );
     }
 
@@ -1000,8 +1079,9 @@ impl MainWindow {
         username: &str,
         password: &str,
         domain: &str,
+        observer: Option<types::SessionStartObserver>,
     ) {
-        rdp_vnc::start_rdp_session_with_credentials(
+        rdp_vnc::start_rdp_session_with_credentials_observed(
             state,
             notebook,
             split_view,
@@ -1010,6 +1090,7 @@ impl MainWindow {
             username,
             password,
             domain,
+            observer,
         );
     }
 
@@ -1021,14 +1102,16 @@ impl MainWindow {
         sidebar: SharedSidebar,
         connection_id: Uuid,
         window: &adw::ApplicationWindow,
+        observer: Option<types::SessionStartObserver>,
     ) {
-        rdp_vnc::start_vnc_with_password_dialog(
+        rdp_vnc::start_vnc_with_password_dialog_observed(
             state,
             notebook,
             split_view,
             sidebar,
             connection_id,
             window.upcast_ref(),
+            observer,
         );
     }
 }

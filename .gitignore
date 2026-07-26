@@ -90,3 +90,6 @@ ROADMAP.md
 
 # Kiro local settings
 .kiro/settings/
+
+# Generated code-review reports
+semantic-review/

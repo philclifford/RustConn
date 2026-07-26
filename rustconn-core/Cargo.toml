@@ -43,7 +43,10 @@ reqwest = { workspace = true }
 zip = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
-ar = "0.9"  # For extracting .deb packages (AWS SSM Plugin)
+# For extracting .deb packages (AWS SSM Plugin)
+# Comment kept on its own line: a trailing comment after a bare version string
+# is not parsed by manifest scanners (KiroGraph sec:cargo), which then skips the dep.
+ar = "0.9"
 # File system notifications for RDPDR directory change monitoring
 # Linux-only application, no macOS features needed
 # macos_fsevent is needed for macOS dev builds (fsevent_sys dependency)
@@ -71,15 +74,14 @@ zune-jpeg = { version = "0.5.15", optional = true }
 #     in RdpClientConfig is still dead (unrelated to GFX work; needs upstream support).
 #   * Drive change notifications: needs ClientDriveNotifyChangeDirectoryResponse PDU
 #     (check if ironrdp-rdpdr 0.7 added it).
-ironrdp = { version = "0.17", features = [
-    "connector", "session", "graphics", "pdu", "core", "svc",
-    "cliprdr",        # Clipboard redirection
-    "rdpdr",          # Device/drive redirection (shared folders)
-    "dvc",            # Dynamic Virtual Channels
-    "displaycontrol", # Dynamic resolution changes (MS-RDPEDISP)
-    "rdpsnd",         # Audio redirection
-    "echo",           # Echo DVC for RTT measurement (MS-RDPEECO)
-], optional = true }
+# Features (kept on one line so manifest scanners can parse the dependency):
+#   cliprdr        — clipboard redirection
+#   rdpdr          — device/drive redirection (shared folders)
+#   dvc            — dynamic virtual channels
+#   displaycontrol — dynamic resolution changes (MS-RDPEDISP)
+#   rdpsnd         — audio redirection
+#   echo           — echo DVC for RTT measurement (MS-RDPEECO)
+ironrdp = { version = "0.17", features = ["connector", "session", "graphics", "pdu", "core", "svc", "cliprdr", "rdpdr", "dvc", "displaycontrol", "rdpsnd", "echo"], optional = true }
 ironrdp-input = { version = "0.7", optional = true }
 ironrdp-tokio = { version = "0.10", features = ["reqwest"], optional = true }
 ironrdp-tls = { version = "0.2", features = ["native-tls"], optional = true }

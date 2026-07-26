@@ -8,6 +8,7 @@ mod clusters;
 mod connection_actions;
 mod connection_dialogs;
 mod credentials;
+mod detach_actions;
 mod document_actions;
 mod edit_actions;
 mod edit_dialogs;
@@ -49,12 +50,10 @@ use vte4::prelude::*;
 
 use self::document_actions as doc_actions;
 use self::types::{
-    SessionSplitBridges, SharedExternalWindowManager, SharedNotebook, SharedSidebar,
-    SharedSplitView, get_protocol_string,
+    SessionSplitBridges, SharedNotebook, SharedSidebar, SharedSplitView, get_protocol_string,
 };
 use crate::activity_coordinator::ActivityCoordinator;
 use crate::dialogs::{ExportDialog, SettingsDialog};
-use crate::external_window::ExternalWindowManager;
 use crate::monitoring::MonitoringCoordinator;
 use crate::sidebar::{ConnectionItem, ConnectionSidebar};
 use crate::split_view::{SplitDirection, SplitViewBridge};
@@ -88,6 +87,14 @@ thread_local! {
     static EXTERNAL_SESSIONS: RefCell<Option<Rc<crate::external_session::ExternalSessionRegistry>>> =
         const { RefCell::new(None) };
 }
+// Detached session windows (issue #236), published for the same reason as
+// `EXTERNAL_SESSIONS`: `MainWindow` itself is a short-lived value in `build_ui`,
+// so the registry needs one owner that lives as long as the process while every
+// closure holds only a `Weak` handle to it.
+thread_local! {
+    static DETACHED_WINDOWS: RefCell<Option<Rc<crate::detached_window::DetachedWindowRegistry>>> =
+        const { RefCell::new(None) };
+}
 
 /// Acquires a busy guard from the thread-local [`BusyStack`].
 ///
@@ -107,13 +114,31 @@ pub fn external_session_registry() -> Option<Rc<crate::external_session::Externa
     EXTERNAL_SESSIONS.with(|cell| cell.borrow().as_ref().map(Rc::clone))
 }
 
+/// Returns the thread-local registry of detached session windows.
+///
+/// Returns `None` before `MainWindow::new` has published it (issue #236).
+///
+/// The shutdown paths use it to close every detached window: the main window's
+/// close handler and the `app.quit` action, which bypasses that handler.
+pub fn detached_window_registry() -> Option<Rc<crate::detached_window::DetachedWindowRegistry>> {
+    DETACHED_WINDOWS.with(|cell| cell.borrow().as_ref().map(Rc::clone))
+}
+
+/// Returns how many sessions a shutdown would end (pure).
+///
+/// `TerminalNotebook::session_count` only counts sessions that have a tab, so
+/// the two tabless kinds are added here: sessions in a detached window (issue
+/// #236) and sessions delegated to an external viewer (issue #209). Shared by
+/// the main window's close handler and the `app.quit` action so both ask the
+/// same question before showing the confirmation dialog.
+#[must_use]
+pub const fn open_session_count(tabbed: usize, detached: usize, external: usize) -> usize {
+    tabbed + detached + external
+}
+
 /// Main application window wrapper
 ///
 /// Provides access to the main window and its components.
-#[expect(
-    dead_code,
-    reason = "Fields kept for GTK widget lifecycle and future use"
-)]
 pub struct MainWindow {
     window: adw::ApplicationWindow,
     sidebar: SharedSidebar,
@@ -129,11 +154,14 @@ pub struct MainWindow {
     split_container: gtk4::Box,
     state: SharedAppState,
     overlay_split_view: adw::OverlaySplitView,
-    external_window_manager: SharedExternalWindowManager,
     /// Registry of external viewer sessions (VNC/RDP/SPICE delegated to a
     /// separate viewer process, issue #209). Tracks child processes and drives
     /// sidebar session-count + history via callbacks; watched by a shared timer.
     external_sessions: Rc<crate::external_session::ExternalSessionRegistry>,
+    /// Windows hosting detached sessions (issue #236), keyed by session. Owns
+    /// the window values; the notebook keeps owning all session state. Also
+    /// published to a thread-local so the lifecycle paths can reach it.
+    detached_windows: Rc<crate::detached_window::DetachedWindowRegistry>,
     toast_overlay: SharedToastOverlay,
     monitoring: Rc<MonitoringCoordinator>,
     activity_coordinator: types::SharedActivityCoordinator,
@@ -371,6 +399,9 @@ impl MainWindow {
         let activity_coordinator = Rc::new(ActivityCoordinator::new());
         let activity_for_close = activity_coordinator.clone();
         terminal_notebook.set_activity_coordinator(activity_coordinator.clone());
+        // The detach/attach paths suspend and resume the monitoring bar around
+        // the widget move, mirroring the split path.
+        terminal_notebook.set_monitoring_coordinator(Rc::clone(&monitoring));
         terminal_notebook.set_on_page_closed(move |session_id, connection_id| {
             monitoring_for_close.stop_monitoring(session_id);
             activity_for_close.stop(session_id);
@@ -433,12 +464,15 @@ impl MainWindow {
         // the user's tab arrangement intact (#89).
         {
             let state_for_reconnect = state.clone();
-            let notebook_for_reconnect = terminal_notebook.clone();
+            let notebook_for_reconnect = Rc::downgrade(&terminal_notebook);
             let split_view_for_reconnect = split_view.clone();
             let sidebar_for_reconnect = sidebar.clone();
             let monitoring_for_reconnect = monitoring.clone();
             let activity_for_reconnect = activity_coordinator.clone();
             terminal_notebook.set_on_reconnect(move |session_id, connection_id| {
+                let Some(notebook_for_reconnect) = notebook_for_reconnect.upgrade() else {
+                    return;
+                };
                 tracing::info!(
                     %session_id,
                     %connection_id,
@@ -496,9 +530,16 @@ impl MainWindow {
                     );
                 }
 
-                // Fallback for non-SSH protocols or if in-place failed:
-                // close old tab, create new one, reorder to original position
-                let tab_position = {
+                // Snapshot placement before close tears down the old tab/window.
+                let was_detached = notebook_for_reconnect.is_detached(session_id);
+                let presentation = was_detached.then(|| {
+                    detached_window_registry()
+                        .and_then(|registry| registry.presentation(session_id))
+                        .unwrap_or_default()
+                });
+                let tab_position = if was_detached {
+                    None
+                } else {
                     let sessions = notebook_for_reconnect.sessions_map();
                     let sessions_ref = sessions.borrow();
                     sessions_ref
@@ -508,27 +549,40 @@ impl MainWindow {
 
                 notebook_for_reconnect.close_tab(session_id);
 
-                let tabs_before = notebook_for_reconnect.tab_view().n_pages();
+                let notebook_for_observer = Rc::downgrade(&notebook_for_reconnect);
+                let observer = types::SessionStartObserver::new(move |new_session_id| {
+                    let Some(notebook) = notebook_for_observer.upgrade() else {
+                        return;
+                    };
+                    if let Some(presentation) = presentation {
+                        if !notebook.request_detach(new_session_id, presentation) {
+                            tracing::warn!(
+                                session = %new_session_id,
+                                "could not restore detached placement after reconnect"
+                            );
+                        }
+                    } else if let Some(original_pos) = tab_position {
+                        let page = notebook
+                            .sessions_map()
+                            .borrow()
+                            .get(&new_session_id)
+                            .cloned();
+                        if let Some(page) = page {
+                            notebook.tab_view().reorder_page(&page, original_pos);
+                        }
+                    }
+                });
 
-                Self::start_connection_with_credential_resolution(
+                Self::start_connection_with_credential_resolution_observed(
                     state_for_reconnect.clone(),
-                    notebook_for_reconnect.clone(),
+                    notebook_for_reconnect,
                     split_view_for_reconnect.clone(),
                     sidebar_for_reconnect.clone(),
                     monitoring_for_reconnect.clone(),
                     connection_id,
                     Some(activity_for_reconnect.clone()),
+                    Some(observer),
                 );
-
-                if let Some(original_pos) = tab_position {
-                    let tabs_after = notebook_for_reconnect.tab_view().n_pages();
-                    if tabs_after > tabs_before {
-                        let new_page = notebook_for_reconnect.tab_view().nth_page(tabs_after - 1);
-                        notebook_for_reconnect
-                            .tab_view()
-                            .reorder_page(&new_page, original_pos);
-                    }
-                }
             });
         }
 
@@ -757,9 +811,6 @@ impl MainWindow {
             win.set_width_request((min_width + 4).max(360));
         });
 
-        // Create external window manager
-        let external_window_manager = Rc::new(ExternalWindowManager::new());
-
         // External viewer session registry (issue #209): tracks VNC/RDP/SPICE
         // sessions delegated to a separate viewer process, surfaced in the
         // sidebar without a notebook tab. The callbacks bridge the registry into
@@ -835,8 +886,8 @@ impl MainWindow {
             split_container,
             state: state.clone(),
             overlay_split_view,
-            external_window_manager,
             external_sessions,
+            detached_windows: Rc::new(crate::detached_window::DetachedWindowRegistry::new()),
             toast_overlay,
             monitoring,
             activity_coordinator,
@@ -864,6 +915,11 @@ impl MainWindow {
         // (issue #209) without threading the registry through every call site.
         EXTERNAL_SESSIONS.with(|cell| {
             *cell.borrow_mut() = Some(Rc::clone(&main_window.external_sessions));
+        });
+        // Publish the detached window registry (issue #236) so the lifecycle
+        // paths reach it while every action closure keeps only a `Weak` handle.
+        DETACHED_WINDOWS.with(|cell| {
+            *cell.borrow_mut() = Some(Rc::clone(&main_window.detached_windows));
         });
 
         // Set up recording checker for sidebar context menu
@@ -1009,6 +1065,7 @@ impl MainWindow {
         self.setup_variables_actions(window, &state);
         self.setup_history_actions(window, &state);
         self.setup_misc_actions(window, &state, &sidebar, &terminal_notebook);
+        self.setup_detach_actions(window);
         Self::setup_smart_folder_actions(window, &state, &sidebar);
     }
     fn setup_document_actions(
@@ -1542,8 +1599,14 @@ impl MainWindow {
             // against accidental loss of active connections). Count tabless
             // external-viewer sessions too (issue #209), so a window holding
             // only external VNC/RDP/SPICE sessions still warns before quitting.
+            // Detached sessions (issue #236) have no tab either, so they are
+            // counted separately — closing the main window ends them too.
             let external_open = external_session_registry().map_or(0, |reg| reg.active_count());
-            let open_sessions = notebook_for_close.session_count() + external_open;
+            let open_sessions = open_session_count(
+                notebook_for_close.session_count(),
+                notebook_for_close.detached_count(),
+                external_open,
+            );
             if !minimize_to_tray && !force_close.get() && open_sessions > 0 {
                 let dialog = Self::close_confirmation_dialog(open_sessions);
                 let force_close_confirm = force_close.clone();
@@ -1570,6 +1633,15 @@ impl MainWindow {
 
             // Stop all standalone SSH tunnels
             tunnel_manager_for_close.borrow_mut().stop_all();
+
+            // No detached window outlives the main window (issue #236). Each
+            // close runs the standard session teardown, so their child
+            // processes and tunnels go down with the tabbed ones. Skipped when
+            // minimizing to tray: then the main window only hides and every
+            // session, detached or not, keeps running.
+            if !minimize_to_tray && let Some(registry) = detached_window_registry() {
+                registry.close_all();
+            }
 
             // Save window geometry and expanded groups state
             let (width, height) = win.default_size();
@@ -1965,33 +2037,66 @@ impl MainWindow {
         connection_id: Uuid,
         activity: Option<&types::SharedActivityCoordinator>,
     ) -> Option<Uuid> {
+        Self::start_connection_with_split_observed(
+            state,
+            notebook,
+            split_view,
+            sidebar,
+            monitoring,
+            connection_id,
+            activity,
+            None,
+        )
+    }
+
+    /// Starts a connection with split integration and an exact-session observer.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "extends the stable start wrapper with one optional observer"
+    )]
+    pub fn start_connection_with_split_observed(
+        state: &SharedAppState,
+        notebook: &SharedNotebook,
+        split_view: &SharedSplitView,
+        sidebar: &SharedSidebar,
+        monitoring: &types::SharedMonitoring,
+        connection_id: Uuid,
+        activity: Option<&types::SharedActivityCoordinator>,
+        observer: Option<types::SessionStartObserver>,
+    ) -> Option<Uuid> {
         // Update status to connecting
         sidebar.update_connection_status(&connection_id.to_string(), "connecting");
 
-        let session_id =
-            match Self::start_connection(state, notebook, sidebar, monitoring, connection_id) {
-                types::ConnectionStartResult::Started(id) => id,
-                types::ConnectionStartResult::Pending => {
-                    // Async port check in progress — keep "connecting" status.
-                    // The protocol callback will set "connected" or "failed".
-                    return None;
+        let session_id = match Self::start_connection_observed(
+            state,
+            notebook,
+            sidebar,
+            monitoring,
+            connection_id,
+            observer,
+        ) {
+            types::ConnectionStartResult::Started(id) => id,
+            types::ConnectionStartResult::Pending => {
+                // Async port check in progress — keep "connecting" status.
+                // The protocol callback will set "connected" or "failed".
+                return None;
+            }
+            types::ConnectionStartResult::Failed => {
+                sidebar.update_connection_status(&connection_id.to_string(), "failed");
+                // Show connection failure toast with connection name
+                if let Ok(state_ref) = state.try_borrow()
+                    && let Some(conn) = state_ref.get_connection(connection_id)
+                {
+                    let name = conn.name.clone();
+                    drop(state_ref);
+                    crate::toast::show_error_toast_on_active_window(&crate::i18n::i18n_f(
+                        "Connection to ‘{}’ failed",
+                        &[&name],
+                    ));
                 }
-                types::ConnectionStartResult::Failed => {
-                    sidebar.update_connection_status(&connection_id.to_string(), "failed");
-                    // Show connection failure toast with connection name
-                    if let Ok(state_ref) = state.try_borrow()
-                        && let Some(conn) = state_ref.get_connection(connection_id)
-                    {
-                        let name = conn.name.clone();
-                        drop(state_ref);
-                        crate::toast::show_error_toast_on_active_window(&crate::i18n::i18n_f(
-                            "Connection to ‘{}’ failed",
-                            &[&name],
-                        ));
-                    }
-                    return None;
-                }
-            };
+                return None;
+            }
+        };
 
         // Get session info to check protocol
         if let Some(info) = notebook.get_session_info(session_id) {
@@ -2075,6 +2180,18 @@ impl MainWindow {
         sidebar: &SharedSidebar,
         monitoring: &types::SharedMonitoring,
         connection_id: Uuid,
+    ) -> types::ConnectionStartResult {
+        Self::start_connection_observed(state, notebook, sidebar, monitoring, connection_id, None)
+    }
+
+    /// Starts a connection and observes the exact session UUID it creates.
+    pub fn start_connection_observed(
+        state: &SharedAppState,
+        notebook: &SharedNotebook,
+        sidebar: &SharedSidebar,
+        monitoring: &types::SharedMonitoring,
+        connection_id: Uuid,
+        observer: Option<types::SessionStartObserver>,
     ) -> types::ConnectionStartResult {
         let state_ref = state.borrow();
 
@@ -2299,7 +2416,7 @@ impl MainWindow {
         );
 
         let session_id = match protocol.as_str() {
-            "ssh" => protocols::start_ssh_connection(
+            "ssh" => protocols::start_ssh_connection_observed(
                 state,
                 notebook,
                 sidebar,
@@ -2307,13 +2424,15 @@ impl MainWindow {
                 connection_id,
                 &conn_clone,
                 logging_enabled,
+                observer.clone(),
             ),
-            "vnc" => protocols::start_vnc_connection(
+            "vnc" => protocols::start_vnc_connection_observed(
                 state,
                 notebook,
                 sidebar,
                 connection_id,
                 &conn_clone,
+                observer.clone(),
             ),
             "rdp" => {
                 // RDP connections are handled by start_rdp_session_with_credentials
@@ -2331,13 +2450,14 @@ impl MainWindow {
                 connection_id,
                 &conn_clone,
             ),
-            "telnet" => protocols::start_telnet_connection(
+            "telnet" => protocols::start_telnet_connection_observed(
                 state,
                 notebook,
                 sidebar,
                 connection_id,
                 &conn_clone,
                 logging_enabled,
+                observer.clone(),
             ),
             "serial" => protocols::start_serial_connection(
                 state,
@@ -2355,13 +2475,14 @@ impl MainWindow {
                 &conn_clone,
                 logging_enabled,
             ),
-            "mosh" => protocols::start_mosh_connection(
+            "mosh" => protocols::start_mosh_connection_observed(
                 state,
                 notebook,
                 sidebar,
                 connection_id,
                 &conn_clone,
                 logging_enabled,
+                observer.clone(),
             ),
             p if p == "zerotrust" || p.starts_with("zerotrust:") => {
                 protocols::start_zerotrust_connection(
@@ -2380,7 +2501,13 @@ impl MainWindow {
             }
             "web" => {
                 // Web: Embedded mode opens in-tab, System/Custom open externally
-                Self::handle_web_connect(state, notebook, sidebar, connection_id);
+                Self::handle_web_connect_observed(
+                    state,
+                    notebook,
+                    sidebar,
+                    connection_id,
+                    observer.clone(),
+                );
                 None
             }
             _ => {
@@ -2388,6 +2515,10 @@ impl MainWindow {
                 None
             }
         };
+
+        if let (Some(session_id), Some(observer)) = (session_id, observer) {
+            observer.complete(session_id);
+        }
 
         // Execute key sequence after connection is established (terminal protocols only)
         if let Some(sid) = session_id
@@ -3006,8 +3137,9 @@ impl MainWindow {
         window: &adw::ApplicationWindow,
         state: &SharedAppState,
         sidebar: &SharedSidebar,
+        notebook: &SharedNotebook,
     ) {
-        edit_dialogs::rename_selected_item(window.upcast_ref(), state, sidebar);
+        edit_dialogs::rename_selected_item(window.upcast_ref(), state, sidebar, notebook);
     }
 
     /// Deletes the selected connection or group
@@ -3777,5 +3909,29 @@ impl MainWindow {
                 crate::dialogs::TerminalSearchDialog::new(Some(&window.clone().upcast()), terminal);
             dialog.show();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::open_session_count;
+
+    #[test]
+    fn tabless_sessions_are_counted_for_the_close_confirmation() {
+        // One tab, one detached window, one external viewer: three sessions
+        // would end, so the confirmation has to appear.
+        assert_eq!(open_session_count(1, 1, 1), 3);
+    }
+
+    #[test]
+    fn only_detached_sessions_still_count_as_open() {
+        // The main window can hold nothing but a Welcome tab while a session
+        // runs in its own window — quitting must still ask (Requirement 6.4).
+        assert_eq!(open_session_count(0, 2, 0), 2);
+    }
+
+    #[test]
+    fn nothing_open_needs_no_confirmation() {
+        assert_eq!(open_session_count(0, 0, 0), 0);
     }
 }

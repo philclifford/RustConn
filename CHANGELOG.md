@@ -5,6 +5,54 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.4] - 2026-07-27
+
+### Added
+
+- **Detachable session windows (issue #236)** — move any in-process session (VTE, embedded RDP/VNC, Web) into its own top-level window via tab context menu, `Ctrl+Shift+M`, or a per-monitor submenu. The live widget is reparented without reconnecting — scrollback, monitoring, recording, and tunnels survive the move. A header-bar button returns the session to a tab. Close/quit confirmation counts detached sessions; re-activation always presents the main window. Not offered for external-viewer sessions or unsplit tabs.
+
+### Fixed
+
+#### Detachable windows (issue #236)
+
+- **Split picker could steal a detached session** — detached sessions are now filtered out of both split pickers; the placement rule is checked before touching the widget.
+- **Detaching the last tab left the main window blank** — parking the last tab now recreates the Welcome tab.
+- **Disconnect/auto-reconnect ignored detached sessions** — session feedback and auto-reconnect now follow the session into whichever window holds it.
+- **Detached sessions missing from session manager and workspaces** — they are now listed, counted, and saved/restored like tabbed ones.
+- **Re-attaching a session lost tooltip and group label** — tooltip, host line, and group metadata are now restored with the tab.
+- **Disconnected embedded RDP/VNC in a detached window showed no feedback** — a "Session disconnected" banner is now raised in the detached window.
+- **Reconnect-by-restart came back as a tab** — placement is remembered across the restart step.
+- **Rename did not propagate to open sessions** — a rename now updates titles in tabs and detached windows.
+- **Failed attach left one session in two places** — the path now rolls back completely on failure.
+- **Activity/silence toasts landed on the main window** — notifications now target the window that holds the session.
+- **Quit confirmation appeared on the wrong window** — the dialog is now parented to the focused session window.
+- **Detached reconnect could target the wrong session** — reconnect now registers a one-shot observer and verifies the result before declaring success; the window is restored to the same monitor by stable identity.
+
+#### RDP
+
+- **"Server only supports Standard RDP Security" killed the session instead of falling back (issue #235)** — `negotiation failure` wording was not matched by the fallback detector. Such failures are now classified as `SecurityUnsupported` and handed to FreeRDP.
+- **FreeRDP fallback broken on 3.24/3.25 (regression from 0.19.3 fix for issue #234)** — the `file:` prefix only exists from FreeRDP 3.26; the launcher now probes `--version` and picks bare path or `file:` accordingly.
+- **CredSSP logon failures triggered a pointless FreeRDP fallback** — the NTSTATUS was never propagated to the GUI. Wrong credentials are now mapped to `AuthenticationFailed` at source and reported without a fallback attempt.
+- **Legacy RDP fallback silently weakened transport security** — downgrading to Standard RDP Security now requires explicit user consent; auth failures never trigger the downgrade.
+- **FreeRDP fallback could freeze GTK and leave orphan clients** — version probing and spawning now run in a bounded background task; stale child processes are terminated.
+- **Secrets could enter the args file through unvalidated extra arguments** — password-bearing options (`/p:`, `/password:`, `/gp:`, `/gateway-password:`, `/pth:`) are now rejected before the file is opened.
+
+### Removed
+
+- **Dead `external_window` module (`ExternalWindowManager`)** — 288-line stub never wired to any UI; replaced by the new `detached_window.rs` implementation.
+
+### Improved
+
+- **RDP failure classification moved to `rustconn-core`** — `classify_rdp_failure()` returns a typed `RdpFailureClass` covered by unit tests, replacing fragile `msg.contains(..)` checks in the GTK layer (issues #199, #234, #235).
+- **Single code path for session tab content** — `build_session_content` + `park_tab_page` replace the monolithic `reparent_terminal_to_tab`, eliminating duplication for the detach/attach path.
+- **HIG-compliant menu wording and window titles (issue #236)** — multi-monitor entry drops the ellipsis (submenu, not dialog); untitled connections use protocol as window title.
+- **Placement tests assert contracts, not code copies (issue #236)** — detachability and split-eligibility predicates live in `rustconn-core` with property tests pinning precedence order; display-dependent notebook checks run in the quality gate.
+- **New strings localised in all 16 languages** — menu items, per-monitor labels, detached-window title, failure toasts, shortcut description, and session-manager row label translated in be, cs, da, de, es, fr, it, kk, nl, pl, pt, sk, sv, uk, uz, zh-cn.
+
+### Dependencies
+
+- **Updated**: cc 1.3.0 → 1.4.0, either 1.16.0 → 1.17.0
+
 ## [0.19.3] - 2026-07-23
 
 ### Added

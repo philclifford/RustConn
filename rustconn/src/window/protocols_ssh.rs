@@ -736,8 +736,12 @@ fn bastion_may_prompt_for_password(
     }
 }
 
-/// Creates a terminal tab and spawns the SSH process with the given configuration.
-pub fn start_ssh_connection(
+/// Starts SSH and observes a session created after asynchronous setup.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "SSH startup requires the shared UI owners, monitoring, connection data, logging policy, and observer"
+)]
+pub fn start_ssh_connection_observed(
     state: &SharedAppState,
     notebook: &SharedNotebook,
     sidebar: &SharedSidebar,
@@ -745,6 +749,7 @@ pub fn start_ssh_connection(
     connection_id: Uuid,
     conn: &rustconn_core::Connection,
     logging_enabled: bool,
+    observer: Option<super::types::SessionStartObserver>,
 ) -> Option<Uuid> {
     // Check if port check is needed
     let settings = state.borrow().settings().clone();
@@ -792,6 +797,7 @@ pub fn start_ssh_connection(
                             connection_id,
                             &conn_clone,
                             logging_enabled,
+                            observer,
                         );
                     }
                     Err(e) => {
@@ -839,6 +845,7 @@ pub fn start_ssh_connection(
             connection_id,
             conn,
             logging_enabled,
+            observer,
         )
     }
 }
@@ -846,6 +853,10 @@ pub fn start_ssh_connection(
 /// Internal function to start SSH connection (after port check).
 ///
 /// Creates a terminal tab and spawns the SSH process with the given configuration.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "SSH startup requires the shared UI owners, monitoring, connection data, logging policy, and observer"
+)]
 fn start_ssh_connection_internal(
     state: &SharedAppState,
     notebook: &SharedNotebook,
@@ -854,6 +865,7 @@ fn start_ssh_connection_internal(
     connection_id: Uuid,
     conn: &rustconn_core::Connection,
     logging_enabled: bool,
+    observer: Option<super::types::SessionStartObserver>,
 ) -> Option<Uuid> {
     use rustconn_core::protocol::{format_command_message, format_connection_message};
 
@@ -886,6 +898,9 @@ fn start_ssh_connection_internal(
         conn.theme_override.as_ref(),
         &global_variables,
     );
+    if let Some(observer) = observer {
+        observer.complete(session_id);
+    }
 
     // Apply highlight rules (built-in defaults + global + per-connection)
     {

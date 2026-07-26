@@ -370,92 +370,76 @@ impl RdpLauncher {
             )
         })?;
 
-        let mut cmd = Command::new(&binary);
+        // Connection arguments are written to a guarded file so credentials
+        // never appear in the FreeRDP process argument vector.
+        let mut plain_args = Vec::new();
 
         if let Some(dom) = domain
             && !dom.is_empty()
         {
-            cmd.arg(format!("/d:{dom}"));
+            plain_args.push(format!("/d:{dom}"));
         }
-
         if let Some(user) = username {
-            cmd.arg(format!("/u:{user}"));
+            plain_args.push(format!("/u:{user}"));
         }
-
-        let has_password = password.is_some_and(|p| !p.is_empty());
-        if has_password && let Some(pass) = password {
-            // SECURITY / ponytail: the password is passed as `/p:<pw>`, which is
-            // visible on the argv (`ps`, `/proc/<pid>/cmdline`) for the lifetime
-            // of the FreeRDP process. FreeRDP's stdin alternative
-            // (`/from-stdin:force`) is unreliable with the sdl-freerdp3 GUI event
-            // loop (it blocks the event loop and can hang the viewer), so argv is
-            // the only path that works across the xfreerdp/sdl-freerdp backends we
-            // support. Revisit once FreeRDP ships a dependable non-argv secret
-            // channel; until then this is a known, documented local-visibility
-            // tradeoff (the value is not logged and never leaves the machine).
-            cmd.arg(format!("/p:{pass}"));
-        }
-
         if let Some((width, height)) = resolution {
-            cmd.arg(format!("/w:{width}"));
-            cmd.arg(format!("/h:{height}"));
+            plain_args.push(format!("/w:{width}"));
+            plain_args.push(format!("/h:{height}"));
         } else {
-            // Default resolution when not specified
-            cmd.arg("/w:1920");
-            cmd.arg("/h:1080");
+            plain_args.push("/w:1920".to_string());
+            plain_args.push("/h:1080".to_string());
         }
-
-        // Security settings — conditional based on connection settings.
-        // Default is TOFU (trust-on-first-use), matching SSH known_hosts behavior.
         if ignore_certificate {
-            // Remove old certificate file to accept new one (like SSH known_hosts removal)
             Self::remove_known_certificate(host, port);
-            cmd.arg("/cert:ignore");
+            plain_args.push("/cert:ignore".to_string());
         } else {
-            cmd.arg("/cert:tofu");
+            plain_args.push("/cert:tofu".to_string());
         }
-        // Enable dynamic resolution for better display
-        cmd.arg("/dynamic-resolution");
-
-        // Add decorations flag for window controls
-        cmd.arg("/decorations");
-
-        // Add window geometry if saved and remember_window_position is enabled
+        plain_args.push("/dynamic-resolution".to_string());
+        plain_args.push("/decorations".to_string());
         if remember_window_position && let Some((x, y, _width, _height)) = window_geometry {
-            cmd.arg(format!("/x:{x}"));
-            cmd.arg(format!("/y:{y}"));
+            plain_args.push(format!("/x:{x}"));
+            plain_args.push(format!("/y:{y}"));
         }
-
-        // Add shared folders for drive redirection
         for (share_name, local_path) in shared_folders {
             if local_path.exists() {
-                // FreeRDP `/drive:<name>,<path>` is comma-delimited; a comma in
-                // the share name would split the argument and corrupt the path.
                 let safe_name = share_name.replace(',', "_");
-                cmd.arg(format!("/drive:{safe_name},{}", local_path.display()));
+                plain_args.push(format!("/drive:{safe_name},{}", local_path.display()));
             }
         }
-
-        // Map the local default printer into the session via CUPS.
         if printer_enabled {
-            cmd.arg("/printer");
+            plain_args.push("/printer".to_string());
         }
-
-        for arg in extra_args {
-            cmd.arg(arg);
-        }
-
+        plain_args.extend(extra_args.iter().cloned());
         if port == 3389 {
-            cmd.arg(format!("/v:{host}"));
+            plain_args.push(format!("/v:{host}"));
         } else {
-            cmd.arg(format!("/v:{host}:{port}"));
+            plain_args.push(format!("/v:{host}:{port}"));
         }
+
+        let password = password
+            .filter(|value| !value.is_empty())
+            .map(|value| secrecy::SecretString::from(value.to_string()));
+        let mut secret_args = Vec::new();
+        if let Some(ref password) = password {
+            secret_args.push(("p", password));
+        }
+        let prepared_args = crate::embedded_rdp::SafeFreeRdpLauncher::prepare_args_file(
+            &binary,
+            &plain_args,
+            &secret_args,
+        )
+        .map_err(|error| EmbeddingError::ProcessStartFailed(error.to_string()))?;
+
+        let mut cmd = Command::new(&binary);
+        cmd.arg(prepared_args.argument());
 
         // Capture stderr for error detection
         cmd.stderr(std::process::Stdio::piped());
 
         match cmd.spawn() {
             Ok(child) => {
+                prepared_args.retain_for_post_spawn_parse();
                 tab.set_process(child);
                 tab.set_status(&i18n_f("Connecting to {}…", &[host]));
                 Self::watch_early_failure(tab, host, on_early_failure);

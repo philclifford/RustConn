@@ -3,7 +3,9 @@
 use std::path::Path;
 
 use rustconn_core::models::{Connection, ProtocolType};
-use rustconn_core::protocol::ProtocolRegistry;
+use rustconn_core::protocol::{
+    ProtocolRegistry, contains_freerdp_secret_field, freerdp_secret_field_takes_following_value,
+};
 
 use crate::error::CliError;
 use crate::util::{create_config_manager, find_connection};
@@ -34,7 +36,8 @@ pub fn cmd_connect(config_path: Option<&Path>, name: &str, dry_run: bool) -> Res
     let command = build_connection_command(connection);
 
     if dry_run {
-        println!("{} {}", command.program, command.args.join(" "));
+        let formatted = format_command_for_log(&command);
+        println!("{formatted}");
         return Ok(());
     }
 
@@ -151,20 +154,33 @@ fn execute_connection_command(command: &ConnectionCommand) -> Result<(), CliErro
 /// be masked in log output.
 fn is_sensitive_arg(arg: &str) -> bool {
     let lower = arg.to_lowercase();
-    lower.starts_with("/p:")
+    contains_freerdp_secret_field(arg)
         || lower.starts_with("--password")
+        || lower == "--passwd"
+        || lower == "-p"
         || lower.starts_with("-p ")
+        || lower.starts_with("--token")
+        || lower.starts_with("--secret")
         || lower.contains("password=")
         || lower.contains("passwd=")
         || lower.contains("secret=")
         || lower.contains("token=")
 }
 
+fn sensitive_arg_takes_following_value(arg: &str) -> bool {
+    let lower = arg.trim().to_ascii_lowercase();
+    freerdp_secret_field_takes_following_value(arg)
+        || matches!(
+            lower.as_str(),
+            "-p" | "--password" | "--passwd" | "--secret" | "--token"
+        )
+}
+
 /// Masks the value portion of a sensitive argument, preserving the key
 /// prefix for readability.
 fn mask_arg(arg: &str) -> String {
-    if arg.to_lowercase().starts_with("/p:") {
-        return "/p:****".to_string();
+    if contains_freerdp_secret_field(arg) && !arg.trim_start().starts_with('-') {
+        return String::from("****");
     }
 
     // Handle `--key=value` and `--key value`-style flags.
@@ -182,11 +198,17 @@ fn mask_arg(arg: &str) -> String {
 /// Formats a connection command for safe log output by masking sensitive
 /// arguments such as passwords and tokens.
 fn format_command_for_log(command: &ConnectionCommand) -> String {
+    let mut mask_following_value = false;
     let masked_args: Vec<String> = command
         .args
         .iter()
         .map(|arg| {
+            if mask_following_value {
+                mask_following_value = false;
+                return String::from("****");
+            }
             if is_sensitive_arg(arg) {
+                mask_following_value = sensitive_arg_takes_following_value(arg);
                 mask_arg(arg)
             } else {
                 arg.clone()
@@ -195,4 +217,90 @@ fn format_command_for_log(command: &ConnectionCommand) -> String {
         .collect();
 
     format!("{} {}", command.program, masked_args.join(" "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn freerdp_secret_aliases_are_fully_masked() {
+        for argument in [
+            " /P:session-secret",
+            "//PASSWORD:password-secret",
+            "/gateway:g:host, /Gp:gateway-secret",
+            "/gateway:g:host,//GATEWAY-PASSWORD:alias-secret",
+            "/gateway:g:host,PTH:hash-secret",
+            "/p whitespace-secret",
+            "/gateway:g:host,gp whitespace-gateway-secret",
+        ] {
+            let command = ConnectionCommand {
+                program: "xfreerdp".to_string(),
+                args: vec![argument.to_string()],
+            };
+
+            assert!(is_sensitive_arg(argument));
+            assert_eq!(format_command_for_log(&command), "xfreerdp ****");
+        }
+    }
+
+    #[test]
+    fn formatted_output_never_contains_freerdp_secret_values() {
+        let command = ConnectionCommand {
+            program: "xfreerdp".to_string(),
+            args: vec![
+                "/gateway:g:host,p:composite-password".to_string(),
+                "/PASSWORD:top-level-password".to_string(),
+                "/u:alice".to_string(),
+            ],
+        };
+
+        let formatted = format_command_for_log(&command);
+
+        assert_eq!(formatted, "xfreerdp **** **** /u:alice");
+        assert!(!formatted.contains("composite-password"));
+        assert!(!formatted.contains("top-level-password"));
+    }
+
+    #[test]
+    fn split_sensitive_values_are_masked() {
+        let command = ConnectionCommand {
+            program: "client".to_string(),
+            args: vec![
+                "--password".to_string(),
+                "split-password".to_string(),
+                "--token".to_string(),
+                "split-token".to_string(),
+                "/gp".to_string(),
+                "gateway-password".to_string(),
+                "--user=alice".to_string(),
+            ],
+        };
+
+        let formatted = format_command_for_log(&command);
+        assert_eq!(
+            formatted,
+            "client **** **** **** **** **** **** --user=alice"
+        );
+        assert!(!formatted.contains("split-password"));
+        assert!(!formatted.contains("split-token"));
+        assert!(!formatted.contains("gateway-password"));
+    }
+
+    #[test]
+    fn generic_password_and_token_arguments_remain_masked() {
+        let command = ConnectionCommand {
+            program: "ssh-client".to_string(),
+            args: vec![
+                "--password=ssh-secret".to_string(),
+                "token=api-secret".to_string(),
+                "--user=alice".to_string(),
+            ],
+        };
+
+        assert_eq!(
+            format_command_for_log(&command),
+            "ssh-client --password=**** token=**** --user=alice"
+        );
+    }
 }
