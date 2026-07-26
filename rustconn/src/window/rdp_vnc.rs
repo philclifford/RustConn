@@ -962,25 +962,22 @@ fn start_external_rdp_session(
     // (R2.1); record_connection_start was already done by the caller, so
     // its entry id is passed straight through.
     let child = tab.process_handle().borrow_mut().take();
-    match super::external_session_registry() {
-        Some(registry) => {
-            // ponytail: a tunnelled tabless RDP session keeps its
-            // SshTunnel in the notebook map keyed by this session id; with
-            // no tab-close event it is reclaimed at app exit. Move it into
-            // the registry entry if this grows.
-            if let Some(tunnel) = ssh_tunnel {
-                notebook.store_ssh_tunnel(session_id, tunnel);
-            }
-            registry.register(session_id, connection_id, child, history_entry_id);
+    if let Some(registry) = super::external_session_registry() {
+        // ponytail: a tunnelled tabless RDP session keeps its
+        // SshTunnel in the notebook map keyed by this session id; with
+        // no tab-close event it is reclaimed at app exit. Move it into
+        // the registry entry if this grows.
+        if let Some(tunnel) = ssh_tunnel {
+            notebook.store_ssh_tunnel(session_id, tunnel);
         }
-        None => {
-            tracing::error!(
-                %connection_id,
-                "External session registry unavailable; terminating untracked RDP viewer"
-            );
-            if let Some(child) = child {
-                crate::embedded_rdp::launcher::cleanup_child_without_blocking(child);
-            }
+        registry.register(session_id, connection_id, child, history_entry_id);
+    } else {
+        tracing::error!(
+            %connection_id,
+            "External session registry unavailable; terminating untracked RDP viewer"
+        );
+        if let Some(child) = child {
+            crate::embedded_rdp::launcher::cleanup_child_without_blocking(child);
         }
     }
 
