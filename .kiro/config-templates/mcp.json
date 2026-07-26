@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "kirograph": {
+      "command": "/home/totoshko88/.local/bin/kirograph",
+      "args": [
+        "serve",
+        "--mcp",
+        "--path",
+        "/home/totoshko88/Documents/RustConn"
+      ],
+      "env": {
+        "PATH": "/home/totoshko88/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin"
+      },
+      "disabled": false
+    }
+  }
+}

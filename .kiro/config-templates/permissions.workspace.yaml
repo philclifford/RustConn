@@ -1,0 +1,112 @@
+# Kiro workspace permissions for RustConn
+# Copy to: ~/.kiro/workspace-roots/3324a452d6cf05d1/permissions.yaml
+#
+# One block per capability, sorted. Kiro appends a new block for every
+# "Allow always" click, so re-merge periodically instead of letting it grow.
+# Writes to .kiro/settings/ and to the permission files themselves are denied by
+# kiro-scope and cannot be re-allowed here.
+
+rules:
+  # ─── Reads: always allowed, any path ─────────────────────────────
+  - capability: fs_read
+    effect: allow
+
+  # ─── Writes: project sources and Kiro config-as-code ─────────────
+  - capability: fs_write
+    effect: allow
+    match:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "CHANGELOG.md"
+      - "deny.toml"
+      - ".kiro/agents/**"
+      - ".kiro/config-templates/**"
+      - ".kiro/hooks/**"
+      - ".kiro/powers/**"
+      - ".kiro/specs/**"
+      - ".kiro/steering/**"
+      - "debian/**"
+      - "docs/**"
+      - "packaging/**"
+      - "po/**"
+      - "rustconn/**"
+      - "rustconn-cli/**"
+      - "rustconn-core/**"
+      - "rustconn-pty-sys/**"
+      - "scripts/**"
+      - "snap/**"
+    exclude:
+      - "**/.env"
+      - "**/.env.*"
+      - "**/*.pem"
+      - "**/secrets/**"
+
+  # ─── Shell: build, inspect, translate. No history rewrites. ──────
+  - capability: shell
+    effect: allow
+    match:
+      - "~/.cargo/bin/cargo *"
+      - "/bin/echo *"
+      - "PATH=$HOME/.cargo/bin:$PATH *"
+      - 'PATH="$HOME/.cargo/bin:$PATH" *'
+      - "RUSTUP_TOOLCHAIN=stable *"
+      - "awk *"
+      - "bash po/update-pot.sh"
+      - "cargo *"
+      - "cat *"
+      - "cut *"
+      - "dpkg-query *"
+      - "find *"
+      - "git branch*"
+      - "git diff*"
+      - "git log*"
+      - "git show*"
+      - "git stash*"
+      - "git status*"
+      - "grep *"
+      - "head *"
+      - "hexdump *"
+      - "kirograph *"
+      - "ls *"
+      - "msgmerge *"
+      - "pgrep *"
+      - "python3 packaging/*"
+      - "rg *"
+      - "script *"
+      - "sed *"
+      - "sort *"
+      - "tail *"
+      - "tee *"
+      - "wc *"
+      - "xargs *"
+    exclude:
+      - "cargo publish*"
+      - "git checkout*"
+      - "git clean*"
+      - "git merge*"
+      - "git push*"
+      - "git rebase*"
+      - "git reset*"
+      - "git tag*"
+
+  # ─── MCP: KiroGraph (all tools) ──────────────────────────────────
+  - capability: mcp
+    effect: allow
+    match:
+      - "kirograph/*"
+
+  # ─── Powers ──────────────────────────────────────────────────────
+  - capability: power
+    effect: allow
+    match:
+      - "rustconn"
+
+  # ─── Sub-agents and web ──────────────────────────────────────────
+  - capability: subagent
+    effect: allow
+
+  - capability: web_fetch
+    effect: allow
+
+  - capability: web_search
+    effect: allow

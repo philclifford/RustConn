@@ -8,7 +8,7 @@
       "matcher": "\\.(rs|toml)$",
       "action": {
         "type": "command",
-        "command": "kirograph mark-dirty 2>/dev/null || true"
+        "command": "cd \"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\" || exit 0; kirograph mark-dirty >>.kirograph/hook.log 2>&1 || true"
       },
       "enabled": true
     }
