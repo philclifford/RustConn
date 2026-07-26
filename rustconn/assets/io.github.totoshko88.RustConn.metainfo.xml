@@ -140,7 +140,7 @@
     <control>touch</control>
   </supports>
   <releases>
-    <release version="0.19.4" date="2026-07-25">
+    <release version="0.19.4" date="2026-07-27">
       <description>
         <p>Version 0.19.4 - Detachable session windows and RDP fallback fixes:</p>
         <ul>

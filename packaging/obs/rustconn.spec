@@ -278,7 +278,7 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
-* Sat Jul 25 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.4-0
+* Mon Jul 27 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.4-0
 - Version bump to 0.19.4
 - Added detachable session windows (issue #236)
 - Fixed RDP connection failing when the server only supports Standard RDP Security (issue #235)
