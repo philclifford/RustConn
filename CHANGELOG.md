@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
-- **Updated**: aes 0.9.1 → 0.9.2, clap_complete 4.6.7 → 4.6.8, event-listener 5.4.1 → 5.4.2, toml_parser 1.1.2 → 1.1.3, tray-icon 0.24.1 → 0.24.2
+- **Updated**: socket2 0.5.10 → 0.6.5 ([#238](https://github.com/totoshko88/RustConn/pull/238), the MPTCP socket helper needed no code change), aes 0.9.1 → 0.9.2, clap_complete 4.6.7 → 4.6.8, event-listener 5.4.1 → 5.4.2, toml_parser 1.1.2 → 1.1.3, tray-icon 0.24.1 → 0.24.2
 - **Audited, no change needed**: `cargo deny check advisories` clean; pinned CLI downloads (kubectl 1.36.3, Tailscale 1.98.9, Teleport 18.10.0, Boundary 0.21.3, Hoop.dev 1.121.1, Bitwarden 2026.7.0, 1Password 2.35.0, TigerVNC 1.16.2) all current; Flatpak/Flathub bundled sources already at their latest releases (FreeRDP 3.30.0, cJSON 1.7.19, openh264 2.6.0, waypipe 0.11.0, mc 4.8.33, fast_float 8.2.10, GNOME runtime 50), VTE stays pinned below 0.81 by design; Snap still on core24 + gnome-46-2404 because no core26 GNOME extension exists yet (issue #174).
 
 ## [0.19.4] - 2026-07-27

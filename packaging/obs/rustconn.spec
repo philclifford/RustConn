@@ -289,7 +289,7 @@ done
 - Fixed multi-codepoint emoji icons (ZWJ sequences, flags, keycaps) saved but never drawn
 - Improved fallback to a visible icon when the active theme lacks the stored icon name
 - Improved localization: new string translated in all 16 languages
-- Updated dependencies: aes, clap_complete, event-listener, toml_parser, tray-icon
+- Updated dependencies: socket2 0.5→0.6, aes, clap_complete, event-listener, toml_parser, tray-icon
 
 * Mon Jul 27 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.4-0
 - Version bump to 0.19.4
