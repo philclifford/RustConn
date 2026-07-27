@@ -418,12 +418,11 @@ pub fn bind_list_item(
     if item.is_group() {
         // Use custom icon if set, otherwise default folder icon
         let custom_icon = item.icon();
+        let glyph_icon = rustconn_core::dialog_utils::is_glyph_icon(&custom_icon);
         if custom_icon.is_empty() {
             icon.set_icon_name(Some("folder-symbolic"));
             icon.set_visible(true);
-        } else if custom_icon.chars().count() <= 2
-            && custom_icon.chars().next().is_some_and(|c| !c.is_ascii())
-        {
+        } else if glyph_icon {
             // Emoji/unicode — show as text via icon tooltip, use a generic icon
             // We repurpose the icon widget: hide it and insert a label before it
             icon.set_visible(false);
@@ -445,8 +444,12 @@ pub fn bind_list_item(
                 content_box.prepend(&emoji_lbl);
             }
         } else {
-            // GTK icon name
-            icon.set_icon_name(Some(&custom_icon));
+            // GTK icon name — a name the active theme lacks would draw nothing,
+            // so fall back to the default folder icon.
+            icon.set_icon_name(Some(crate::icon_render::theme_icon_or(
+                &custom_icon,
+                "folder-symbolic",
+            )));
             icon.set_visible(true);
         }
         set_label_text(&label, &item.name());
@@ -499,9 +502,7 @@ pub fn bind_list_item(
         // Hide stale emoji label if icon is not emoji
         if let Some(first) = content_box.first_child()
             && first.css_classes().iter().any(|c| c == "emoji-icon")
-            && (custom_icon.is_empty()
-                || !(custom_icon.chars().count() <= 2
-                    && custom_icon.chars().next().is_some_and(|c| !c.is_ascii())))
+            && !glyph_icon
         {
             first.set_visible(false);
         }
@@ -580,15 +581,13 @@ pub fn bind_list_item(
     } else {
         // Use custom icon if set, otherwise protocol-based icon
         let custom_icon = item.icon();
+        let glyph_icon = rustconn_core::dialog_utils::is_glyph_icon(&custom_icon);
+        let protocol_icon = sidebar_ui::get_protocol_icon(&item.protocol());
         if custom_icon.is_empty() {
             // Set icon based on protocol
-            let protocol = item.protocol();
-            let icon_name = sidebar_ui::get_protocol_icon(&protocol);
-            icon.set_icon_name(Some(icon_name));
+            icon.set_icon_name(Some(protocol_icon));
             icon.set_visible(true);
-        } else if custom_icon.chars().count() <= 2
-            && custom_icon.chars().next().is_some_and(|c| !c.is_ascii())
-        {
+        } else if glyph_icon {
             // Emoji/unicode
             icon.set_visible(false);
             let emoji_label = if let Some(first) = content_box.first_child()
@@ -608,17 +607,19 @@ pub fn bind_list_item(
                 content_box.prepend(&emoji_lbl);
             }
         } else {
-            // GTK icon name
-            icon.set_icon_name(Some(&custom_icon));
+            // GTK icon name — a name the active theme lacks would draw nothing,
+            // so fall back to the protocol icon.
+            icon.set_icon_name(Some(crate::icon_render::theme_icon_or(
+                &custom_icon,
+                protocol_icon,
+            )));
             icon.set_visible(true);
         }
 
         // Hide stale emoji label if icon is not emoji
         if let Some(first) = content_box.first_child()
             && first.css_classes().iter().any(|c| c == "emoji-icon")
-            && (custom_icon.is_empty()
-                || !(custom_icon.chars().count() <= 2
-                    && custom_icon.chars().next().is_some_and(|c| !c.is_ascii())))
+            && !glyph_icon
         {
             first.set_visible(false);
         }

@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.4
+Version:        0.19.5
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,19 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Tue Jul 28 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.5-0
+- Version bump to 0.19.5
+- Fixed SSH session dying with "path too long for Unix domain socket" on long hostnames (issue #239)
+- Fixed ${variable} placeholders never substituted in a Custom Command template (issue #151)
+- Fixed Custom Command leaving a dead terminal tab behind after a one-shot launcher exits
+- Fixed Tags field hidden for Custom Command and other Zero Trust connections
+- Fixed in-place reconnect breaking a Custom Command line
+- Fixed folders could not be nested by drag and drop in the sidebar (issue #237)
+- Fixed multi-codepoint emoji icons (ZWJ sequences, flags, keycaps) saved but never drawn
+- Improved fallback to a visible icon when the active theme lacks the stored icon name
+- Improved localization: new string translated in all 16 languages
+- Updated dependencies: socket2 0.5→0.6, aes, clap_complete, event-listener, toml_parser, tray-icon
+
 * Mon Jul 27 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.4-0
 - Version bump to 0.19.4
 - Added detachable session windows (issue #236)

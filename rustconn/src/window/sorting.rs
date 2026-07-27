@@ -371,11 +371,8 @@ pub fn handle_drag_drop(state: &SharedAppState, sidebar: &SharedSidebar, data: &
             }
         }
         "group" => {
-            // Moving a group - reorder among groups
-            if let Ok(mut state_mut) = state.try_borrow_mut()
-                && let Err(e) = state_mut.reorder_group(item_uuid, target_uuid)
-            {
-                tracing::error!(%e, "Failed to reorder group");
+            // Moving a group — may reparent it, reorder it, or both
+            if !move_dropped_group(state, item_uuid, target_uuid, target_is_group, position) {
                 return;
             }
         }
@@ -390,4 +387,129 @@ pub fn handle_drag_drop(state: &SharedAppState, sidebar: &SharedSidebar, data: &
 
     // Restore tree state after rebuild
     sidebar.restore_state(&tree_state);
+}
+
+/// Returns `true` when `group_id` is an Import folder or sits inside one.
+///
+/// Import folders and everything under them are recreated from the synced
+/// source on the next sync run, so a manual move there would silently revert.
+fn is_in_import_subtree(
+    state_ref: &std::cell::Ref<crate::state::AppState>,
+    group_id: Uuid,
+) -> bool {
+    let mut current = Some(group_id);
+    // A corrupted parent chain must not spin forever; no real tree is this deep.
+    for _ in 0..64 {
+        let Some(id) = current else { return false };
+        let Some(group) = state_ref.get_group(id) else {
+            return false;
+        };
+        if group.sync_mode == rustconn_core::sync::SyncMode::Import {
+            return true;
+        }
+        current = group.parent_id;
+    }
+    tracing::warn!(%group_id, "Folder parent chain too deep, treating as unmanaged");
+    false
+}
+
+/// Applies a dropped folder, returning `true` when the sidebar needs a rebuild.
+///
+/// Dropping a folder on the middle band of another folder nests it inside that
+/// folder; dropping it on a folder's top/bottom edge, or on a connection, makes
+/// it a sibling at that level instead. A single drop can require both a
+/// reparent and a reorder, and they must run in that order because
+/// `reorder_group` only accepts folders that already share a parent.
+fn move_dropped_group(
+    state: &SharedAppState,
+    group_id: Uuid,
+    target_uuid: Uuid,
+    target_is_group: bool,
+    position: &str,
+) -> bool {
+    let nest_into_target = target_is_group && position == "into";
+
+    let (current_parent, new_parent) = {
+        // A drop arrives from a GTK callback, where another handler may still
+        // hold the state — try_borrow keeps that a no-op instead of a panic.
+        let Ok(state_ref) = state.try_borrow() else {
+            tracing::warn!("State busy, folder drop ignored");
+            return false;
+        };
+        let Some(dragged) = state_ref.get_group(group_id) else {
+            tracing::warn!(%group_id, "Dragged folder no longer exists");
+            return false;
+        };
+        let current_parent = dragged.parent_id;
+        let dragged_name = dragged.name.clone();
+
+        // Import folders mirror a synced source: the next sync run recreates
+        // their place in the tree, so neither the folder itself nor anything
+        // inside it may be reorganised by hand.
+        if is_in_import_subtree(&state_ref, group_id) {
+            tracing::warn!(group = %dragged_name, "Rejected move of an Import folder");
+            drop(state_ref);
+            crate::toast::show_error_toast_on_active_window(&i18n(
+                "Imported folders are managed by sync and their structure cannot be changed",
+            ));
+            return false;
+        }
+
+        let new_parent = if nest_into_target {
+            Some(target_uuid)
+        } else if target_is_group {
+            state_ref.get_group(target_uuid).and_then(|g| g.parent_id)
+        } else {
+            // Dropped on a connection — join the folder that holds it.
+            state_ref
+                .get_connection(target_uuid)
+                .and_then(|c| c.group_id)
+        };
+        // The destination must not belong to an Import tree either — a folder
+        // nested there would be dropped again by the next sync run.
+        if new_parent.is_some_and(|p| is_in_import_subtree(&state_ref, p)) {
+            tracing::warn!(group = %dragged_name, "Rejected folder drop into an Import subtree");
+            drop(state_ref);
+            crate::toast::show_error_toast_on_active_window(&i18n(
+                "Imported folders are managed by sync and their structure cannot be changed",
+            ));
+            return false;
+        }
+        // A folder cannot land inside itself, and nesting it under one of its own
+        // descendants would cut the whole subtree out of the tree.
+        if new_parent == Some(group_id)
+            || new_parent.is_some_and(|p| super::groups::is_descendant_of(&state_ref, p, group_id))
+        {
+            drop(state_ref);
+            crate::toast::show_error_toast_on_active_window(&i18n(
+                "Cannot move a folder into one of its own subfolders",
+            ));
+            return false;
+        }
+        (current_parent, new_parent)
+    };
+
+    if current_parent != new_parent {
+        let Ok(mut state_mut) = state.try_borrow_mut() else {
+            tracing::warn!("State busy, folder drop ignored");
+            return false;
+        };
+        if let Err(e) = state_mut.move_group_to_parent(group_id, new_parent) {
+            tracing::error!(%e, "Failed to reparent folder");
+            return false;
+        }
+    }
+
+    // Edge drops also carry a position among the siblings.
+    if target_is_group
+        && !nest_into_target
+        && let Ok(mut state_mut) = state.try_borrow_mut()
+        && let Err(e) = state_mut.reorder_group(group_id, target_uuid)
+    {
+        // Non-fatal: the folder already sits at the requested level, only the
+        // order among its siblings stays as it was.
+        tracing::warn!(%e, "Failed to reorder folder after drop");
+    }
+
+    true
 }

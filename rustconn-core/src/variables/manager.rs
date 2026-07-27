@@ -448,6 +448,44 @@ impl VariableManager {
         Ok(result)
     }
 
+    /// Substitutes only the variables that are defined, leaving unknown
+    /// `${...}` references untouched.
+    ///
+    /// Same command-safety validation as [`Self::substitute_for_command`], but
+    /// undefined references are kept verbatim instead of being blanked. This is
+    /// what a user-authored shell command needs: `${my_var}` must resolve from
+    /// the variable scope chain, while `${HOME}` or `${1}` must survive for the
+    /// shell to expand (issue #151).
+    ///
+    /// # Errors
+    ///
+    /// Returns `VariableError::UnsafeValue` if a resolved value contains null
+    /// bytes, newlines, control characters or shell metacharacters, and
+    /// `VariableError::EmptyName` for a malformed reference.
+    pub fn substitute_defined_for_command(
+        &self,
+        input: &str,
+        scope: VariableScope,
+    ) -> VariableResult<String> {
+        let refs = Self::parse_references(input)?;
+        let mut result = input.to_string();
+
+        for var_name in &refs {
+            match self.resolve(var_name, scope) {
+                Ok(value) => {
+                    Self::validate_command_value(var_name, &value)?;
+                    let pattern = format!("${{{var_name}}}");
+                    result = result.replace(&pattern, &value);
+                }
+                // Undefined: leave the placeholder for the shell to expand.
+                Err(VariableError::Undefined(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Validates that a resolved variable value is safe for command arguments.
     ///
     /// Rejects values containing null bytes, newlines, carriage returns, and
@@ -796,6 +834,43 @@ mod tests {
             .substitute_for_command("${with_tab}", VariableScope::Global)
             .unwrap();
         assert_eq!(result, "value\twith_tab");
+    }
+
+    /// Issue #151: a Custom Command template like `rustdesk --connect ${id}`
+    /// must pick up the connection-local variable `id`.
+    #[test]
+    fn test_substitute_defined_for_command_resolves_connection_variable() {
+        let conn_id = Uuid::new_v4();
+        let mut manager = VariableManager::new();
+        manager.set_connection(conn_id, Variable::new("id", "123456789"));
+
+        let result = manager
+            .substitute_defined_for_command(
+                "rustdesk --connect ${id}",
+                VariableScope::Connection(conn_id),
+            )
+            .unwrap();
+        assert_eq!(result, "rustdesk --connect 123456789");
+    }
+
+    /// Undefined references stay literal so the shell can still expand them
+    /// (`${HOME}`), unlike `substitute_for_command` which blanks them.
+    #[test]
+    fn test_substitute_defined_for_command_keeps_unknown_placeholders() {
+        let manager = create_test_manager();
+        let result = manager
+            .substitute_defined_for_command("cp ${HOME}/f ${host}:/tmp", VariableScope::Global)
+            .unwrap();
+        assert_eq!(result, "cp ${HOME}/f example.com:/tmp");
+    }
+
+    #[test]
+    fn test_substitute_defined_for_command_rejects_shell_metacharacters() {
+        let mut manager = VariableManager::new();
+        manager.set_global(Variable::new("evil", "1; rm -rf /"));
+
+        let result = manager.substitute_defined_for_command("echo ${evil}", VariableScope::Global);
+        assert!(matches!(result, Err(VariableError::UnsafeValue { .. })));
     }
 
     #[test]

@@ -229,6 +229,7 @@ PKG_FILES=(
     "docs/ARCHITECTURE.md"
     "docs/AI_DEVELOPMENT.md"
     "rustconn/Cargo.toml"
+    "rustconn-cli/Cargo.toml"
 )
 PKG_PATS=(
     "^rustconn \\($VERSION-1\\)"
@@ -246,6 +247,7 @@ PKG_PATS=(
     "\\*\\*Version $VERSION\\*\\*"
     "\\*\\*Version $VERSION\\*\\*"
     "\\*\\*Version $VERSION\\*\\*"
+    "version = \"$VERSION\""
     "version = \"$VERSION\""
 )
 

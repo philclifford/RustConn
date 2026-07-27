@@ -61,6 +61,154 @@ pub(super) fn substitute_variables(input: &str, global_variables: &[Variable]) -
         .unwrap_or_else(|_| input.to_string())
 }
 
+/// A Zero Trust command ready to be spawned in a terminal.
+pub(super) struct ZeroTrustLaunch {
+    /// argv handed to VTE, already wrapped for Flatpak / login shell
+    argv: Vec<String>,
+    /// Command line echoed into the terminal, with secret values masked
+    display: String,
+}
+
+/// Builds a variable manager for `conn`: synthetic connection fields first,
+/// then the connection's own local variables (they win over the synthetic and
+/// global ones), with global variables as the outermost fallback.
+///
+/// With `mask_secrets` every secret value is replaced by `********`, which is
+/// what the command line echoed into the terminal (and the session log) uses.
+fn connection_variable_manager(
+    conn: &rustconn_core::Connection,
+    global_variables: &[Variable],
+    mask_secrets: bool,
+) -> VariableManager {
+    let value_of = |var: &Variable| -> String {
+        if mask_secrets && var.is_secret() {
+            "********".to_string()
+        } else {
+            var.value.clone()
+        }
+    };
+
+    let mut manager = VariableManager::new();
+    for var in global_variables {
+        manager.set_global(Variable::new(&var.name, value_of(var)));
+    }
+
+    // Synthetic connection fields, mirroring the pre-connect task scope.
+    // Empty ones are skipped so the placeholder stays available to the shell.
+    let conn_id = conn.id;
+    if !conn.host.is_empty() {
+        manager.set_connection(conn_id, Variable::new("host", &conn.host));
+    }
+    if conn.port != 0 {
+        manager.set_connection(conn_id, Variable::new("port", conn.port.to_string()));
+    }
+    if let Some(ref user) = conn.username
+        && !user.is_empty()
+    {
+        manager.set_connection(conn_id, Variable::new("username", user));
+    }
+    if !conn.name.is_empty() {
+        manager.set_connection(conn_id, Variable::new("name", &conn.name));
+    }
+
+    for var in conn.local_variables.values() {
+        manager.set_connection(conn_id, Variable::new(&var.name, value_of(var)));
+    }
+
+    manager
+}
+
+/// Builds the spawn argv and the echoed command line for a Zero Trust connection.
+///
+/// For the Generic provider (Custom Command) the `${var}` placeholders of the
+/// template are resolved from the connection's local variables, the synthetic
+/// connection fields and the global variables; unknown references are left
+/// untouched so the shell can still expand them (issue #151).
+///
+/// # Errors
+///
+/// Returns `VariableError::UnsafeValue` when a resolved value contains shell
+/// metacharacters or control characters — substituting it into `sh -c` would
+/// be a command injection.
+pub(super) fn build_zerotrust_launch(
+    conn: &rustconn_core::Connection,
+    zt_config: &rustconn_core::models::ZeroTrustConfig,
+    global_variables: &[Variable],
+) -> Result<ZeroTrustLaunch, rustconn_core::variables::VariableError> {
+    let (program, mut args) = zt_config.build_command(conn.username.as_deref());
+    let is_generic = matches!(
+        zt_config.provider,
+        rustconn_core::models::ZeroTrustProvider::Generic
+    );
+
+    // Generic yields ("sh", ["-c", <template>]) — expand the template only.
+    let mut masked_args = args.clone();
+    if is_generic && let Some(template) = args.last_mut() {
+        let scope = VariableScope::Connection(conn.id);
+        let expanded = connection_variable_manager(conn, global_variables, false)
+            .substitute_defined_for_command(template, scope)?;
+        // The masked pass must never fall back to `expanded`: that string holds
+        // the real secret values and is echoed into the terminal and the session
+        // log. If masking cannot be produced, the launch fails instead.
+        let masked = connection_variable_manager(conn, global_variables, true)
+            .substitute_defined_for_command(template, scope)?;
+        *template = expanded;
+        if let Some(last) = masked_args.last_mut() {
+            *last = masked;
+        }
+    }
+
+    let join = |parts: &[String]| -> String {
+        std::iter::once(program.as_str())
+            .chain(parts.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let display = join(&masked_args);
+    let full_command = join(&args);
+
+    let spawn_argv = if is_generic && rustconn_core::flatpak::is_flatpak() {
+        // The user's custom command refers to host-side binaries that are not
+        // installed in the sandbox, so it runs through flatpak-spawn --host
+        // (same approach as Local Shell, #122).
+        //
+        // Run it on the host through a *login* shell (`sh -lc`) so the host PATH
+        // resolves the binary. `script` (util-linux) allocates a host PTY for
+        // interactive TUI tools, but it is not present on every host (atomic
+        // distros, or `script` outside the sandbox PATH) and GUI tools (e.g.
+        // WinBox, #190) do not need a PTY at all. So probe the host for `script`
+        // and fall back to a plain `sh -c` when it is missing — this fixes both
+        // the "Failed to start command: script" portal error and launching GUI
+        // programs from a Generic command.
+        // ponytail: single login-shell probe per launch; fine for one-shot
+        // command spawn (not in a hot path).
+        let template = args.last().map_or("", String::as_str);
+        // Escape single quotes for safe embedding in '...' shell string:
+        // replace ' with '\'' (end quote, escaped quote, start quote)
+        let escaped = template.replace('\'', "'\\''");
+        let host_runner = "if command -v script >/dev/null 2>&1; then exec script -qfc \"$1\" /dev/null; else exec sh -c \"$1\"; fi";
+        let spawn_cmd = format!(
+            "flatpak-spawn --host --env=TERM=xterm-256color -- sh -lc '{host_runner}' rustconn '{escaped}'"
+        );
+        vec!["/bin/sh".to_string(), "-c".to_string(), spawn_cmd]
+    } else if is_generic {
+        // build_command already returns a complete shell invocation
+        // ("sh", ["-c", template]). Wrapping it in yet another shell would break
+        // argument parsing (e.g. `bash -c 'sh -c aws login'` treats "login" as
+        // $0, not part of the command). Spawn it directly.
+        std::iter::once(program.clone()).chain(args).collect()
+    } else {
+        let spawn_command = rustconn_core::flatpak::wrap_host_command(&full_command);
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        vec![shell, "-c".to_string(), spawn_command]
+    };
+
+    Ok(ZeroTrustLaunch {
+        argv: spawn_argv,
+        display,
+    })
+}
+
 /// Known external viewers that hand control to a daemon or a separate process
 /// and then exit their initial child (a *detaching viewer*, R5.7).
 ///
@@ -960,26 +1108,32 @@ pub fn reconnect_generic_vte_in_place(
     // Build and spawn command based on protocol
     match &conn.protocol_config {
         rustconn_core::ProtocolConfig::ZeroTrust(zt_config) => {
-            let (program, args) = zt_config.build_command(conn.username.as_deref());
-            let provider_name = zt_config.provider.display_name();
-            let full_command = std::iter::once(program.as_str())
-                .chain(args.iter().map(String::as_str))
-                .collect::<Vec<_>>()
-                .join(" ");
+            let global_variables = state
+                .try_borrow()
+                .ok()
+                .map(|s| crate::state::resolve_global_variables(s.settings()))
+                .unwrap_or_default();
+            let launch = match build_zerotrust_launch(&conn, zt_config, &global_variables) {
+                Ok(launch) => launch,
+                Err(e) => {
+                    tracing::error!(?e, connection = %conn.name, "Failed to expand custom command");
+                    notebook.display_output(
+                        session_id,
+                        &format!(
+                            "\r\n{}\r\n",
+                            i18n_f("Invalid variable: {}", &[&e.to_string()])
+                        ),
+                    );
+                    return false;
+                }
+            };
 
-            let conn_msg = format_connection_message(provider_name, &conn.name);
-            let cmd_msg = format_command_message(&full_command);
+            let conn_msg = format_connection_message(zt_config.provider.display_name(), &conn.name);
+            let cmd_msg = format_command_message(&launch.display);
             notebook.display_output(session_id, &format!("{conn_msg}\r\n{cmd_msg}\r\n\r\n"));
 
-            let spawn_command = rustconn_core::flatpak::wrap_host_command(&full_command);
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-            notebook.spawn_command(
-                session_id,
-                &[&shell, "-c", &spawn_command],
-                None,
-                None,
-                None,
-            );
+            let argv: Vec<&str> = launch.argv.iter().map(String::as_str).collect();
+            notebook.spawn_command(session_id, &argv, None, None, None);
         }
         rustconn_core::ProtocolConfig::Telnet(telnet_config) => {
             let conn_msg = format_connection_message("Telnet", &conn.host);
@@ -1340,74 +1494,74 @@ pub fn start_zerotrust_connection(
     use rustconn_core::protocol::{format_command_message, format_connection_message};
 
     let conn_name = conn.name.clone();
-    let username = conn.username.clone();
 
-    // Get Zero Trust config and build command
-    let (program, args, provider_name, provider_key) =
-        if let rustconn_core::ProtocolConfig::ZeroTrust(zt_config) = &conn.protocol_config {
-            // Validate configuration before launch
-            if let Err(e) = zt_config.validate() {
-                tracing::error!(?e, "ZeroTrust config validation failed for {}", conn_name);
-                if let Some(root) = notebook.widget().root()
-                    && let Some(window) = root.downcast_ref::<gtk4::Window>()
-                {
-                    crate::toast::show_toast_on_window(
-                        window,
-                        &crate::i18n::i18n_f("Invalid config: {}", &[&e.to_string()]),
-                        crate::toast::ToastType::Error,
-                    );
-                }
-                return None;
-            }
+    let rustconn_core::ProtocolConfig::ZeroTrust(zt_config) = &conn.protocol_config else {
+        return None;
+    };
 
-            let (prog, args) = zt_config.build_command(username.as_deref());
-            let provider = zt_config.provider.display_name();
-
-            // Check CLI tool availability before launch
-            let cli = zt_config.provider.cli_command();
-            if !cli.is_empty() && !rustconn_core::flatpak::is_host_command_available(cli) {
-                tracing::warn!(
-                    provider = %provider,
-                    cli,
-                    flatpak = rustconn_core::flatpak::is_flatpak(),
-                    "ZeroTrust CLI tool not found"
+    // Validate the Zero Trust config and resolve display metadata; the command
+    // itself is built further down, once the global variables are resolved.
+    let (provider_name, provider_key) = {
+        // Validate configuration before launch
+        if let Err(e) = zt_config.validate() {
+            tracing::error!(?e, "ZeroTrust config validation failed for {}", conn_name);
+            if let Some(root) = notebook.widget().root()
+                && let Some(window) = root.downcast_ref::<gtk4::Window>()
+            {
+                crate::toast::show_toast_on_window(
+                    window,
+                    &crate::i18n::i18n_f("Invalid config: {}", &[&e.to_string()]),
+                    crate::toast::ToastType::Error,
                 );
-                if let Some(root) = notebook.widget().root()
-                    && let Some(window) = root.downcast_ref::<gtk4::Window>()
-                {
-                    crate::toast::show_missing_cli_toast(
-                        window,
-                        &format!("{provider} requires '{cli}' CLI tool"),
-                    );
-                }
-                return None;
             }
-
-            tracing::info!(
-                provider = %provider,
-                cli = %prog,
-                connection = %conn_name,
-                "Launching ZeroTrust connection"
-            );
-
-            // Get provider key for icon matching
-            let key = match zt_config.provider {
-                rustconn_core::models::ZeroTrustProvider::AwsSsm => "aws",
-                rustconn_core::models::ZeroTrustProvider::GcpIap => "gcloud",
-                rustconn_core::models::ZeroTrustProvider::AzureBastion => "azure",
-                rustconn_core::models::ZeroTrustProvider::AzureSsh => "azure_ssh",
-                rustconn_core::models::ZeroTrustProvider::OciBastion => "oci",
-                rustconn_core::models::ZeroTrustProvider::CloudflareAccess => "cloudflare",
-                rustconn_core::models::ZeroTrustProvider::Teleport => "teleport",
-                rustconn_core::models::ZeroTrustProvider::TailscaleSsh => "tailscale",
-                rustconn_core::models::ZeroTrustProvider::Boundary => "boundary",
-                rustconn_core::models::ZeroTrustProvider::HoopDev => "hoop",
-                rustconn_core::models::ZeroTrustProvider::Generic => "generic",
-            };
-            (prog, args, provider, key)
-        } else {
             return None;
+        }
+
+        let provider = zt_config.provider.display_name();
+
+        // Check CLI tool availability before launch
+        let cli = zt_config.provider.cli_command();
+        if !cli.is_empty() && !rustconn_core::flatpak::is_host_command_available(cli) {
+            tracing::warn!(
+                provider = %provider,
+                cli,
+                flatpak = rustconn_core::flatpak::is_flatpak(),
+                "ZeroTrust CLI tool not found"
+            );
+            if let Some(root) = notebook.widget().root()
+                && let Some(window) = root.downcast_ref::<gtk4::Window>()
+            {
+                crate::toast::show_missing_cli_toast(
+                    window,
+                    &format!("{provider} requires '{cli}' CLI tool"),
+                );
+            }
+            return None;
+        }
+
+        tracing::info!(
+            provider = %provider,
+            cli,
+            connection = %conn_name,
+            "Launching ZeroTrust connection"
+        );
+
+        // Get provider key for icon matching
+        let key = match zt_config.provider {
+            rustconn_core::models::ZeroTrustProvider::AwsSsm => "aws",
+            rustconn_core::models::ZeroTrustProvider::GcpIap => "gcloud",
+            rustconn_core::models::ZeroTrustProvider::AzureBastion => "azure",
+            rustconn_core::models::ZeroTrustProvider::AzureSsh => "azure_ssh",
+            rustconn_core::models::ZeroTrustProvider::OciBastion => "oci",
+            rustconn_core::models::ZeroTrustProvider::CloudflareAccess => "cloudflare",
+            rustconn_core::models::ZeroTrustProvider::Teleport => "teleport",
+            rustconn_core::models::ZeroTrustProvider::TailscaleSsh => "tailscale",
+            rustconn_core::models::ZeroTrustProvider::Boundary => "boundary",
+            rustconn_core::models::ZeroTrustProvider::HoopDev => "hoop",
+            rustconn_core::models::ZeroTrustProvider::Generic => "generic",
         };
+        (provider, key)
+    };
 
     let automation_config = resolve_automation_for_connection(state, conn);
 
@@ -1424,6 +1578,26 @@ pub fn start_zerotrust_connection(
         .ok()
         .map(|s| crate::state::resolve_global_variables(s.settings()))
         .unwrap_or_default();
+
+    // Build the command. For a Custom Command this expands the ${var}
+    // placeholders — done before opening a tab so an unusable variable value
+    // reports an error instead of leaving a dead terminal behind (#151).
+    let launch = match build_zerotrust_launch(conn, zt_config, &global_variables) {
+        Ok(launch) => launch,
+        Err(e) => {
+            tracing::error!(?e, connection = %conn_name, "Failed to expand custom command");
+            if let Some(root) = notebook.widget().root()
+                && let Some(window) = root.downcast_ref::<gtk4::Window>()
+            {
+                crate::toast::show_toast_on_window(
+                    window,
+                    &i18n_f("Invalid variable: {}", &[&e.to_string()]),
+                    crate::toast::ToastType::Error,
+                );
+            }
+            return None;
+        }
+    };
 
     // Create terminal tab for Zero Trust with provider-specific protocol
     let tab_protocol = format!("zerotrust:{provider_key}");
@@ -1464,75 +1638,14 @@ pub fn start_zerotrust_connection(
     // Wire up child exited callback for session cleanup
     MainWindow::setup_child_exited_handler(state, notebook, sidebar, session_id, connection_id);
 
-    // Build the full command string for display
-    let full_command = std::iter::once(program.as_str())
-        .chain(args.iter().map(String::as_str))
-        .collect::<Vec<_>>()
-        .join(" ");
-
     // Display CLI output feedback before executing command
     let conn_msg = format_connection_message(provider_name, &conn_name);
-    let cmd_msg = format_command_message(&full_command);
+    let cmd_msg = format_command_message(&launch.display);
     let feedback = format!("{conn_msg}\r\n{cmd_msg}\r\n\r\n");
     notebook.display_output(session_id, &feedback);
 
-    // Spawn the Zero Trust command through shell
-    //
-    // For Generic provider in Flatpak: the user's custom command likely refers
-    // to host-side binaries (not installed in sandbox via Flatpak Components).
-    // Wrap with flatpak-spawn --host + script (for PTY) — same approach as
-    // Local Shell (#122). Other providers have their CLIs installed in-sandbox.
-    let is_generic = matches!(
-        &conn.protocol_config,
-        rustconn_core::ProtocolConfig::ZeroTrust(zt)
-            if matches!(zt.provider, rustconn_core::models::ZeroTrustProvider::Generic)
-    );
-
-    if is_generic && rustconn_core::flatpak::is_flatpak() {
-        // Generic command_template is already a shell command string.
-        // Extract it from the full_command which is "sh -c <template>".
-        // We need just the template part for flatpak-spawn.
-        let template = full_command.strip_prefix("sh -c ").unwrap_or(&full_command);
-        // Escape single quotes for safe embedding in '...' shell string:
-        // replace ' with '\'' (end quote, escaped quote, start quote)
-        let escaped = template.replace('\'', "'\\''");
-        // Run on the host through a *login* shell (`sh -lc`) so the host PATH is
-        // used to resolve binaries. `script` (util-linux) allocates a host PTY
-        // for interactive TUI tools, but it is not present on every host
-        // (atomic distros, or `script` outside the sandbox PATH) and GUI tools
-        // (e.g. WinBox, #190) do not need a PTY at all. So we probe the host for
-        // `script` and fall back to a plain `sh -c` when it is missing — this
-        // fixes both the "Failed to start command: script" portal error and
-        // launching GUI programs from a Generic command.
-        // ponytail: single login-shell probe per launch; fine for one-shot
-        // command spawn (not in a hot path).
-        let host_runner = "if command -v script >/dev/null 2>&1; then exec script -qfc \"$1\" /dev/null; else exec sh -c \"$1\"; fi";
-        let spawn_cmd = format!(
-            "flatpak-spawn --host --env=TERM=xterm-256color -- sh -lc '{host_runner}' rustconn '{escaped}'"
-        );
-        notebook.spawn_command(session_id, &["/bin/sh", "-c", &spawn_cmd], None, None, None);
-    } else {
-        // For Generic provider, build_command already returns ("sh", ["-c", "template"])
-        // which is a complete shell invocation. Wrapping in yet another shell would
-        // break argument parsing (e.g. "bash -c 'sh -c aws login'" treats "login"
-        // as $0, not part of the command). Spawn it directly.
-        if is_generic {
-            let spawn_argv: Vec<&str> = std::iter::once(program.as_str())
-                .chain(args.iter().map(String::as_str))
-                .collect();
-            notebook.spawn_command(session_id, &spawn_argv, None, None, None);
-        } else {
-            let spawn_command = rustconn_core::flatpak::wrap_host_command(&full_command);
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-            notebook.spawn_command(
-                session_id,
-                &[&shell, "-c", &spawn_command],
-                None,
-                None,
-                None,
-            );
-        }
-    }
+    let argv: Vec<&str> = launch.argv.iter().map(String::as_str).collect();
+    notebook.spawn_command(session_id, &argv, None, None, None);
 
     Some(session_id)
 }

@@ -5,6 +5,44 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.5] - 2026-07-28
+
+### Fixed
+
+#### SSH
+
+- **`unix_listener: path … too long for Unix domain socket` with long hostnames (issue #239)** — `ssh_control_path()` reserved only ~20 bytes for the `%r` (remote username) expansion and ignored the `.<16 random chars>` suffix OpenSSH binds while setting up the multiplex master, so a UUID subdomain combined with a UUID username overflowed `sun_path` and the session died before the ControlMaster socket appeared. The path is now sized against the full worst case (username budget plus the temporary master suffix), and hosts that still do not fit are identified by a 12-char SHA-256 digest of host+port instead of a truncated hostname — two hosts sharing a long prefix can no longer collapse onto the same master connection.
+
+#### Custom Command (issue #151)
+
+- **`${variable}` placeholders were never substituted** — a template such as `rustdesk --connect ${id}` went to `sh -c` verbatim, so the shell expanded `${id}` to an empty string even when a matching local variable existed. Placeholders are now resolved from the connection's local variables (Data tab), the synthetic connection fields (`host`, `port`, `username`, `name`) and the global variables, with local values taking precedence. Unknown references are left untouched so genuine shell expansion (`${HOME}`) keeps working, resolved values are rejected when they contain shell metacharacters, and secret values are masked in the echoed command line and the session log.
+- **A one-shot command left a dead terminal behind** — launchers like RustDesk or WinBox return as soon as their own window is up, leaving a tab with a "session disconnected" notice and a pointless reconnect button. A Custom Command tab now closes itself on a clean exit regardless of the global close-on-exit setting; a failing command still keeps its tab so the output stays readable.
+- **Tags could not be edited for a Custom Command** — the Tags field was hidden for the whole Zero Trust protocol group even though tags are protocol-independent metadata used by search and smart folders. It is visible for every protocol again.
+- **In-place reconnect broke the command line** — the reconnect path wrapped the already complete `sh -c <template>` invocation in another shell, which turned the first template argument into `$0`. Both the initial launch and the reconnect now go through one shared builder.
+- **The Command Template field did not say where placeholders come from** — the connection editor and the wizard now explain that `${…}` resolves from local variables and connection fields.
+
+#### Sidebar (issue #237)
+
+- **Folders could not be nested by drag and drop** — the drop handler recognised a dragged folder but only ever reordered it among its existing siblings: `reorder_group` shuffles `sort_order` and rejects folders that do not already share a parent, so a drop onto another folder either changed nothing or failed with a log-only error. Dropping a folder on the middle band of another folder now nests it, dropping it on a folder's top or bottom edge makes it a sibling at that level, and dropping it on a connection moves it into that connection's folder. Reparenting goes through the same `move_group_to_parent` path as "Move to Group…", so `KeePass` entry paths migrate with the subtree. Nesting a folder inside its own subtree is refused with an error toast instead of failing silently. Import folders stay off limits in both directions: neither an Import folder (or anything inside it) can be dragged elsewhere, nor can a folder be nested anywhere in an Import subtree — the next sync run would recreate the old layout, so the drop is refused with a toast that says why.
+- **Emoji longer than two codepoints were saved but never drawn** — `validate_icon` accepts sequences of up to ten codepoints, while every render site decided "emoji or icon name" with a `chars().count() <= 2` check. ZWJ sequences and tag flags therefore passed validation, were stored, and then went to the icon theme as a name, which drew nothing. That decision now lives in one place, `dialog_utils::is_glyph_icon()`, shared by the sidebar, smart folders, the template list and the wizard's template buttons. Keycap sequences are accepted by validation as well.
+
+### Improved
+
+- **Unresolvable icon names fall back to a visible icon (issue #237)** — a stored GTK icon name that the active theme does not carry used to render as blank space. In Flatpak that is the normal case: the GNOME runtime ships only the Adwaita theme, so names found in a host icon browser cannot be resolved inside the sandbox. Connection and folder rows now fall back to the protocol or folder icon and log the unresolved name at debug level.
+- **New strings localised in all 16 languages** — both folder-drop rejection messages (own subtree, sync-managed folder) are translated in be, cs, da, de, es, fr, it, kk, nl, pl, pt, sk, sv, uk, uz, zh-cn.
+
+- **Release gate covers `rustconn-cli/Cargo.toml` and `po/rustconn.pot`** — both carry the release version but were absent from `PKG_FILES` in `scripts/release.sh`, so a stale value there could not fail the release. The pot header is now bumped by the release-version checklist and the CLI manifest is checked by the gate (17 packaging files instead of 16).
+
+### Documentation
+
+- **Custom Command placeholders documented (issue #151)** — `docs/ZERO_TRUST.md` gained a "Variable Placeholders" section listing the resolution order (local variables → connection fields → global variables), the metacharacter rejection, secret masking, and the one-shot tab-close behaviour. The old note claiming that `${…}` is never substituted was removed.
+- **Sidebar drag and drop and icon fallback documented (issue #237)** — `docs/USER_GUIDE.md` describes the three drop zones (into a folder, sibling before/after, onto a connection), the self-nesting and Import-folder restrictions, multi-codepoint emoji support, and the fallback for icon names the active theme does not carry.
+
+### Dependencies
+
+- **Updated**: socket2 0.5.10 → 0.6.5 ([#238](https://github.com/totoshko88/RustConn/pull/238), the MPTCP socket helper needed no code change), aes 0.9.1 → 0.9.2, clap_complete 4.6.7 → 4.6.8, event-listener 5.4.1 → 5.4.2, toml_parser 1.1.2 → 1.1.3, tray-icon 0.24.1 → 0.24.2
+- **Audited, no change needed**: `cargo deny check advisories` clean; pinned CLI downloads (kubectl 1.36.3, Tailscale 1.98.9, Teleport 18.10.0, Boundary 0.21.3, Hoop.dev 1.121.1, Bitwarden 2026.7.0, 1Password 2.35.0, TigerVNC 1.16.2) all current; Flatpak/Flathub bundled sources already at their latest releases (FreeRDP 3.30.0, cJSON 1.7.19, openh264 2.6.0, waypipe 0.11.0, mc 4.8.33, fast_float 8.2.10, GNOME runtime 50), VTE stays pinned below 0.81 by design; Snap still on core24 + gnome-46-2404 because no core26 GNOME extension exists yet (issue #174).
+
 ## [0.19.4] - 2026-07-27
 
 ### Added

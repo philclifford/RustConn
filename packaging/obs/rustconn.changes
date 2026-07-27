@@ -1,4 +1,19 @@
 -------------------------------------------------------------------
+Tue Jul 28 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.5
+
+- Version bump to 0.19.5
+- Fixed SSH session dying with "path too long for Unix domain socket" on long hostnames (issue #239)
+- Fixed ${variable} placeholders never substituted in a Custom Command template (issue #151)
+- Fixed Custom Command leaving a dead terminal tab behind after a one-shot launcher exits
+- Fixed Tags field hidden for Custom Command and other Zero Trust connections
+- Fixed in-place reconnect breaking a Custom Command line
+- Fixed folders could not be nested by drag and drop in the sidebar (issue #237)
+- Fixed multi-codepoint emoji icons (ZWJ sequences, flags, keycaps) saved but never drawn
+- Improved fallback to a visible icon when the active theme lacks the stored icon name
+- Improved localization: new string translated in all 16 languages
+- Updated dependencies: socket2 0.5→0.6, aes, clap_complete, event-listener, toml_parser, tray-icon
+
+-------------------------------------------------------------------
 Mon Jul 27 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.4
 
 - Version bump to 0.19.4
