@@ -215,8 +215,15 @@ impl ConnectionPage {
         zt_group.add(&zt_provider_row);
 
         let zt_command_row = adw::EntryRow::builder().title(i18n("Command")).build();
-        // Literal CLI example — intentionally not wrapped in i18n()
-        zt_command_row.set_tooltip_text(Some("cloudflared access ssh --hostname ..."));
+        // A template placeholder only resolves once the matching variable
+        // exists, so say where it comes from (#151). The CLI example itself is
+        // literal — intentionally not wrapped in i18n().
+        zt_command_row.set_tooltip_text(Some(&format!(
+            "cloudflared access ssh --hostname ...\n\n{}",
+            i18n(
+                "Placeholders such as ${id} are taken from the local variables on the Data tab; ${host}, ${port}, ${username} and ${name} come from the connection itself",
+            )
+        )));
         zt_group.add(&zt_command_row);
 
         let zt_field1_row = adw::EntryRow::builder().visible(false).build();
@@ -887,10 +894,7 @@ impl ConnectionPage {
         vbox.set_margin_top(12);
         vbox.set_margin_bottom(12);
 
-        if !icon.is_empty()
-            && icon.chars().count() <= 2
-            && icon.chars().next().is_some_and(|c| !c.is_ascii())
-        {
+        if rustconn_core::dialog_utils::is_glyph_icon(icon) {
             // Emoji icon
             let emoji_label = gtk4::Label::builder()
                 .label(icon)
@@ -898,8 +902,12 @@ impl ConnectionPage {
                 .build();
             vbox.append(&emoji_label);
         } else if !icon.is_empty() {
-            // GTK icon name
-            let img = gtk4::Image::from_icon_name(icon);
+            // GTK icon name, falling back to the generic template icon when the
+            // active theme does not carry it.
+            let img = gtk4::Image::from_icon_name(crate::icon_render::theme_icon_or(
+                icon,
+                "system-run-symbolic",
+            ));
             img.set_pixel_size(24);
             vbox.append(&img);
         } else {

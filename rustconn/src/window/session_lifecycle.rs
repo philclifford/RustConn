@@ -369,11 +369,25 @@ impl MainWindow {
             .map(|s| Arc::clone(s.folder_tracker()))
             .unwrap_or_default();
 
+        // A Custom Command (Generic Zero Trust) is a one-shot launcher, not a
+        // session: RustDesk, WinBox or `xdg-open` return as soon as their own
+        // window is up. Leaving a dead terminal with a reconnect banner behind
+        // is pure noise (#151), so such a tab always closes on a clean exit —
+        // a failure still keeps the tab so its output stays readable.
+        let is_custom_command = post_disconnect_conn.as_ref().is_some_and(|c| {
+            matches!(
+                &c.protocol_config,
+                rustconn_core::ProtocolConfig::ZeroTrust(zt)
+                    if matches!(zt.provider, rustconn_core::models::ZeroTrustProvider::Generic)
+            )
+        });
+
         // Capture close-on-clean-exit setting before entering the closure
-        let close_on_clean_exit = state
-            .try_borrow()
-            .ok()
-            .is_some_and(|s| s.settings().terminal.close_on_clean_exit);
+        let close_on_clean_exit = is_custom_command
+            || state
+                .try_borrow()
+                .ok()
+                .is_some_and(|s| s.settings().terminal.close_on_clean_exit);
 
         notebook.connect_child_exited(session_id, move |exit_status| {
             // Execute post-disconnect task if configured

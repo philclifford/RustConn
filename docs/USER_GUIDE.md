@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.19.4** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.19.5** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -1519,6 +1519,18 @@ Override terminal colors (background, foreground, cursor) on a per-connection ba
 - **Move** — Drag-drop or right-click → Move to Group
 - **Delete** — Delete key (shows choice dialog: Keep Connections, Delete All, or Cancel)
 
+#### Drag and Drop in the Sidebar
+
+The drop zone inside a row decides what happens, for both connections and folders:
+
+| Drop target | Result |
+|-------------|--------|
+| Middle of a folder | The dragged item goes **into** that folder — this is how folders are nested |
+| Top / bottom edge of a folder | The dragged item becomes a **sibling** of that folder, placed before or after it |
+| A connection | The dragged item joins the folder that holds that connection |
+
+A folder cannot be dropped into itself or into one of its own subfolders — such a drop is refused with an error toast. Import folders mirror a synced source, so dropping anything into them is blocked. Moving a folder carries its whole subtree, including the KeePass entry paths of the connections inside it.
+
 #### Group Operations Mode (Bulk Actions)
 
 The sidebar toolbar has a **list icon** button (view-list-symbolic) that activates Group Operations Mode for bulk actions on multiple connections at once.
@@ -1823,8 +1835,10 @@ Set custom emoji or GTK icon names on connections and groups to visually disting
 
 | Type | Example | How It Renders |
 |------|---------|----------------|
-| Emoji / Unicode | `🇺🇦`, `🏢`, `🔒`, `🐳` | Displayed as text next to the name |
+| Emoji / Unicode | `🇺🇦`, `🏢`, `🔒`, `🐳`, `👨‍💻`, `1️⃣` | Displayed as text next to the name |
 | GTK icon name | `starred-symbolic`, `network-server-symbolic` | Rendered as a symbolic icon |
+
+Multi-codepoint emoji work as well — ZWJ sequences (`👨‍💻`, `❤️‍🔥`), regional-indicator flags, subdivision tag flags, and keycaps (`1️⃣`).
 
 **Set a Custom Icon:**
 1. Edit a connection or group
@@ -1832,6 +1846,8 @@ Set custom emoji or GTK icon names on connections and groups to visually disting
 3. Save
 
 Leave the field empty to use the default icon (folder for groups, protocol-based for connections).
+
+> **Note:** If the active icon theme does not carry the GTK icon name you entered, RustConn falls back to the default icon (folder or protocol) instead of drawing empty space. Under Flatpak this is the usual case for exotic names: the GNOME runtime ships only the Adwaita theme, so a name you found in a host icon browser may not exist inside the sandbox. See the [Adwaita named icons list](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/named-icons.html) for names that always resolve.
 
 ### Tab Coloring
 

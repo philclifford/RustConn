@@ -498,6 +498,9 @@ fn create_generic_zt_fields_adw() -> (GtkBox, adw::EntryRow) {
     let command_row = adw::EntryRow::builder()
         .title(i18n("Command Template"))
         .build();
+    command_row.set_tooltip_text(Some(&i18n(
+        "Placeholders such as ${id} are taken from the local variables on the Data tab; ${host}, ${port}, ${username} and ${name} come from the connection itself",
+    )));
     group.add(&command_row);
 
     let vbox = GtkBox::new(Orientation::Vertical, 0);

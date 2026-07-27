@@ -1,3 +1,19 @@
+rustconn (0.19.5-1) unstable; urgency=medium
+
+  * Version bump to 0.19.5
+  * Fixed SSH session dying with "path too long for Unix domain socket" on long hostnames (issue #239)
+  * Fixed ${variable} placeholders never substituted in a Custom Command template (issue #151)
+  * Fixed Custom Command leaving a dead terminal tab behind after a one-shot launcher exits
+  * Fixed Tags field hidden for Custom Command and other Zero Trust connections
+  * Fixed in-place reconnect breaking a Custom Command line
+  * Fixed folders could not be nested by drag and drop in the sidebar (issue #237)
+  * Fixed multi-codepoint emoji icons (ZWJ sequences, flags, keycaps) saved but never drawn
+  * Improved fallback to a visible icon when the active theme lacks the stored icon name
+  * Improved localization: new string translated in all 16 languages
+  * Updated dependencies: aes, clap_complete, event-listener, toml_parser, tray-icon
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Tue, 28 Jul 2026 00:01:23 +0300
+
 rustconn (0.19.4-1) unstable; urgency=medium
 
   * Version bump to 0.19.4

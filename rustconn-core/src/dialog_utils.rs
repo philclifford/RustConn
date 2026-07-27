@@ -218,18 +218,37 @@ fn is_emoji_char(c: char) -> bool {
     )
 }
 
+/// Upper bound on codepoints in an emoji sequence.
+///
+/// A single visual glyph can span many codepoints: a ZWJ family emoji uses up
+/// to seven, and a subdivision flag adds seven tag characters to its base. Ten
+/// leaves room for those without letting arbitrary text through.
+const MAX_EMOJI_CODEPOINTS: usize = 10;
+
+/// Upper bound on codepoints accepted by the legacy non-emoji glyph path.
+///
+/// A symbol outside the emoji ranges is one codepoint, optionally followed by a
+/// variation selector. Anything longer is text, and text drawn into a two-char
+/// icon slot is only clipped, so it must go down the icon-name path instead.
+const MAX_LEGACY_GLYPH_CODEPOINTS: usize = 2;
+
 /// Returns `true` if the string looks like an emoji sequence.
 ///
-/// An emoji sequence is 1-10 codepoints where every character passes
-/// [`is_emoji_char`].  The grapheme cluster count is at most 2 (to allow
-/// flag sequences and family emoji that are a single visual glyph but
-/// many codepoints).
+/// An emoji sequence is 1-[`MAX_EMOJI_CODEPOINTS`] codepoints where every
+/// character passes [`is_emoji_char`]. Keycap sequences are accepted as well:
+/// their base is an ASCII digit, `#` or `*`, which only becomes an emoji
+/// through the trailing combining enclosing keycap. The base is only allowed at
+/// the start of the string, so a run of digits with a stray keycap somewhere in
+/// it stays plain text.
 fn is_emoji_sequence(s: &str) -> bool {
     let chars: Vec<char> = s.chars().collect();
-    if chars.is_empty() || chars.len() > 10 {
+    if chars.is_empty() || chars.len() > MAX_EMOJI_CODEPOINTS {
         return false;
     }
-    chars.iter().all(|c| is_emoji_char(*c))
+    let has_keycap = chars.contains(&'\u{20E3}');
+    chars.iter().enumerate().all(|(i, c)| {
+        is_emoji_char(*c) || (i == 0 && has_keycap && matches!(c, '0'..='9' | '#' | '*'))
+    })
 }
 
 /// Returns `true` if the string is a valid GTK icon name.
@@ -282,6 +301,33 @@ pub fn validate_icon(icon: &str) -> Result<(), ValidationError> {
     }
 
     Err(ValidationError::InvalidIcon)
+}
+
+/// Returns `true` when a stored icon value has to be drawn as a text glyph.
+///
+/// The GUI stores one field for both icon kinds, so every render site has to
+/// decide whether to hand the value to the icon theme or to a label. Anything
+/// that is not a valid GTK icon name can never be resolved by the theme, so
+/// emoji — including multi-codepoint ZWJ sequences and flags — as well as any
+/// other short non-ASCII glyph are drawn as text. Longer values are rejected so
+/// a stray string cannot stretch a sidebar row.
+#[must_use]
+pub fn is_glyph_icon(icon: &str) -> bool {
+    let icon = icon.trim();
+    if icon.is_empty() || is_valid_gtk_icon_name(icon) {
+        return false;
+    }
+    if is_emoji_sequence(icon) {
+        return true;
+    }
+    // Legacy values stored before `validate_icon` existed (or imported from
+    // another manager) may hold a symbol outside the emoji ranges, such as `→`.
+    // Showing it is still better than an unresolvable icon name. Letters and
+    // digits are excluded on purpose: a short word like `Сервер` or `产品` is a
+    // label, not a glyph, and the icon slot would only clip it.
+    icon.chars().count() <= MAX_LEGACY_GLYPH_CODEPOINTS
+        && !icon.is_ascii()
+        && !icon.chars().any(char::is_alphanumeric)
 }
 
 #[cfg(test)]
@@ -373,6 +419,68 @@ mod tests {
     #[test]
     fn test_validate_icon_rejects_leading_hyphen() {
         assert!(validate_icon("-symbolic").is_err());
+    }
+
+    #[test]
+    fn test_validate_icon_accepts_zwj_sequences() {
+        // ZWJ sequences and keycaps are single glyphs made of many codepoints.
+        assert!(validate_icon("👨‍💻").is_ok());
+        assert!(validate_icon("🏳️‍🌈").is_ok());
+        assert!(validate_icon("❤️‍🔥").is_ok());
+        assert!(validate_icon("1️⃣").is_ok());
+    }
+
+    #[test]
+    fn test_is_glyph_icon_multi_codepoint_emoji() {
+        // Regression: these validate fine but used to be handed to the icon
+        // theme as a name, which drew nothing at all.
+        assert!(is_glyph_icon("👨‍💻"));
+        assert!(is_glyph_icon("🏳️‍🌈"));
+        assert!(is_glyph_icon("❤️‍🔥"));
+        assert!(is_glyph_icon("🇺🇦"));
+        assert!(is_glyph_icon("🖥️"));
+        assert!(is_glyph_icon("⚡"));
+    }
+
+    #[test]
+    fn test_is_glyph_icon_rejects_icon_names_and_empty() {
+        assert!(!is_glyph_icon(""));
+        assert!(!is_glyph_icon("   "));
+        assert!(!is_glyph_icon("starred-symbolic"));
+        assert!(!is_glyph_icon("network-server-symbolic"));
+    }
+
+    #[test]
+    fn test_is_glyph_icon_rejects_long_text() {
+        assert!(!is_glyph_icon("не іконка а цілий рядок тексту"));
+        assert!(!is_glyph_icon("hello world"));
+    }
+
+    #[test]
+    fn test_is_glyph_icon_rejects_short_non_ascii_text() {
+        // Short words are labels, not glyphs — the icon slot is two chars wide,
+        // so drawing them there would only clip them.
+        assert!(!is_glyph_icon("Сервер"));
+        assert!(!is_glyph_icon("产品"));
+        assert!(!is_glyph_icon("Ük"));
+    }
+
+    #[test]
+    fn test_is_glyph_icon_accepts_legacy_symbol() {
+        // Outside the emoji ranges but still a single visual symbol.
+        assert!(is_glyph_icon("→"));
+        assert!(is_glyph_icon("§"));
+    }
+
+    #[test]
+    fn test_validate_icon_rejects_digits_with_stray_keycap() {
+        // A keycap only encloses the character right before it; a whole run of
+        // digits is text, not an emoji sequence.
+        assert!(validate_icon("12345\u{20E3}").is_err());
+        // A bare digit run is not an emoji; it only validates because ASCII
+        // digits are a legal GTK icon name, and it renders through the theme.
+        assert!(validate_icon("42").is_ok());
+        assert!(!is_glyph_icon("42"));
     }
 
     #[test]

@@ -229,7 +229,22 @@ For providers not listed above. Enter a custom command template that RustConn wi
 
 The command template is run through a shell (`sh -c`), so standard shell syntax works (pipes, environment variables, quoting). Any **Additional CLI arguments** from the Advanced section are appended to the template before execution.
 
-> **Note:** The command template is **not** processed for RustConn placeholders such as `${host}`, `${user}`, or `${port}` — it is passed to the shell verbatim. If you reference `${host}` it will expand as an empty shell variable, not the connection's host. Enter the literal host/user/port values directly in the command.
+#### Variable Placeholders
+
+`${...}` references in the template are resolved before the command is handed to the shell:
+
+| Placeholder | Source |
+|-------------|--------|
+| `${host}`, `${port}`, `${username}`, `${name}` | The connection's own fields |
+| `${anything_else}` | Local variables of the connection (**Data** tab), then global variables (Settings → Variables) |
+
+Local variables win over the connection fields and the global ones, so a local variable named `host` overrides the Host field. A reference with no matching variable is left untouched, which keeps genuine shell expansion (`${HOME}`, `${1}`) working.
+
+**Example — RustDesk by ID:** add a local variable `id` = `123456789` on the Data tab, then use `rustdesk --connect ${id}` as the template.
+
+Resolved values are validated: a value carrying shell metacharacters (`;`, `|`, `&`, backticks, `$(`) or control characters is refused with an "Invalid variable" error instead of being spliced into the shell command. Variables marked as secret are masked as `********` in the command line echoed into the terminal.
+
+> **Note:** A Custom Command tab closes itself when the command exits successfully — one-shot launchers such as RustDesk or WinBox return as soon as their own window is up, and an empty terminal with a reconnect banner is of no use. A command that fails keeps its tab so the output stays readable.
 
 #### Running Local Programs
 

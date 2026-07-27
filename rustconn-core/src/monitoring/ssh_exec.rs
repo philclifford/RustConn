@@ -20,6 +20,74 @@ use tokio::process::Command;
 /// Default timeout for SSH monitoring commands (seconds)
 const SSH_EXEC_TIMEOUT_SECS: u64 = 10;
 
+/// Directory that holds RustConn's SSH ControlMaster sockets.
+///
+/// Prefers `XDG_RUNTIME_DIR` (tmpfs, user-private, short path). On macOS the
+/// fallback is `/tmp` rather than `$TMPDIR`: the latter is ~52 chars under
+/// `/var/folders/...`, which alone eats half of the 104-byte socket path limit.
+fn control_socket_dir() -> String {
+    std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
+        if cfg!(target_os = "macos") {
+            "/tmp".to_string()
+        } else {
+            std::env::temp_dir().to_string_lossy().to_string()
+        }
+    })
+}
+
+/// Usable length of `sockaddr_un.sun_path`: 104 bytes on macOS, 108 on Linux,
+/// minus the NUL terminator. The smaller value keeps paths portable.
+const SOCKET_PATH_MAX: usize = 103;
+
+/// Extra bytes OpenSSH appends while the multiplex master is being created.
+///
+/// `muxserver_listen()` binds `"{ControlPath}.{16 random chars}"` first and
+/// only then renames it into place, so the path that actually reaches
+/// `bind()` is a dot plus 16 characters longer than what we pass in.
+const MUX_TEMP_SUFFIX_LEN: usize = 17;
+
+/// Budget reserved for the `%r` (remote username) expansion.
+///
+/// SSH expands `%r` itself, so the length of the real username is unknown here
+/// and a fixed budget is the only defence. Linux caps local usernames at 32
+/// chars, cloud/IdP setups hand out UUIDs (36) and Entra ID hands out UPNs, so
+/// the budget covers 48.
+///
+/// Raising it further is not free: the whole path must fit
+/// [`SOCKET_PATH_MAX`], so a larger reserve pushes more hosts from the readable
+/// form onto the digest form and eventually out of `XDG_RUNTIME_DIR` into
+/// `/tmp` — where the socket is no longer user-private and the cleanup helpers
+/// (which scan [`control_socket_dir`]) would stop finding it. 48 keeps the
+/// digest form comfortably inside a runtime directory of up to 21 chars.
+const USERNAME_RESERVE: usize = 48;
+
+/// Length of the digest used when the readable form does not fit.
+///
+/// 12 hex chars = 48 bits of SHA-256: collision-free in practice for the
+/// handful of hosts a single user connects to.
+const HOST_DIGEST_LEN: usize = 12;
+
+/// Worst-case length of a `ControlPath` template once SSH is done with it.
+///
+/// `%r` (2 chars) becomes a username of up to [`USERNAME_RESERVE`] chars, and
+/// the master adds [`MUX_TEMP_SUFFIX_LEN`] bytes before renaming.
+fn expanded_path_len(template: &str) -> usize {
+    template.len() - "%r".len() + USERNAME_RESERVE + MUX_TEMP_SUFFIX_LEN
+}
+
+/// Returns a short, stable digest of `host:port` for use in a socket name.
+///
+/// Hostnames are hashed rather than truncated: two hosts sharing a long
+/// prefix (`<uuid>-a.example.com` / `<uuid>-b.example.com`) must never end up
+/// multiplexing over the same master connection.
+fn host_digest(host: &str, port: u16) -> String {
+    let key = format!("{host}\u{0}{port}");
+    let digest = ring::digest::digest(&ring::digest::SHA256, key.as_bytes());
+    let mut hex = hex::encode(digest.as_ref());
+    hex.truncate(HOST_DIGEST_LEN);
+    hex
+}
+
 /// Returns the SSH `ControlPath` for a given host/port combination.
 ///
 /// This path is shared between the main VTE terminal SSH connection and the
@@ -27,36 +95,40 @@ const SSH_EXEC_TIMEOUT_SECS: u64 = 10;
 /// multiplex over the already-authenticated master connection, avoiding a
 /// second key/passphrase prompt.
 ///
-/// The path uses `XDG_RUNTIME_DIR` (tmpfs, user-private) when available,
-/// falling back to the system temp directory.
-///
-/// On macOS, uses `/tmp` instead of `$TMPDIR` (which is a long path under
-/// `/var/folders/...`) to stay within the 104-byte Unix socket path limit.
-/// Long hostnames are truncated to keep the total path under the limit.
+/// The result is guaranteed to stay within the Unix domain socket path limit
+/// even after SSH expands `%r` and appends its temporary master suffix. Hosts
+/// whose readable form would overflow are identified by a digest instead
+/// (issue #239).
 #[must_use]
 pub fn ssh_control_path(host: &str, port: u16) -> String {
-    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
-        // macOS $TMPDIR is ~52 chars (/var/folders/xx/.../T/), which leaves
-        // very little room for the socket name within the 104-byte limit.
-        // Use /tmp instead (symlinks to /private/tmp on macOS, only 4 chars).
-        if cfg!(target_os = "macos") {
-            "/tmp".to_string()
-        } else {
-            std::env::temp_dir().to_string_lossy().to_string()
-        }
-    });
+    control_path_in(&control_socket_dir(), host, port)
+}
 
-    // Unix socket path limit: 104 bytes on macOS, 108 on Linux.
-    // Format: {dir}/rc-{host}-{port}-%r
-    // Reserve ~20 chars for /%r expansion and null terminator.
-    let max_host_len = 40;
-    let short_host = if host.len() > max_host_len {
-        // Truncate at a valid char boundary to avoid panic on IDN hostnames.
-        &host[..host.floor_char_boundary(max_host_len)]
-    } else {
-        host
-    };
-    format!("{dir}/rc-{short_host}-{port}-%r")
+/// Builds the `ControlPath` template inside `dir` (see [`ssh_control_path`]).
+fn control_path_in(dir: &str, host: &str, port: u16) -> String {
+    // Preferred, human-readable form: {dir}/rc-{host}-{port}-%r
+    let readable = format!("{dir}/rc-{host}-{port}-%r");
+    if expanded_path_len(&readable) <= SOCKET_PATH_MAX {
+        return readable;
+    }
+
+    // Too long — fall back to a digest of host+port (also covers the port,
+    // so it can be dropped from the name).
+    let digest = host_digest(host, port);
+    let hashed = format!("{dir}/rc-{digest}-%r");
+    if expanded_path_len(&hashed) <= SOCKET_PATH_MAX {
+        return hashed;
+    }
+
+    // Even the digest form does not fit, so the directory itself is the
+    // problem (an unusually long XDG_RUNTIME_DIR). /tmp is the last resort.
+    let fallback = format!("/tmp/rc-{digest}-%r");
+    tracing::warn!(
+        %dir,
+        %fallback,
+        "Runtime directory too long for an SSH ControlMaster socket, using /tmp"
+    );
+    fallback
 }
 
 /// Checks if any file exists with the given prefix (for socket detection).
@@ -142,13 +214,7 @@ pub async fn close_control_socket(host: &str, port: u16, username: Option<&str>)
 ///
 /// Errors are logged but not propagated (best-effort cleanup).
 pub async fn close_all_control_sockets() {
-    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
-        if cfg!(target_os = "macos") {
-            "/tmp".to_string()
-        } else {
-            std::env::temp_dir().to_string_lossy().to_string()
-        }
-    });
+    let dir = control_socket_dir();
 
     let Ok(entries) = std::fs::read_dir(&dir) else {
         tracing::debug!(dir, "Cannot read runtime directory for socket cleanup");
@@ -254,13 +320,7 @@ pub async fn close_all_control_sockets() {
 /// # Returns
 /// The number of stale sockets that were removed.
 pub async fn close_dead_control_sockets() -> u32 {
-    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
-        if cfg!(target_os = "macos") {
-            "/tmp".to_string()
-        } else {
-            std::env::temp_dir().to_string_lossy().to_string()
-        }
-    });
+    let dir = control_socket_dir();
 
     let Ok(entries) = std::fs::read_dir(&dir) else {
         tracing::debug!(dir, "Cannot read runtime directory for socket health check");
@@ -635,5 +695,97 @@ pub fn ssh_exec_factory(
                 )),
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MUX_TEMP_SUFFIX_LEN, SOCKET_PATH_MAX, USERNAME_RESERVE, control_path_in, ssh_control_path,
+    };
+
+    /// Simulates what OpenSSH actually binds: `%r` expanded to a username of
+    /// `username_len` chars plus the temporary master suffix.
+    fn bound_socket_len(template: &str, username_len: usize) -> usize {
+        template.len() - "%r".len() + username_len + MUX_TEMP_SUFFIX_LEN
+    }
+
+    #[test]
+    fn short_host_keeps_readable_form() {
+        let path = control_path_in("/run/user/1000", "192.168.1.10", 22);
+        assert_eq!(path, "/run/user/1000/rc-192.168.1.10-22-%r");
+    }
+
+    #[test]
+    fn long_host_with_uuid_username_fits_socket_limit() {
+        // Reproduces issue #239: UUID subdomain + UUID remote username.
+        let host = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0-server.example.com";
+        let path = control_path_in("/run/user/1000", host, 5902);
+        let uuid_username_len = 36;
+
+        assert!(
+            bound_socket_len(&path, uuid_username_len) <= SOCKET_PATH_MAX,
+            "path {path} would overflow sun_path once expanded"
+        );
+        assert!(
+            bound_socket_len(&path, USERNAME_RESERVE) <= SOCKET_PATH_MAX,
+            "path {path} must also fit the reserved username budget"
+        );
+        assert!(path.ends_with("-%r"), "path must keep the %r token: {path}");
+    }
+
+    #[test]
+    fn hosts_sharing_a_long_prefix_get_distinct_paths() {
+        let prefix = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0-server";
+        let a = control_path_in("/run/user/1000", &format!("{prefix}-a.example.com"), 22);
+        let b = control_path_in("/run/user/1000", &format!("{prefix}-b.example.com"), 22);
+        assert_ne!(a, b, "truncation must not merge two different hosts");
+    }
+
+    #[test]
+    fn digest_form_is_stable_and_port_specific() {
+        let host = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0-server.example.com";
+        let first = control_path_in("/run/user/1000", host, 22);
+        let second = control_path_in("/run/user/1000", host, 22);
+        assert_eq!(first, second, "same host/port must map to the same socket");
+        assert_ne!(
+            first,
+            control_path_in("/run/user/1000", host, 2222),
+            "different ports must not share a master socket"
+        );
+    }
+
+    /// The digest form must still fit inside `XDG_RUNTIME_DIR`: `/tmp` is not
+    /// user-private and the cleanup helpers only scan the runtime directory, so
+    /// a larger `USERNAME_RESERVE` must not silently push sockets out of it.
+    #[test]
+    fn digest_form_stays_in_runtime_dir() {
+        let host = "x".repeat(200);
+        for dir in ["/run/user/1000", "/run/user/1000000"] {
+            let path = control_path_in(dir, &host, 22);
+            assert!(
+                path.starts_with(dir),
+                "socket left the runtime directory {dir}: {path}"
+            );
+            assert!(bound_socket_len(&path, USERNAME_RESERVE) <= SOCKET_PATH_MAX);
+        }
+    }
+
+    #[test]
+    fn overlong_directory_falls_back_to_tmp() {
+        let dir = format!("/run/user/1000/{}", "d".repeat(80));
+        let path = control_path_in(&dir, "example.com", 22);
+        assert!(path.starts_with("/tmp/rc-"), "unexpected fallback: {path}");
+        assert!(bound_socket_len(&path, USERNAME_RESERVE) <= SOCKET_PATH_MAX);
+    }
+
+    #[test]
+    fn public_path_fits_for_pathological_host() {
+        let host = "x".repeat(255);
+        let path = ssh_control_path(&host, 65535);
+        assert!(
+            bound_socket_len(&path, USERNAME_RESERVE) <= SOCKET_PATH_MAX,
+            "ssh_control_path returned an unusable path: {path}"
+        );
     }
 }

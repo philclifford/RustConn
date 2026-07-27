@@ -40,6 +40,8 @@ Then perform ALL of the following steps:
    - `packaging/obs/_service` → `<param name="revision">vX.Y.Z</param>`
    - `flake.nix` → `version = "X.Y.Z";`
    - `rustconn/Cargo.toml` → `rustconn-core = { ..., version = "X.Y.Z", ... }`
+   - `rustconn-cli/Cargo.toml` → `rustconn-core = { ..., version = "X.Y.Z", ... }`
+   - `po/rustconn.pot` → `Project-Id-Version: rustconn X.Y.Z`
    - `docs/USER_GUIDE.md` → `**Version X.Y.Z**`
    - `docs/ARCHITECTURE.md` → `**Version X.Y.Z**`
    - `docs/AI_DEVELOPMENT.md` → version in the first line after heading

@@ -191,7 +191,7 @@ pub fn show_move_to_group_dialog(
 }
 
 /// Checks if a group is a descendant of another group
-fn is_descendant_of(
+pub(super) fn is_descendant_of(
     state: &std::cell::Ref<crate::state::AppState>,
     group_id: Uuid,
     potential_ancestor: Uuid,

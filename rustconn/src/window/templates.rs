@@ -263,9 +263,7 @@ pub fn refresh_templates_list(
 
             // Use custom icon if set, otherwise protocol-based icon
             if let Some(ref custom_icon) = template.icon {
-                if custom_icon.chars().count() <= 2
-                    && custom_icon.chars().next().is_some_and(|c| !c.is_ascii())
-                {
+                if rustconn_core::dialog_utils::is_glyph_icon(custom_icon) {
                     // Emoji icon
                     let emoji_lbl = Label::builder()
                         .label(custom_icon)
@@ -274,8 +272,12 @@ pub fn refresh_templates_list(
                         .build();
                     hbox.append(&emoji_lbl);
                 } else {
-                    // GTK icon name
-                    let icon = gtk4::Image::from_icon_name(custom_icon);
+                    // GTK icon name, falling back to the protocol icon when the
+                    // active theme does not carry it.
+                    let icon = gtk4::Image::from_icon_name(crate::icon_render::theme_icon_or(
+                        custom_icon,
+                        rustconn_core::get_protocol_icon(template.protocol),
+                    ));
                     hbox.append(&icon);
                 }
             } else {

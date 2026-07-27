@@ -79,6 +79,7 @@ pub mod embedded_web;
 pub mod external_session;
 pub mod i18n;
 mod i18n_markers;
+pub mod icon_render;
 #[cfg(target_os = "macos")]
 pub mod macos_pty;
 pub mod monitoring;

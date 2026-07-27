@@ -305,17 +305,19 @@ fn build_connection_row(conn: &Connection) -> ListBoxRow {
         let icon = Image::from_icon_name(icon_name);
         icon.set_pixel_size(16);
         hbox.append(&icon);
-    } else if custom_icon.chars().count() <= 2
-        && custom_icon.chars().next().is_some_and(|c| !c.is_ascii())
-    {
+    } else if rustconn_core::dialog_utils::is_glyph_icon(custom_icon) {
         // Emoji/unicode — show as a label
         let emoji_lbl = Label::new(Some(custom_icon));
         emoji_lbl.add_css_class("emoji-icon");
         emoji_lbl.set_width_chars(2);
         hbox.append(&emoji_lbl);
     } else {
-        // GTK icon name
-        let icon = Image::from_icon_name(custom_icon);
+        // GTK icon name, falling back to the protocol icon when the active
+        // theme does not carry it.
+        let icon = Image::from_icon_name(crate::icon_render::theme_icon_or(
+            custom_icon,
+            get_protocol_icon(conn.protocol),
+        ));
         icon.set_pixel_size(16);
         hbox.append(&icon);
     }

@@ -228,8 +228,10 @@ impl ConnectionDialog {
                     host_label.set_text(&crate::i18n::i18n("Host"));
                     host_entry.set_placeholder_text(Some(&crate::i18n::i18n("hostname or IP")));
                 }
-                tags_entry.set_visible(!is_zerotrust);
-                tags_label.set_visible(!is_zerotrust);
+                // Tags are organisation metadata (search, smart folders) and
+                // apply to every protocol — including Custom Command (#151).
+                tags_entry.set_visible(true);
+                tags_label.set_visible(true);
 
                 // Password source only relevant for protocols that use credentials:
                 // SSH, SFTP, RDP, VNC, SPICE, Web, Telnet. Telnet is an interactive
