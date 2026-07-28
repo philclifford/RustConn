@@ -72,8 +72,18 @@ jobs:
           VERSION="${{ steps.version.outputs.VERSION }}"
           COMMIT="${{ steps.commit.outputs.SHA }}"
           
-          # Update tag in manifest
+          # Update tag AND commit in manifest. Both must move together: a tag
+          # that does not point at the pinned commit makes flatpak-builder abort
+          # ("commit does not match tag"), and a stale commit silently builds an
+          # old release.
           sed -i "s/tag: v[0-9.]*/tag: $VERSION/" flathub-pr/io.github.totoshko88.RustConn.yml
+          sed -i "s/commit: [0-9a-f]\{7,40\}/commit: $COMMIT/" flathub-pr/io.github.totoshko88.RustConn.yml
+
+          # Fail loudly if the manifest lost its pinning — flathub-bot PRs drop
+          # the commit line, and a tag without a commit only yields a linter
+          # warning, so it is easy to miss.
+          grep -q "tag: $VERSION" flathub-pr/io.github.totoshko88.RustConn.yml
+          grep -q "commit: $COMMIT" flathub-pr/io.github.totoshko88.RustConn.yml
           
           echo "=== Updated manifest ==="
           grep -A5 "type: git" flathub-pr/io.github.totoshko88.RustConn.yml
