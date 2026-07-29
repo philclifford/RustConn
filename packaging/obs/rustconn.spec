@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.5
+Version:        0.19.6
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,16 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Wed Jul 29 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.6-0
+- Version bump to 0.19.6
+- Fixed auxiliary keyring operations using Linux-only secret-tool on macOS
+- Added local-only macOS CI, dependency, signing, and bundle audit workflow
+- Improved the canonical macOS app and DMG to bundle and relocate 58 non-system dylibs
+- Added explicit ad-hoc and Developer ID hardened-runtime signing plus notarization and stapling
+- Expanded cargo-deny checks to aarch64 and x86_64 macOS targets
+- Synchronized the canonical macOS feature profile across build and packaging paths
+- Updated dependencies: displaydoc 0.2.6→0.2.7, toml 1.1.3→1.1.4
+
 * Tue Jul 28 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.5-0
 - Version bump to 0.19.5
 - Fixed SSH session dying with "path too long for Unix domain socket" on long hostnames (issue #239)

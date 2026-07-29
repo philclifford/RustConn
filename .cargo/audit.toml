@@ -1,0 +1,17 @@
+# cargo-audit configuration for RustConn
+# Keeps `cargo audit` consistent with the accepted advisories in deny.toml.
+#
+# Accepted transitive advisory:
+# - RUSTSEC-2023-0071: rsa 0.10.0-rc.18 Marvin Attack (timing sidechannel,
+#   medium 5.9). No fixed upgrade is published. Reached only through
+#   ironrdp 0.17.0 -> ironrdp-connector 0.10.0 -> {picky, sspi 0.21.3} -> rsa.
+#   RustConn is a local desktop client: it does not host an RSA decryption
+#   oracle and does not perform attacker-triggerable repeated private-key
+#   operations, so the timing sidechannel is not exploitable in this context.
+#   Upgrade path: sspi/picky drop the rsa dependency, or rsa ships a stable
+#   release with the constant-time fix.
+#   Last reviewed: 2026-07-29
+#   Next review: when ironrdp, sspi, or picky publishes a new major version.
+
+[advisories]
+ignore = ["RUSTSEC-2023-0071"]

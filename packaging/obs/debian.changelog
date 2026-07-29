@@ -1,3 +1,16 @@
+rustconn (0.19.6-1) unstable; urgency=medium
+
+  * Version bump to 0.19.6
+  * Fixed auxiliary keyring operations using Linux-only secret-tool on macOS
+  * Added local-only macOS CI, dependency, signing, and bundle audit workflow
+  * Improved the canonical macOS app and DMG to bundle and relocate 58 non-system dylibs
+  * Added explicit ad-hoc and Developer ID hardened-runtime signing plus notarization and stapling
+  * Expanded cargo-deny checks to aarch64 and x86_64 macOS targets
+  * Synchronized the canonical macOS feature profile across build and packaging paths
+  * Updated dependencies: displaydoc 0.2.6→0.2.7, toml 1.1.3→1.1.4
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Wed, 29 Jul 2026 12:00:00 +0300
+
 rustconn (0.19.5-1) unstable; urgency=medium
 
   * Version bump to 0.19.5

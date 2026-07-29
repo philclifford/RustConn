@@ -1,178 +1,150 @@
-#!/bin/bash
-# Build RustConn.dmg for macOS distribution
-# Usage: ./packaging/macos/build-dmg.sh [--release]
-set -e
+#!/usr/bin/env bash
+# Package the canonical RustConn.app as a DMG and optionally notarize it.
+#
+# Usage:
+#   ./packaging/macos/build-dmg.sh --adhoc
+#   ./packaging/macos/build-dmg.sh --sign-identity "Developer ID Application: ..."
+#   ./packaging/macos/build-dmg.sh --sign-identity "..." --notary-profile rustconn-notary
+#   ./packaging/macos/build-dmg.sh --skip-build
+
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-BUILD_TYPE="${1:---release}"
-APP_NAME="RustConn"
-APP_DIR="$PROJECT_DIR/dist/${APP_NAME}.app"
+APP_DIR="$PROJECT_DIR/dist/RustConn.app"
 DMG_DIR="$PROJECT_DIR/dist"
-VERSION=$(grep '^version' "$PROJECT_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
-
-echo "=== Building RustConn for macOS ==="
-
-# 1. Build the binary
-echo "Building binary ($BUILD_TYPE)..."
-if [ "$BUILD_TYPE" = "--release" ]; then
-    cargo build -p rustconn --release --no-default-features \
-        --features "tray-macos,vnc-embedded,rdp-embedded,rdp-audio"
-    BINARY="$PROJECT_DIR/target/release/rustconn"
-else
-    cargo build -p rustconn --no-default-features \
-        --features "tray-macos,vnc-embedded,rdp-embedded,rdp-audio"
-    BINARY="$PROJECT_DIR/target/debug/rustconn"
+VERSION="$(awk -F'"' '/^\[workspace\.package\]/{p=1} p&&/^version[[:space:]]*=/{print $2; exit}' "$PROJECT_DIR/Cargo.toml")"
+ARCH="$(uname -m)"
+DMG_PATH="$DMG_DIR/RustConn-${VERSION}-macOS-${ARCH}.dmg"
+STAGING_DIR="$DMG_DIR/dmg-staging"
+SKIP_BUILD=false
+SIGN_MODE="none"
+SIGN_IDENTITY="${MACOS_SIGN_IDENTITY:-}"
+NOTARY_PROFILE="${MACOS_NOTARY_PROFILE:-}"
+if [[ -n "$SIGN_IDENTITY" ]]; then
+    SIGN_MODE="developer"
 fi
 
-# 2. Create .app bundle structure
-echo "Creating app bundle..."
-rm -rf "$APP_DIR"
-mkdir -p "$APP_DIR/Contents/MacOS"
-mkdir -p "$APP_DIR/Contents/Resources"
+fail() { printf '[fail] %s\n' "$*" >&2; exit 1; }
+info() { printf '[info] %s\n' "$*"; }
+ok() { printf '[ ok ] %s\n' "$*"; }
 
-# 3. Copy binary
-cp "$BINARY" "$APP_DIR/Contents/MacOS/rustconn"
-
-# 4. Create icon
-echo "Creating icon..."
-ICONSET_DIR=$(mktemp -d)/RustConn.iconset
-mkdir -p "$ICONSET_DIR"
-SVG="$PROJECT_DIR/rustconn/assets/icons/hicolor/scalable/apps/io.github.totoshko88.RustConn.svg"
-
-for size in 16 32 64 128 256 512 1024; do
-    rsvg-convert -w $size -h $size "$SVG" -o "$ICONSET_DIR/icon_${size}.png"
+BUILD_ARGS=(--release --clean --no-launch)
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --release) ;;
+        --skip-build) SKIP_BUILD=true ;;
+        --adhoc)
+            [[ "$SIGN_MODE" != "developer" ]] || fail "--adhoc conflicts with Developer ID signing"
+            SIGN_MODE="adhoc"
+            BUILD_ARGS+=(--adhoc)
+            ;;
+        --no-sign)
+            SIGN_MODE="none"
+            SIGN_IDENTITY=""
+            BUILD_ARGS+=(--no-sign)
+            ;;
+        --sign-identity)
+            shift
+            [[ $# -gt 0 ]] || fail "--sign-identity requires a value"
+            [[ "$SIGN_MODE" != "adhoc" ]] || fail "--sign-identity conflicts with --adhoc"
+            SIGN_MODE="developer"
+            SIGN_IDENTITY="$1"
+            BUILD_ARGS+=(--sign-identity "$1")
+            ;;
+        --sign-identity=*)
+            [[ "$SIGN_MODE" != "adhoc" ]] || fail "--sign-identity conflicts with --adhoc"
+            SIGN_MODE="developer"
+            SIGN_IDENTITY="${1#*=}"
+            BUILD_ARGS+=(--sign-identity "$SIGN_IDENTITY")
+            ;;
+        --notary-profile)
+            shift
+            [[ $# -gt 0 ]] || fail "--notary-profile requires a value"
+            NOTARY_PROFILE="$1"
+            ;;
+        --notary-profile=*) NOTARY_PROFILE="${1#*=}" ;;
+        -h|--help)
+            sed -n '2,8p' "$0"
+            exit 0
+            ;;
+        *) fail "Unknown option: $1" ;;
+    esac
+    shift
 done
 
-cp "$ICONSET_DIR/icon_16.png" "$ICONSET_DIR/icon_16x16.png"
-cp "$ICONSET_DIR/icon_32.png" "$ICONSET_DIR/icon_16x16@2x.png"
-cp "$ICONSET_DIR/icon_32.png" "$ICONSET_DIR/icon_32x32.png"
-cp "$ICONSET_DIR/icon_64.png" "$ICONSET_DIR/icon_32x32@2x.png"
-cp "$ICONSET_DIR/icon_128.png" "$ICONSET_DIR/icon_128x128.png"
-cp "$ICONSET_DIR/icon_256.png" "$ICONSET_DIR/icon_128x128@2x.png"
-cp "$ICONSET_DIR/icon_256.png" "$ICONSET_DIR/icon_256x256.png"
-cp "$ICONSET_DIR/icon_512.png" "$ICONSET_DIR/icon_256x256@2x.png"
-cp "$ICONSET_DIR/icon_512.png" "$ICONSET_DIR/icon_512x512.png"
-cp "$ICONSET_DIR/icon_1024.png" "$ICONSET_DIR/icon_512x512@2x.png"
-rm -f "$ICONSET_DIR"/icon_16.png "$ICONSET_DIR"/icon_32.png "$ICONSET_DIR"/icon_64.png \
-    "$ICONSET_DIR"/icon_128.png "$ICONSET_DIR"/icon_256.png "$ICONSET_DIR"/icon_512.png \
-    "$ICONSET_DIR"/icon_1024.png
+[[ "$(uname -s)" == "Darwin" ]] || fail "DMG creation must run on macOS"
+[[ -n "$VERSION" ]] || fail "Cannot read workspace version"
+if [[ -n "$NOTARY_PROFILE" && "$SIGN_MODE" != "developer" ]]; then
+    fail "Notarization requires --sign-identity or MACOS_SIGN_IDENTITY"
+fi
 
-iconutil -c icns "$ICONSET_DIR" -o "$APP_DIR/Contents/Resources/RustConn.icns"
+if ! $SKIP_BUILD; then
+    "$PROJECT_DIR/scripts/macos-build.sh" "${BUILD_ARGS[@]}"
+fi
+[[ -d "$APP_DIR" ]] || fail "Missing app bundle: $APP_DIR"
+plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null
 
-# 5. Compile locales
-echo "Compiling locales..."
-for f in "$PROJECT_DIR"/po/*.po; do
-    lang=$(basename "$f" .po)
-    mkdir -p "$APP_DIR/Contents/Resources/locale/${lang}/LC_MESSAGES"
-    msgfmt -o "$APP_DIR/Contents/Resources/locale/${lang}/LC_MESSAGES/rustconn.mo" "$f" 2>/dev/null || true
-done
+# Establish the provenance of the enclosed app before it is wrapped, signed or
+# notarized. With --skip-build the bundle is whatever is already on disk, so a
+# Developer ID DMG could otherwise ship an unsigned or ad-hoc app and only fail
+# late at Apple's notary service.
+verify_enclosed_app() {
+    local signature_info
+    codesign --verify --deep --strict --verbose=2 "$APP_DIR" 2>/dev/null || \
+        fail "Enclosed app fails strict signature verification: $APP_DIR"
+    signature_info="$(codesign -d --verbose=4 "$APP_DIR" 2>&1)"
 
-# 6. Copy Adwaita icons (subset needed by the app)
-echo "Bundling Adwaita icons..."
-mkdir -p "$APP_DIR/Contents/Resources/share/icons"
-cp -RL /opt/homebrew/share/icons/Adwaita "$APP_DIR/Contents/Resources/share/icons/"
-cp -RL /opt/homebrew/share/icons/hicolor "$APP_DIR/Contents/Resources/share/icons/"
+    case "$SIGN_MODE" in
+        developer)
+            if grep -q 'Signature=adhoc' <<<"$signature_info"; then
+                fail "Refusing to sign a Developer ID DMG around an ad-hoc app; rebuild without --skip-build"
+            fi
+            grep -qF "Authority=$SIGN_IDENTITY" <<<"$signature_info" || \
+                fail "Enclosed app is not signed by '$SIGN_IDENTITY'; rebuild without --skip-build"
+            grep -qE '^CodeDirectory .*flags=.*runtime' <<<"$signature_info" || \
+                fail "Enclosed app lacks the hardened runtime required for notarization"
+            ok "Enclosed app verified: Developer ID, hardened runtime"
+            ;;
+        adhoc)
+            grep -q 'Signature=adhoc' <<<"$signature_info" || \
+                fail "Expected an ad-hoc signed app for --adhoc; found a different signature"
+            ok "Enclosed app verified: ad-hoc signature"
+            ;;
+    esac
+}
 
-# 7. Copy GSettings schemas
-mkdir -p "$APP_DIR/Contents/Resources/share/glib-2.0/schemas"
-cp /opt/homebrew/share/glib-2.0/schemas/gschemas.compiled \
-   "$APP_DIR/Contents/Resources/share/glib-2.0/schemas/"
+if [[ "$SIGN_MODE" == "none" ]]; then
+    info "Unsigned mode: skipping app signature provenance checks"
+else
+    verify_enclosed_app
+fi
 
-# 8. Create wrapper script (kept for manual terminal launches)
-cat > "$APP_DIR/Contents/MacOS/rustconn-wrapper" << 'EOF'
-#!/bin/bash
-DIR="$(cd "$(dirname "$0")/.." && pwd)"
-export XDG_DATA_DIRS="$DIR/Resources/share:/opt/homebrew/share:/usr/local/share:/usr/share"
-export GSETTINGS_SCHEMA_DIR="$DIR/Resources/share/glib-2.0/schemas"
-export LOCALEDIR="$DIR/Resources/locale"
-export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-# Let GTK4 handle HiDPI scaling natively; override with GDK_DPI_SCALE env if needed.
-cd "$HOME"
-exec "$DIR/MacOS/rustconn" "$@"
-EOF
-chmod +x "$APP_DIR/Contents/MacOS/rustconn-wrapper"
-
-# 8b. Kept for backward compatibility — the RustConn-launcher script is still
-#     available for manual use but is no longer the CFBundleExecutable.
-#     CFBundleExecutable now points directly to the native `rustconn` binary
-#     so macOS associates NSStatusItem with the correct bundle.
-cat > "$APP_DIR/Contents/MacOS/RustConn-launcher" << 'LAUNCHER'
-#!/bin/bash
-DIR="$(cd "$(dirname "$0")/.." && pwd)"
-export XDG_DATA_DIRS="$DIR/Resources/share:/opt/homebrew/share:/usr/local/share:/usr/share"
-export GSETTINGS_SCHEMA_DIR="$DIR/Resources/share/glib-2.0/schemas"
-export LOCALEDIR="$DIR/Resources/locale"
-export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-cd "$HOME"
-exec "$DIR/MacOS/rustconn" "$@"
-LAUNCHER
-chmod +x "$APP_DIR/Contents/MacOS/RustConn-launcher"
-
-# 9. Create Info.plist
-#    CFBundleExecutable points directly to the native rustconn binary.
-#    The binary's configure_macos_bundle() detects the bundle and configures
-#    i18n, icon paths, and GSettings programmatically (no re-exec needed).
-#    This preserves the LaunchServices scene for NSStatusItem (tray icon).
-cat > "$APP_DIR/Contents/Info.plist" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>rustconn</string>
-    <key>CFBundleIconFile</key>
-    <string>RustConn</string>
-    <key>CFBundleIdentifier</key>
-    <string>io.github.totoshko88.RustConn</string>
-    <key>CFBundleName</key>
-    <string>RustConn</string>
-    <key>CFBundleDisplayName</key>
-    <string>RustConn</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleVersion</key>
-    <string>${VERSION}</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${VERSION}</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>NSDocumentsFolderUsageDescription</key>
-    <string>RustConn needs access to import SSH configs and connection files.</string>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>RustConn needs to open URLs in your default browser.</string>
-</dict>
-</plist>
-EOF
-
-# 10. Ad-hoc code sign (prevents Gatekeeper quarantine issues during development)
-echo "Code signing (ad-hoc)..."
-codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
-
-# 11. Create DMG
-echo "Creating DMG..."
-mkdir -p "$DMG_DIR"
-ARCH=$(uname -m)
-DMG_PATH="$DMG_DIR/RustConn-${VERSION}-macOS-${ARCH}.dmg"
+rm -rf "$STAGING_DIR"
+mkdir -p "$STAGING_DIR"
+trap 'rm -rf "$STAGING_DIR"' EXIT
+cp -R "$APP_DIR" "$STAGING_DIR/"
+ln -s /Applications "$STAGING_DIR/Applications"
 rm -f "$DMG_PATH"
 
-# Create a temporary folder with .app and Applications symlink for drag-install UX
-DMG_STAGING="$DMG_DIR/dmg-staging"
-rm -rf "$DMG_STAGING"
-mkdir -p "$DMG_STAGING"
-cp -R "$APP_DIR" "$DMG_STAGING/"
-ln -s /Applications "$DMG_STAGING/Applications"
+info "Creating compressed DMG"
+hdiutil create -volname "RustConn" -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG_PATH"
 
-hdiutil create -volname "RustConn" -srcfolder "$DMG_STAGING" \
-    -ov -format UDZO "$DMG_PATH"
-rm -rf "$DMG_STAGING"
+if [[ "$SIGN_MODE" == "developer" ]]; then
+    codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"
+    codesign --verify --verbose=2 "$DMG_PATH"
+    ok "DMG signed with Developer ID"
+fi
 
-echo ""
-echo "=== Done ==="
-echo "App bundle: $APP_DIR"
-echo "DMG: $DMG_PATH"
-echo ""
-echo "Note: This DMG requires Homebrew GTK4/libadwaita/VTE libraries installed."
-echo "Install dependencies: brew install gtk4 libadwaita vte3 adwaita-icon-theme"
+if [[ -n "$NOTARY_PROFILE" ]]; then
+    info "Submitting DMG to Apple notary service"
+    xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$DMG_PATH"
+    xcrun stapler validate "$DMG_PATH"
+    spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG_PATH"
+    ok "Notarization ticket stapled and validated"
+else
+    info "Notarization skipped; pass --notary-profile for a distribution artifact"
+fi
+
+ok "DMG ready: $DMG_PATH"

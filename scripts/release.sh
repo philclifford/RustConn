@@ -367,7 +367,7 @@ else
             -- -D warnings || fail "cargo clippy reported warnings"
         cargo clippy --all-targets --quiet \
             -p rustconn --no-default-features \
-            --features "tray-macos,vnc-embedded,rdp-embedded,rdp-audio,spice-embedded,adw-1-8" \
+            --features "tray-macos,system-keyring,vnc-embedded,rdp-embedded,gfx-h264,rdp-audio,rd-gateway,adw-1-8" \
             -- -D warnings || fail "cargo clippy reported warnings (rustconn)"
     else
         cargo clippy --all-targets --quiet -- -D warnings || fail "cargo clippy reported warnings"
@@ -383,7 +383,7 @@ else
         if [[ "$(uname -s)" == "Darwin" ]]; then
             cargo test -p rustconn-core -p rustconn-cli || fail "cargo test failed"
             cargo test -p rustconn --no-default-features \
-                --features "tray-macos,vnc-embedded,rdp-embedded,rdp-audio,spice-embedded,adw-1-8" \
+                --features "tray-macos,system-keyring,vnc-embedded,rdp-embedded,gfx-h264,rdp-audio,rd-gateway,adw-1-8" \
                 || fail "cargo test failed (rustconn)"
         else
             cargo test --workspace || fail "cargo test failed"

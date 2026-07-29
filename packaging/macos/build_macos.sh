@@ -1,5 +1,6 @@
-#!/bin/bash
-cargo build -p rustconn --no-default-features \
-  --features "vnc-embedded,rdp-embedded,rdp-audio" 2>&1 | \
-  grep -E "error|warning.*unused" | head -20
-echo "Exit: $?"
+#!/usr/bin/env bash
+# Compatibility entry point; the canonical app producer lives in scripts/.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+exec "$PROJECT_DIR/scripts/macos-build.sh" "$@"

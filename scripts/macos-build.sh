@@ -1,231 +1,372 @@
-#!/bin/bash
-# Build RustConn for macOS and create/update the .app bundle.
+#!/usr/bin/env bash
+# Build RustConn for macOS and produce the canonical self-contained .app bundle.
 #
 # Usage:
-#   ./scripts/macos-build.sh              # debug build + bundle + launch
-#   ./scripts/macos-build.sh --release    # release build + bundle + launch
-#   ./scripts/macos-build.sh --no-launch  # build + bundle, don't launch
-#   ./scripts/macos-build.sh --clean      # remove existing bundle first
+#   ./scripts/macos-build.sh                         # debug, unsigned bundle
+#   ./scripts/macos-build.sh --release --adhoc      # local release bundle
+#   ./scripts/macos-build.sh --release --sign-identity "Developer ID Application: ..."
+#   ./scripts/macos-build.sh --launch --adhoc       # explicitly launch local bundle
+#   ./scripts/macos-build.sh --print-features       # print canonical feature set
 
 set -euo pipefail
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Config
-# ──────────────────────────────────────────────────────────────────────────────
-BUNDLE_NAME="dist/RustConn.app"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_DIR"
+
+APP_DIR="$PROJECT_DIR/dist/RustConn.app"
 BUNDLE_ID="io.github.totoshko88.RustConn"
-FEATURES="tray-macos,vnc-embedded,rdp-embedded,rdp-audio,spice-embedded,adw-1-8"
-VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
-ICON_SVG="rustconn/assets/icons/hicolor/scalable/apps/io.github.totoshko88.RustConn.svg"
+MACOS_FEATURES="tray-macos,system-keyring,vnc-embedded,rdp-embedded,gfx-h264,rdp-audio,rd-gateway,adw-1-8"
+ENTITLEMENTS="$PROJECT_DIR/packaging/macos/RustConn.entitlements"
+ICON_SVG="$PROJECT_DIR/rustconn/assets/icons/hicolor/scalable/apps/io.github.totoshko88.RustConn.svg"
+VERSION="$(awk -F'"' '/^\[workspace\.package\]/{p=1} p&&/^version[[:space:]]*=/{print $2; exit}' Cargo.toml)"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Args
-# ──────────────────────────────────────────────────────────────────────────────
 RELEASE=false
-LAUNCH=true
 CLEAN=false
+LAUNCH=false
+SIGN_MODE="none"
+SIGN_IDENTITY="${MACOS_SIGN_IDENTITY:-}"
+if [[ -n "$SIGN_IDENTITY" ]]; then
+    SIGN_MODE="developer"
+fi
 
-for arg in "$@"; do
-    case "$arg" in
+info() { printf '\033[34m[info]\033[0m %s\n' "$*"; }
+ok() { printf '\033[32m[ ok ]\033[0m %s\n' "$*"; }
+fail() { printf '\033[31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
+require_tool() { command -v "$1" >/dev/null 2>&1 || fail "Missing required tool: $1"; }
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --release) RELEASE=true ;;
-        --no-launch) LAUNCH=false ;;
         --clean) CLEAN=true ;;
-        -h|--help)
-            echo "Usage: $0 [--release] [--no-launch] [--clean]"
+        --launch) LAUNCH=true ;;
+        --no-launch) LAUNCH=false ;;
+        --adhoc)
+            [[ "$SIGN_MODE" != "developer" ]] || fail "--adhoc conflicts with Developer ID signing"
+            SIGN_MODE="adhoc"
+            ;;
+        --no-sign)
+            SIGN_MODE="none"
+            SIGN_IDENTITY=""
+            ;;
+        --sign-identity)
+            shift
+            [[ $# -gt 0 ]] || fail "--sign-identity requires a value"
+            [[ "$SIGN_MODE" != "adhoc" ]] || fail "--sign-identity conflicts with --adhoc"
+            SIGN_MODE="developer"
+            SIGN_IDENTITY="$1"
+            ;;
+        --sign-identity=*)
+            [[ "$SIGN_MODE" != "adhoc" ]] || fail "--sign-identity conflicts with --adhoc"
+            SIGN_MODE="developer"
+            SIGN_IDENTITY="${1#*=}"
+            ;;
+        --print-features)
+            printf '%s\n' "$MACOS_FEATURES"
             exit 0
             ;;
-        *) echo "Unknown option: $arg"; exit 2 ;;
+        -h|--help)
+            sed -n '2,10p' "$0"
+            exit 0
+            ;;
+        *) fail "Unknown option: $1" ;;
     esac
+    shift
+done
+
+[[ "$(uname -s)" == "Darwin" ]] || fail "macOS bundle creation must run on macOS"
+[[ -n "$VERSION" ]] || fail "Cannot read workspace version"
+if $LAUNCH && [[ "$SIGN_MODE" == "none" ]]; then
+    fail "Launching an unsigned relocated bundle is disabled; pass --adhoc for local use"
+fi
+if [[ "$SIGN_MODE" == "developer" ]]; then
+    [[ -n "$SIGN_IDENTITY" ]] || fail "Developer ID signing requires an identity"
+    [[ -f "$ENTITLEMENTS" ]] || fail "Missing entitlements: $ENTITLEMENTS"
+fi
+
+for tool in cargo brew otool install_name_tool codesign file iconutil rsvg-convert msgfmt awk sed grep cmp; do
+    require_tool "$tool"
 done
 
 if $RELEASE; then
     PROFILE="release"
-    CARGO_FLAGS="--release"
-    TARGET_DIR="target/release"
+    TARGET_DIR="$PROJECT_DIR/target/release"
+    CARGO_PROFILE_ARGS=(--release)
 else
     PROFILE="debug"
-    CARGO_FLAGS=""
-    TARGET_DIR="target/debug"
+    TARGET_DIR="$PROJECT_DIR/target/debug"
+    CARGO_PROFILE_ARGS=()
 fi
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────────────────────
-info() { printf '\033[34m[info]\033[0m %s\n' "$*"; }
-ok()   { printf '\033[32m[ ok ]\033[0m %s\n' "$*"; }
-fail() { printf '\033[31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
+info "Building rustconn ($PROFILE) with features: $MACOS_FEATURES"
+cargo build -p rustconn --no-default-features --features "$MACOS_FEATURES" "${CARGO_PROFILE_ARGS[@]}"
+cargo build -p rustconn-cli --features full "${CARGO_PROFILE_ARGS[@]}"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 1. Build
-# ──────────────────────────────────────────────────────────────────────────────
-info "Building rustconn ($PROFILE) with features: $FEATURES"
-cargo build -p rustconn --no-default-features --features "$FEATURES" $CARGO_FLAGS \
-    || fail "cargo build failed"
-cargo build -p rustconn-cli $CARGO_FLAGS || fail "cargo build rustconn-cli failed"
-ok "Build complete: $TARGET_DIR/rustconn"
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 2. Create bundle structure
-# ──────────────────────────────────────────────────────────────────────────────
-if $CLEAN && [ -d "$BUNDLE_NAME" ]; then
-    info "Removing existing $BUNDLE_NAME"
-    rm -rf "$BUNDLE_NAME"
+if $CLEAN && [[ -d "$APP_DIR" ]]; then
+    info "Removing existing bundle"
+    rm -rf "$APP_DIR"
 fi
+rm -rf "$APP_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS" \
+         "$APP_DIR/Contents/Frameworks" \
+         "$APP_DIR/Contents/Resources/bin" \
+         "$APP_DIR/Contents/Resources/share/icons" \
+         "$APP_DIR/Contents/Resources/share/glib-2.0/schemas"
+cp "$TARGET_DIR/rustconn" "$APP_DIR/Contents/MacOS/rustconn"
+cp "$TARGET_DIR/rustconn-cli" "$APP_DIR/Contents/MacOS/rustconn-cli"
 
-mkdir -p "$BUNDLE_NAME/Contents/MacOS"
-mkdir -p "$BUNDLE_NAME/Contents/Resources/share/icons"
+# Build the native application icon.
+ICON_TMP="$(mktemp -d)"
+trap 'rm -rf "$ICON_TMP"' EXIT
+ICONSET="$ICON_TMP/RustConn.iconset"
+mkdir -p "$ICONSET"
+for size in 16 32 64 128 256 512 1024; do
+    rsvg-convert -w "$size" -h "$size" "$ICON_SVG" -o "$ICONSET/icon_${size}.png"
+done
+cp "$ICONSET/icon_16.png" "$ICONSET/icon_16x16.png"
+cp "$ICONSET/icon_32.png" "$ICONSET/icon_16x16@2x.png"
+cp "$ICONSET/icon_32.png" "$ICONSET/icon_32x32.png"
+cp "$ICONSET/icon_64.png" "$ICONSET/icon_32x32@2x.png"
+cp "$ICONSET/icon_128.png" "$ICONSET/icon_128x128.png"
+cp "$ICONSET/icon_256.png" "$ICONSET/icon_128x128@2x.png"
+cp "$ICONSET/icon_256.png" "$ICONSET/icon_256x256.png"
+cp "$ICONSET/icon_512.png" "$ICONSET/icon_256x256@2x.png"
+cp "$ICONSET/icon_512.png" "$ICONSET/icon_512x512.png"
+cp "$ICONSET/icon_1024.png" "$ICONSET/icon_512x512@2x.png"
+rm "$ICONSET"/icon_16.png "$ICONSET"/icon_32.png "$ICONSET"/icon_64.png \
+   "$ICONSET"/icon_128.png "$ICONSET"/icon_256.png "$ICONSET"/icon_512.png \
+   "$ICONSET"/icon_1024.png
+iconutil -c icns "$ICONSET" -o "$APP_DIR/Contents/Resources/RustConn.icns"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 3. Copy binaries
-# ──────────────────────────────────────────────────────────────────────────────
-cp "$TARGET_DIR/rustconn" "$BUNDLE_NAME/Contents/MacOS/"
-cp "$TARGET_DIR/rustconn-cli" "$BUNDLE_NAME/Contents/MacOS/"
-ok "Binaries copied"
+# Compile all translations; a broken catalog must fail packaging.
+for catalog in "$PROJECT_DIR"/po/*.po; do
+    language="$(basename "$catalog" .po)"
+    locale_dir="$APP_DIR/Contents/Resources/locale/$language/LC_MESSAGES"
+    mkdir -p "$locale_dir"
+    msgfmt --check -o "$locale_dir/rustconn.mo" "$catalog"
+done
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 4. Generate icon (.icns)
-# ──────────────────────────────────────────────────────────────────────────────
-if command -v rsvg-convert &>/dev/null && [ -f "$ICON_SVG" ]; then
-    ICONSET=$(mktemp -d)/RustConn.iconset
-    mkdir -p "$ICONSET"
-    for size in 16 32 64 128 256 512 1024; do
-        rsvg-convert -w "$size" -h "$size" "$ICON_SVG" -o "$ICONSET/icon_${size}.png"
-    done
-    cp "$ICONSET/icon_16.png"   "$ICONSET/icon_16x16.png"
-    cp "$ICONSET/icon_32.png"   "$ICONSET/icon_16x16@2x.png"
-    cp "$ICONSET/icon_32.png"   "$ICONSET/icon_32x32.png"
-    cp "$ICONSET/icon_64.png"   "$ICONSET/icon_32x32@2x.png"
-    cp "$ICONSET/icon_128.png"  "$ICONSET/icon_128x128.png"
-    cp "$ICONSET/icon_256.png"  "$ICONSET/icon_128x128@2x.png"
-    cp "$ICONSET/icon_256.png"  "$ICONSET/icon_256x256.png"
-    cp "$ICONSET/icon_512.png"  "$ICONSET/icon_256x256@2x.png"
-    cp "$ICONSET/icon_512.png"  "$ICONSET/icon_512x512.png"
-    cp "$ICONSET/icon_1024.png" "$ICONSET/icon_512x512@2x.png"
-    iconutil -c icns "$ICONSET" -o "$BUNDLE_NAME/Contents/Resources/RustConn.icns" 2>/dev/null
-    rm -rf "$(dirname "$ICONSET")"
-    ok "Icon generated"
-else
-    info "Skipping icon (rsvg-convert not found or SVG missing)"
+# Bundle runtime data without assuming Intel or Apple Silicon Homebrew paths.
+HOMEBREW_PREFIX="$(brew --prefix)"
+GLIB_PREFIX="$(brew --prefix glib)"
+ICON_PREFIX="$(brew --prefix adwaita-icon-theme)"
+for theme in Adwaita hicolor; do
+    source_theme="$ICON_PREFIX/share/icons/$theme"
+    [[ -d "$source_theme" ]] || source_theme="$HOMEBREW_PREFIX/share/icons/$theme"
+    [[ -d "$source_theme" ]] || fail "Missing $theme icon theme (brew install adwaita-icon-theme)"
+    cp -RL "$source_theme" "$APP_DIR/Contents/Resources/share/icons/"
+done
+SCHEMAS="$GLIB_PREFIX/share/glib-2.0/schemas/gschemas.compiled"
+if [[ ! -f "$SCHEMAS" ]]; then
+    SCHEMAS="$HOMEBREW_PREFIX/share/glib-2.0/schemas/gschemas.compiled"
 fi
+[[ -f "$SCHEMAS" ]] || fail "Missing compiled GSettings schemas (brew install glib)"
+cp "$SCHEMAS" "$APP_DIR/Contents/Resources/share/glib-2.0/schemas/"
+mkdir -p "$APP_DIR/Contents/Resources/share/icons/hicolor/scalable/apps"
+cp "$ICON_SVG" "$APP_DIR/Contents/Resources/share/icons/hicolor/scalable/apps/"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 5. Compile locales
-# ──────────────────────────────────────────────────────────────────────────────
-if command -v msgfmt &>/dev/null; then
-    for f in po/*.po; do
-        lang=$(basename "$f" .po)
-        mkdir -p "$BUNDLE_NAME/Contents/Resources/locale/${lang}/LC_MESSAGES"
-        msgfmt -o "$BUNDLE_NAME/Contents/Resources/locale/${lang}/LC_MESSAGES/rustconn.mo" "$f"
-    done
-    ok "Locales compiled ($(ls po/*.po | wc -l | tr -d ' ') languages)"
-else
-    info "Skipping locales (msgfmt not found — brew install gettext)"
-fi
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 6. Copy Adwaita icons (for sidebar/toolbar icons)
-# ──────────────────────────────────────────────────────────────────────────────
-ADWAITA_ICONS="/opt/homebrew/share/icons/Adwaita"
-if [ -d "$ADWAITA_ICONS" ]; then
-    # -RL: dereference symlinks (Homebrew uses symlinks to Cellar)
-    cp -RL "$ADWAITA_ICONS" "$BUNDLE_NAME/Contents/Resources/share/icons/"
-    ok "Adwaita icons bundled"
-else
-    ADWAITA_ICONS="/usr/local/share/icons/Adwaita"
-    if [ -d "$ADWAITA_ICONS" ]; then
-        cp -RL "$ADWAITA_ICONS" "$BUNDLE_NAME/Contents/Resources/share/icons/"
-        ok "Adwaita icons bundled"
-    else
-        info "Skipping Adwaita icons (not found — brew install adwaita-icon-theme)"
-    fi
-fi
-
-# Also copy hicolor theme from system and add our app icon
-HICOLOR_ICONS="/opt/homebrew/share/icons/hicolor"
-if [ -d "$HICOLOR_ICONS" ]; then
-    # -RL: dereference symlinks (Homebrew uses symlinks to Cellar)
-    cp -RL "$HICOLOR_ICONS" "$BUNDLE_NAME/Contents/Resources/share/icons/"
-    ok "hicolor icons bundled"
-fi
-# Ensure our app icon is present (after hicolor copy so directory exists)
-mkdir -p "$BUNDLE_NAME/Contents/Resources/share/icons/hicolor/scalable/apps"
-if [ -f "$ICON_SVG" ]; then
-    cp "$ICON_SVG" "$BUNDLE_NAME/Contents/Resources/share/icons/hicolor/scalable/apps/"
-fi
-
-# Update icon caches for GTK4 lookup
-if command -v gtk4-update-icon-cache &>/dev/null; then
-    gtk4-update-icon-cache -f -t "$BUNDLE_NAME/Contents/Resources/share/icons/Adwaita" 2>/dev/null || true
-    gtk4-update-icon-cache -f -t "$BUNDLE_NAME/Contents/Resources/share/icons/hicolor" 2>/dev/null || true
-    ok "Icon caches updated"
-fi
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 7. Create wrapper script
-# ──────────────────────────────────────────────────────────────────────────────
-cat > "$BUNDLE_NAME/Contents/MacOS/rustconn-wrapper" << 'EOF'
-#!/bin/bash
-DIR="$(cd "$(dirname "$0")/.." && pwd)"
-export XDG_DATA_DIRS="$DIR/Resources/share:/opt/homebrew/share:/usr/local/share:/usr/share"
-export GSETTINGS_SCHEMA_DIR="/opt/homebrew/share/glib-2.0/schemas"
-export LOCALEDIR="$DIR/Resources/locale"
-export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
+# Manual-terminal wrapper only. LaunchServices executes the native rustconn binary.
+cat > "$APP_DIR/Contents/Resources/bin/rustconn-wrapper" <<'WRAPPER'
+#!/bin/sh
+CONTENTS="$(cd "$(dirname "$0")/../.." && pwd)"
+export XDG_DATA_DIRS="$CONTENTS/Resources/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+export GSETTINGS_SCHEMA_DIR="$CONTENTS/Resources/share/glib-2.0/schemas"
+export LOCALEDIR="$CONTENTS/Resources/locale"
 cd "$HOME"
-exec "$DIR/MacOS/rustconn" "$@"
-EOF
-chmod +x "$BUNDLE_NAME/Contents/MacOS/rustconn-wrapper"
-ok "Wrapper script created"
+exec "$CONTENTS/MacOS/rustconn" "$@"
+WRAPPER
+chmod 0755 "$APP_DIR/Contents/Resources/bin/rustconn-wrapper"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 8. Create Info.plist
-# ──────────────────────────────────────────────────────────────────────────────
-cat > "$BUNDLE_NAME/Contents/Info.plist" << EOF
+cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleExecutable</key>
-    <string>rustconn</string>
-    <key>CFBundleIconFile</key>
-    <string>RustConn</string>
-    <key>CFBundleIdentifier</key>
-    <string>${BUNDLE_ID}</string>
-    <key>CFBundleName</key>
-    <string>RustConn</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleVersion</key>
-    <string>${VERSION}</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${VERSION}</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <key>CFBundleExecutable</key><string>rustconn</string>
+    <key>CFBundleIconFile</key><string>RustConn</string>
+    <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
+    <key>CFBundleName</key><string>RustConn</string>
+    <key>CFBundleDisplayName</key><string>RustConn</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleVersion</key><string>${VERSION}</string>
+    <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+    <key>LSMinimumSystemVersion</key><string>13.0</string>
+    <key>NSHighResolutionCapable</key><true/>
     <key>NSDocumentsFolderUsageDescription</key>
-    <string>RustConn needs access to import SSH configs and connection files.</string>
+    <string>RustConn needs access to import SSH configurations and connection files.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>RustConn needs to open URLs in your default browser.</string>
 </dict>
 </plist>
-EOF
-ok "Info.plist created (version $VERSION, CFBundleExecutable=rustconn)"
+PLIST
+plutil -lint "$APP_DIR/Contents/Info.plist" >/dev/null
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 9. Ad-hoc code sign
-# ──────────────────────────────────────────────────────────────────────────────
-codesign --force --deep --sign - "$BUNDLE_NAME" 2>/dev/null && ok "Code signed (ad-hoc)" || true
+is_system_dependency() {
+    case "$1" in
+        /System/Library/*|/usr/lib/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Done
-# ──────────────────────────────────────────────────────────────────────────────
-echo ""
-ok "Bundle ready: $BUNDLE_NAME ($PROFILE, v$VERSION)"
-echo "   Launch:  open $BUNDLE_NAME"
-echo "   CLI:     ./$BUNDLE_NAME/Contents/MacOS/rustconn-cli --help"
-echo ""
+macho_dependencies() {
+    otool -L "$1" | tail -n +2 | sed -E 's/^[[:space:]]+([^[:space:]]+).*/\1/'
+}
+
+resolve_dependency() {
+    local source="$1" dependency="$2" candidate base suffix
+    base="$(basename "$dependency")"
+    case "$dependency" in
+        /*)
+            [[ -f "$dependency" ]] && printf '%s\n' "$dependency" && return 0
+            ;;
+        @loader_path/*)
+            suffix="${dependency#@loader_path/}"
+            candidate="$(dirname "$source")/$suffix"
+            [[ -f "$candidate" ]] && printf '%s\n' "$candidate" && return 0
+            ;;
+        @executable_path/*)
+            suffix="${dependency#@executable_path/}"
+            candidate="$TARGET_DIR/$suffix"
+            [[ -f "$candidate" ]] && printf '%s\n' "$candidate" && return 0
+            ;;
+        @rpath/*)
+            for candidate in "$(dirname "$source")/$base" \
+                             "$HOMEBREW_PREFIX/lib/$base" \
+                             "$APP_DIR/Contents/Frameworks/$base"; do
+                [[ -f "$candidate" ]] && printf '%s\n' "$candidate" && return 0
+            done
+            candidate="$(find "$HOMEBREW_PREFIX/opt" -path "*/lib/$base" -type f -print -quit 2>/dev/null || true)"
+            [[ -n "$candidate" ]] && printf '%s\n' "$candidate" && return 0
+            ;;
+    esac
+    return 1
+}
+
+QUEUE_SOURCE=("$TARGET_DIR/rustconn" "$TARGET_DIR/rustconn-cli")
+QUEUE_DEST=("$APP_DIR/Contents/MacOS/rustconn" "$APP_DIR/Contents/MacOS/rustconn-cli")
+
+enqueue_library() {
+    local source="$1" base destination existing i
+    base="$(basename "$source")"
+    destination="$APP_DIR/Contents/Frameworks/$base"
+    for ((i = 0; i < ${#QUEUE_DEST[@]}; i++)); do
+        existing="${QUEUE_DEST[$i]}"
+        if [[ "$existing" == "$destination" ]]; then
+            cmp -s "$source" "${QUEUE_SOURCE[$i]}" || fail "Dylib basename collision: $source and ${QUEUE_SOURCE[$i]}"
+            return 0
+        fi
+    done
+    cp -L "$source" "$destination"
+    chmod u+w "$destination"
+    QUEUE_SOURCE+=("$source")
+    QUEUE_DEST+=("$destination")
+}
+
+# OpenH264 is dlopen'd at runtime rather than represented in LC_LOAD_DYLIB, so
+# it must be bundled explicitly. The canonical feature set enables gfx-h264, and
+# rustconn-core looks for Contents/Frameworks/libopenh264.dylib first, so a
+# missing library silently downgrades H.264 to non-AVC codecs. Fail instead.
+OPENH264_PREFIX="$(brew --prefix openh264 2>/dev/null || true)"
+OPENH264_DYLIB="$OPENH264_PREFIX/lib/libopenh264.dylib"
+[[ -n "$OPENH264_PREFIX" && -f "$OPENH264_DYLIB" ]] || \
+    fail "Missing OpenH264 for the gfx-h264 feature (brew install openh264)"
+enqueue_library "$OPENH264_DYLIB"
+
+index=0
+while (( index < ${#QUEUE_SOURCE[@]} )); do
+    source_macho="${QUEUE_SOURCE[$index]}"
+    while IFS= read -r dependency; do
+        [[ -n "$dependency" ]] || continue
+        is_system_dependency "$dependency" && continue
+        case "$dependency" in
+            @rpath/*)
+                [[ -f "$APP_DIR/Contents/Frameworks/$(basename "$dependency")" ]] && continue
+                ;;
+        esac
+        resolved="$(resolve_dependency "$source_macho" "$dependency" || true)"
+        [[ -n "$resolved" ]] || fail "Cannot resolve dependency $dependency required by $source_macho"
+        enqueue_library "$resolved"
+    done < <(macho_dependencies "$source_macho")
+    ((index += 1))
+done
+
+# Remove existing signatures before changing Mach-O load commands.
+for destination in "${QUEUE_DEST[@]}"; do
+    if codesign -dv "$destination" >/dev/null 2>&1; then
+        codesign --remove-signature "$destination"
+    fi
+done
+
+for destination in "${QUEUE_DEST[@]}"; do
+    chmod u+w "$destination"
+    if [[ "$destination" == "$APP_DIR/Contents/Frameworks/"* ]]; then
+        install_name_tool -id "@rpath/$(basename "$destination")" "$destination"
+    fi
+    while IFS= read -r dependency; do
+        [[ -n "$dependency" ]] || continue
+        is_system_dependency "$dependency" && continue
+        base="$(basename "$dependency")"
+        [[ -f "$APP_DIR/Contents/Frameworks/$base" ]] || fail "Unbundled dependency $dependency in $destination"
+        [[ "$dependency" == "@rpath/$base" ]] || \
+            install_name_tool -change "$dependency" "@rpath/$base" "$destination"
+    done < <(macho_dependencies "$destination")
+
+    if ! otool -l "$destination" | grep -A2 LC_RPATH | grep -q 'path @executable_path/../Frameworks'; then
+        install_name_tool -add_rpath "@executable_path/../Frameworks" "$destination"
+    fi
+done
+
+# Reject any remaining absolute non-system dependency before signing.
+for destination in "${QUEUE_DEST[@]}"; do
+    while IFS= read -r dependency; do
+        [[ -n "$dependency" ]] || continue
+        is_system_dependency "$dependency" && continue
+        case "$dependency" in
+            @rpath/*|@loader_path/*|@executable_path/*) ;;
+            *) fail "Non-relocatable dependency remains in $destination: $dependency" ;;
+        esac
+    done < <(macho_dependencies "$destination")
+done
+ok "Bundled and relocated $((${#QUEUE_DEST[@]} - 2)) non-system dylibs"
+
+sign_artifact() {
+    local artifact="$1"
+    if [[ "$SIGN_MODE" == "developer" ]]; then
+        codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$artifact"
+    else
+        codesign --force --sign - "$artifact"
+    fi
+}
+
+if [[ "$SIGN_MODE" != "none" ]]; then
+    # Nested code must be signed inside-out. Signing the main executable first
+    # makes codesign validate its still-unsigned sibling CLI and frameworks.
+    for destination in "${QUEUE_DEST[@]}"; do
+        if [[ "$destination" == "$APP_DIR/Contents/Frameworks/"* ]]; then
+            sign_artifact "$destination"
+        fi
+    done
+    sign_artifact "$APP_DIR/Contents/MacOS/rustconn-cli"
+    sign_artifact "$APP_DIR/Contents/MacOS/rustconn"
+    if [[ "$SIGN_MODE" == "developer" ]]; then
+        codesign --force --options runtime --timestamp \
+            --entitlements "$ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$APP_DIR"
+        ok "Signed with Developer ID and hardened runtime"
+    else
+        codesign --force --sign - "$APP_DIR"
+        ok "Signed ad-hoc for explicit local use"
+    fi
+    codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+else
+    info "Bundle left unsigned; use --adhoc locally or --sign-identity for distribution"
+fi
+
+ARCHITECTURES="$(lipo -archs "$APP_DIR/Contents/MacOS/rustconn")"
+ok "Bundle ready: $APP_DIR ($PROFILE, v$VERSION, $ARCHITECTURES)"
+printf 'Features: %s\n' "$MACOS_FEATURES"
+printf 'CLI: %s/Contents/MacOS/rustconn-cli --help\n' "$APP_DIR"
 
 if $LAUNCH; then
-    info "Launching..."
-    open "$BUNDLE_NAME"
+    info "Launching signed bundle"
+    open "$APP_DIR"
 fi

@@ -6,29 +6,20 @@
 //! - On Linux/BSD (`cfg(not(target_os = "macos"))`) this talks to the Secret
 //!   Service **in process** via the [`oo7`] crate (`oo7::dbus::Service`), so no
 //!   `secret-tool` binary or bundled libsecret C library is required.
-//! - On macOS the legacy `secret-tool` subprocess path is retained purely so the
-//!   crate keeps compiling; it is never actually selected at runtime (macOS
-//!   routes to the Keychain backend). Task 4.5 removes this macOS path entirely
-//!   and gates the whole module behind `cfg(not(macos))`.
+//! - On macOS these generic auxiliary operations delegate to the native
+//!   Keychain implementation in [`super::macos_keychain::keychain_ops`].
 //!
-//! Both paths use the *same* two attributes — `application` and `key` — and the
-//! same labels, so entries written by the old `secret-tool` code remain findable
-//! after the switch to oo7 (backward compatibility, R11.1).
+//! Linux/BSD entries use the same two attributes — `application` and `key` —
+//! and the same labels as the former `secret-tool` implementation.
 
 // oo7 attribute maps are only built on the in-process (non-macOS) path.
 #[cfg(all(feature = "system-keyring", not(target_os = "macos")))]
 use std::collections::HashMap;
-// secret-tool subprocess machinery is only used by the retained macOS path.
-#[cfg(all(feature = "system-keyring", target_os = "macos"))]
-use std::process::Stdio;
-
-#[cfg(all(feature = "system-keyring", target_os = "macos"))]
-use tokio::process::Command;
 
 use crate::error::{SecretError, SecretResult};
 
 /// Application identifier used as the `application` attribute in keyring entries
-#[cfg(feature = "system-keyring")]
+#[cfg(all(feature = "system-keyring", not(target_os = "macos")))]
 const APP_ID: &str = "rustconn";
 
 /// Builds the two-attribute map used to identify a keyring entry.
@@ -206,10 +197,19 @@ pub async fn lookup(key: &str) -> SecretResult<Option<String>> {
 
     let secret = item.secret().await.map_err(map_oo7_retrieve_error)?;
 
-    // Values were written as UTF-8 text; decode them back the same way.
-    let value = String::from_utf8(secret.as_bytes().to_vec()).map_err(|e| {
-        SecretError::RetrieveFailed(format!("stored secret was not valid UTF-8: {e}"))
-    })?;
+    // Values were written as UTF-8 text; decode them back the same way. The
+    // intermediate copy holds secret material, so it is wiped on drop and the
+    // malformed-input buffer is wiped explicitly, matching the macOS path.
+    let bytes = zeroize::Zeroizing::new(secret.as_bytes().to_vec());
+    let value = match String::from_utf8(bytes.to_vec()) {
+        Ok(value) => value,
+        Err(e) => {
+            drop(zeroize::Zeroizing::new(e.into_bytes()));
+            return Err(SecretError::RetrieveFailed(
+                "stored secret was not valid UTF-8".to_string(),
+            ));
+        }
+    };
 
     if value.is_empty() {
         Ok(None)
@@ -318,117 +318,115 @@ pub async fn clear(_key: &str) -> SecretResult<()> {
     ))
 }
 
+/// Maximum time callers wait for a native Keychain operation.
 #[cfg(all(feature = "system-keyring", target_os = "macos"))]
-pub async fn is_secret_tool_available() -> bool {
-    // secret-tool does not support --version; running it without valid
-    // arguments prints usage to stderr and exits with code 1.
-    // Use `which` / `command -v` to check binary presence instead.
-    Command::new("which")
-        .env("PATH", crate::cli_download::get_extended_path())
-        .arg("secret-tool")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false)
+const KEYCHAIN_OPERATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[cfg(all(feature = "system-keyring", target_os = "macos"))]
+async fn run_keychain_operation<T, F>(operation: &'static str, task: F) -> SecretResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> SecretResult<T> + Send + 'static,
+{
+    let mut handle = tokio::task::spawn_blocking(task);
+
+    match tokio::time::timeout(KEYCHAIN_OPERATION_TIMEOUT, &mut handle).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => Err(SecretError::LibSecret(format!(
+            "Keychain {operation} worker failed: {error}"
+        ))),
+        Err(_) => {
+            // A blocking Security.framework call cannot be cancelled, so the
+            // timeout only bounds how long the caller waits. Keep observing the
+            // task instead of dropping its handle silently: the late outcome is
+            // logged, and every Keychain operation here is idempotent per key
+            // (store overwrites, clear deletes), so a late completion cannot
+            // contradict the failure already reported to the caller.
+            tokio::spawn(async move {
+                match handle.await {
+                    Ok(Ok(_)) => tracing::warn!(
+                        operation,
+                        "Keychain operation completed after its timeout was reported"
+                    ),
+                    Ok(Err(error)) => tracing::warn!(
+                        operation,
+                        %error,
+                        "Keychain operation failed after its timeout was reported"
+                    ),
+                    Err(error) => tracing::warn!(
+                        operation,
+                        %error,
+                        "Keychain worker terminated after its timeout was reported"
+                    ),
+                }
+            });
+
+            Err(SecretError::BackendUnavailable(format!(
+                "Keychain {operation} did not finish within {}s; it may still \
+                 complete in the background",
+                KEYCHAIN_OPERATION_TIMEOUT.as_secs()
+            )))
+        }
+    }
 }
 
-/// Stores a value in the system keyring.
+/// Checks whether the native macOS Keychain backend is available.
+///
+/// The function keeps its historical backend-neutral call-site API even though
+/// macOS does not use the `secret-tool` executable.
+#[cfg(all(feature = "system-keyring", target_os = "macos"))]
+#[expect(
+    clippy::unused_async,
+    reason = "keeps the public async API identical across keyring backends"
+)]
+pub async fn is_secret_tool_available() -> bool {
+    super::macos_keychain::keychain_ops::is_keychain_available()
+}
+
+/// Stores a value in the native macOS Keychain.
+///
+/// The label is accepted for API compatibility; Keychain entries use the
+/// application service and key as their stable identity.
 ///
 /// # Errors
-/// Returns `SecretError::BackendUnavailable` if `secret-tool` is not installed.
-/// Returns `SecretError::LibSecret` if `secret-tool` cannot be spawned
-/// or the store command fails.
+/// Returns `SecretError::StoreFailed` if the Keychain operation fails.
+/// Returns `SecretError::BackendUnavailable` if the operation times out.
 #[cfg(all(feature = "system-keyring", target_os = "macos"))]
-pub async fn store(key: &str, value: &str, label: &str) -> SecretResult<()> {
-    use tokio::io::AsyncWriteExt;
-
-    if !is_secret_tool_available().await {
-        return Err(SecretError::BackendUnavailable(
-            "secret-tool not found. Install libsecret-tools or use \
-             encrypted settings storage."
-                .into(),
-        ));
-    }
-
-    let mut child = Command::new("secret-tool")
-        .env("PATH", crate::cli_download::get_extended_path())
-        .args(["store", "--label", label, "application", APP_ID, "key", key])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| SecretError::LibSecret(format!("Failed to spawn secret-tool: {e}")))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(value.as_bytes())
-            .await
-            .map_err(|e| SecretError::LibSecret(format!("Failed to write secret: {e}")))?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| SecretError::LibSecret(format!("Failed to wait for secret-tool: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(SecretError::StoreFailed(format!(
-            "secret-tool store failed: {stderr}"
-        )));
-    }
-
-    Ok(())
+pub async fn store(key: &str, value: &str, _label: &str) -> SecretResult<()> {
+    let key = key.to_owned();
+    let value = zeroize::Zeroizing::new(value.to_owned());
+    run_keychain_operation("store", move || {
+        super::macos_keychain::keychain_ops::store(&key, &value)
+    })
+    .await
 }
 
-/// Retrieves a value from the system keyring.
+/// Retrieves a value from the native macOS Keychain.
 ///
 /// Returns `Ok(None)` when the key does not exist.
 ///
 /// # Errors
-/// Returns `SecretError::LibSecret` if `secret-tool` cannot be spawned.
+/// Returns `SecretError::LibSecret` if the Keychain operation fails.
+/// Returns `SecretError::BackendUnavailable` if the operation times out.
 #[cfg(all(feature = "system-keyring", target_os = "macos"))]
 pub async fn lookup(key: &str) -> SecretResult<Option<String>> {
-    let output = Command::new("secret-tool")
-        .env("PATH", crate::cli_download::get_extended_path())
-        .args(["lookup", "application", APP_ID, "key", key])
-        .output()
-        .await
-        .map_err(|e| SecretError::LibSecret(format!("Failed to run secret-tool: {e}")))?;
-
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if value.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(value))
-    }
+    let key = key.to_owned();
+    run_keychain_operation("lookup", move || {
+        super::macos_keychain::keychain_ops::lookup(&key)
+    })
+    .await
 }
 
-/// Deletes a value from the system keyring.
+/// Deletes a value from the native macOS Keychain.
 ///
 /// # Errors
-/// Returns `SecretError::DeleteFailed` if the clear command fails.
+/// Returns `SecretError::DeleteFailed` if the Keychain operation fails.
+/// Returns `SecretError::BackendUnavailable` if the operation times out.
 #[cfg(all(feature = "system-keyring", target_os = "macos"))]
 pub async fn clear(key: &str) -> SecretResult<()> {
-    let output = Command::new("secret-tool")
-        .env("PATH", crate::cli_download::get_extended_path())
-        .args(["clear", "application", APP_ID, "key", key])
-        .output()
-        .await
-        .map_err(|e| SecretError::LibSecret(format!("Failed to run secret-tool: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(SecretError::DeleteFailed(format!(
-            "secret-tool clear failed: {stderr}"
-        )));
-    }
-
-    Ok(())
+    let key = key.to_owned();
+    run_keychain_operation("clear", move || {
+        super::macos_keychain::keychain_ops::clear(&key)
+    })
+    .await
 }

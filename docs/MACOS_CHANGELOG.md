@@ -1,5 +1,40 @@
 # macOS Port — Changelog
 
+## [0.19.6] - 2026-07-29
+
+### Added
+
+- **Local-only macOS CI and audit gate** — `scripts/macos-ci.sh` runs formatting, strict Clippy, core tests, `cargo deny`, canonical bundle creation, CLI smoke checks, signature verification, `@rpath` validation, and absolute Homebrew dependency detection without modifying GitHub workflows.
+- **Developer ID and notarization flow** — the canonical scripts support explicit Developer ID Application signing with hardened runtime, entitlements and timestamps, followed by optional `notarytool` submission, stapling, validation, and Gatekeeper assessment.
+- **Explicit ad-hoc mode** — local artifacts can be signed with `--adhoc`; unsigned remains the default and there is no silent fallback from a requested Developer ID signature.
+
+### Fixed
+
+- **Auxiliary Keychain storage no longer invokes `secret-tool`** — macOS auxiliary secret operations delegate to the native Security.framework implementation with blocking work isolated from the async runtime, a 10-second timeout, and zeroizing retrieval intermediates.
+- **Cross-platform Clippy failures** — corrected target-specific `statvfs` conversion expectations and removed an unused GTK observer so warnings are denied under the full canonical profile.
+- **Bundled OpenH264 was never loaded** — the runtime probed only Linux `.so` paths, so H.264 quietly fell back to non-AVC codecs. macOS now probes `Contents/Frameworks/libopenh264.dylib` first, the producer requires OpenH264, and the local audit verifies the bundled library and its architecture.
+- **`--skip-build` could produce a misleading Developer ID DMG** — the packager now strictly verifies the enclosed app's signature, identity and hardened runtime before signing or notarizing.
+- **Malformed Keychain values were dropped without zeroization** — auxiliary Keychain and Secret Service decoding now wipes invalid UTF-8 buffers, covered by unit tests.
+- **Timed-out Keychain mutations were abandoned silently** — the late outcome is now observed and logged, and the error states the operation may still complete.
+
+### Improved
+
+- **Canonical self-contained `.app` producer** — `scripts/macos-build.sh` owns application creation and relocates 58 recursively discovered non-system dylibs into `Contents/Frameworks`, rewrites them to `@rpath`, embeds runtime resources, and fails on remaining absolute Homebrew references.
+- **Single DMG path** — `packaging/macos/build-dmg.sh` packages `dist/RustConn.app`; `build_macos.sh` delegates for compatibility instead of producing a divergent application.
+- **Canonical features** — macOS consistently enables `tray-macos,system-keyring,vnc-embedded,rdp-embedded,gfx-h264,rdp-audio,rd-gateway,adw-1-8` and excludes Linux-only Wayland/WebKitGTK and removed embedded SPICE paths.
+- **Portable bundle layout** — LaunchServices executes `Contents/MacOS/rustconn`; the optional terminal wrapper moved to `Contents/Resources/bin/rustconn-wrapper`, and schemas, icons, locales, OpenH264 and library lookup are bundle-relative.
+- **Supply-chain target coverage** — `deny.toml` audits both Apple Silicon and Intel macOS targets.
+- **Native PTY completion** — the isolated `rustconn-pty-sys` helper provides `setsid` and `TIOCSCTTY`, replacing the earlier basic process-group limitation.
+
+### Validation
+
+- A real Apple Silicon ad-hoc release app and DMG were built successfully, with all non-system dylibs relocated, OpenH264 bundled, and signature/linkage checks passing.
+- Developer ID signing and notarization remain credential-dependent and cannot be validated without the certificate and notarytool keychain profile.
+- Intel and universal runtime behavior still requires an Intel host or explicit universal build; the validated local artifact is arm64.
+- Rust reports an upstream future-incompatibility warning in `block 0.1.6`, pulled by the latest `gettext-rs`/`locale_config` chain; no compatible published update currently removes it.
+
+> The limitations and build configuration under the older `0.15.4` port notes are historical. For current commands and supported layout, use [`MACOS_BUILD.md`](MACOS_BUILD.md).
+
 ## [0.15.4] - 2026-05-31
 
 ### Fixed

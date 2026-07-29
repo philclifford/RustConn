@@ -72,21 +72,33 @@ jobs:
           VERSION="${{ steps.version.outputs.VERSION }}"
           COMMIT="${{ steps.commit.outputs.SHA }}"
           
-          # Update tag AND commit in manifest. Both must move together: a tag
-          # that does not point at the pinned commit makes flatpak-builder abort
-          # ("commit does not match tag"), and a stale commit silently builds an
-          # old release.
-          sed -i "s/tag: v[0-9.]*/tag: $VERSION/" flathub-pr/io.github.totoshko88.RustConn.yml
-          sed -i "s/commit: [0-9a-f]\{7,40\}/commit: $COMMIT/" flathub-pr/io.github.totoshko88.RustConn.yml
+          MANIFEST=flathub-pr/io.github.totoshko88.RustConn.yml
 
-          # Fail loudly if the manifest lost its pinning — flathub-bot PRs drop
-          # the commit line, and a tag without a commit only yields a linter
-          # warning, so it is easy to miss.
-          grep -q "tag: $VERSION" flathub-pr/io.github.totoshko88.RustConn.yml
-          grep -q "commit: $COMMIT" flathub-pr/io.github.totoshko88.RustConn.yml
+          # Update tag AND commit in the manifest that goes to Flathub. Both must
+          # move together: a tag that does not point at the pinned commit makes
+          # flatpak-builder abort ("commit does not match tag"), and a stale
+          # commit silently builds an old release.
+          #
+          # The in-repo manifest intentionally carries only the tag, because the
+          # release commit does not exist while the release is being prepared
+          # (chicken-and-egg) and a placeholder would be a fake pin. This job
+          # runs after the tag exists, so it resolves the real commit and pins it
+          # here: replace an existing commit line, otherwise insert one directly
+          # after the tag line, preserving indentation.
+          sed -i -E "s|^([[:space:]]*)tag: v[0-9.]+[[:space:]]*$|\1tag: $VERSION|" "$MANIFEST"
+          if grep -qE "^[[:space:]]*commit: [0-9a-f]{7,40}[[:space:]]*$" "$MANIFEST"; then
+            sed -i -E "s|^([[:space:]]*)commit: [0-9a-f]{7,40}[[:space:]]*$|\1commit: $COMMIT|" "$MANIFEST"
+          else
+            sed -i -E "s|^([[:space:]]*)tag: $VERSION[[:space:]]*$|\1tag: $VERSION\n\1commit: $COMMIT|" "$MANIFEST"
+          fi
+
+          # Fail loudly if the artifact is not fully pinned: a tag without a
+          # commit only yields a linter warning downstream, so it is easy to miss.
+          grep -q "tag: $VERSION" "$MANIFEST"
+          grep -q "commit: $COMMIT" "$MANIFEST"
           
           echo "=== Updated manifest ==="
-          grep -A5 "type: git" flathub-pr/io.github.totoshko88.RustConn.yml
+          grep -A8 "type: git" "$MANIFEST"
           
           # Create instructions
           cat > flathub-pr/README.md << EOF
