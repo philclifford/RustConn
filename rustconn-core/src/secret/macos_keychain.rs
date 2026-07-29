@@ -242,6 +242,8 @@ pub use inner::MacOsKeychainBackend;
 /// 1Password tokens, KeePassXC passwords).
 #[cfg(target_os = "macos")]
 pub mod keychain_ops {
+    use zeroize::Zeroizing;
+
     use crate::error::{SecretError, SecretResult};
 
     /// Application identifier used as the service name in Keychain entries
@@ -263,6 +265,33 @@ pub mod keychain_ops {
             .map_err(|e| SecretError::StoreFailed(format!("Keychain store failed: {e}")))
     }
 
+    /// Decodes raw Keychain bytes into an optional UTF-8 value.
+    ///
+    /// An empty stored value is reported as absent. On success `from_utf8`
+    /// reuses the buffer and the caller moves the value onward; on failure the
+    /// bytes may still hold password material, so they are wiped instead of
+    /// being dropped as-is.
+    ///
+    /// # Errors
+    /// Returns `SecretError::LibSecret` if the bytes are not valid UTF-8.
+    fn decode_secret_bytes(bytes: Vec<u8>) -> SecretResult<Option<String>> {
+        let value = match String::from_utf8(bytes) {
+            Ok(value) => value,
+            Err(e) => {
+                drop(Zeroizing::new(e.into_bytes()));
+                return Err(SecretError::LibSecret(
+                    "Keychain value is not valid UTF-8".to_string(),
+                ));
+            }
+        };
+
+        if value.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(value))
+        }
+    }
+
     /// Retrieves a value from the macOS Keychain
     ///
     /// Returns `Ok(None)` when the key does not exist.
@@ -273,16 +302,7 @@ pub mod keychain_ops {
         use security_framework::passwords::get_generic_password;
 
         match get_generic_password(APP_SERVICE, key) {
-            Ok(bytes) => {
-                let value = String::from_utf8(bytes).map_err(|e| {
-                    SecretError::LibSecret(format!("Keychain value is not valid UTF-8: {e}"))
-                })?;
-                if value.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(value))
-                }
-            }
+            Ok(bytes) => decode_secret_bytes(bytes),
             Err(e) => {
                 let err_str = e.to_string();
                 if err_str.contains("-25300") || err_str.contains("not found") {
@@ -315,6 +335,33 @@ pub mod keychain_ops {
                     )))
                 }
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn decode_secret_bytes_returns_value() {
+            let decoded = decode_secret_bytes(b"s3cret".to_vec()).expect("valid UTF-8 decodes");
+            assert_eq!(decoded, Some("s3cret".to_string()));
+        }
+
+        #[test]
+        fn decode_secret_bytes_treats_empty_as_absent() {
+            let decoded = decode_secret_bytes(Vec::new()).expect("empty value decodes");
+            assert_eq!(decoded, None);
+        }
+
+        #[test]
+        fn decode_secret_bytes_rejects_invalid_utf8_without_leaking() {
+            // 0xff is never valid UTF-8; the raw bytes must be wiped and the
+            // error must not echo any of the stored material.
+            let error = decode_secret_bytes(vec![b's', b'3', 0xff]).expect_err("invalid UTF-8");
+            let rendered = error.to_string();
+            assert!(rendered.contains("not valid UTF-8"), "{rendered}");
+            assert!(!rendered.contains("s3"), "{rendered}");
         }
     }
 }

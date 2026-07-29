@@ -5,6 +5,43 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.6] - 2026-07-29
+
+### Added
+
+- **Local macOS release gate** — `scripts/macos-ci.sh` adds a local-only format, Clippy, test, supply-chain, bundle, signing and linkage audit workflow without changing GitHub Actions. Optional Developer ID signing, hardened runtime, notarization, stapling and validation are available through explicit build-script flags and a notarytool keychain profile.
+
+### Fixed
+
+- **Auxiliary secrets used a Linux-only helper on macOS** — auxiliary keyring operations now delegate to the native Security.framework-backed macOS Keychain implementation instead of invoking `secret-tool`. Blocking Keychain calls run outside the async executor with a 10-second timeout, and retrieved secret intermediates remain zeroizing.
+- **Platform-specific Clippy regressions** — corrected the target-aware `statvfs` conversion expectation and removed an unused window observer so the canonical macOS feature profile passes with warnings denied.
+- **H.264 decoding was unreachable on macOS** — the OpenH264 loader only probed Linux `.so` paths, so H.264 silently fell back to non-AVC codecs even when the library was present. macOS now probes the bundled `Contents/Frameworks/libopenh264.dylib` first, then Homebrew prefixes for development runs, and the canonical bundle fails to build if OpenH264 is missing instead of shipping a degraded artifact.
+- **DMG signing could misrepresent an unsigned app** — `build-dmg.sh --skip-build` wrapped whatever bundle was on disk, so a Developer ID DMG could enclose an unsigned or ad-hoc application and only fail later at Apple's notary service. The packager now verifies the enclosed app strictly and rejects a mismatched identity, an ad-hoc signature, or a missing hardened runtime before signing or notarizing.
+- **Malformed keyring values were not wiped** — invalid UTF-8 read from the macOS Keychain and from the Linux Secret Service is now zeroized before the error is returned, and the macOS decoding path is covered by unit tests.
+- **Keychain timeouts could hide a late mutation** — a timed-out Keychain call is no longer abandoned silently; its outcome is observed and logged, the error states that the operation may still complete, and the per-key idempotence that makes this safe is documented.
+
+### Improved
+
+- **Self-contained macOS application and DMG** — `scripts/macos-build.sh` is now the canonical `.app` producer and recursively bundles and relocates all 58 non-system dynamic libraries into `Contents/Frameworks`, rewrites install names to `@rpath`, embeds GTK/libadwaita resources, schemas, icons, locales and OpenH264, and rejects unresolved absolute non-system dependencies. `build-dmg.sh` consumes that verified bundle instead of maintaining a divergent second builder.
+- **Canonical macOS feature profile** — all macOS build, package and local-CI paths now use `tray-macos,system-keyring,vnc-embedded,rdp-embedded,gfx-h264,rdp-audio,rd-gateway,adw-1-8`; removed Linux-only or deleted feature drift from macOS commands.
+- **Explicit macOS signing policy** — unsigned output remains the default, ad-hoc signing requires `--adhoc`, and Developer ID signing proceeds inside-out (frameworks, CLI, main executable, app) with hardened runtime, entitlements and timestamps before optional notarization and stapling.
+- **macOS supply-chain coverage** — `cargo-deny` now audits both `aarch64-apple-darwin` and `x86_64-apple-darwin`, matching the supported native and universal release targets.
+- **Local gate covers every shipped crate** — `scripts/macos-ci.sh` now runs the GUI and full CLI test suites in addition to `rustconn-core`, so a failure there can no longer be reported as a passing gate.
+- **Release source pinning made explicit** — the Flathub manifest intentionally carries only the tag, since the release commit cannot exist while the manifest is prepared; the immutable commit is added afterwards by hand or by the Flathub bot. The Homebrew formula documents its tag-only form as a temporary pre-tag state that must become an archive plus measured checksum before publication.
+
+### Documentation
+
+- **macOS build and release documentation refreshed** — documented the canonical producer and feature set, self-contained layout, local CI, ad-hoc and Developer ID workflows, notarization commands, wrapper resource path and current `0.19.6` examples.
+
+### Dependencies
+
+- **Updated**: displaydoc 0.2.6 → 0.2.7, toml 1.1.3+spec-1.1.0 → 1.1.4+spec-1.1.0.
+- **CLI versions audited**: auto-resolved kubectl 1.36.3, Tailscale 1.98.10, Teleport 18.10.0, Boundary 0.21.3, Hoop.dev 1.122.2, Bitwarden CLI 2026.7.0 and 1Password CLI 2.35.0 are current; the explicit TigerVNC 1.16.2 pin remains current.
+- **Security advisory formally accepted**: `RUSTSEC-2023-0071` (rsa 0.10.0-rc.18 Marvin Attack, medium 5.9) is reached only through `ironrdp 0.17.0` → `ironrdp-connector 0.10.0` → `picky 7.0.0-rc.25`/`sspi 0.21.3` → `rsa`, has no published fix, and is not exploitable in a local desktop client that exposes no RSA decryption oracle. The acceptance is now recorded in both `deny.toml` and a new `.cargo/audit.toml` so `cargo audit` and `cargo deny` agree, and it is re-reviewed when IronRDP, sspi or picky publish a new major version. No new Rust dependencies were added for the macOS work.
+- **Audit tooling wired into local CI**: `cargo audit` and `cargo outdated` are installed and now run inside `scripts/macos-ci.sh`; both pass, with all root workspace dependencies reported up to date.
+- **Build requirement**: producing the macOS bundle now requires Homebrew `openh264`, because the canonical feature set enables `gfx-h264`.
+- **Future-incompatibility tracked**: `block 0.1.6` still triggers Rust's uninhabited-static compatibility warning through `gettext-rs 0.7.7` → `locale_config 0.3.0` → `objc-foundation 0.1.1`; all four crates are already at their latest published compatible versions, so resolving it requires an upstream fix or maintained fork.
+
 ## [0.19.5] - 2026-07-28
 
 ### Fixed

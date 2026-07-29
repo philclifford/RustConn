@@ -327,9 +327,13 @@ modules:
     sources:
       - type: git
         url: https://github.com/totoshko88/RustConn.git
-        tag: v0.19.5
+        # Tag only, deliberately without `commit:`. The release commit does not
+        # exist while this manifest is being prepared, so pinning it here is a
+        # chicken-and-egg problem and any placeholder would be a fake pin.
+        # The immutable commit is added once the tag exists — by hand or by the
+        # Flathub bot — in the Flathub repository, not here.
+        tag: v0.19.6
         x-checker-data:
           type: git
           tag-pattern: ^v([\d.]+)$
-        commit: 8aa78dda377a9d3ff1e555011b299693cbfa03f8
       - cargo-sources.json

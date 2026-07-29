@@ -12,7 +12,6 @@
 //! for RGBA→BGRA conversion and framebuffer blitting.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::mpsc;
 
 use ironrdp_egfx::client::{BitmapUpdate, GraphicsPipelineHandler};
@@ -192,6 +191,7 @@ impl GraphicsPipelineHandler for RustConnGfxHandler {
 /// Flatpak puts it under `/app/lib/`, native installs use `/usr/lib/` or
 /// `/usr/lib64/`. The `openh264` crate's libloading backend handles the
 /// actual dlopen; we just need to find the `.so` file.
+#[cfg(not(target_os = "macos"))]
 const OPENH264_SEARCH_PATHS: &[&str] = &[
     "/app/lib/libopenh264.so",
     "/app/lib64/libopenh264.so",
@@ -200,6 +200,47 @@ const OPENH264_SEARCH_PATHS: &[&str] = &[
     "/usr/lib/x86_64-linux-gnu/libopenh264.so",
     "/usr/lib/aarch64-linux-gnu/libopenh264.so",
 ];
+
+/// Standard library search paths for OpenH264 on macOS.
+///
+/// macOS ships Mach-O `.dylib` files, never ELF `.so`, so the Linux list above
+/// can never match. The distributed `.app` carries its own copy (see
+/// [`bundled_openh264_path`]); these Homebrew prefixes only cover development
+/// runs of the bare `target/` binary on Apple Silicon and Intel.
+#[cfg(target_os = "macos")]
+const OPENH264_SEARCH_PATHS: &[&str] = &[
+    "/opt/homebrew/lib/libopenh264.dylib",
+    "/usr/local/lib/libopenh264.dylib",
+];
+
+/// Returns the OpenH264 copy shipped inside the macOS application bundle.
+///
+/// The canonical bundle layout is `RustConn.app/Contents/MacOS/rustconn`, so the
+/// relocated library sits at `../Frameworks/libopenh264.dylib` relative to the
+/// running executable. Returns `None` outside a bundle-like layout or when the
+/// executable path cannot be resolved.
+#[cfg(target_os = "macos")]
+fn bundled_openh264_path() -> Option<std::path::PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let contents = executable.parent()?.parent()?;
+    Some(contents.join("Frameworks").join("libopenh264.dylib"))
+}
+
+/// Returns OpenH264 candidates in priority order.
+///
+/// The bundled copy is tried first so a self-contained macOS `.app` never
+/// depends on a Homebrew installation at runtime.
+fn openh264_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    if let Some(bundled) = bundled_openh264_path() {
+        candidates.push(bundled);
+    }
+
+    candidates.extend(OPENH264_SEARCH_PATHS.iter().map(std::path::PathBuf::from));
+    candidates
+}
 
 /// Attempts to load OpenH264 at runtime via dlopen.
 ///
@@ -218,8 +259,8 @@ const OPENH264_SEARCH_PATHS: &[&str] = &[
 pub fn try_load_openh264() -> Option<Box<dyn H264Decoder>> {
     use ironrdp_egfx::decode::OpenH264Decoder;
 
-    for path_str in OPENH264_SEARCH_PATHS {
-        let path = Path::new(path_str);
+    for path in openh264_candidates() {
+        let path = path.as_path();
         if !path.exists() {
             continue;
         }

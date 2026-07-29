@@ -140,6 +140,19 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.6" date="2026-07-29">
+      <description>
+        <p>Version 0.19.6 - macOS reliability, self-contained distribution and local release auditing:</p>
+        <ul>
+          <li>Fixed auxiliary secrets on macOS to use the native Keychain instead of a Linux-only command</li>
+          <li>Added a local-only macOS CI and release audit workflow</li>
+          <li>Improved the application and DMG to bundle and relocate all 58 non-system dynamic libraries</li>
+          <li>Added explicit ad-hoc and Developer ID hardened-runtime signing</li>
+          <li>Added optional notarization, stapling and validation for release artifacts</li>
+          <li>Synchronized one canonical macOS feature profile across all build and packaging paths</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.5" date="2026-07-28">
       <description>
         <p>Version 0.19.5 - Custom Command variables, nested folders and long-hostname SSH fix:</p>

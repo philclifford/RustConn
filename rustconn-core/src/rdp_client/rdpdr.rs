@@ -1024,6 +1024,13 @@ impl RustConnRdpdrBackend {
 /// Values are normalized to 4096-byte allocation units (8 sectors × 512 bytes)
 /// to match the `sectors_per_alloc_unit` and `bytes_per_sector` reported to Windows.
 /// Falls back to hardcoded defaults if the statvfs call fails.
+#[cfg_attr(
+    target_pointer_width = "64",
+    expect(
+        clippy::useless_conversion,
+        reason = "statvfs values are u64 on 64-bit targets; conversions preserve 32-bit portability"
+    )
+)]
 fn get_disk_stats(path: &str) -> (i64, i64) {
     const ALLOC_UNIT_BYTES: u64 = 4096; // 8 sectors × 512 bytes
 
@@ -1032,21 +1039,9 @@ fn get_disk_stats(path: &str) -> (i64, i64) {
             // nix::sys::statvfs returns platform-dependent integer types:
             // u64 on 64-bit (x86_64, aarch64), u32 on 32-bit targets.
             // u64::from() is needed for 32-bit compatibility but is identity on 64-bit.
-            #[expect(
-                clippy::useless_conversion,
-                reason = "u64::from needed on 32-bit targets where statvfs fields are u32"
-            )]
             let frag_size = u64::from(stat.fragment_size());
             // Convert from filesystem blocks to 4096-byte allocation units
-            #[expect(
-                clippy::useless_conversion,
-                reason = "u64::from needed on 32-bit targets where statvfs fields are u32"
-            )]
             let total_bytes = u64::from(stat.blocks()).saturating_mul(frag_size);
-            #[expect(
-                clippy::useless_conversion,
-                reason = "u64::from needed on 32-bit targets where statvfs fields are u32"
-            )]
             let avail_bytes = u64::from(stat.blocks_available()).saturating_mul(frag_size);
 
             let total = i64::try_from(total_bytes / ALLOC_UNIT_BYTES).unwrap_or(1_000_000);

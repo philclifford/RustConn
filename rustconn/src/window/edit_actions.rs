@@ -938,6 +938,7 @@ impl MainWindow {
         {
             let _ = &notebook;
             let _ = &conn_name;
+            let _ = &observer;
         }
 
         // Embedded mode: create an in-tab WebKitGTK widget
