@@ -140,6 +140,20 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.7" date="2026-07-30">
+      <description>
+        <p>Version 0.19.7 - opening connections, session restore and Custom Command credentials:</p>
+        <ul>
+          <li>Fixed double-clicking a connection focusing a disconnected tab instead of connecting</li>
+          <li>Fixed Enter in the connection sidebar not opening the selected connection</li>
+          <li>Implemented Restore sessions on startup, which previously had no effect</li>
+          <li>Fixed an unresolvable hostname aborting the connection instead of just skipping the probe</li>
+          <li>Added resolution of mDNS .local hostnames inside the Flatpak sandbox</li>
+          <li>Added the password placeholder to Custom Command templates, passed through the environment</li>
+          <li>Fixed Host, Port, Username and password not being editable for a Custom Command</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.6" date="2026-07-29">
       <description>
         <p>Version 0.19.6 - macOS reliability, self-contained distribution and local release auditing:</p>

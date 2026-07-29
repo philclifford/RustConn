@@ -643,8 +643,12 @@ impl ConnectionSidebar {
             // See: https://github.com/totoshko88/RustConn/issues/4
             match key {
                 gdk::Key::Return | gdk::Key::KP_Enter => {
-                    // Activate selected item - handled by ListView's activate signal
-                    glib::Propagation::Stop
+                    // Let the event reach the ListView so it emits `activate`,
+                    // which is what actually opens the selected connection.
+                    // Returning `Stop` here swallowed the key and made Enter a
+                    // no-op — the fix claimed in the 0.18.5 notes was never
+                    // applied to this handler.
+                    glib::Propagation::Proceed
                 }
                 gdk::Key::Delete => {
                     // Delete selected connection/group

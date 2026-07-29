@@ -19,6 +19,7 @@ mod interning;
 pub mod knock;
 mod lazy_loader;
 mod manager;
+pub mod mdns;
 pub mod mptcp;
 mod port_check;
 mod retry;
@@ -37,6 +38,7 @@ pub use knock::{
 };
 pub use lazy_loader::LazyGroupLoader;
 pub use manager::ConnectionManager;
+pub use mdns::{apply_mdns_fallback, is_mdns_name, resolve_sandboxed_hostname};
 pub use mptcp::{
     MptcpError, MptcpResult, connect_mptcp, connect_mptcp_async, is_mptcp_available,
     is_mptcpize_available,

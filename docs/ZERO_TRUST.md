@@ -236,13 +236,29 @@ The command template is run through a shell (`sh -c`), so standard shell syntax 
 | Placeholder | Source |
 |-------------|--------|
 | `${host}`, `${port}`, `${username}`, `${name}` | The connection's own fields |
+| `${password}` | The connection's password (see below) |
 | `${anything_else}` | Local variables of the connection (**Data** tab), then global variables (Settings → Variables) |
 
 Local variables win over the connection fields and the global ones, so a local variable named `host` overrides the Host field. A reference with no matching variable is left untouched, which keeps genuine shell expansion (`${HOME}`, `${1}`) working.
 
+Host, Port, Username and the password source are editable for Custom Command (they are hidden for the other Zero Trust providers, which authenticate through their own CLI).
+
 **Example — RustDesk by ID:** add a local variable `id` = `123456789` on the Data tab, then use `rustdesk --connect ${id}` as the template.
 
 Resolved values are validated: a value carrying shell metacharacters (`;`, `|`, `&`, backticks, `$(`) or control characters is refused with an "Invalid variable" error instead of being spliced into the shell command. Variables marked as secret are masked as `********` in the command line echoed into the terminal.
+
+##### `${password}` and the command line
+
+`${password}` is handled differently from every other placeholder: the password is **never written into the command line**. A command line is readable by any process of the same user through `/proc/<pid>/cmdline` and `ps`, so `${password}` is replaced by a reference to the `RUSTCONN_PASSWORD` environment variable and the value is passed to the child out of band.
+
+The value comes from a local variable named `password` if you defined one, otherwise from the connection's password source (vault, variable or script). Write the placeholder unquoted or quoted — `--password ${password}` and `--password "${password}"` behave the same, because RustConn supplies the quoting itself.
+
+**Example — RustDesk with a password:** set the password source on the **General** tab, then use `rustdesk --connect ${id} --password ${password}`.
+
+Two limits are worth knowing:
+
+- The launched program's own command line is outside RustConn's control. `rustdesk --password …` will show the value in that program's `/proc` entry — that is inherent to a tool that takes a password as an argument.
+- In Flatpak the command runs on the host through `flatpak-spawn`, which does not forward the sandbox environment. RustConn hands the variable over a file descriptor (`--env-fd`, backed by a mode-0600 file in `$XDG_RUNTIME_DIR` that the shell unlinks immediately), so it stays out of every command line there too. The value does travel over the portal's D-Bus call, which is your own session bus.
 
 > **Note:** A Custom Command tab closes itself when the command exits successfully — one-shot launchers such as RustDesk or WinBox return as soon as their own window is up, and an empty terminal with a reconnect banner is of no use. A command that fails keeps its tab so the output stays readable.
 

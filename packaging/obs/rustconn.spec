@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.6
+Version:        0.19.7
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,17 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Thu Jul 30 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.7-0
+- Version bump to 0.19.7
+- Fixed double-click on a connection focusing a disconnected tab instead of connecting (#242)
+- Fixed Enter in the connection sidebar doing nothing
+- Implemented "Restore sessions on startup", which had no effect at all (#243)
+- Fixed an unresolvable hostname aborting the connection instead of skipping the probe (#241)
+- Added host-side resolution of mDNS .local names inside Flatpak (#241)
+- Added ${password} to Custom Command templates, passed via environment, never via a command line (#151)
+- Fixed Host, Port, Username and password not being editable for a Custom Command (#151)
+- Fixed a password-only connection never caching its resolved credential
+
 * Wed Jul 29 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.6-0
 - Version bump to 0.19.6
 - Fixed auxiliary keyring operations using Linux-only secret-tool on macOS

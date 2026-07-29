@@ -355,6 +355,28 @@ pub fn show_error_toast_on_active_window(message: &str) {
     show_toast_on_window(&window, message, ToastType::Error);
 }
 
+/// Shows a warning toast on the application's active window.
+///
+/// Like [`show_error_toast_on_active_window`] but with warning styling — for a
+/// transient problem the user should notice without it blocking anything (e.g.
+/// part of a session restore referring to connections that were since deleted).
+/// Falls back to a log message if no active window is found.
+pub fn show_warning_toast_on_active_window(message: &str) {
+    let Some(app) = gui::gio::Application::default() else {
+        tracing::warn!(toast_message = %message, "No default application, cannot show toast");
+        return;
+    };
+    let Some(gtk_app) = app.downcast_ref::<gui::Application>() else {
+        tracing::warn!(toast_message = %message, "Application is not a GtkApplication");
+        return;
+    };
+    let Some(window) = gtk_app.active_window() else {
+        tracing::warn!(toast_message = %message, "No active window, cannot show toast");
+        return;
+    };
+    show_toast_on_window(&window, message, ToastType::Warning);
+}
+
 /// Shows an informational toast on the application's active window.
 ///
 /// Like [`show_error_toast_on_active_window`] but with informational styling —

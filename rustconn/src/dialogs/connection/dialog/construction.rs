@@ -17,6 +17,59 @@ use libadwaita as adw;
 use super::ConnectionDialog;
 use crate::i18n::i18n;
 
+/// Index of the Custom Command entry in the Zero Trust provider dropdown.
+///
+/// Mirrors `ZeroTrustProvider::Generic` — the order is fixed by
+/// `zerotrust::create_zerotrust_options` and by `populate::set_zerotrust_config`.
+const ZT_GENERIC_PROVIDER_INDEX: u32 = 10;
+
+/// Index of `PasswordSource::Vault` in the password source dropdown — the one
+/// source that shows the inline password entry (see
+/// `passwords::update_password_row_visibility`).
+const PASSWORD_SOURCE_VAULT_INDEX: u32 = 1;
+
+/// Returns `true` when the Zero Trust provider dropdown has Custom Command selected.
+fn is_custom_command_provider(zt_provider_dropdown: &DropDown) -> bool {
+    zt_provider_dropdown.selected() == ZT_GENERIC_PROVIDER_INDEX
+}
+
+/// The General-tab widgets whose visibility depends on the selected protocol.
+///
+/// Grouped so the visibility rules live in one function that both the protocol
+/// dropdown and the Zero Trust provider dropdown can call, instead of a
+/// sixteen-parameter signature repeated per call site.
+#[derive(Clone)]
+pub(super) struct GeneralFields {
+    /// Host (or URL for Web) entry
+    pub host_entry: Entry,
+    /// Label of the host row
+    pub host_label: Label,
+    /// Port spin button
+    pub port_spin: SpinButton,
+    /// Label of the port row
+    pub port_label: Label,
+    /// Username entry
+    pub username_entry: Entry,
+    /// Label of the username row
+    pub username_label: Label,
+    /// Tags entry
+    pub tags_entry: Entry,
+    /// Label of the tags row
+    pub tags_label: Label,
+    /// Password source dropdown
+    pub password_source_dropdown: DropDown,
+    /// Label of the password source row
+    pub password_source_label: Label,
+    /// Inline password entry row, shown by the password source dropdown
+    pub password_row: GtkBox,
+    /// Windows domain entry (RDP only)
+    pub domain_entry: Entry,
+    /// Label of the domain row
+    pub domain_label: Label,
+    /// MOSH-specific settings group
+    pub mosh_settings_group: adw::PreferencesGroup,
+}
+
 impl ConnectionDialog {
     /// Sets up inline validation for required fields
     pub(super) fn setup_inline_validation_for(dialog: &Self) {
@@ -137,128 +190,158 @@ impl ConnectionDialog {
         protocol_stack
     }
 
-    /// Connects the protocol dropdown to update the stack and port
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "function parameters mirror upstream API or struct fields 1:1; bundling into a struct only restates the field list"
-    )]
+    /// Connects the protocol dropdown to update the stack and port.
+    ///
+    /// The Zero Trust provider dropdown is wired to the same visibility pass:
+    /// Custom Command (the `Generic` provider) is the one Zero Trust variant that
+    /// does use Host/Port/Username and a stored password, because its template
+    /// resolves `${host}`, `${port}`, `${username}` and `${password}` (issue #151).
     pub(super) fn connect_protocol_dropdown(
         dropdown: &DropDown,
         stack: &Stack,
-        port_spin: &SpinButton,
-        host_entry: &Entry,
-        host_label: &Label,
-        port_label: &Label,
-        username_entry: &Entry,
-        username_label: &Label,
-        tags_entry: &Entry,
-        tags_label: &Label,
-        password_source_dropdown: &DropDown,
-        password_source_label: &Label,
-        password_row: &GtkBox,
-        domain_entry: &Entry,
-        domain_label: &Label,
-        mosh_settings_group: &adw::PreferencesGroup,
+        zt_provider_dropdown: &DropDown,
+        fields: &GeneralFields,
     ) {
-        let stack_clone = stack.clone();
-        let port_clone = port_spin.clone();
-        let host_entry = host_entry.clone();
-        let host_label = host_label.clone();
-        let port_label = port_label.clone();
-        let username_entry = username_entry.clone();
-        let username_label = username_label.clone();
-        let tags_entry = tags_entry.clone();
-        let tags_label = tags_label.clone();
-        let password_source_dropdown = password_source_dropdown.clone();
-        let password_source_label = password_source_label.clone();
-        let password_row = password_row.clone();
-        let domain_entry = domain_entry.clone();
-        let domain_label = domain_label.clone();
-        let mosh_group = mosh_settings_group.clone();
+        let stack_for_protocol = stack.clone();
+        let fields_for_protocol = fields.clone();
+        let zt_for_protocol = zt_provider_dropdown.clone();
 
         dropdown.connect_selected_notify(move |dropdown| {
-            let protocols = [
-                "ssh",
-                "rdp",
-                "vnc",
-                "spice",
-                "zerotrust",
-                "telnet",
-                "serial",
-                "sftp",
-                "kubernetes",
-                "mosh",
-                "web",
-            ];
-            let selected = dropdown.selected() as usize;
-            if selected < protocols.len() {
-                let protocol_id = protocols[selected];
-                // SFTP and MOSH reuse SSH config tab
-                let stack_name = if protocol_id == "sftp" || protocol_id == "mosh" {
-                    "ssh"
-                } else {
-                    protocol_id
-                };
-                stack_clone.set_visible_child_name(stack_name);
-                let default_port = Self::get_default_port(protocol_id);
-                if Self::is_default_port(port_clone.value()) {
-                    port_clone.set_value(default_port);
-                }
-
-                let is_zerotrust = protocol_id == "zerotrust";
-                let is_serial = protocol_id == "serial";
-                let is_kubernetes = protocol_id == "kubernetes";
-                let is_web = protocol_id == "web";
-                let hide_network = is_zerotrust || is_serial || is_kubernetes;
-                let visible = !hide_network;
-
-                host_entry.set_visible(visible || is_web);
-                host_label.set_visible(visible || is_web);
-                port_clone.set_visible(visible && !is_web);
-                port_label.set_visible(visible && !is_web);
-                username_entry.set_visible(visible);
-                username_label.set_visible(visible);
-
-                // Update host field label and placeholder for Web protocol
-                if is_web {
-                    host_label.set_text(&crate::i18n::i18n("URL"));
-                    host_entry
-                        .set_placeholder_text(Some(&crate::i18n::i18n("https://example.com")));
-                } else {
-                    host_label.set_text(&crate::i18n::i18n("Host"));
-                    host_entry.set_placeholder_text(Some(&crate::i18n::i18n("hostname or IP")));
-                }
-                // Tags are organisation metadata (search, smart folders) and
-                // apply to every protocol — including Custom Command (#151).
-                tags_entry.set_visible(true);
-                tags_label.set_visible(true);
-
-                // Password source only relevant for protocols that use credentials:
-                // SSH, SFTP, RDP, VNC, SPICE, Web, Telnet. Telnet is an interactive
-                // login protocol whose password source (typically None or Prompt) must
-                // stay selectable — hiding it left older connections stuck on Vault,
-                // which triggered a spurious "Vault entry not found" error (issue #210).
-                // Hidden for Serial, MOSH, Kubernetes, Zero Trust — no stored passwords.
-                let uses_password = matches!(
-                    protocol_id,
-                    "ssh" | "sftp" | "rdp" | "vnc" | "spice" | "web" | "telnet"
-                );
-                password_source_dropdown.set_visible(uses_password);
-                password_source_label.set_visible(uses_password);
-                // Password row visibility controlled by password_source_dropdown
-                if !uses_password {
-                    password_row.set_visible(false);
-                }
-
-                // Domain only relevant for RDP (GEN-2)
-                let is_rdp = protocol_id == "rdp";
-                domain_entry.set_visible(is_rdp);
-                domain_label.set_visible(is_rdp);
-
-                // MOSH settings group visible only when MOSH is selected
-                mosh_group.set_visible(protocol_id == "mosh");
+            let Some(protocol_id) = Self::protocol_id_at(dropdown.selected()) else {
+                return;
+            };
+            // SFTP and MOSH reuse SSH config tab
+            let stack_name = if protocol_id == "sftp" || protocol_id == "mosh" {
+                "ssh"
+            } else {
+                protocol_id
+            };
+            stack_for_protocol.set_visible_child_name(stack_name);
+            let default_port = Self::get_default_port(protocol_id);
+            if Self::is_default_port(fields_for_protocol.port_spin.value()) {
+                fields_for_protocol.port_spin.set_value(default_port);
             }
+            Self::apply_general_field_visibility(
+                &fields_for_protocol,
+                protocol_id,
+                is_custom_command_provider(&zt_for_protocol),
+            );
         });
+
+        // Switching provider inside the Zero Trust page changes which General
+        // fields matter, so re-run the same pass. Only meaningful while Zero
+        // Trust is the selected protocol; `apply_general_field_visibility`
+        // ignores the flag for every other protocol.
+        let fields_for_provider = fields.clone();
+        let protocol_for_provider = dropdown.clone();
+        zt_provider_dropdown.connect_selected_notify(move |zt_dropdown| {
+            let Some(protocol_id) = Self::protocol_id_at(protocol_for_provider.selected()) else {
+                return;
+            };
+            Self::apply_general_field_visibility(
+                &fields_for_provider,
+                protocol_id,
+                is_custom_command_provider(zt_dropdown),
+            );
+        });
+    }
+
+    /// Maps a protocol dropdown index to its protocol id.
+    pub(super) fn protocol_id_at(selected: u32) -> Option<&'static str> {
+        const PROTOCOLS: [&str; 11] = [
+            "ssh",
+            "rdp",
+            "vnc",
+            "spice",
+            "zerotrust",
+            "telnet",
+            "serial",
+            "sftp",
+            "kubernetes",
+            "mosh",
+            "web",
+        ];
+        PROTOCOLS.get(selected as usize).copied()
+    }
+
+    /// Shows or hides the General-tab fields that only apply to some protocols.
+    ///
+    /// `zt_custom_command` says whether the Zero Trust page currently has the
+    /// Custom Command provider selected; it is ignored unless `protocol_id` is
+    /// `zerotrust`.
+    pub(super) fn apply_general_field_visibility(
+        fields: &GeneralFields,
+        protocol_id: &str,
+        zt_custom_command: bool,
+    ) {
+        let is_zerotrust = protocol_id == "zerotrust";
+        let is_serial = protocol_id == "serial";
+        let is_kubernetes = protocol_id == "kubernetes";
+        let is_web = protocol_id == "web";
+        // Custom Command substitutes the connection fields into its template, so
+        // it keeps the network rows the other Zero Trust providers hide (#151).
+        let custom_command = is_zerotrust && zt_custom_command;
+        let hide_network = (is_zerotrust && !custom_command) || is_serial || is_kubernetes;
+        let visible = !hide_network;
+
+        fields.host_entry.set_visible(visible || is_web);
+        fields.host_label.set_visible(visible || is_web);
+        fields.port_spin.set_visible(visible && !is_web);
+        fields.port_label.set_visible(visible && !is_web);
+        fields.username_entry.set_visible(visible);
+        fields.username_label.set_visible(visible);
+
+        // Update host field label and placeholder for Web protocol
+        if is_web {
+            fields.host_label.set_text(&crate::i18n::i18n("URL"));
+            fields
+                .host_entry
+                .set_placeholder_text(Some(&crate::i18n::i18n("https://example.com")));
+        } else {
+            fields.host_label.set_text(&crate::i18n::i18n("Host"));
+            fields
+                .host_entry
+                .set_placeholder_text(Some(&crate::i18n::i18n("hostname or IP")));
+        }
+        // Tags are organisation metadata (search, smart folders) and
+        // apply to every protocol — including Custom Command (#151).
+        fields.tags_entry.set_visible(true);
+        fields.tags_label.set_visible(true);
+
+        // Password source only relevant for protocols that use credentials:
+        // SSH, SFTP, RDP, VNC, SPICE, Web, Telnet. Telnet is an interactive
+        // login protocol whose password source (typically None or Prompt) must
+        // stay selectable — hiding it left older connections stuck on Vault,
+        // which triggered a spurious "Vault entry not found" error (issue #210).
+        // Custom Command joins them because `${password}` resolves from the
+        // stored password (#151). Hidden for Serial, MOSH, Kubernetes and the
+        // remaining Zero Trust providers — no stored passwords.
+        let uses_password = custom_command
+            || matches!(
+                protocol_id,
+                "ssh" | "sftp" | "rdp" | "vnc" | "spice" | "web" | "telnet"
+            );
+        fields.password_source_dropdown.set_visible(uses_password);
+        fields.password_source_label.set_visible(uses_password);
+        // The inline password row belongs to the Vault source. Recomputed rather
+        // than only hidden, so the row reappears when a protocol switch (or the
+        // Zero Trust provider switch) re-enables credentials — otherwise the
+        // order in which `populate_from_connection` sets the source and the
+        // protocol would decide whether an existing password is visible.
+        fields.password_row.set_visible(
+            uses_password
+                && fields.password_source_dropdown.selected() == PASSWORD_SOURCE_VAULT_INDEX,
+        );
+
+        // Domain only relevant for RDP (GEN-2)
+        let is_rdp = protocol_id == "rdp";
+        fields.domain_entry.set_visible(is_rdp);
+        fields.domain_label.set_visible(is_rdp);
+
+        // MOSH settings group visible only when MOSH is selected
+        fields
+            .mosh_settings_group
+            .set_visible(protocol_id == "mosh");
     }
 
     /// Returns the default port for a protocol

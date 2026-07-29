@@ -1,3 +1,15 @@
+rustconn (0.19.7-1) unstable; urgency=medium
+  * Version bump to 0.19.7
+  * Fixed double-click on a connection focusing a disconnected tab instead of connecting (#242)
+  * Fixed Enter in the connection sidebar doing nothing
+  * Implemented "Restore sessions on startup", which had no effect at all (#243)
+  * Fixed an unresolvable hostname aborting the connection instead of skipping the probe (#241)
+  * Added host-side resolution of mDNS .local names inside Flatpak (#241)
+  * Added ${password} to Custom Command templates, passed via environment, never via a command line (#151)
+  * Fixed Host, Port, Username and password not being editable for a Custom Command (#151)
+  * Fixed a password-only connection never caching its resolved credential
+ -- Anton Isaiev <totoshko88@gmail.com>  Thu, 30 Jul 2026 00:06:00 +0300
+
 rustconn (0.19.6-1) unstable; urgency=medium
 
   * Version bump to 0.19.6
