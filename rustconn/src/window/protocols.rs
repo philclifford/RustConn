@@ -61,12 +61,87 @@ pub(super) fn substitute_variables(input: &str, global_variables: &[Variable]) -
         .unwrap_or_else(|_| input.to_string())
 }
 
+/// Returns the connection's resolved password, if credential resolution cached one.
+///
+/// Feeds `${password}` in a Custom Command template (issue #151). `None` when the
+/// password source needs no vault lookup or nothing has been resolved yet — the
+/// placeholder is then left untouched, like any other unknown reference.
+fn cached_connection_password(
+    state: &SharedAppState,
+    connection_id: Uuid,
+) -> Option<secrecy::SecretString> {
+    use secrecy::ExposeSecret;
+    state
+        .try_borrow()
+        .ok()?
+        .get_cached_credentials(connection_id)
+        .map(|c| c.password.clone())
+        .filter(|p| !p.expose_secret().is_empty())
+}
+
+/// Environment variable carrying the connection password to a Custom Command.
+///
+/// `${password}` in the template expands to a shell reference to this variable
+/// rather than to the secret itself, so the value never enters a command line
+/// (issue #151). See [`super::command_env`] for how it reaches the child.
+const PASSWORD_ENV_VAR: &str = "RUSTCONN_PASSWORD";
+
+/// Metacharacter-free stand-in that `${password}` resolves to during substitution.
+///
+/// `substitute_defined_for_command` rejects values containing shell
+/// metacharacters, so the shell reference cannot be substituted directly. This
+/// token passes that guard and is replaced by the reference afterwards. The
+/// random suffix keeps a template that happens to contain the literal text from
+/// colliding with it.
+const PASSWORD_TOKEN: &str = "__RUSTCONN_PASSWORD_REF_8f21c4d7__";
+
 /// A Zero Trust command ready to be spawned in a terminal.
 pub(super) struct ZeroTrustLaunch {
     /// argv handed to VTE, already wrapped for Flatpak / login shell
     argv: Vec<String>,
     /// Command line echoed into the terminal, with secret values masked
     display: String,
+    /// `KEY=VALUE` entries VTE adds to the child environment.
+    ///
+    /// Carries [`PASSWORD_ENV_VAR`] when the template references `${password}`
+    /// and the connection has a resolved password. Empty on the Flatpak path,
+    /// which delivers the same variable through `flatpak-spawn --env-fd`.
+    env: Vec<zeroize::Zeroizing<String>>,
+    /// Keeps the Flatpak `--env-fd` file alive until the argv has been spawned.
+    _env_file: Option<super::command_env::EphemeralCommandEnv>,
+}
+
+impl ZeroTrustLaunch {
+    /// Returns the extra environment entries as VTE expects them.
+    fn env_refs(&self) -> Vec<&str> {
+        self.env.iter().map(|e| e.as_str()).collect()
+    }
+}
+
+/// Strips quotes the user put around `${password}`.
+///
+/// The placeholder is replaced by an already-quoted shell reference, so a
+/// template written as `--password "${password}"` would otherwise end up as
+/// `--password ""$RUSTCONN_PASSWORD""`, where the expansion sits *outside* the
+/// quotes and word-splits on a password containing spaces.
+fn strip_quotes_around_password(template: &str) -> String {
+    template
+        .replace("\"${password}\"", "${password}")
+        .replace("'${password}'", "${password}")
+}
+
+/// Replaces [`PASSWORD_TOKEN`] with a quoted shell reference.
+///
+/// Returns the rewritten string and whether the token was present, i.e. whether
+/// the variable actually has to be put into the child environment.
+fn link_password_reference(text: &str) -> (String, bool) {
+    if !text.contains(PASSWORD_TOKEN) {
+        return (text.to_string(), false);
+    }
+    (
+        text.replace(PASSWORD_TOKEN, &format!("\"${PASSWORD_ENV_VAR}\"")),
+        true,
+    )
 }
 
 /// Builds a variable manager for `conn`: synthetic connection fields first,
@@ -75,9 +150,15 @@ pub(super) struct ZeroTrustLaunch {
 ///
 /// With `mask_secrets` every secret value is replaced by `********`, which is
 /// what the command line echoed into the terminal (and the session log) uses.
+///
+/// `has_password` registers `${password}` as [`PASSWORD_TOKEN`]. The password
+/// itself never enters the manager: it travels through the child environment, so
+/// both the expanded and the masked pass produce the same text and there is
+/// nothing here to mask.
 fn connection_variable_manager(
     conn: &rustconn_core::Connection,
     global_variables: &[Variable],
+    has_password: bool,
     mask_secrets: bool,
 ) -> VariableManager {
     let value_of = |var: &Variable| -> String {
@@ -110,12 +191,40 @@ fn connection_variable_manager(
     if !conn.name.is_empty() {
         manager.set_connection(conn_id, Variable::new("name", &conn.name));
     }
-
     for var in conn.local_variables.values() {
         manager.set_connection(conn_id, Variable::new(&var.name, value_of(var)));
     }
 
+    // Registered last so it also wins over a local variable named `password`.
+    // Precedence is preserved elsewhere: the *value* behind the token already
+    // prefers that local variable (see `effective_password`). What must not
+    // happen is the local variable's plaintext being substituted directly, which
+    // would put it in the `sh -c` argv and bypass the environment indirection.
+    if has_password {
+        manager.set_connection(conn_id, Variable::new("password", PASSWORD_TOKEN));
+    }
+
     manager
+}
+
+/// Name of the local variable that overrides the stored password for `${password}`.
+const PASSWORD_VARIABLE: &str = "password";
+
+/// Resolves what `${password}` should expand to, as a secret.
+///
+/// A connection-local variable named `password` wins over the stored credential,
+/// matching how every other local variable overrides its synthetic counterpart.
+/// Either way the value leaves through the child environment, never the argv.
+fn effective_password(
+    conn: &rustconn_core::Connection,
+    resolved: Option<&secrecy::SecretString>,
+) -> Option<secrecy::SecretString> {
+    conn.local_variables
+        .values()
+        .find(|var| var.name == PASSWORD_VARIABLE)
+        .filter(|var| !var.value.is_empty())
+        .map(|var| secrecy::SecretString::from(var.value.clone()))
+        .or_else(|| resolved.cloned())
 }
 
 /// Builds the spawn argv and the echoed command line for a Zero Trust connection.
@@ -124,6 +233,10 @@ fn connection_variable_manager(
 /// template are resolved from the connection's local variables, the synthetic
 /// connection fields and the global variables; unknown references are left
 /// untouched so the shell can still expand them (issue #151).
+///
+/// `${password}` is special: it becomes a shell reference to
+/// [`PASSWORD_ENV_VAR`], and the password is delivered through the child
+/// environment instead of the command line. See [`super::command_env`].
 ///
 /// # Errors
 ///
@@ -134,24 +247,34 @@ pub(super) fn build_zerotrust_launch(
     conn: &rustconn_core::Connection,
     zt_config: &rustconn_core::models::ZeroTrustConfig,
     global_variables: &[Variable],
+    password: Option<&secrecy::SecretString>,
 ) -> Result<ZeroTrustLaunch, rustconn_core::variables::VariableError> {
     let (program, mut args) = zt_config.build_command(conn.username.as_deref());
     let is_generic = matches!(
         zt_config.provider,
         rustconn_core::models::ZeroTrustProvider::Generic
     );
+    let password = effective_password(conn, password);
 
     // Generic yields ("sh", ["-c", <template>]) — expand the template only.
     let mut masked_args = args.clone();
+    let mut needs_password_env = false;
     if is_generic && let Some(template) = args.last_mut() {
         let scope = VariableScope::Connection(conn.id);
-        let expanded = connection_variable_manager(conn, global_variables, false)
-            .substitute_defined_for_command(template, scope)?;
+        let source = strip_quotes_around_password(template);
+        let expanded =
+            connection_variable_manager(conn, global_variables, password.is_some(), false)
+                .substitute_defined_for_command(&source, scope)?;
         // The masked pass must never fall back to `expanded`: that string holds
         // the real secret values and is echoed into the terminal and the session
         // log. If masking cannot be produced, the launch fails instead.
-        let masked = connection_variable_manager(conn, global_variables, true)
-            .substitute_defined_for_command(template, scope)?;
+        let masked = connection_variable_manager(conn, global_variables, password.is_some(), true)
+            .substitute_defined_for_command(&source, scope)?;
+        // The password becomes a shell reference in both passes, so the echoed
+        // line and the argv agree and neither carries the secret.
+        let (expanded, used) = link_password_reference(&expanded);
+        let (masked, _) = link_password_reference(&masked);
+        needs_password_env = used;
         *template = expanded;
         if let Some(last) = masked_args.last_mut() {
             *last = masked;
@@ -165,7 +288,15 @@ pub(super) fn build_zerotrust_launch(
             .join(" ")
     };
     let display = join(&masked_args);
-    let full_command = join(&args);
+
+    // Only populated when the template actually references `${password}`, so a
+    // command line without it stays byte-identical to before this feature.
+    let password_entry = needs_password_env
+        .then(|| password.as_ref().map(|value| (PASSWORD_ENV_VAR, value)))
+        .flatten();
+
+    let mut env: Vec<zeroize::Zeroizing<String>> = Vec::new();
+    let mut env_file = None;
 
     let spawn_argv = if is_generic && rustconn_core::flatpak::is_flatpak() {
         // The user's custom command refers to host-side binaries that are not
@@ -187,8 +318,26 @@ pub(super) fn build_zerotrust_launch(
         // replace ' with '\'' (end quote, escaped quote, start quote)
         let escaped = template.replace('\'', "'\\''");
         let host_runner = "if command -v script >/dev/null 2>&1; then exec script -qfc \"$1\" /dev/null; else exec sh -c \"$1\"; fi";
+        // `flatpak-spawn` does not forward the sandbox environment to the host,
+        // and its `--env=` option would put the password back into an argv. The
+        // secret therefore travels through `--env-fd`: the sandbox shell opens a
+        // mode-0600 runtime file as fd 3, unlinks it immediately (the descriptor
+        // stays valid), and only then execs `flatpak-spawn`.
+        let env_fd_prefix = password_entry
+            .and_then(|(name, value)| {
+                let file = super::command_env::EphemeralCommandEnv::write(&[(name, value)])?;
+                let path = file.path().to_string_lossy().replace('\'', "'\\''");
+                env_file = Some(file);
+                Some(format!("exec 3<'{path}'; rm -f '{path}'; "))
+            })
+            .unwrap_or_default();
+        let env_fd_flag = if env_file.is_some() {
+            " --env-fd=3"
+        } else {
+            ""
+        };
         let spawn_cmd = format!(
-            "flatpak-spawn --host --env=TERM=xterm-256color -- sh -lc '{host_runner}' rustconn '{escaped}'"
+            "{env_fd_prefix}exec flatpak-spawn --host{env_fd_flag} --env=TERM=xterm-256color -- sh -lc '{host_runner}' rustconn '{escaped}'"
         );
         vec!["/bin/sh".to_string(), "-c".to_string(), spawn_cmd]
     } else if is_generic {
@@ -196,8 +345,20 @@ pub(super) fn build_zerotrust_launch(
         // ("sh", ["-c", template]). Wrapping it in yet another shell would break
         // argument parsing (e.g. `bash -c 'sh -c aws login'` treats "login" as
         // $0, not part of the command). Spawn it directly.
+        //
+        // The command runs inside the sandbox (or natively), so VTE can hand the
+        // password to the child environment directly — no file, no argv. Goes
+        // through the same validation as the `--env-fd` path.
+        if let Some(entry) =
+            password_entry.and_then(|(name, value)| super::command_env::env_entry(name, value))
+        {
+            env.push(entry);
+        }
         std::iter::once(program.clone()).chain(args).collect()
     } else {
+        // Non-Generic providers have no user template, so `${password}` cannot
+        // appear and `full_command` never holds a secret.
+        let full_command = join(&args);
         let spawn_command = rustconn_core::flatpak::wrap_host_command(&full_command);
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
         vec![shell, "-c".to_string(), spawn_command]
@@ -206,6 +367,8 @@ pub(super) fn build_zerotrust_launch(
     Ok(ZeroTrustLaunch {
         argv: spawn_argv,
         display,
+        env,
+        _env_file: env_file,
     })
 }
 
@@ -1113,7 +1276,13 @@ pub fn reconnect_generic_vte_in_place(
                 .ok()
                 .map(|s| crate::state::resolve_global_variables(s.settings()))
                 .unwrap_or_default();
-            let launch = match build_zerotrust_launch(&conn, zt_config, &global_variables) {
+            let password = cached_connection_password(state, connection_id);
+            let launch = match build_zerotrust_launch(
+                &conn,
+                zt_config,
+                &global_variables,
+                password.as_ref(),
+            ) {
                 Ok(launch) => launch,
                 Err(e) => {
                     tracing::error!(?e, connection = %conn.name, "Failed to expand custom command");
@@ -1133,7 +1302,9 @@ pub fn reconnect_generic_vte_in_place(
             notebook.display_output(session_id, &format!("{conn_msg}\r\n{cmd_msg}\r\n\r\n"));
 
             let argv: Vec<&str> = launch.argv.iter().map(String::as_str).collect();
-            notebook.spawn_command(session_id, &argv, None, None, None);
+            let env = launch.env_refs();
+            let envv = (!env.is_empty()).then_some(env.as_slice());
+            notebook.spawn_command(session_id, &argv, envv, None, None);
         }
         rustconn_core::ProtocolConfig::Telnet(telnet_config) => {
             let conn_msg = format_connection_message("Telnet", &conn.host);
@@ -1582,7 +1753,9 @@ pub fn start_zerotrust_connection(
     // Build the command. For a Custom Command this expands the ${var}
     // placeholders — done before opening a tab so an unusable variable value
     // reports an error instead of leaving a dead terminal behind (#151).
-    let launch = match build_zerotrust_launch(conn, zt_config, &global_variables) {
+    let password = cached_connection_password(state, connection_id);
+    let launch = match build_zerotrust_launch(conn, zt_config, &global_variables, password.as_ref())
+    {
         Ok(launch) => launch,
         Err(e) => {
             tracing::error!(?e, connection = %conn_name, "Failed to expand custom command");
@@ -1645,7 +1818,9 @@ pub fn start_zerotrust_connection(
     notebook.display_output(session_id, &feedback);
 
     let argv: Vec<&str> = launch.argv.iter().map(String::as_str).collect();
-    notebook.spawn_command(session_id, &argv, None, None, None);
+    let env = launch.env_refs();
+    let envv = (!env.is_empty()).then_some(env.as_slice());
+    notebook.spawn_command(session_id, &argv, envv, None, None);
 
     Some(session_id)
 }
@@ -2235,4 +2410,134 @@ fn start_mosh_connection_internal(
     }
 
     Some(session_id)
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the `${password}` rewrite of a Custom Command template
+    //! (issue #151). No GTK widgets are involved: both helpers are pure string
+    //! transforms, and the property that matters is that the secret never
+    //! reaches the rewritten text — only a shell reference does.
+
+    use rustconn_core::variables::{Variable, VariableScope};
+    use secrecy::{ExposeSecret, SecretString};
+
+    use super::{
+        PASSWORD_ENV_VAR, PASSWORD_TOKEN, connection_variable_manager, effective_password,
+        link_password_reference, strip_quotes_around_password,
+    };
+
+    /// A connection carrying the given local variables.
+    ///
+    /// Only `local_variables` (plus the synthetic fields) matter to the two
+    /// functions under test, so the protocol config is irrelevant here.
+    fn connection_with_locals(vars: &[Variable]) -> rustconn_core::Connection {
+        use rustconn_core::models::{ProtocolConfig, SshConfig};
+        let mut conn = rustconn_core::Connection::new(
+            "rustdesk".to_string(),
+            "host.example".to_string(),
+            0,
+            ProtocolConfig::Ssh(SshConfig::default()),
+        );
+        for var in vars {
+            conn.local_variables.insert(var.name.clone(), var.clone());
+        }
+        conn
+    }
+
+    #[test]
+    fn token_becomes_a_quoted_shell_reference() {
+        let (text, used) =
+            link_password_reference(&format!("rustdesk --password {PASSWORD_TOKEN}"));
+        assert!(used);
+        assert_eq!(text, format!("rustdesk --password \"${PASSWORD_ENV_VAR}\""));
+    }
+
+    #[test]
+    fn text_without_the_token_is_unchanged() {
+        let (text, used) = link_password_reference("rustdesk --connect 123456789");
+        assert!(
+            !used,
+            "no reference means no environment variable is needed"
+        );
+        assert_eq!(text, "rustdesk --connect 123456789");
+    }
+
+    #[test]
+    fn user_written_quotes_are_absorbed() {
+        // The replacement supplies its own quoting, so keeping the user's would
+        // leave the expansion unquoted and word-split a password with spaces.
+        assert_eq!(
+            strip_quotes_around_password("rustdesk --password \"${password}\""),
+            "rustdesk --password ${password}"
+        );
+        assert_eq!(
+            strip_quotes_around_password("rustdesk --password '${password}'"),
+            "rustdesk --password ${password}"
+        );
+    }
+
+    #[test]
+    fn unquoted_placeholder_is_left_alone() {
+        assert_eq!(
+            strip_quotes_around_password("rustdesk --password ${password}"),
+            "rustdesk --password ${password}"
+        );
+    }
+
+    #[test]
+    fn every_occurrence_is_linked() {
+        let (text, used) =
+            link_password_reference(&format!("a {PASSWORD_TOKEN} b {PASSWORD_TOKEN}"));
+        assert!(used);
+        assert!(!text.contains(PASSWORD_TOKEN));
+        assert_eq!(text.matches(PASSWORD_ENV_VAR).count(), 2);
+    }
+
+    #[test]
+    fn local_password_variable_wins_over_the_stored_credential() {
+        let conn = connection_with_locals(&[Variable::new_secret("password", "from-local-var")]);
+        let stored = SecretString::from("from-vault".to_string());
+        let effective = effective_password(&conn, Some(&stored)).expect("a password is available");
+        assert_eq!(effective.expose_secret(), "from-local-var");
+    }
+
+    #[test]
+    fn stored_credential_is_used_without_a_local_variable() {
+        let conn = connection_with_locals(&[Variable::new("id", "123456789")]);
+        let stored = SecretString::from("from-vault".to_string());
+        let effective = effective_password(&conn, Some(&stored)).expect("a password is available");
+        assert_eq!(effective.expose_secret(), "from-vault");
+    }
+
+    #[test]
+    fn an_empty_local_variable_does_not_mask_the_stored_credential() {
+        let conn = connection_with_locals(&[Variable::new("password", "")]);
+        let stored = SecretString::from("from-vault".to_string());
+        let effective = effective_password(&conn, Some(&stored)).expect("a password is available");
+        assert_eq!(effective.expose_secret(), "from-vault");
+    }
+
+    #[test]
+    fn no_password_anywhere_yields_none() {
+        let conn = connection_with_locals(&[]);
+        assert!(effective_password(&conn, None).is_none());
+    }
+
+    #[test]
+    fn a_local_password_variable_never_substitutes_its_plaintext() {
+        // Regression guard: local variables normally override their synthetic
+        // counterpart, which would have put the plaintext straight into the
+        // `sh -c` argv. `${password}` must resolve to the token instead, so the
+        // value can only travel through the child environment (issue #151).
+        let conn = connection_with_locals(&[Variable::new_secret("password", "from-local-var")]);
+        let expanded = connection_variable_manager(&conn, &[], true, false)
+            .substitute_defined_for_command(
+                "rustdesk --password ${password}",
+                VariableScope::Connection(conn.id),
+            )
+            .expect("substitution succeeds");
+        assert!(!expanded.contains("from-local-var"));
+        assert_eq!(expanded, format!("rustdesk --password {PASSWORD_TOKEN}"));
+    }
 }

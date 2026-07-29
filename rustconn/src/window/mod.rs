@@ -5,6 +5,7 @@
 
 mod batch_edit;
 mod clusters;
+mod command_env;
 mod connection_actions;
 mod connection_dialogs;
 mod credentials;
@@ -22,6 +23,7 @@ mod protocols;
 mod protocols_ssh;
 mod rdp_vnc;
 mod session_lifecycle;
+pub mod session_restore;
 mod sessions;
 mod smart_folders;
 mod snippet_actions;
@@ -1621,6 +1623,10 @@ impl MainWindow {
                 return glib::Propagation::Stop;
             }
 
+            // Snapshot the open sessions for the next start (issue #243). Done
+            // before any teardown, while the notebook still knows what is live.
+            session_restore::save_snapshot(&state_clone, &notebook_for_close);
+
             // Flush all active session recordings before shutdown
             notebook_for_close.flush_active_recordings();
 
@@ -1925,11 +1931,16 @@ impl MainWindow {
                 let id_str = conn_item.id();
                 if let Ok(conn_id) = Uuid::parse_str(&id_str) {
                     if !force_new {
-                        // R7.1/7.4: focus the most recently created embedded
-                        // session. Collect first (an owned `Uuid`) so no notebook
-                        // borrow is held across the focus call below.
+                        // R7.1/7.4: focus the most recently created *live*
+                        // session. `live_sessions` excludes tabs whose
+                        // connection already ended — those keep their tab for
+                        // the transcript and the Reconnect button, and focusing
+                        // one instead of connecting is what made double-click
+                        // look dead (issue #242). Collect first (an owned
+                        // `Uuid`) so no notebook borrow is held across the focus
+                        // call below.
                         let target = notebook
-                            .get_all_sessions()
+                            .live_sessions()
                             .into_iter()
                             .filter(|s| s.connection_id == conn_id)
                             .max_by_key(|s| s.connected_at)
@@ -1946,10 +1957,14 @@ impl MainWindow {
                             // R7.6: the session vanished between resolution and
                             // focus — fall through and launch a new one.
                         } else if external_session_registry()
-                            .is_some_and(|reg| reg.has_active_session(conn_id))
+                            .is_some_and(|reg| reg.has_verifiable_active_session(conn_id))
                         {
                             // R7 external-only: do not duplicate a session that
                             // lives in a foreign viewer window; inform the user.
+                            // Only *owned* viewers count — a detaching viewer
+                            // (remmina/krdc) is tracked without a child handle,
+                            // so its entry never clears on its own and would
+                            // block every later double-click (issue #242).
                             crate::toast::show_info_toast_on_active_window(&crate::i18n::i18n(
                                 "Already running in an external window",
                             ));
@@ -2220,8 +2235,14 @@ impl MainWindow {
         let logging_enabled = state_ref.settings().logging.enabled;
 
         // Clone connection data before dropping borrow
-        let conn_clone = conn.clone();
+        let mut conn_clone = conn.clone();
         drop(state_ref);
+
+        // Issue #241: a `.local` host that only the Flatpak *host* can resolve is
+        // rewritten to its address for this launch (SSH keeps the name as
+        // HostKeyAlias). A no-op outside Flatpak and for every non-mDNS name.
+        rustconn_core::connection::apply_mdns_fallback(&mut conn_clone);
+        let conn_clone = conn_clone;
 
         // Execute pre-connect task if configured
         if let Some(ref task) = conn_clone.pre_connect_task {
@@ -3395,6 +3416,25 @@ impl MainWindow {
     #[must_use]
     pub fn sidebar_rc(&self) -> Rc<ConnectionSidebar> {
         self.sidebar.clone()
+    }
+
+    /// Reopens the sessions that were open when RustConn last closed (issue #243).
+    ///
+    /// Called from `build_ui` after the startup action, so an explicit startup
+    /// connection lands first and the restored set follows. A no-op when
+    /// "Restore sessions on startup" is off or no usable snapshot exists.
+    pub fn restore_previous_sessions(&self) {
+        session_restore::restore_previous_sessions(
+            session_restore::RestoreContext {
+                state: self.state.clone(),
+                notebook: self.terminal_notebook.clone(),
+                split_view: self.split_view.clone(),
+                sidebar: Rc::clone(&self.sidebar),
+                monitoring: Rc::clone(&self.monitoring),
+                activity: self.activity_coordinator.clone(),
+            },
+            self.window.upcast_ref::<gtk4::Window>(),
+        );
     }
 
     /// Executes a startup action (open local shell or connect to a saved connection)

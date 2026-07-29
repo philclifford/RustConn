@@ -215,6 +215,24 @@ impl ExternalSessionRegistry {
             .any(|s| s.connection_id == connection_id && !s.ended)
     }
 
+    /// Returns whether the connection has an active external session whose
+    /// liveness RustConn can actually verify.
+    ///
+    /// Only *owned* viewers qualify: their `Child` is polled by the shared timer,
+    /// so the entry disappears within one cycle of the viewer exiting. A
+    /// detaching viewer (`child: None`, see `DETACHING_VIEWERS`) is registered
+    /// without a handle and is only ever cleared by "Stop tracking", so its
+    /// entry outlives the viewer window. Answering "yes, still running" from
+    /// such an entry made the smart double-click refuse to open the connection
+    /// for the rest of the session (issue #242).
+    #[must_use]
+    pub fn has_verifiable_active_session(&self, connection_id: Uuid) -> bool {
+        self.sessions
+            .borrow()
+            .values()
+            .any(|s| s.connection_id == connection_id && !s.ended && s.child.is_some())
+    }
+
     /// Returns the session ids of the connection's active external sessions.
     #[must_use]
     pub fn active_session_ids(&self, connection_id: Uuid) -> Vec<Uuid> {

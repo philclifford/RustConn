@@ -32,21 +32,6 @@ proptest! {
         prop_assert_eq!(skipped.clone(), PortCheckResult::Skipped);
     }
 
-    /// Property: PortCheckError::ResolutionFailed preserves host
-    #[test]
-    fn resolution_failed_preserves_host(
-        host in "[a-zA-Z][a-zA-Z0-9.-]{0,50}",
-        reason in "[a-zA-Z0-9 ]{1,100}",
-    ) {
-        let error = PortCheckError::ResolutionFailed {
-            host: host.clone(),
-            reason: reason.clone(),
-        };
-
-        let error_str = format!("{error}");
-        prop_assert!(error_str.contains(&host));
-    }
-
     /// Property: PortCheckError::Unreachable preserves host and port
     #[test]
     fn unreachable_preserves_fields(
@@ -65,16 +50,19 @@ proptest! {
         prop_assert!(error_str.contains(&port.to_string()));
     }
 
-    /// Property: Invalid hostnames fail resolution
+    /// Property: an unresolvable hostname skips the probe instead of failing
+    ///
+    /// Issue #241 — the probe is an optimisation, so a name it cannot resolve
+    /// must not veto the connection.
     #[test]
-    fn invalid_hostname_fails(
+    fn invalid_hostname_is_unresolved_not_error(
         invalid_suffix in "[a-z]{5,10}",
     ) {
         // Use a hostname that definitely won't resolve
-        let host = format!("invalid-host-{invalid_suffix}.nonexistent.local");
+        let host = format!("invalid-host-{invalid_suffix}.nonexistent.invalid");
         let result = rustconn_core::connection::check_port(&host, 22, 1);
 
-        prop_assert!(result.is_err());
+        prop_assert_eq!(result.ok(), Some(PortCheckResult::Unresolved));
     }
 
     /// Property: Port 0 is invalid
@@ -112,18 +100,12 @@ fn test_port_check_result_debug() {
 
 #[test]
 fn test_port_check_error_debug() {
-    let resolution_error = PortCheckError::ResolutionFailed {
-        host: "example.com".to_string(),
-        reason: "DNS lookup failed".to_string(),
-    };
-
     let unreachable_error = PortCheckError::Unreachable {
         host: "example.com".to_string(),
         port: 22,
         reason: "Connection refused".to_string(),
     };
 
-    assert!(format!("{resolution_error:?}").contains("ResolutionFailed"));
     assert!(format!("{unreachable_error:?}").contains("Unreachable"));
 }
 
@@ -140,32 +122,24 @@ fn test_localhost_closed_port() {
 }
 
 #[test]
-fn test_invalid_hostname() {
+fn test_invalid_hostname_reports_unresolved() {
     let result = rustconn_core::connection::check_port(
         "this-hostname-definitely-does-not-exist.invalid",
         22,
         1,
     );
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        PortCheckError::ResolutionFailed { .. }
-    ));
+    assert_eq!(result.ok(), Some(PortCheckResult::Unresolved));
 }
 
 #[tokio::test]
-async fn test_check_port_async_invalid_host() {
+async fn test_check_port_async_invalid_host_reports_unresolved() {
     let result = rustconn_core::connection::check_port_async(
-        "invalid.host.that.does.not.exist.local",
+        "invalid.host.that.does.not.exist.invalid",
         22,
         1,
     )
     .await;
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        PortCheckError::ResolutionFailed { .. }
-    ));
+    assert_eq!(result.ok(), Some(PortCheckResult::Unresolved));
 }
 
 #[tokio::test]

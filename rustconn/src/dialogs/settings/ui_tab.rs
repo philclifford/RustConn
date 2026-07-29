@@ -595,7 +595,6 @@ pub fn collect_ui_settings(
                 reason = "value is non-negative by construction in this code path"
             )]
             max_age_hours: max_age_row.value().max(0.0) as u32,
-            saved_sessions: Vec::new(),
         },
         search_history: Vec::new(), // Preserve existing history from current settings
         startup_action,

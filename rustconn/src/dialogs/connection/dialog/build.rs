@@ -302,23 +302,27 @@ impl ConnectionDialog {
         protocol_stack.set_visible_child_name("ssh");
 
         // Connect protocol dropdown to stack
+        let general_fields = super::construction::GeneralFields {
+            host_entry: host_entry.clone(),
+            host_label: host_label.clone(),
+            port_spin: port_spin.clone(),
+            port_label: port_label.clone(),
+            username_entry: username_entry.clone(),
+            username_label: username_label.clone(),
+            tags_entry: tags_entry.clone(),
+            tags_label: tags_label.clone(),
+            password_source_dropdown: password_source_dropdown.clone(),
+            password_source_label: password_source_label.clone(),
+            password_row: password_row.clone(),
+            domain_entry: domain_entry.clone(),
+            domain_label: domain_label.clone(),
+            mosh_settings_group: mosh_settings_group.clone(),
+        };
         Self::connect_protocol_dropdown(
             &protocol_dropdown,
             &protocol_stack,
-            &port_spin,
-            &host_entry,
-            &host_label,
-            &port_label,
-            &username_entry,
-            &username_label,
-            &tags_entry,
-            &tags_label,
-            &password_source_dropdown,
-            &password_source_label,
-            &password_row,
-            &domain_entry,
-            &domain_label,
-            &mosh_settings_group,
+            &zt_provider_dropdown,
+            &general_fields,
         );
 
         // === Data Tab (Variables + Custom Properties) ===

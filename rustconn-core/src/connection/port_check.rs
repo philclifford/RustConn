@@ -11,14 +11,6 @@ use thiserror::Error;
 /// Error type for port check operations
 #[derive(Debug, Error)]
 pub enum PortCheckError {
-    /// Host resolution failed
-    #[error("Failed to resolve host '{host}': {reason}")]
-    ResolutionFailed {
-        /// The hostname that failed to resolve
-        host: String,
-        /// The reason for the failure
-        reason: String,
-    },
     /// Connection refused or timed out
     #[error("Port {port} on '{host}' is not reachable: {reason}")]
     Unreachable {
@@ -38,6 +30,15 @@ pub enum PortCheckResult {
     Open,
     /// Port check was skipped (disabled or not applicable)
     Skipped,
+    /// The hostname could not be resolved, so no probe was performed.
+    ///
+    /// Treated as "proceed anyway" by every caller (issue #241): the probe is a
+    /// latency optimisation, not an authority on reachability. A name our
+    /// resolver cannot see may still be resolvable by the client that actually
+    /// connects — the classic case is an mDNS `.local` name inside a Flatpak
+    /// sandbox — and a genuinely wrong name produces the client's own, more
+    /// accurate error a moment later.
+    Unresolved,
 }
 
 /// Checks if a TCP port is reachable on the given host
@@ -49,9 +50,9 @@ pub enum PortCheckResult {
 ///
 /// # Returns
 /// * `Ok(PortCheckResult::Open)` if the port is reachable
+/// * `Ok(PortCheckResult::Unresolved)` if the hostname cannot be resolved locally
 ///
 /// # Errors
-/// * `PortCheckError::ResolutionFailed` if the hostname cannot be resolved
 /// * `PortCheckError::Unreachable` if the port is not reachable or connection timed out
 pub fn check_port(
     host: &str,
@@ -61,20 +62,28 @@ pub fn check_port(
     let timeout = Duration::from_secs(u64::from(timeout_secs));
     let addr_str = format!("{host}:{port}");
 
-    // Resolve hostname to socket addresses
-    let addrs: Vec<SocketAddr> = addr_str
-        .to_socket_addrs()
-        .map_err(|e| PortCheckError::ResolutionFailed {
-            host: host.to_string(),
-            reason: e.to_string(),
-        })?
-        .collect();
+    // Resolve hostname to socket addresses. A resolution failure never blocks
+    // the connection (issue #241) — see `PortCheckResult::Unresolved`.
+    let addrs: Vec<SocketAddr> = match addr_str.to_socket_addrs() {
+        Ok(addrs) => addrs.collect(),
+        Err(e) => {
+            tracing::info!(
+                %host,
+                port,
+                error = %e,
+                "Pre-connect probe skipped: hostname not resolvable locally"
+            );
+            return Ok(PortCheckResult::Unresolved);
+        }
+    };
 
     if addrs.is_empty() {
-        return Err(PortCheckError::ResolutionFailed {
-            host: host.to_string(),
-            reason: "No addresses found".to_string(),
-        });
+        tracing::info!(
+            %host,
+            port,
+            "Pre-connect probe skipped: hostname resolved to no addresses"
+        );
+        return Ok(PortCheckResult::Unresolved);
     }
 
     // Try each resolved address
@@ -108,9 +117,9 @@ pub fn check_port(
 ///
 /// # Returns
 /// * `Ok(PortCheckResult::Open)` if the port is reachable
+/// * `Ok(PortCheckResult::Unresolved)` if the hostname cannot be resolved locally
 ///
 /// # Errors
-/// * `PortCheckError::ResolutionFailed` if the hostname cannot be resolved
 /// * `PortCheckError::Unreachable` if the port is not reachable or connection timed out
 pub async fn check_port_async(
     host: &str,
@@ -120,20 +129,28 @@ pub async fn check_port_async(
     let timeout = Duration::from_secs(u64::from(timeout_secs));
     let addr_str = format!("{host}:{port}");
 
-    // Resolve hostname asynchronously
-    let addrs: Vec<SocketAddr> = tokio::net::lookup_host(&addr_str)
-        .await
-        .map_err(|e| PortCheckError::ResolutionFailed {
-            host: host.to_string(),
-            reason: e.to_string(),
-        })?
-        .collect();
+    // Resolve hostname asynchronously. As in `check_port`, an unresolvable name
+    // skips the probe instead of failing the connection (issue #241).
+    let addrs: Vec<SocketAddr> = match tokio::net::lookup_host(&addr_str).await {
+        Ok(addrs) => addrs.collect(),
+        Err(e) => {
+            tracing::info!(
+                %host,
+                port,
+                error = %e,
+                "Pre-connect probe skipped: hostname not resolvable locally"
+            );
+            return Ok(PortCheckResult::Unresolved);
+        }
+    };
 
     if addrs.is_empty() {
-        return Err(PortCheckError::ResolutionFailed {
-            host: host.to_string(),
-            reason: "No addresses found".to_string(),
-        });
+        tracing::info!(
+            %host,
+            port,
+            "Pre-connect probe skipped: hostname resolved to no addresses"
+        );
+        return Ok(PortCheckResult::Unresolved);
     }
 
     // Try each resolved address with tokio timeout
@@ -164,13 +181,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_check_port_invalid_host() {
-        let result = check_port("invalid.host.that.does.not.exist.local", 22, 1);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            PortCheckError::ResolutionFailed { .. }
-        ));
+    fn test_check_port_invalid_host_is_not_an_error() {
+        // Issue #241: an unresolvable name must not fail the probe, otherwise a
+        // name only the connecting client can resolve (mDNS `.local` inside a
+        // Flatpak sandbox) can never be connected to.
+        let result = check_port("invalid.host.that.does.not.exist.example", 22, 1);
+        assert_eq!(result.ok(), Some(PortCheckResult::Unresolved));
     }
 
     #[test]

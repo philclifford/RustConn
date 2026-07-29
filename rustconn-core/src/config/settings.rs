@@ -656,9 +656,6 @@ pub struct SessionRestoreSettings {
     /// Maximum age of sessions to restore (in hours, 0 = no limit)
     #[serde(default = "default_session_max_age")]
     pub max_age_hours: u32,
-    /// Sessions to restore (connection IDs)
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub saved_sessions: Vec<SavedSession>,
 }
 
 const fn default_session_max_age() -> u32 {
@@ -671,26 +668,8 @@ impl Default for SessionRestoreSettings {
             enabled: false,
             prompt_on_restore: true,
             max_age_hours: default_session_max_age(),
-            saved_sessions: Vec::new(),
         }
     }
-}
-
-/// A saved session for restore
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SavedSession {
-    /// Connection ID
-    pub connection_id: uuid::Uuid,
-    /// Connection name (for display if connection deleted)
-    pub connection_name: String,
-    /// Protocol type
-    pub protocol: String,
-    /// Host
-    pub host: String,
-    /// Port
-    pub port: u16,
-    /// When the session was saved
-    pub saved_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Default language value (system auto-detect)

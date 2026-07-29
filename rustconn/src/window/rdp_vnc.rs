@@ -257,6 +257,10 @@ fn start_rdp_session_internal(
 
     // Apply variable substitution to host and username
     let host = substitute(&conn.host);
+    // Issue #241: an mDNS `.local` name the sandbox cannot resolve is replaced by
+    // the address the Flatpak host resolves it to. No-op outside Flatpak.
+    let host = rustconn_core::connection::resolve_sandboxed_hostname(&host)
+        .map_or(host, |ip| ip.to_string());
     let username = substitute(username);
 
     // Get RDP-specific options
@@ -1226,6 +1230,10 @@ fn start_vnc_session_internal(
     } else {
         conn.host.clone()
     };
+    // Issue #241: an mDNS `.local` name the sandbox cannot resolve is replaced by
+    // the address the Flatpak host resolves it to. No-op outside Flatpak.
+    let host = rustconn_core::connection::resolve_sandboxed_hostname(&host)
+        .map_or(host, |ip| ip.to_string());
 
     // Get VNC-specific configuration
     let mut vnc_config = if let rustconn_core::ProtocolConfig::Vnc(config) = &conn.protocol_config {

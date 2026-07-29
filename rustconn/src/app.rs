@@ -433,6 +433,11 @@ fn build_ui(app: &adw::Application, tray_manager: SharedTrayManager) {
             .unwrap_or_else(|| state.borrow().settings().ui.startup_action.clone());
 
         window.execute_startup_action(&action);
+
+        // Reopen the previous session set (issue #243). After the startup
+        // action, so an explicit startup connection lands first. A no-op when
+        // "Restore sessions on startup" is off or no usable snapshot exists.
+        window.restore_previous_sessions();
     }
 
     // Run Cloud Sync startup import for all Import groups

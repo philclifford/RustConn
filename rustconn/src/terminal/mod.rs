@@ -180,6 +180,16 @@ pub struct TerminalNotebook {
     on_terminal_focus: Rc<RefCell<Option<Box<dyn Fn(bool)>>>>,
     /// Sessions that already have a reconnect banner (prevents duplicates)
     reconnect_shown: Rc<RefCell<HashSet<Uuid>>>,
+    /// Sessions whose connection has ended while their tab is still open.
+    ///
+    /// A tab is kept after the child exits (unless `close_on_clean_exit`) so the
+    /// scrollback stays readable and the reconnect banner has somewhere to live.
+    /// Such a session is still in `session_info`, which made the smart
+    /// double-click focus the dead tab instead of connecting (issue #242). This
+    /// set is the liveness signal every "is there a session to focus?" check
+    /// must consult; it is broader than `reconnect_shown`, which only tracks
+    /// tabs that actually got a banner.
+    disconnected_sessions: Rc<RefCell<HashSet<Uuid>>>,
     /// Cluster terminal tracking: cluster_id → Vec<session_id>
     cluster_sessions: Rc<RefCell<HashMap<Uuid, Vec<Uuid>>>>,
     /// Reverse lookup: session_id → cluster_id
@@ -331,6 +341,7 @@ impl TerminalNotebook {
             on_reconnect: Rc::new(RefCell::new(None)),
             on_terminal_focus: Rc::new(RefCell::new(None)),
             reconnect_shown: Rc::new(RefCell::new(HashSet::new())),
+            disconnected_sessions: Rc::new(RefCell::new(HashSet::new())),
             cluster_sessions: Rc::new(RefCell::new(HashMap::new())),
             session_to_cluster: Rc::new(RefCell::new(HashMap::new())),
             cluster_pending: Rc::new(RefCell::new(HashMap::new())),
@@ -383,6 +394,7 @@ impl TerminalNotebook {
         let on_session_ended = Rc::clone(&self.on_session_ended);
         let vte_child_pids = self.vte_child_pids.clone();
         let show_welcome_on_close = self.show_welcome.clone();
+        let disconnected_on_close = Rc::clone(&self.disconnected_sessions);
 
         // Handle create-window signal - we must connect this to prevent the default
         // behavior which causes CRITICAL warnings. Returning None cancels the tearoff.
@@ -500,6 +512,7 @@ impl TerminalNotebook {
                 }
 
                 session_info.borrow_mut().remove(&session_id);
+                disconnected_on_close.borrow_mut().remove(&session_id);
 
                 // Kill VTE child process group explicitly (#172).
                 // Some CLI clients (notably telnet) do not exit on SIGHUP
@@ -1784,6 +1797,7 @@ impl TerminalNotebook {
     /// Closes a terminal tab by session ID
     pub fn close_tab(&self, session_id: Uuid) {
         self.reconnect_shown.borrow_mut().remove(&session_id);
+        self.disconnected_sessions.borrow_mut().remove(&session_id);
         // Cancel any background polling (auto-reconnect, host check) for this session
         self.cancel_poll(session_id);
         // A detached session has no tab page to close, so route it through the
@@ -1853,6 +1867,9 @@ impl TerminalNotebook {
 
         // Allow a new reconnect banner to be shown if this reconnect also fails
         self.reconnect_shown.borrow_mut().remove(&session_id);
+        // The session is live again, so it becomes focusable by the smart
+        // double-click once more (issue #242).
+        self.disconnected_sessions.borrow_mut().remove(&session_id);
 
         // Remove stale automation session (will be re-created by the caller)
         self.automation_sessions.borrow_mut().remove(&session_id);
@@ -1898,6 +1915,7 @@ impl TerminalNotebook {
     /// reconnect in place, which leaves an embedded RDP/VNC session with no
     /// signal at all otherwise (issue #236).
     pub fn mark_tab_disconnected(&self, session_id: Uuid) {
+        self.disconnected_sessions.borrow_mut().insert(session_id);
         if self.is_detached(session_id) {
             Self::mark_detached_window_disconnected(session_id, true);
         }
@@ -1924,6 +1942,7 @@ impl TerminalNotebook {
     /// connection-state events (RDP fires "connected" on every resolution change)
     /// would wipe the split-color indicator.
     pub fn mark_tab_connected(&self, session_id: Uuid) {
+        self.disconnected_sessions.borrow_mut().remove(&session_id);
         if self.is_detached(session_id) {
             Self::mark_detached_window_disconnected(session_id, false);
         }
@@ -2184,6 +2203,32 @@ impl TerminalNotebook {
     #[must_use]
     pub fn is_reconnect_shown(&self, session_id: Uuid) -> bool {
         self.reconnect_shown.borrow().contains(&session_id)
+    }
+
+    /// Returns `true` if the session's connection has ended but its tab is still
+    /// open (issue #242).
+    ///
+    /// Such a session must not be treated as something to focus or to save for
+    /// restore: it is a readable transcript with a Reconnect button, not a live
+    /// connection.
+    #[must_use]
+    pub fn is_session_disconnected(&self, session_id: Uuid) -> bool {
+        self.disconnected_sessions.borrow().contains(&session_id)
+    }
+
+    /// Returns the sessions that are still live (tab open and connected).
+    ///
+    /// The counterpart of [`Self::get_all_sessions`] for every caller that means
+    /// "sessions I can hand the user" rather than "tabs that exist".
+    #[must_use]
+    pub fn live_sessions(&self) -> Vec<TerminalSession> {
+        let disconnected = self.disconnected_sessions.borrow();
+        self.session_info
+            .borrow()
+            .values()
+            .filter(|s| !disconnected.contains(&s.id))
+            .cloned()
+            .collect()
     }
 
     /// Sets a color indicator on a tab to show it's in a split pane

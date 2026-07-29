@@ -154,15 +154,16 @@ impl MainWindow {
                     ) {
                         return false;
                     }
-                    // Skip vault lookup for Zero Trust Generic — the custom command
-                    // handles its own authentication interactively in the terminal
-                    if let rustconn_core::ProtocolConfig::ZeroTrust(ref zt) = c.protocol_config
-                        && matches!(
+                    // Zero Trust providers other than Custom Command authenticate
+                    // through their own CLI (SSO, device code, cloud profile), so a
+                    // vault lookup would only add latency. Custom Command is the
+                    // exception: its template may reference `${password}`, which
+                    // resolves from the stored password (issue #151).
+                    if let rustconn_core::ProtocolConfig::ZeroTrust(ref zt) = c.protocol_config {
+                        return matches!(
                             zt.provider,
                             rustconn_core::models::ZeroTrustProvider::Generic
-                        )
-                    {
-                        return false;
+                        );
                     }
                     true
                 })
@@ -561,12 +562,17 @@ impl MainWindow {
             | ProtocolType::Serial
             | ProtocolType::Kubernetes
             | ProtocolType::Mosh => {
-                // For SSH/SPICE, cache credentials if available and start connection
+                // For SSH/SPICE, cache credentials if available and start connection.
+                // A missing username is not a reason to skip caching: a
+                // password-only connection (a Custom Command resolving
+                // `${password}`, or a VNC-style login) still needs the resolved
+                // secret in the cache, and the empty username is what the
+                // connection actually has (issue #151).
                 if let Some(ref creds) = resolved_credentials
-                    && let (Some(username), Some(password)) =
-                        (&creds.username, creds.expose_password())
+                    && let Some(password) = creds.expose_password()
                     && let Ok(mut state_mut) = state.try_borrow_mut()
                 {
+                    let username = creds.username.as_deref().unwrap_or_default();
                     state_mut.cache_credentials(connection_id, username, password, "");
                 }
                 Self::start_connection_with_split_observed(
