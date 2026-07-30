@@ -33,6 +33,7 @@ pub fn create_ui_page() -> (
     adw::SwitchRow,
     adw::SwitchRow,
     adw::SwitchRow,
+    adw::SwitchRow,
 ) {
     let page = adw::PreferencesPage::builder()
         .title(i18n("Interface"))
@@ -248,6 +249,24 @@ pub fn create_ui_page() -> (
 
     page.add(&window_group);
 
+    // === Connections Group ===
+    let connections_group = adw::PreferencesGroup::builder()
+        .title(i18n("Connections"))
+        .description(i18n("Behavior when opening a connection from the sidebar"))
+        .build();
+
+    // Double-click behavior (issue #242). Off by default keeps the smart
+    // double-click: an already-open session is focused instead of duplicated.
+    let double_click_opens_new_session = adw::SwitchRow::builder()
+        .title(i18n("Open a new session on every double-click"))
+        .subtitle(i18n(
+            "Double-clicking a connection always starts another session instead of focusing the one already open",
+        ))
+        .build();
+    connections_group.add(&double_click_opens_new_session);
+
+    page.add(&connections_group);
+
     // === Startup Group ===
     let startup_group = adw::PreferencesGroup::builder()
         .title(i18n("Startup"))
@@ -369,6 +388,7 @@ pub fn create_ui_page() -> (
         terminal_passthrough_ctrl,
         window_title_shows_connection,
         show_welcome_switch,
+        double_click_opens_new_session,
     )
 }
 
@@ -421,6 +441,7 @@ pub fn load_ui_settings(
     terminal_passthrough_ctrl: &adw::SwitchRow,
     window_title_shows_connection: &adw::SwitchRow,
     show_welcome_switch: &adw::SwitchRow,
+    double_click_opens_new_session: &adw::SwitchRow,
     settings: &UiSettings,
     connections: &[&Connection],
 ) {
@@ -498,6 +519,8 @@ pub fn load_ui_settings(
 
     show_welcome_switch.set_active(settings.show_welcome_on_startup);
 
+    double_click_opens_new_session.set_active(settings.double_click_opens_new_session);
+
     // Populate startup action dropdown with connections
     let entries = build_startup_entries(connections);
     let mut labels: Vec<String> = vec![i18n("Do nothing"), i18n("Local Shell")];
@@ -546,6 +569,7 @@ pub fn collect_ui_settings(
     terminal_passthrough_ctrl: &adw::SwitchRow,
     window_title_shows_connection: &adw::SwitchRow,
     show_welcome_switch: &adw::SwitchRow,
+    double_click_opens_new_session: &adw::SwitchRow,
     connections: &[&Connection],
 ) -> UiSettings {
     let mut selected_scheme = ColorScheme::System;
@@ -606,5 +630,6 @@ pub fn collect_ui_settings(
         terminal_passthrough_ctrl: terminal_passthrough_ctrl.is_active(),
         window_title_shows_connection: window_title_shows_connection.is_active(),
         show_welcome_on_startup: show_welcome_switch.is_active(),
+        double_click_opens_new_session: double_click_opens_new_session.is_active(),
     }
 }

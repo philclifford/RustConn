@@ -159,11 +159,13 @@ impl RoyalTsExporter {
     ) {
         let id = Uuid::new_v4().to_string();
 
-        output.push_str("  <RoyalRDPConnection>\n");
+        // Royal TS calls RDP connections RoyalRDSConnection and stores the port
+        // in RDPPort; the older RoyalRDPConnection name does not exist upstream.
+        output.push_str("  <RoyalRDSConnection>\n");
         let _ = writeln!(output, "    <ID>{id}</ID>");
         let _ = writeln!(output, "    <Name>{}</Name>", escape_xml(&conn.name));
         let _ = writeln!(output, "    <URI>{}</URI>", escape_xml(&conn.host));
-        let _ = writeln!(output, "    <Port>{}</Port>", conn.port);
+        let _ = writeln!(output, "    <RDPPort>{}</RDPPort>", conn.port);
 
         if let Some(group_id) = conn.group_id
             && let Some(royal_group_id) = group_map.get(&group_id)
@@ -210,7 +212,7 @@ impl RoyalTsExporter {
             }
         }
 
-        output.push_str("  </RoyalRDPConnection>\n");
+        output.push_str("  </RoyalRDSConnection>\n");
     }
 
     fn write_vnc_connection(
@@ -224,7 +226,7 @@ impl RoyalTsExporter {
         let _ = writeln!(output, "    <ID>{id}</ID>");
         let _ = writeln!(output, "    <Name>{}</Name>", escape_xml(&conn.name));
         let _ = writeln!(output, "    <URI>{}</URI>", escape_xml(&conn.host));
-        let _ = writeln!(output, "    <VNCPort>{}</VNCPort>", conn.port);
+        let _ = writeln!(output, "    <Port>{}</Port>", conn.port);
 
         if let Some(group_id) = conn.group_id
             && let Some(royal_group_id) = group_map.get(&group_id)
@@ -378,10 +380,10 @@ mod tests {
         let conn = create_rdp_connection("rdp-server", "192.168.1.200", 3389);
         let output = RoyalTsExporter::export_to_xml(&[conn], &[]);
 
-        assert!(output.contains("<RoyalRDPConnection>"));
+        assert!(output.contains("<RoyalRDSConnection>"));
         assert!(output.contains("<Name>rdp-server</Name>"));
         assert!(output.contains("<URI>192.168.1.200</URI>"));
-        assert!(output.contains("<Port>3389</Port>"));
+        assert!(output.contains("<RDPPort>3389</RDPPort>"));
     }
 
     #[test]
@@ -392,7 +394,7 @@ mod tests {
         assert!(output.contains("<RoyalVNCConnection>"));
         assert!(output.contains("<Name>vnc-server</Name>"));
         assert!(output.contains("<URI>192.168.1.150</URI>"));
-        assert!(output.contains("<VNCPort>5900</VNCPort>"));
+        assert!(output.contains("<Port>5900</Port>"));
     }
 
     #[test]
@@ -445,7 +447,7 @@ mod tests {
         let output = RoyalTsExporter::export_to_xml(&connections, &[]);
 
         assert!(output.contains("<RoyalSSHConnection>"));
-        assert!(output.contains("<RoyalRDPConnection>"));
+        assert!(output.contains("<RoyalRDSConnection>"));
         assert!(output.contains("<RoyalVNCConnection>"));
     }
 }

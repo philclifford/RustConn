@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.7
+Version:        0.19.8
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,19 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Fri Jul 31 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.8-0
+- Version bump to 0.19.8
+- Added a setting to open a new session on every double-click (#242)
+- Fixed Remote Desktop Manager JSON import aborting on the first entry: ConnectionType is a numeric enum in real exports (#234)
+- Fixed RDM import losing usernames, passwords and the folder hierarchy: Url/UserName/nested Credentials and Group paths are now read (#234)
+- Fixed Royal TS import skipping every RDP connection: the object is RoyalRDSConnection with RDPPort (#234)
+- Fixed Royal TS connections importing without a username: credentials assigned by name, typed inline, or inherited from the folder are now resolved (#234)
+- Added support for compressed .rtsz containers and uncompressed .rtsx Royal TS documents (#234)
+- Fixed XML entities corrupting imported Royal TS names (#234)
+- Fixed Royal TS export writing RoyalRDPConnection, an element Royal TS cannot read
+- Unsupported import entries are now reported as skipped with their source type (#234)
+- Updated dependencies: hybrid-array 0.4.13→0.4.14, wide 1.5.0→1.6.0
+
 * Thu Jul 30 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.7-0
 - Version bump to 0.19.7
 - Fixed double-click on a connection focusing a disconnected tab instead of connecting (#242)

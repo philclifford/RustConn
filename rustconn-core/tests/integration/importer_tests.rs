@@ -314,13 +314,13 @@ fn test_royal_ts_import_real_world_rtsz() {
     <Port>22</Port>
     <ParentID>prod-folder</ParentID>
   </RoyalSSHConnection>
-  <RoyalRDPConnection>
+  <RoyalRDSConnection>
     <ID>db-rdp</ID>
     <Name>Database Server</Name>
     <URI>db.example.com</URI>
-    <Port>3389</Port>
+    <RDPPort>3389</RDPPort>
     <ParentID>prod-folder</ParentID>
-  </RoyalRDPConnection>
+  </RoyalRDSConnection>
   <RoyalVNCConnection>
     <ID>dev-vnc</ID>
     <Name>Dev Desktop</Name>
@@ -393,13 +393,13 @@ fn test_royal_ts_import_handles_credentials() {
     <Port>22</Port>
     <CredentialId>cred-1</CredentialId>
   </RoyalSSHConnection>
-  <RoyalRDPConnection>
+  <RoyalRDSConnection>
     <ID>rdp-domain</ID>
     <Name>RDP with Domain</Name>
     <URI>rdp.example.com</URI>
-    <Port>3389</Port>
+    <RDPPort>3389</RDPPort>
     <CredentialId>cred-2</CredentialId>
-  </RoyalRDPConnection>
+  </RoyalRDSConnection>
 </RoyalDocument>"#;
 
     let importer = RoyalTsImporter::new();

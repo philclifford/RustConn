@@ -129,6 +129,8 @@ pub struct SettingsDialog {
     window_title_shows_connection: adw::SwitchRow,
     // Show Welcome tab on startup (issue #232)
     show_welcome_switch: adw::SwitchRow,
+    // Always open a new session on a sidebar double-click (issue #242)
+    double_click_opens_new_session: adw::SwitchRow,
     // SSH Agent settings
     ssh_agent_status_label: Label,
     ssh_agent_socket_label: Label,
@@ -249,6 +251,7 @@ impl SettingsDialog {
             terminal_passthrough_ctrl,
             window_title_shows_connection,
             show_welcome_switch,
+            double_click_opens_new_session,
         ) = create_ui_page();
         mark("ui_page");
 
@@ -672,6 +675,7 @@ impl SettingsDialog {
             terminal_passthrough_ctrl,
             window_title_shows_connection,
             show_welcome_switch,
+            double_click_opens_new_session,
             ssh_agent_status_label,
             ssh_agent_socket_label,
             ssh_agent_start_button,
@@ -1019,6 +1023,7 @@ impl SettingsDialog {
             &self.terminal_passthrough_ctrl,
             &self.window_title_shows_connection,
             &self.show_welcome_switch,
+            &self.double_click_opens_new_session,
             &settings.ui,
             &conn_refs,
         );
@@ -1160,6 +1165,7 @@ impl SettingsDialog {
         let terminal_passthrough_ctrl_clone = self.terminal_passthrough_ctrl.clone();
         let window_title_shows_connection_clone = self.window_title_shows_connection.clone();
         let show_welcome_switch_clone = self.show_welcome_switch.clone();
+        let double_click_opens_new_session_clone = self.double_click_opens_new_session.clone();
         let connections_clone = self.connections.clone();
         let keybindings_overrides_clone = self.keybindings_overrides.clone();
 
@@ -1308,6 +1314,7 @@ impl SettingsDialog {
                 &terminal_passthrough_ctrl_clone,
                 &window_title_shows_connection_clone,
                 &show_welcome_switch_clone,
+                &double_click_opens_new_session_clone,
                 &conn_refs,
             );
             // Preserve smart folders visibility (managed by toolbar toggle, not settings dialog)

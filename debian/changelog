@@ -1,3 +1,19 @@
+rustconn (0.19.8-1) unstable; urgency=medium
+
+  * Version bump to 0.19.8
+  * Added a setting to open a new session on every double-click (#242)
+  * Fixed Remote Desktop Manager JSON import aborting on the first entry: ConnectionType is a numeric enum in real exports (#234)
+  * Fixed RDM import losing usernames, passwords and the folder hierarchy: Url/UserName/nested Credentials and Group paths are now read (#234)
+  * Fixed Royal TS import skipping every RDP connection: the object is RoyalRDSConnection with RDPPort (#234)
+  * Fixed Royal TS connections importing without a username: credentials assigned by name, typed inline, or inherited from the folder are now resolved (#234)
+  * Added support for compressed .rtsz containers and uncompressed .rtsx Royal TS documents (#234)
+  * Fixed XML entities corrupting imported Royal TS names (#234)
+  * Fixed Royal TS export writing RoyalRDPConnection, an element Royal TS cannot read
+  * Unsupported import entries are now reported as skipped with their source type (#234)
+  * Updated dependencies: hybrid-array 0.4.13→0.4.14, wide 1.5.0→1.6.0
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Fri, 31 Jul 2026 01:14:04 +0300
+
 rustconn (0.19.7-1) unstable; urgency=medium
   * Version bump to 0.19.7
   * Fixed double-click on a connection focusing a disconnected tab instead of connecting (#242)

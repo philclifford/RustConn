@@ -127,7 +127,7 @@ impl ImportDialog {
             ),
             (
                 "royalts_file",
-                i18n("Royal TS (.rtsz)"),
+                i18n("Royal TS (.rtsz, .rtsx)"),
                 i18n("Import from a Royal TS export file"),
                 true,
             ),
@@ -732,8 +732,8 @@ impl ImportDialog {
 
         let filter = gtk4::FileFilter::new();
         filter.add_pattern("*.rtsz");
-        filter.add_pattern("*.json");
-        filter.set_name(Some(&i18n("Royal TS files (*.rtsz, *.json)")));
+        filter.add_pattern("*.rtsx");
+        filter.set_name(Some(&i18n("Royal TS files (*.rtsz, *.rtsx)")));
         let filters = gtk4::gio::ListStore::new::<gtk4::FileFilter>();
         filters.append(&filter);
         file_dialog.set_filters(Some(&filters));
@@ -1395,6 +1395,7 @@ impl ImportDialog {
         filter.add_pattern("*.rcn");
         filter.add_pattern("*.json");
         filter.add_pattern("*.rtsz");
+        filter.add_pattern("*.rtsx");
         filter.add_pattern("*.mxtsessions");
         filter.add_pattern("*.xml");
         filter.add_pattern("*.yaml");
@@ -1589,7 +1590,7 @@ impl ImportDialog {
                 let importer = RdmImporter::new();
                 Self::import_or_error(importer.import_from_path(path), "RDM JSON")
             }
-            "rtsz" => {
+            "rtsz" | "rtsx" => {
                 let importer = RoyalTsImporter::new();
                 Self::import_or_error(importer.import_from_path(path), "Royal TS")
             }
