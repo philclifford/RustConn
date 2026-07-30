@@ -1904,6 +1904,10 @@ impl MainWindow {
     /// An embedded session is focused in place (R7.1/7.2/7.4); an external-only
     /// session shows an informational toast (a foreign OS window cannot be
     /// raised reliably from RustConn); zero sessions launch a new one (R7.3).
+    ///
+    /// The `double_click_opens_new_session` preference opts out of that
+    /// resolution entirely (issue #242): while it is on, every activation
+    /// behaves as if `force_new` were set, so the modifier is simply redundant.
     #[expect(
         clippy::too_many_arguments,
         reason = "smart double-click dispatch (R7) needs the full window context: state, sidebar, notebook, split view, monitoring, split bridges plus position/force_new/activity"
@@ -1930,7 +1934,13 @@ impl MainWindow {
             {
                 let id_str = conn_item.id();
                 if let Ok(conn_id) = Uuid::parse_str(&id_str) {
-                    if !force_new {
+                    // Issue #242: the preference restores the pre-0.18.3
+                    // behavior for users who keep several concurrent sessions
+                    // on one host. Read into a `bool` so no state borrow is
+                    // held into the launch path below, which borrows again.
+                    let always_new = state.borrow().settings().ui.double_click_opens_new_session;
+
+                    if !force_new && !always_new {
                         // R7.1/7.4: focus the most recently created *live*
                         // session. `live_sessions` excludes tabs whose
                         // connection already ended — those keep their tab for

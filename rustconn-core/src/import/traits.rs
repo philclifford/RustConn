@@ -37,6 +37,33 @@ const MAX_IMPORT_FILE_SIZE: u64 = 50 * 1024 * 1024;
 /// let content = read_import_file(path, "SSH config")?;
 /// ```
 pub(super) fn read_import_file(path: &Path, source_name: &str) -> Result<String, ImportError> {
+    check_import_file_size(path, source_name)?;
+
+    fs::read_to_string(path).map_err(|e| ImportError::ParseError {
+        source_name: source_name.to_string(),
+        reason: format!("Failed to read {}: {}", path.display(), e),
+    })
+}
+
+/// Reads a file for import operations as raw bytes.
+///
+/// Same size guard as [`read_import_file`], for formats that may be a binary
+/// container (for example the compressed Royal TS `.rtsz` document).
+///
+/// # Errors
+/// Returns `ImportError::ParseError` if the file cannot be read or exceeds the
+/// size limit.
+pub(super) fn read_import_bytes(path: &Path, source_name: &str) -> Result<Vec<u8>, ImportError> {
+    check_import_file_size(path, source_name)?;
+
+    fs::read(path).map_err(|e| ImportError::ParseError {
+        source_name: source_name.to_string(),
+        reason: format!("Failed to read {}: {}", path.display(), e),
+    })
+}
+
+/// Rejects files above [`MAX_IMPORT_FILE_SIZE`] before they are read.
+fn check_import_file_size(path: &Path, source_name: &str) -> Result<(), ImportError> {
     let metadata = fs::metadata(path).map_err(|e| ImportError::ParseError {
         source_name: source_name.to_string(),
         reason: format!("Cannot read {}: {}", path.display(), e),
@@ -53,10 +80,7 @@ pub(super) fn read_import_file(path: &Path, source_name: &str) -> Result<String,
         });
     }
 
-    fs::read_to_string(path).map_err(|e| ImportError::ParseError {
-        source_name: source_name.to_string(),
-        reason: format!("Failed to read {}: {}", path.display(), e),
-    })
+    Ok(())
 }
 
 /// Result of an import operation containing successful imports and any issues encountered.

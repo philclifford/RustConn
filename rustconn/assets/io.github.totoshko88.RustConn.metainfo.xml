@@ -140,6 +140,21 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.8" date="2026-07-31">
+      <description>
+        <p>Version 0.19.8 - importing from Remote Desktop Manager and Royal TS:</p>
+        <ul>
+          <li>Fixed Remote Desktop Manager JSON import aborting on the first entry</li>
+          <li>Fixed RDM import losing usernames, passwords and the folder hierarchy</li>
+          <li>Fixed Royal TS import skipping every RDP connection</li>
+          <li>Fixed Royal TS connections importing without a username</li>
+          <li>Added support for compressed .rtsz and uncompressed .rtsx Royal TS documents</li>
+          <li>Fixed XML entities corrupting imported Royal TS names</li>
+          <li>Unsupported entries are now reported as skipped with their source type</li>
+          <li>Added a setting to open a new session on every double-click</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.7" date="2026-07-30">
       <description>
         <p>Version 0.19.7 - opening connections, session restore and Custom Command credentials:</p>

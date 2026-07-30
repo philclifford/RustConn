@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.19.7** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.19.8** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -339,7 +339,7 @@ Temporary connection without saving:
 
 | Action | Method |
 |--------|--------|
-| Connect | Double-click, Enter, or right-click → Connect |
+| Connect | Double-click, Enter, or right-click → Connect (a double-click focuses an already-running session; Shift/Ctrl+double-click, or Settings → Interface → Connections → "Open a new session on every double-click", starts another one) |
 | Edit | Ctrl+E or right-click → Edit |
 | Rename | F2 or right-click → Rename |
 | Duplicate | Ctrl+D or right-click → Duplicate |
@@ -2383,7 +2383,9 @@ The settings dialog uses `adw::PreferencesDialog` with built-in search. Settings
 
 **Appearance group:** Theme (System, Light, Dark), Language (UI language selector, restart required), Color tabs by protocol, Sidebar width (260–500 pixels, default 320).
 
-**Window group:** Remember size (restore window geometry on startup).
+**Window group:** Remember size (restore window geometry on startup), Show connection in window title (appends the active connection name so time-tracking tools can attribute usage; off by default for privacy).
+
+**Connections group:** Open a new session on every double-click — off by default, so a double-click on a connection that is already running focuses that session instead of duplicating it (hold Shift or Ctrl, or use right-click → Open new session, to force a second one). Turn it on if you routinely keep several concurrent sessions on the same host: every double-click then starts another session, and the modifier is no longer needed.
 
 **Startup group:** On startup — Do nothing, Local Shell, or connect to a specific saved connection.
 
@@ -2509,7 +2511,7 @@ Back up your entire RustConn configuration as a single ZIP archive.
 - Remmina profiles
 - Asbru-CM configuration
 - Ansible inventory (INI/YAML)
-- Royal TS (.rtsz XML)
+- Royal TS / Royal TSX (`.rtsz`, `.rtsx`)
 - MobaXterm sessions (.mxtsessions)
 - SecureCRT sessions (.ini directory)
 - Remote Desktop Manager (JSON)
@@ -2537,10 +2539,10 @@ Double-click source to start import immediately.
 | Remmina | `~/.local/share/remmina/` | — | SSH, RDP, VNC, SFTP | One `.remmina` per connection |
 | Asbru-CM | `~/.config/pac/` | YAML file | SSH, VNC, RDP | Variables converted to `${VAR}` |
 | Ansible | `/etc/ansible/hosts` | INI/YAML file | SSH | Groups preserved |
-| Royal TS | — | `.rtsz` file | All | Folder hierarchy → groups |
+| Royal TS / Royal TSX | — | `.rtsz` (compressed) or `.rtsx` file | SSH, RDP, VNC | Folder hierarchy → groups; usernames inherited from folder credentials |
 | MobaXterm | — | `.mxtsessions` | SSH, RDP, VNC, Telnet, Serial | INI-based sessions |
 | SecureCRT | `~/.vandyke/Config/Sessions/` | Directory or `.ini` | SSH, Telnet, RDP, VNC | Folder hierarchy → groups |
-| Remote Desktop Manager | — | JSON file | SSH, RDP, VNC | Devolutions JSON export |
+| Remote Desktop Manager | — | JSON file | SSH, RDP, VNC, Telnet | Devolutions JSON export; `Group` paths → groups |
 | RDP File | — | `.rdp` file | RDP | Microsoft Remote Desktop format |
 | Virt-Viewer | — | `.vv` file | SPICE, VNC | From libvirt, Proxmox VE, oVirt |
 | Libvirt / GNOME Boxes | `/etc/libvirt/qemu/`, `~/.config/libvirt/qemu/` | XML file | VNC, SPICE, RDP | Domain XML `<graphics>` elements |
@@ -2641,10 +2643,27 @@ xdg-mime default io.github.totoshko88.RustConn.desktop application/x-virt-viewer
 2. **File > Import > SecureCRT** → select the `Sessions` directory → Import
 3. Folder hierarchy is preserved as connection groups; SSH keys, usernames, ports, X11/agent forwarding settings are imported
 
-#### From Royal TS
+#### From Royal TS / Royal TSX
 
-1. In Royal TS: **File > Export > Royal TS Document (.rtsz)**
+1. In Royal TS: **File > Export > Royal TS Document (.rtsz)** — `.rtsx` works as well
 2. **File > Import > Royal TS** → select file → Import (folder structure preserved as groups)
+
+SSH, RDP (`RoyalRDSConnection`) and VNC connections are imported; every other object type
+(web page, file transfer, TeamViewer, ...) is listed as skipped. Usernames and domains come
+from the connection, from an assigned credential, or are inherited from the parent folder.
+Passwords are kept encrypted inside the document and cannot be imported, so those
+connections are set to prompt for the password. An encrypted or lockdown document cannot be
+read at all.
+
+#### From Remote Desktop Manager
+
+1. In RDM: **File > Export** → JSON. Include credentials if you want the passwords to come
+   across; otherwise they stay encrypted and unusable.
+2. **File > Import > Remote Desktop Manager** → select the file → Import
+
+Folders are taken from the `Group` path of each entry, credentials from the entry itself or
+from a linked `Credential` entry, and any entry type RustConn does not support is listed as
+skipped together with its RDM type.
 
 #### From SSH Config
 

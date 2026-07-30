@@ -5,6 +5,32 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.8] - 2026-07-31
+
+### Added
+
+- **"Open a new session on every double-click" setting (issue [#242](https://github.com/totoshko88/RustConn/issues/242))** — Settings → Interface → Connections. The smart double-click added in 0.18.3 focuses a connection's running session instead of duplicating it, which removed the pre-0.18.3 way of opening several concurrent sessions on one host: double-clicking the same entry four times. Shift/Ctrl+double-click and right-click → "Open new session" already forced a new session, but neither is as immediate as the plain double-click that used to do it. With the new switch on, every double-click starts another session — the "already running in an external window" hint is skipped as well — and the modifier becomes redundant. Off by default, so the focusing behaviour stays the norm.
+
+### Fixed
+
+- **Remote Desktop Manager JSON import failed on the first entry (issue [#234](https://github.com/totoshko88/RustConn/issues/234))** — the importer expected `ConnectionType` to be a token name, while RDM serialises it as the numeric Devolutions `ConnectionType` enum, so a real export aborted with `invalid type: integer 25, expected a string` (25 is `Group`) and imported nothing. Both dialects are now accepted, together with the rest of the export's actual shape: the connection-type tokens RDM really writes (`RDPConfigured`, `SSHShell`, `Putty`, `Iterm`, `TerminalConsole`, `SecureCRT`, `VNC`, `NoVNC`, `Telnet`), the host in `Url`/`HostName` as well as `Host`, a port encoded as a string, and the folder tree, which RDM expresses as `Group` entries plus a backslash-separated `Group` path rather than the `Folders` array RustConn used to look for. Usernames, domains and passwords are read from the nested `Credentials` object and from a `Credential` entry referenced through `CredentialConnectionID` — previously the flat `Username` key never matched RDM's `UserName` and every credential was dropped. An imported password now goes to the secret backend (`PasswordSource::Vault`) instead of being parsed and discarded, and an entry of a type RustConn cannot map is reported in the skipped list with that type named.
+- **Royal TS import skipped every RDP connection (issue [#234](https://github.com/totoshko88/RustConn/issues/234))** — the parser looked for a `RoyalRDPConnection` element, which does not exist in the format: Royal TS and Royal TSX store RDP as `RoyalRDSConnection` (older documents: `RoyalTerminalServicesConnection`) and keep its port in `RDPPort`, not `Port`. All three names are now recognised, and any other `Royal*Connection` object (web page, file transfer, TeamViewer, ...) is listed as skipped with its type instead of vanishing silently.
+- **Royal TS connections imported without a username (issue [#234](https://github.com/totoshko88/RustConn/issues/234))** — only `CredentialId` was honoured, so the usual Royal TS arrangements produced no credentials at all: a credential assigned by name (`CredentialName`), typed into the connection (`CredentialMode` 2 with `CredentialUsername`), or — most commonly — inherited from the parent folder (`CredentialFromParent`, `CredentialMode` 1). Username and domain are now resolved through all of these, walking up the folder chain. Passwords stay a prompt: Royal TS keeps them encrypted inside the document, so they cannot be imported.
+- **Compressed Royal TS documents could not be read (issue [#234](https://github.com/totoshko88/RustConn/issues/234))** — `.rtsz` is the compressed document format and was read as UTF-8 text, which failed with an opaque error. The ZIP container is now unpacked before parsing, `.rtsx` (uncompressed XML) is offered in the file chooser and recognised in batch import, and a document that is neither says so, naming encryption and lockdown as the likely cause.
+- **XML entities corrupted imported Royal TS values (issue [#234](https://github.com/totoshko88/RustConn/issues/234))** — `quick-xml` reports `&amp;`, `&#39;` and friends as their own events, and each text fragment was written straight into the field, so only the fragment after the last entity survived: a connection named `Dev & Test` was imported as `Test`. Field text is now accumulated across text, CDATA and reference events and committed when the element closes.
+- **Royal TS export wrote an element Royal TS cannot read** — the exporter emitted `RoyalRDPConnection` with a `Port` child for RDP and `VNCPort` for VNC; it now writes `RoyalRDSConnection`/`RDPPort` and the VNC `Port` that the format actually defines.
+
+### Documentation
+
+- **Import chapter matches the formats again (issue [#234](https://github.com/totoshko88/RustConn/issues/234))** — `docs/USER_GUIDE.md` now lists Royal TS as `.rtsz`/`.rtsx`, states which object types are imported and why passwords cannot be, and gained a "From Remote Desktop Manager" section covering the JSON export, the credentials option and how `Group` paths become folders.
+
+### Dependencies
+
+- **Updated**: hybrid-array 0.4.13→0.4.14, wide 1.5.0→1.6.0 — the only two compatible updates `cargo update` found; both transitive (RustCrypto and SIMD helpers).
+- **Security clean**: `cargo deny check advisories` reports `advisories ok`. `RUSTSEC-2023-0071` (rsa, via `ironrdp` → `picky`/`sspi`) remains accepted in `deny.toml` and `.cargo/audit.toml`.
+- **CLI downloads current**: `scripts/check-cli-versions.sh` exits 0 — kubectl 1.36.3, Tailscale 1.98.10, Teleport 18.10.0, Boundary 0.21.3, Hoop.dev 1.125.1, Bitwarden CLI 2026.7.0 and 1Password CLI 2.38.1 all auto-resolve to the latest release, and the one explicit pin, TigerVNC 1.16.2, is still current.
+- **Packaging sources current**: GNOME runtime 50, FreeRDP 3.30.0 (newest on pub.freerdp.com), cJSON 1.7.19, openh264 2.6.0, fast_float 8.2.10, waypipe 0.11.0 and mc 4.8.33 are all at their latest upstream release, and the Flathub manifest matches the local one. Snap stays on core24 + gnome-46-2404: no `gnome-*-2604` platform snap exists yet (issue [#174](https://github.com/totoshko88/RustConn/issues/174)).
+
 ## [0.19.7] - 2026-07-30
 
 ### Added
