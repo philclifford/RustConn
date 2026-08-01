@@ -45,13 +45,15 @@ These interfaces are connected automatically:
 | `gsettings` | GNOME settings |
 | `home` | Access to home directory |
 | `opengl` | GPU rendering |
-| `password-manager-service` | D-Bus secret service (GNOME Keyring, KWallet) |
 
 ### Manual Interface Connections
 
 These interfaces require manual connection after installation:
 
 ```bash
+# System keyring (GNOME Keyring / KDE Wallet — required for password storage)
+sudo snap connect rustconn:password-manager-service
+
 # SSH keys (required for SSH connections)
 sudo snap connect rustconn:ssh-keys
 

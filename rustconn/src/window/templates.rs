@@ -375,7 +375,7 @@ pub fn show_new_connection_from_template(
     // Set available groups
     {
         let state_ref = state.borrow();
-        let groups: Vec<_> = state_ref.list_groups().into_iter().cloned().collect();
+        let groups: Vec<_> = state_ref.list_groups_owned();
         dialog.set_groups(&groups);
     }
 
@@ -450,8 +450,7 @@ pub fn show_new_connection_from_template(
                             && let Some(pwd) = password
                         {
                             let settings = state_mut.settings().clone();
-                            let groups: Vec<_> =
-                                state_mut.list_groups().into_iter().cloned().collect();
+                            let groups: Vec<_> = state_mut.list_groups_owned();
                             let conn_for_path = state_mut.get_connection(conn_id).cloned();
                             let username = conn_username.unwrap_or_default();
 

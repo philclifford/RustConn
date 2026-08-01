@@ -5,6 +5,27 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.11] - 2026-08-02
+
+### Fixed
+
+- **Homebrew release automation updates comments but leaves formula pinned (issue [#251](https://github.com/totoshko88/RustConn/issues/251))** — the `update-homebrew` CI job copied `packaging/macos/rustconn.rb` into the tap and ran sed patterns that expected an archive tarball URL, but the formula used `url "...RustConn.git", tag: "v0.19.6"`. The sed matched only commented-out examples, so every automated release commit since v0.19.6 patched comments while the active source stayed pinned. The formula now uses `url "https://...archive/refs/tags/vX.Y.Z.tar.gz"` with a sha256 placeholder; the workflow sed is anchored to active directives (`^  url`, `^  sha256`) and a verification gate fails the job unless exactly one URL and one checksum were patched. `scripts/release.sh` validates the template format pre-release so drift cannot reach CI silently.
+- **KeePassXC: group passwords failed to retrieve when database is password-protected (issue [#250](https://github.com/totoshko88/RustConn/issues/250))** — the "Load from Vault" button in the group editor and group creation dialogs passed `None` for the database master password when calling `keepassxc-cli`, causing it to exit with code 1 on password-protected databases. Individual connection passwords worked because their code path correctly forwarded the stored master password. Key-file-only databases were unaffected since the `--no-password` flag is valid there. Both call sites now pass `settings.secrets.kdbx_password`.
+- **Snap: keyring error message now shows the `snap connect` command (issue [#249](https://github.com/totoshko88/RustConn/issues/249))** — when running in a snap with `password-manager-service` not connected, the startup banner and vault-save dialog now tell the user exactly which command to run (`sudo snap connect rustconn:password-manager-service`) instead of the generic "no system keyring is responding" that implies the keyring is broken. The interface is not auto-connected by snapd policy, so most snap users hit this on first launch.
+
+### Improved
+
+- **Embedded RDP background-tab throttling** — the IronRDP polling loop now detects when the drawing area is not mapped (tab in background) and skips 15 out of every 16 ticks, reducing CPU usage from ~60 Hz to ~4 Hz for invisible sessions while still handling lifecycle events (disconnect, error, watchdog).
+- **Eliminated redundant full-collection cloning** — added `list_connections_owned()` and `list_groups_owned()` to `ConnectionManager`, which fill a pre-allocated vector in a single pass. Every `list_groups().into_iter().cloned().collect()` site is gone: 39 of them across 13 window files, plus the state layer and both `ConnectionManager` persist paths. Each one used to build an intermediate `Vec<&T>` and then a second, unreserved `Vec<T>`.
+- **Decomposed `setup_ironrdp_polling` into handler functions** — extracted ~300 lines of event handling (frame updates, clipboard sync, file transfer, RTT, display control) into `polling_handlers.rs`. The handlers take one of two borrowed context structs, `FrameContext` and `FileTransferContext`, that the polling closure builds once per tick from variables it already owns; passing each captured widget and cell individually would have traded a 1000-line closure for an 11-argument function signature.
+- **Pre-allocated collections in hot paths** — added `with_capacity` hints for trash HashMap construction, group hierarchy index building, and sidebar connection filtering to reduce allocation overhead during startup and search.
+- **Moved filesystem cleanup off the main thread** — `empty_trash()` now performs webkit session directory removal (`remove_dir_all`) on a background thread, preventing potential UI freezes on slow storage.
+- **Trimmed unused public API surface** — removed `PackageManager`, `detect_package_manager`, and `get_system_install_command` from `rustconn-core`'s crate-level re-exports (only used internally in tests).
+
+### Documentation
+
+- **Snap: `password-manager-service` moved to Manual Interfaces** — `docs/SNAP.md` incorrectly listed it under "Automatic Interfaces"; it has never been auto-connected by snapd and requires an explicit `snap connect`.
+
 ## [0.19.10] - 2026-08-01
 
 ### Added

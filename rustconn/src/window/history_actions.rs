@@ -287,7 +287,7 @@ impl MainWindow {
             if let Some(win) = window_weak.upgrade() {
                 let state_ref = state_clone.borrow();
                 let connections: Vec<rustconn_core::models::Connection> =
-                    state_ref.list_connections().into_iter().cloned().collect();
+                    state_ref.list_connections_owned();
                 drop(state_ref);
 
                 let dialog = crate::dialogs::WolDialog::new();

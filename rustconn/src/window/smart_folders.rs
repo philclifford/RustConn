@@ -91,7 +91,7 @@ impl MainWindow {
                 return;
             };
             let folder_clone = folder.clone();
-            let groups: Vec<_> = state_ref.list_groups().into_iter().cloned().collect();
+            let groups: Vec<_> = state_ref.list_groups_owned();
             drop(state_ref);
 
             let dialog = SmartFolderDialog::new(Some(win.upcast_ref()), Some(&folder_clone));

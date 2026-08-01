@@ -317,7 +317,7 @@ impl MainWindow {
                             let params = conn.and_then(|c| {
                                 // Resolve key path via inheritance (connection → group → parent group → root)
                                 let groups: Vec<rustconn_core::models::ConnectionGroup> =
-                                    state_ref.list_groups().into_iter().cloned().collect();
+                                    state_ref.list_groups_owned();
                                 let key_path = rustconn_core::connection::ssh_inheritance::resolve_ssh_key_path(c, &groups)
                                     .and_then(|p| rustconn_core::resolve_key_path(&p))
                                     .map(|p| p.to_string_lossy().to_string());

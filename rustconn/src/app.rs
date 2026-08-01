@@ -1122,11 +1122,22 @@ fn check_secret_backend_available(
             secret_banner.set_revealed(false);
             return;
         }
-        BackendAvailability::ServiceUnavailable => crate::i18n::i18n_f(
-            "{} is selected, but no system keyring is responding. \
-             Open Settings, then Secrets, to choose a backend that works on this system.",
-            &[&backend_name],
-        ),
+        BackendAvailability::ServiceUnavailable => {
+            if rustconn_core::snap::is_snap() {
+                // In a snap the keyring is most likely present on the host but
+                // the password-manager-service interface is not connected (#249).
+                crate::i18n::i18n_f(
+                    "{} is selected, but the system keyring is not accessible. Run: sudo snap connect rustconn:password-manager-service — or open Settings, then Secrets, to choose another backend.",
+                    &[&backend_name],
+                )
+            } else {
+                crate::i18n::i18n_f(
+                    "{} is selected, but no system keyring is responding. \
+                     Open Settings, then Secrets, to choose a backend that works on this system.",
+                    &[&backend_name],
+                )
+            }
+        }
         BackendAvailability::ClientMissing => crate::i18n::i18n_f(
             "{} is selected, but its keyring client is not installed. \
              Open Settings, then Secrets, to choose a backend that works on this system.",

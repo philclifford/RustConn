@@ -88,10 +88,10 @@ pub fn show_new_connection_dialog_internal(
     // Set available groups
     {
         let state_ref = state.borrow();
-        let mut groups: Vec<_> = state_ref.list_groups().into_iter().cloned().collect();
+        let mut groups: Vec<_> = state_ref.list_groups_owned();
         groups.sort_by_key(|a| a.name.to_lowercase());
         dialog.set_groups(&groups);
-        let connections: Vec<_> = state_ref.list_connections().into_iter().cloned().collect();
+        let connections: Vec<_> = state_ref.list_connections_owned();
         dialog.set_connections(&connections);
     }
 
@@ -174,8 +174,7 @@ pub fn show_new_connection_dialog_internal(
                             && let Some(pwd) = password
                         {
                             let settings = state_mut.settings().clone();
-                            let groups: Vec<_> =
-                                state_mut.list_groups().into_iter().cloned().collect();
+                            let groups: Vec<_> = state_mut.list_groups_owned();
                             let conn_for_path = state_mut.get_connection(conn_id).cloned();
                             let username = conn_username.unwrap_or_default();
 
@@ -242,10 +241,10 @@ fn show_new_connection_dialog_internal_prefilled(
     // Set available groups
     {
         let state_ref = state.borrow();
-        let mut groups: Vec<_> = state_ref.list_groups().into_iter().cloned().collect();
+        let mut groups: Vec<_> = state_ref.list_groups_owned();
         groups.sort_by_key(|a| a.name.to_lowercase());
         dialog.set_groups(&groups);
-        let connections: Vec<_> = state_ref.list_connections().into_iter().cloned().collect();
+        let connections: Vec<_> = state_ref.list_connections_owned();
         dialog.set_connections(&connections);
     }
 
@@ -327,8 +326,7 @@ fn show_new_connection_dialog_internal_prefilled(
                             && let Some(pwd) = password
                         {
                             let settings = state_mut.settings().clone();
-                            let groups: Vec<_> =
-                                state_mut.list_groups().into_iter().cloned().collect();
+                            let groups: Vec<_> = state_mut.list_groups_owned();
                             let conn_for_path = state_mut.get_connection(conn_id).cloned();
                             let username = conn_username.unwrap_or_default();
 
@@ -613,6 +611,7 @@ pub fn show_new_group_dialog_with_parent(
                     btn_clone.set_icon_name("folder-symbolic");
                     return;
                 };
+                let db_password = settings.secrets.kdbx_password.clone();
                 let key_file = settings.secrets.kdbx_key_file.clone();
                 let entry_name = format!("RustConn/Groups/{group_name}");
 
@@ -621,7 +620,7 @@ pub fn show_new_group_dialog_with_parent(
                         let key_file_path = key_file.as_ref().map(std::path::Path::new);
                         rustconn_core::secret::KeePassStatus::get_password_from_kdbx_with_key(
                             std::path::Path::new(&kdbx_path),
-                            None,
+                            db_password.as_ref(),
                             key_file_path,
                             &entry_name,
                             None,
@@ -963,7 +962,7 @@ pub fn show_new_group_dialog_with_parent(
                     // Save password if provided - use appropriate backend
                     if has_password {
                         // Get group path for hierarchical storage
-                        let groups: Vec<_> = state_mut.list_groups().into_iter().cloned().collect();
+                        let groups: Vec<_> = state_mut.list_groups_owned();
                         let group = state_mut.get_group(group_id).cloned();
                         let settings = state_mut.settings().clone();
 

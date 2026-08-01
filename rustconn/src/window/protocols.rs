@@ -36,7 +36,7 @@ pub(super) fn resolve_automation_for_connection(
         .try_borrow()
         .ok()
         .map(|s| {
-            let groups: Vec<_> = s.list_groups().into_iter().cloned().collect();
+            let groups: Vec<_> = s.list_groups_owned();
             automation_inheritance::resolve_automation(conn, &groups)
         })
         .unwrap_or_else(|| conn.automation.clone())
@@ -561,8 +561,7 @@ pub fn resolve_jump_chain_for_tunnel(
     state_ref: &crate::state::AppState,
     jump_conn: &rustconn_core::Connection,
 ) -> Vec<String> {
-    let groups: Vec<rustconn_core::ConnectionGroup> =
-        state_ref.list_groups().into_iter().cloned().collect();
+    let groups: Vec<rustconn_core::ConnectionGroup> = state_ref.list_groups_owned();
 
     // Check if the jump host itself has a jump host (recursive chain)
     let ssh_config = match &jump_conn.protocol_config {
@@ -1094,8 +1093,7 @@ fn start_spice_connection_internal(
             }
             let jump_port = jump_conn.port;
             // Resolve key path via inheritance (connection → group → parent group → root)
-            let groups: Vec<rustconn_core::models::ConnectionGroup> =
-                state_ref.list_groups().into_iter().cloned().collect();
+            let groups: Vec<rustconn_core::models::ConnectionGroup> = state_ref.list_groups_owned();
             let identity_file = ssh_inheritance::resolve_ssh_key_path(jump_conn, &groups)
                 .and_then(|p| rustconn_core::resolve_key_path(&p))
                 .map(|p| p.to_string_lossy().to_string());

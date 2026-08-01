@@ -135,7 +135,7 @@ pub fn start_rdp_with_password_dialog_observed(
 
                 if let Ok(state_ref) = state.try_borrow() {
                     let settings = state_ref.settings().clone();
-                    let groups: Vec<_> = state_ref.list_groups().into_iter().cloned().collect();
+                    let groups: Vec<_> = state_ref.list_groups_owned();
                     let conn = state_ref.get_connection(connection_id);
                     let protocol = rustconn_core::models::ProtocolType::Rdp;
 
@@ -281,8 +281,7 @@ fn start_rdp_session_internal(
             }
             let jump_port = jump_conn.port;
             // Resolve key path via inheritance (connection → group → parent group → root)
-            let groups: Vec<rustconn_core::models::ConnectionGroup> =
-                state_ref.list_groups().into_iter().cloned().collect();
+            let groups: Vec<rustconn_core::models::ConnectionGroup> = state_ref.list_groups_owned();
             let identity_file = rustconn_core::connection::ssh_inheritance::resolve_ssh_key_path(
                 jump_conn, &groups,
             )
@@ -1135,7 +1134,7 @@ pub fn start_vnc_with_password_dialog_observed(
 
                 if let Ok(state_ref) = state.try_borrow() {
                     let settings = state_ref.settings().clone();
-                    let groups: Vec<_> = state_ref.list_groups().into_iter().cloned().collect();
+                    let groups: Vec<_> = state_ref.list_groups_owned();
                     let conn = state_ref.get_connection(connection_id);
                     let protocol = rustconn_core::models::ProtocolType::Vnc;
 
@@ -1270,8 +1269,7 @@ fn start_vnc_session_internal(
             }
             let jump_port = jump_conn.port;
             // Resolve key path via inheritance (connection → group → parent group → root)
-            let groups: Vec<rustconn_core::models::ConnectionGroup> =
-                state_ref.list_groups().into_iter().cloned().collect();
+            let groups: Vec<rustconn_core::models::ConnectionGroup> = state_ref.list_groups_owned();
             let identity_file = rustconn_core::connection::ssh_inheritance::resolve_ssh_key_path(
                 jump_conn, &groups,
             )

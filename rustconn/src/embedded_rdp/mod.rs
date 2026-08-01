@@ -44,6 +44,7 @@ mod drawing;
 mod ephemeral_args;
 pub mod file_dnd;
 mod input;
+mod polling_handlers;
 mod resize;
 
 // Re-export types for external use

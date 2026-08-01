@@ -1769,7 +1769,7 @@ impl MainWindow {
         if let Some(protocol_name) = single_protocol {
             // Handle single protocol filter — direct filtering without scoring
             let protocol_names: Vec<&str> = vec![protocol_name.trim()];
-            let mut filtered_connections = Vec::new();
+            let mut filtered_connections = Vec::with_capacity(connections.len());
 
             for conn in &connections {
                 let protocol = get_protocol_string(&conn.protocol_config);
@@ -1797,7 +1797,7 @@ impl MainWindow {
         } else if let Some(protocols_str) = query.strip_prefix("protocols:") {
             // Handle multiple protocol filters with OR logic
             let protocol_names: Vec<&str> = protocols_str.split(',').collect();
-            let mut filtered_connections = Vec::new();
+            let mut filtered_connections = Vec::with_capacity(connections.len());
 
             for conn in &connections {
                 let protocol = get_protocol_string(&conn.protocol_config);
@@ -2723,7 +2723,7 @@ impl MainWindow {
             return;
         };
         let settings = state_mut.settings().clone();
-        let groups: Vec<_> = state_mut.list_groups().into_iter().cloned().collect();
+        let groups: Vec<_> = state_mut.list_groups_owned();
         let conn_for_path = state_mut.get_connection(conn_id).cloned();
         crate::state::save_password_to_vault(
             &settings,
@@ -2894,7 +2894,7 @@ impl MainWindow {
         // Populate with current connections and groups
         {
             let state_ref = state.borrow();
-            let connections: Vec<_> = state_ref.list_connections().into_iter().cloned().collect();
+            let connections: Vec<_> = state_ref.list_connections_owned();
             let groups: Vec<_> = state_ref.get_root_groups().into_iter().cloned().collect();
             palette.set_connections(connections);
             palette.set_groups(groups);
@@ -3033,11 +3033,11 @@ impl MainWindow {
         {
             let state_ref = state.borrow();
             dialog.set_settings(state_ref.settings().clone());
-            let connections: Vec<_> = state_ref.list_connections().into_iter().cloned().collect();
+            let connections: Vec<_> = state_ref.list_connections_owned();
             dialog.set_connections(connections);
 
             // Populate Cloud Sync sections
-            let groups: Vec<_> = state_ref.list_groups().into_iter().cloned().collect();
+            let groups: Vec<_> = state_ref.list_groups_owned();
             dialog.populate_cloud_sync(&groups, state_ref.sync_manager(), &state);
         }
         tracing::debug!(

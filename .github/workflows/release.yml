@@ -720,25 +720,31 @@ jobs:
           # sync with the code — the CI only needs to patch version + sha256.
           cp packaging/macos/rustconn.rb "$FORMULA"
 
-          # Update version in url
-          sed -i "s|url \"https://github.com/totoshko88/RustConn/archive/refs/tags/v[^\"]*\.tar\.gz\"|url \"https://github.com/totoshko88/RustConn/archive/refs/tags/v${VERSION}.tar.gz\"|" "$FORMULA"
+          # Replace the archive URL version (anchored to active `url` line)
+          sed -i 's|^\(  url "https://github.com/totoshko88/RustConn/archive/refs/tags/v\)[^"]*\(\.tar\.gz"\)|\1'"${VERSION}"'\2|' "$FORMULA"
 
-          # Update or insert sha256
-          if grep -q '# TODO: update sha256' "$FORMULA"; then
-            # Replace placeholder sha256 line
-            sed -i "s|.*# TODO: update sha256.*|  sha256 \"${SHA256}\"|" "$FORMULA"
-          elif grep -q '# sha256' "$FORMULA"; then
-            # Replace commented-out sha256 with real one
-            sed -i "s|# sha256 \".*\"|sha256 \"${SHA256}\"|" "$FORMULA"
-          elif grep -q 'sha256 "' "$FORMULA"; then
-            # Update existing sha256
-            sed -i "s|sha256 \"[^\"]*\"|sha256 \"${SHA256}\"|" "$FORMULA"
-          else
-            # Insert sha256 after url line
-            sed -i "/^  url /a\\  sha256 \"${SHA256}\"" "$FORMULA"
+          # Replace sha256 (handles both PLACEHOLDER_SHA256 and any previous real hash)
+          sed -i 's|^\(  sha256 "\)[^"]*\(".*\)|\1'"${SHA256}"'\2|' "$FORMULA"
+
+          # ── Verification: fail unless exactly one active URL contains the
+          # release tag and exactly one active sha256 contains the computed hash.
+          # Escape the dots in the version so 0.19.11 cannot match 0X19Y11
+          VERSION_RE=${VERSION//./\\.}
+          URL_COUNT=$(grep -c "^  url.*v${VERSION_RE}\.tar\.gz" "$FORMULA" || true)
+          SHA_COUNT=$(grep -c "^  sha256 \"${SHA256}\"" "$FORMULA" || true)
+
+          if [[ "$URL_COUNT" -ne 1 ]]; then
+            echo "::error::Expected exactly 1 active URL with v${VERSION}, found ${URL_COUNT}"
+            head -15 "$FORMULA"
+            exit 1
+          fi
+          if [[ "$SHA_COUNT" -ne 1 ]]; then
+            echo "::error::Expected exactly 1 active sha256 with computed hash, found ${SHA_COUNT}"
+            head -15 "$FORMULA"
+            exit 1
           fi
 
-          echo "=== Updated formula ==="
+          echo "=== Updated formula (first 10 lines) ==="
           head -10 "$FORMULA"
 
       - name: Commit and push
