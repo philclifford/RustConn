@@ -11,11 +11,7 @@ use rustconn_core::{
 
 /// Strategy for generating item types
 fn item_type_strategy() -> impl Strategy<Value = ItemType> {
-    prop_oneof![
-        Just(ItemType::Connection),
-        Just(ItemType::Group),
-        Just(ItemType::Document),
-    ]
+    prop_oneof![Just(ItemType::Connection), Just(ItemType::Group),]
 }
 
 /// Strategy for generating drop configurations

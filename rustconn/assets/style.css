@@ -562,15 +562,6 @@ tabbar > revealer > box {
 }
 
 /* ============================================================
- * Document Dirty Indicator
- * CSS dot badge replaces text "• " prefix for unsaved documents
- * ============================================================ */
-
-.document-dirty {
-    font-style: italic;
-}
-
-/* ============================================================
  * Tunnel Path Diagram Styles
  * Visual representation of SSH tunnel chain:
  * localhost → bastion → target

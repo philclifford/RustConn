@@ -11,6 +11,12 @@ use rustconn_core::session::LogConfig;
 
 use crate::i18n::i18n;
 
+/// Path template used when the field is left empty.
+///
+/// Deliberately relative: it is resolved against the log directory from
+/// Settings → Terminal → Logging, which is also where the global switch writes.
+const DEFAULT_PATH_TEMPLATE: &str = "${connection_name}_${datetime}.log";
+
 /// Timestamp format options matching the dropdown order
 const TIMESTAMP_FORMATS: [&str; 5] = [
     "%Y-%m-%d %H:%M:%S",
@@ -73,22 +79,23 @@ impl LoggingTab {
             .title(i18n("Log Settings"))
             .build();
 
+        // A relative path lands in the log directory from Settings → Terminal →
+        // Logging, so the placeholder shows the plain file-name form rather than
+        // an absolute path that suggested the wrong location (issue #247).
         let path_entry = Entry::builder()
             .hexpand(true)
             .valign(gtk4::Align::Center)
-            .placeholder_text(
-                "${HOME}/.local/share/rustconn/logs/\
-                 ${connection_name}_${date}.log",
-            )
+            .placeholder_text(DEFAULT_PATH_TEMPLATE)
             .sensitive(false)
             .build();
 
         let path_row = adw::ActionRow::builder()
             .title(i18n("Log Path"))
-            .subtitle(
-                "Variables: ${connection_name}, ${protocol}, \
-                 ${date}, ${time}, ${datetime}, ${HOME}",
-            )
+            .subtitle(format!(
+                "{}\nVariables: ${{connection_name}}, ${{protocol}}, \
+                 ${{date}}, ${{time}}, ${{datetime}}, ${{HOME}}, ~",
+                i18n("A relative path is kept in the log directory from Settings")
+            ))
             .build();
         path_row.add_suffix(&path_entry);
         settings_group.add(&path_row);
@@ -285,9 +292,7 @@ impl LoggingTab {
 
         let path_template = self.path_entry.text().trim().to_string();
         let path_template = if path_template.is_empty() {
-            "${HOME}/.local/share/rustconn/logs/\
-             ${connection_name}_${date}.log"
-                .to_string()
+            DEFAULT_PATH_TEMPLATE.to_string()
         } else {
             path_template
         };

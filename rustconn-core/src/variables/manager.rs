@@ -27,12 +27,8 @@ pub static VARIABLE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 pub struct VariableManager {
     /// Global variables available to all connections
     global_vars: HashMap<String, Variable>,
-    /// Document-scoped variables indexed by document ID
-    document_vars: HashMap<Uuid, HashMap<String, Variable>>,
     /// Connection-scoped variables indexed by connection ID
     connection_vars: HashMap<Uuid, HashMap<String, Variable>>,
-    /// Mapping from connection ID to document ID for scope chain resolution
-    connection_to_document: HashMap<Uuid, Uuid>,
 }
 
 impl VariableManager {
@@ -49,14 +45,6 @@ impl VariableManager {
         self.global_vars.insert(variable.name.clone(), variable);
     }
 
-    /// Sets a document-scoped variable
-    pub fn set_document(&mut self, document_id: Uuid, variable: Variable) {
-        self.document_vars
-            .entry(document_id)
-            .or_default()
-            .insert(variable.name.clone(), variable);
-    }
-
     /// Sets a connection-scoped variable
     pub fn set_connection(&mut self, connection_id: Uuid, variable: Variable) {
         self.connection_vars
@@ -65,24 +53,10 @@ impl VariableManager {
             .insert(variable.name.clone(), variable);
     }
 
-    /// Associates a connection with a document for scope chain resolution
-    pub fn set_connection_document(&mut self, connection_id: Uuid, document_id: Uuid) {
-        self.connection_to_document
-            .insert(connection_id, document_id);
-    }
-
     /// Gets a global variable by name
     #[must_use]
     pub fn get_global(&self, name: &str) -> Option<&Variable> {
         self.global_vars.get(name)
-    }
-
-    /// Gets a document-scoped variable by name
-    #[must_use]
-    pub fn get_document(&self, document_id: Uuid, name: &str) -> Option<&Variable> {
-        self.document_vars
-            .get(&document_id)
-            .and_then(|vars| vars.get(name))
     }
 
     /// Gets a connection-scoped variable by name
@@ -98,13 +72,6 @@ impl VariableManager {
         self.global_vars.remove(name)
     }
 
-    /// Removes a document-scoped variable
-    pub fn remove_document(&mut self, document_id: Uuid, name: &str) -> Option<Variable> {
-        self.document_vars
-            .get_mut(&document_id)
-            .and_then(|vars| vars.remove(name))
-    }
-
     /// Removes a connection-scoped variable
     pub fn remove_connection(&mut self, connection_id: Uuid, name: &str) -> Option<Variable> {
         self.connection_vars
@@ -116,15 +83,6 @@ impl VariableManager {
     #[must_use]
     pub fn list_global(&self) -> Vec<&Variable> {
         self.global_vars.values().collect()
-    }
-
-    /// Lists all document-scoped variables
-    #[must_use]
-    pub fn list_document(&self, document_id: Uuid) -> Vec<&Variable> {
-        self.document_vars
-            .get(&document_id)
-            .map(|vars| vars.values().collect())
-            .unwrap_or_default()
     }
 
     /// Lists all connection-scoped variables
@@ -141,8 +99,7 @@ impl VariableManager {
     /// Resolves a variable reference to its value
     ///
     /// Resolution follows the scope chain from most specific to least specific:
-    /// - For `Connection` scope: Connection -> Document -> Global
-    /// - For `Document` scope: Document -> Global
+    /// - For `Connection` scope: Connection -> Global
     /// - For `Global` scope: Global only
     ///
     /// # Arguments
@@ -203,34 +160,11 @@ impl VariableManager {
     fn lookup_in_scope_chain(&self, name: &str, scope: VariableScope) -> Option<&Variable> {
         match scope {
             VariableScope::Global => self.global_vars.get(name),
-            VariableScope::Document(doc_id) => self
-                .document_vars
-                .get(&doc_id)
+            VariableScope::Connection(conn_id) => self
+                .connection_vars
+                .get(&conn_id)
                 .and_then(|vars| vars.get(name))
                 .or_else(|| self.global_vars.get(name)),
-            VariableScope::Connection(conn_id) => {
-                // First check connection scope
-                if let Some(var) = self
-                    .connection_vars
-                    .get(&conn_id)
-                    .and_then(|vars| vars.get(name))
-                {
-                    return Some(var);
-                }
-
-                // Then check document scope if connection is associated with a document
-                if let Some(doc_id) = self.connection_to_document.get(&conn_id)
-                    && let Some(var) = self
-                        .document_vars
-                        .get(doc_id)
-                        .and_then(|vars| vars.get(name))
-                {
-                    return Some(var);
-                }
-
-                // Finally check global scope
-                self.global_vars.get(name)
-            }
         }
     }
 
@@ -357,14 +291,6 @@ impl VariableManager {
         for name in self.global_vars.keys() {
             let mut visited = HashSet::new();
             self.check_cycle_from(name, VariableScope::Global, &mut visited)?;
-        }
-
-        // Check document variables for cycles
-        for (doc_id, vars) in &self.document_vars {
-            for name in vars.keys() {
-                let mut visited = HashSet::new();
-                self.check_cycle_from(name, VariableScope::Document(*doc_id), &mut visited)?;
-            }
         }
 
         // Check connection variables for cycles
@@ -567,36 +493,12 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_with_document_scope() {
-        let mut manager = create_test_manager();
-        let doc_id = Uuid::new_v4();
-
-        // Document variable overrides global
-        manager.set_document(doc_id, Variable::new("user", "doc_user"));
-
-        // Document scope should return document variable
-        let result = manager
-            .resolve("user", VariableScope::Document(doc_id))
-            .unwrap();
-        assert_eq!(result, "doc_user");
-
-        // Global variable should still be accessible
-        let result = manager
-            .resolve("host", VariableScope::Document(doc_id))
-            .unwrap();
-        assert_eq!(result, "example.com");
-    }
-
-    #[test]
     fn test_resolve_with_connection_scope() {
         let mut manager = create_test_manager();
-        let doc_id = Uuid::new_v4();
         let conn_id = Uuid::new_v4();
 
-        // Set up scope chain
-        manager.set_document(doc_id, Variable::new("user", "doc_user"));
+        // Connection variable overrides global
         manager.set_connection(conn_id, Variable::new("user", "conn_user"));
-        manager.set_connection_document(conn_id, doc_id);
 
         // Connection scope should return connection variable
         let result = manager
@@ -604,7 +506,7 @@ mod tests {
             .unwrap();
         assert_eq!(result, "conn_user");
 
-        // Global variable should still be accessible through chain
+        // Global variable should still be accessible through the chain
         let result = manager
             .resolve("host", VariableScope::Connection(conn_id))
             .unwrap();
@@ -672,21 +574,17 @@ mod tests {
     #[test]
     fn test_variable_management() {
         let mut manager = VariableManager::new();
-        let doc_id = Uuid::new_v4();
         let conn_id = Uuid::new_v4();
 
         // Test set and get
         manager.set_global(Variable::new("g1", "v1"));
-        manager.set_document(doc_id, Variable::new("d1", "v2"));
         manager.set_connection(conn_id, Variable::new("c1", "v3"));
 
         assert_eq!(manager.get_global("g1").unwrap().value, "v1");
-        assert_eq!(manager.get_document(doc_id, "d1").unwrap().value, "v2");
         assert_eq!(manager.get_connection(conn_id, "c1").unwrap().value, "v3");
 
         // Test list
         assert_eq!(manager.list_global().len(), 1);
-        assert_eq!(manager.list_document(doc_id).len(), 1);
         assert_eq!(manager.list_connection(conn_id).len(), 1);
 
         // Test remove

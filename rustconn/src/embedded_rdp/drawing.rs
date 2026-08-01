@@ -9,6 +9,12 @@ use gtk4::prelude::*;
 
 use super::types::{RdpConfig, RdpConnectionState};
 
+/// Opacity of the wash drawn over a frame that may no longer reflect the server.
+///
+/// Enough that the change is unmistakable at a glance, light enough that the
+/// user can still recognise what was on screen before the machine slept.
+const STALE_FRAME_DIM_ALPHA: f64 = 0.55;
+
 impl super::EmbeddedRdpWidget {
     /// Sets up the drawing function for the DrawingArea
     ///
@@ -26,6 +32,7 @@ impl super::EmbeddedRdpWidget {
     pub(super) fn setup_drawing(&self) {
         let cairo_buffer = self.cairo_buffer.clone();
         let state = self.state.clone();
+        let stale_frame = self.stale.clone();
         let is_embedded = self.is_embedded.clone();
         let config = self.config.clone();
         let rdp_width = self.rdp_width.clone();
@@ -121,6 +128,15 @@ impl super::EmbeddedRdpWidget {
                         // Restore the transformation matrix
                         if let Err(e) = cr.restore() {
                             tracing::warn!(error = %e, "Cairo restore failed");
+                        }
+
+                        // The machine resumed from sleep and this frame may be
+                        // minutes old. Wash it out so a frozen desktop is never
+                        // mistaken for a live one (issue #248). The reconnect
+                        // banner below states the reason in words.
+                        if stale_frame.get() {
+                            cr.set_source_rgba(0.12, 0.12, 0.14, STALE_FRAME_DIM_ALPHA);
+                            let _ = cr.paint();
                         }
                     }
                 } else {

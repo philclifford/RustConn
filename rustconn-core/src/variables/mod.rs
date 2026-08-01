@@ -1,7 +1,7 @@
 //! Variables system for `RustConn`
 //!
 //! This module provides a hierarchical variable system with support for:
-//! - Global, document-level, and connection-level variables
+//! - Global and connection-level variables
 //! - Variable substitution in strings using `${variable_name}` syntax
 //! - Nested variable resolution with cycle detection
 //! - Secure storage for secret variables
@@ -19,7 +19,7 @@ pub const MAX_NESTING_DEPTH: usize = 10;
 
 /// A variable definition with optional secret flag
 ///
-/// Variables can be defined at different scopes (global, document, connection)
+/// Variables can be defined at different scopes (global, connection)
 /// and can be marked as secret for secure storage and masked display.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Variable {
@@ -152,13 +152,11 @@ pub fn variable_kdbx_lookup_key(var: &Variable) -> String {
 /// Variable scope for resolution
 ///
 /// Variables are resolved in order from most specific to least specific:
-/// Connection -> Document -> Global
+/// Connection -> Global
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VariableScope {
     /// Global variables available to all connections
     Global,
-    /// Document-level variables available to connections within a document
-    Document(Uuid),
     /// Connection-level variables specific to a single connection
     Connection(Uuid),
 }
@@ -166,13 +164,12 @@ pub enum VariableScope {
 impl VariableScope {
     /// Returns the parent scope for resolution chain
     ///
-    /// Connection -> Document -> Global -> None
+    /// Connection -> Global -> None
     #[must_use]
     pub const fn parent(&self) -> Option<Self> {
         match self {
-            Self::Document(_) => Some(Self::Global),
-            // Connection scope needs document ID to get parent, Global has no parent
-            Self::Global | Self::Connection(_) => None,
+            Self::Connection(_) => Some(Self::Global),
+            Self::Global => None,
         }
     }
 }
@@ -244,11 +241,9 @@ mod tests {
     fn test_variable_scope_parent() {
         assert_eq!(VariableScope::Global.parent(), None);
         assert_eq!(
-            VariableScope::Document(Uuid::nil()).parent(),
+            VariableScope::Connection(Uuid::nil()).parent(),
             Some(VariableScope::Global)
         );
-        // Connection scope parent depends on document context
-        assert_eq!(VariableScope::Connection(Uuid::nil()).parent(), None);
     }
 
     #[test]

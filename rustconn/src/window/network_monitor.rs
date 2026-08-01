@@ -177,11 +177,7 @@ pub fn setup_network_monitor(
         let state_for_reconnect = state_clone.clone();
         let notebook_for_reconnect = notebook_clone.clone();
         glib::timeout_add_local_once(Duration::from_millis(RECONNECT_DELAY_MS), move || {
-            trigger_reconnect_for_disconnected_sessions(
-                &state_for_reconnect,
-                &notebook_for_reconnect,
-            );
-            trigger_reconnect_for_embedded_sessions(&state_for_reconnect, &notebook_for_reconnect);
+            reconnect_sessions_after_outage(&state_for_reconnect, &notebook_for_reconnect);
         });
     });
 }
@@ -239,6 +235,22 @@ fn close_only_dead_sockets() {
     {
         tracing::warn!(error = %e, "Failed to spawn socket-check thread (ulimit reached?)");
     }
+}
+
+/// Reconnects every session that an outage left disconnected.
+///
+/// Shared by the two events that can strand a session: a network interface
+/// change (issue #217) and the local machine waking from sleep (issue #248).
+/// Both end in the same place — sessions whose transport died while RustConn was
+/// unable to do anything about it — so both use one sweep rather than each
+/// growing its own copy.
+///
+/// Only sessions that are *already* known to be disconnected are touched, and
+/// only when the connection has auto-reconnect enabled, so a healthy session is
+/// never interrupted.
+pub(super) fn reconnect_sessions_after_outage(state: &SharedAppState, notebook: &SharedNotebook) {
+    trigger_reconnect_for_disconnected_sessions(state, notebook);
+    trigger_reconnect_for_embedded_sessions(state, notebook);
 }
 
 /// Triggers in-place reconnect for VTE sessions currently showing the

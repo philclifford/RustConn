@@ -23,7 +23,6 @@ mod cluster;
 mod command_palette;
 mod connection;
 pub mod connection_wizard;
-mod document;
 mod export;
 mod flatpak_components;
 mod history;
@@ -32,7 +31,6 @@ pub mod keyboard;
 mod log_viewer;
 mod password;
 mod password_generator;
-mod progress;
 pub mod recording;
 pub(crate) mod settings;
 mod shortcuts;
@@ -59,10 +57,6 @@ pub use cluster::{ClusterCallback, ClusterDialog, ClusterListDialog};
 pub use command_palette::{CommandPaletteDialog, OpenTabInfo};
 pub use connection::ConnectionDialog;
 pub use connection_wizard::{ConnectionWizard, PartialConnection, WizardResult};
-pub use document::{
-    CloseDocumentDialog, DocumentCallback, DocumentDialogResult, DocumentProtectionDialog,
-    NewDocumentDialog, OpenDocumentDialog, SaveDocumentDialog,
-};
 pub use export::{ExportCallback, ExportDialog};
 pub use flatpak_components::{FlatpakComponentsDialog, should_show_flatpak_components_menu};
 pub use history::HistoryDialog;
@@ -70,7 +64,6 @@ pub use import::ImportDialog;
 pub use log_viewer::LogViewerDialog;
 pub use password::{PasswordDialog, PasswordDialogResult};
 pub use password_generator::show_password_generator_dialog;
-pub use progress::ProgressDialog;
 pub use recording::RecordingsDialog;
 use rustconn_core::config::AppSettings;
 use rustconn_core::import::ImportResult;

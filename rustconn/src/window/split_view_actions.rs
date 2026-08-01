@@ -876,57 +876,5 @@ impl MainWindow {
             }
         });
         window.add_action(&focus_next_pane_action);
-
-        // Unsplit session action - moves session from split pane to its own tab
-        let unsplit_session_action =
-            gio::SimpleAction::new("unsplit-session", Some(glib::VariantTy::STRING));
-        let session_bridges_unsplit = self.session_split_bridges.clone();
-        let notebook_for_unsplit = self.terminal_notebook.clone();
-        let split_container_unsplit = self.split_container.clone();
-        let monitoring_unsplit = self.monitoring.clone();
-        unsplit_session_action.connect_activate(move |_, param| {
-            if let Some(param) = param
-                && let Some(session_id_str) = param.get::<String>()
-                && let Ok(session_id) = Uuid::parse_str(&session_id_str)
-            {
-                // Find the bridge containing this session
-                let bridges = session_bridges_unsplit.borrow();
-                for bridge in bridges.values() {
-                    if bridge.is_session_displayed(session_id) {
-                        // Clear session from split pane
-                        bridge.clear_session_from_panes(session_id);
-
-                        // Move terminal back to TabView
-                        notebook_for_unsplit.reparent_terminal_to_tab(session_id);
-
-                        // Clear tab color indicator
-                        notebook_for_unsplit.clear_tab_split_color(session_id);
-
-                        // Resume monitoring if it was suspended
-                        if monitoring_unsplit.is_suspended(session_id)
-                            && let Some(container) =
-                                notebook_for_unsplit.get_session_container(session_id)
-                        {
-                            monitoring_unsplit.resume_monitoring(session_id, &container);
-                        }
-
-                        // Check if any sessions remain in this split view
-                        let has_sessions_in_split = bridge
-                            .pane_ids()
-                            .iter()
-                            .any(|&pane_id| bridge.get_pane_session(pane_id).is_some());
-
-                        if !has_sessions_in_split {
-                            // No sessions in split view - hide it
-                            bridge.widget().set_visible(false);
-                            split_container_unsplit.set_visible(false);
-                            notebook_for_unsplit.show_tab_view_content();
-                        }
-                        break;
-                    }
-                }
-            }
-        });
-        window.add_action(&unsplit_session_action);
     }
 }

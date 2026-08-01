@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use super::gateway::GatewayConfig;
 use super::graphics::{GraphicsMode, GraphicsQuality};
 use super::multimonitor::MonitorLayout;
-use super::reconnect::ReconnectPolicy;
 use crate::models::RdpPerformanceMode;
 
 /// Shared folder configuration for RDP drive redirection
@@ -125,10 +124,6 @@ pub struct RdpClientConfig {
     /// Multi-monitor layout
     #[serde(default)]
     pub monitor_layout: MonitorLayout,
-
-    /// Reconnection policy
-    #[serde(default)]
-    pub reconnect_policy: ReconnectPolicy,
 
     /// Enable printer redirection
     #[serde(default)]
@@ -258,7 +253,6 @@ impl Default for RdpClientConfig {
             graphics_quality: GraphicsQuality::default(),
             gateway: GatewayConfig::default(),
             monitor_layout: MonitorLayout::default(),
-            reconnect_policy: ReconnectPolicy::default(),
             printer_enabled: false,
             printers: Vec::new(),
             smartcard_enabled: false,
@@ -401,13 +395,6 @@ impl RdpClientConfig {
         self
     }
 
-    /// Sets the reconnection policy
-    #[must_use]
-    pub const fn with_reconnect_policy(mut self, policy: ReconnectPolicy) -> Self {
-        self.reconnect_policy = policy;
-        self
-    }
-
     /// Enables or disables audio
     #[must_use]
     pub const fn with_audio(mut self, enabled: bool) -> Self {
@@ -544,7 +531,6 @@ impl PartialEq for RdpClientConfig {
             && self.graphics_quality == other.graphics_quality
             && self.gateway == other.gateway
             && self.monitor_layout == other.monitor_layout
-            && self.reconnect_policy == other.reconnect_policy
             && self.printer_enabled == other.printer_enabled
             && self.printers == other.printers
             && self.smartcard_enabled == other.smartcard_enabled

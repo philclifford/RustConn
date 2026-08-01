@@ -753,7 +753,6 @@ fn zt_cfg(
         provider,
         provider_config,
         custom_args: Vec::new(),
-        detected_provider: None,
     }
 }
 

@@ -16,6 +16,7 @@
 
 pub mod automation_inheritance;
 mod interning;
+pub mod keepalive;
 pub mod knock;
 mod lazy_loader;
 mod manager;
@@ -32,6 +33,7 @@ pub use interning::{
     check_interning_stats, get_interning_stats, intern_connection_strings, intern_hostname,
     intern_protocol_name, intern_username, log_interning_stats, log_interning_stats_with_warning,
 };
+pub use keepalive::{KeepaliveConfig, apply_interactive_keepalive, set_interactive_keepalive};
 pub use knock::{
     Knock, KnockError, KnockProtocol, KnockResult, KnockSequence, SpaAllowIp, SpaConfig,
     execute_knock_sequence,

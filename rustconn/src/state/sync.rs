@@ -999,6 +999,4 @@ impl AppState {
 
         Ok(())
     }
-
-    // ========== Document Operations ==========
 }

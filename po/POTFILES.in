@@ -24,7 +24,6 @@ rustconn/src/window/connection_actions.rs
 rustconn/src/window/credentials.rs
 rustconn/src/window/connection_dialogs.rs
 rustconn/src/window/detach_actions.rs
-rustconn/src/window/document_actions.rs
 rustconn/src/window/edit_actions.rs
 rustconn/src/window/edit_dialogs.rs
 rustconn/src/window/edit_group.rs
@@ -33,6 +32,7 @@ rustconn/src/window/history_actions.rs
 rustconn/src/window/navigation_actions.rs
 rustconn/src/window/network_monitor.rs
 rustconn/src/window/operations.rs
+rustconn/src/window/resume_monitor.rs
 rustconn/src/window/sorting.rs
 rustconn/src/window/templates.rs
 rustconn/src/window/terminal_actions.rs
@@ -92,7 +92,6 @@ rustconn/src/dialogs/template.rs
 rustconn/src/dialogs/template_manager.rs
 rustconn/src/dialogs/password.rs
 rustconn/src/dialogs/password_generator.rs
-rustconn/src/dialogs/progress.rs
 rustconn/src/dialogs/recording.rs
 rustconn/src/dialogs/variables.rs
 rustconn/src/dialogs/variable_setup.rs
@@ -100,7 +99,6 @@ rustconn/src/dialogs/widgets.rs
 rustconn/src/dialogs/backend_missing.rs
 rustconn/src/dialogs/cluster.rs
 rustconn/src/dialogs/command_palette.rs
-rustconn/src/dialogs/document.rs
 rustconn/src/dialogs/flatpak_components.rs
 rustconn/src/dialogs/log_viewer.rs
 rustconn/src/dialogs/terminal_search.rs
@@ -128,12 +126,11 @@ rustconn/src/terminal/tab_menu.rs
 rustconn/src/validation.rs
 rustconn/src/vault_ops.rs
 rustconn/src/detached_window.rs
-rustconn/src/empty_state.rs
-rustconn/src/dashboard.rs
 rustconn/src/automation.rs
 rustconn/src/monitoring.rs
 rustconn/src/embedded.rs
 rustconn/src/embedded_rdp/mod.rs
+rustconn/src/embedded_toolbar_overflow.rs
 rustconn/src/embedded_rdp/autotype.rs
 rustconn/src/embedded_rdp/clipboard.rs
 rustconn/src/embedded_rdp/ui.rs
@@ -142,7 +139,6 @@ rustconn/src/embedded_rdp/file_dnd.rs
 rustconn/src/embedded_rdp/resize.rs
 rustconn/src/embedded_web/mod.rs
 rustconn/src/embedded_web/navigation.rs
-rustconn/src/embedded_spice.rs
 rustconn/src/embedded_trait.rs
 rustconn/src/embedded_vnc/mod.rs
 rustconn/src/embedded_vnc/ui.rs

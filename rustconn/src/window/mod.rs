@@ -10,7 +10,6 @@ mod connection_actions;
 mod connection_dialogs;
 mod credentials;
 mod detach_actions;
-mod document_actions;
 mod edit_actions;
 mod edit_dialogs;
 mod edit_group;
@@ -22,6 +21,7 @@ mod operations;
 mod protocols;
 mod protocols_ssh;
 mod rdp_vnc;
+mod resume_monitor;
 mod session_lifecycle;
 pub mod session_restore;
 mod sessions;
@@ -50,7 +50,6 @@ use rustconn_core::variables::{VariableManager, VariableScope};
 use uuid::Uuid;
 use vte4::prelude::*;
 
-use self::document_actions as doc_actions;
 use self::types::{
     SessionSplitBridges, SharedNotebook, SharedSidebar, SharedSplitView, get_protocol_string,
 };
@@ -1036,6 +1035,15 @@ impl MainWindow {
             &main_window.toast_overlay,
         );
 
+        // Notice when the machine wakes from sleep, so a session whose socket
+        // died during the suspend is reported at once rather than after the
+        // keepalive timeout — and never shown as a live frozen desktop (#248)
+        resume_monitor::setup_resume_monitor(
+            &main_window.state,
+            &main_window.terminal_notebook,
+            &main_window.toast_overlay,
+        );
+
         main_window
     }
 
@@ -1063,24 +1071,12 @@ impl MainWindow {
         self.setup_template_actions(window, &state, &sidebar);
         self.setup_workspace_actions(window, &state, &terminal_notebook, &sidebar);
         self.setup_split_view_actions(window);
-        self.setup_document_actions(window, &state, &sidebar);
         self.setup_variables_actions(window, &state);
         self.setup_history_actions(window, &state);
         self.setup_misc_actions(window, &state, &sidebar, &terminal_notebook);
         self.setup_detach_actions(window);
         Self::setup_smart_folder_actions(window, &state, &sidebar);
     }
-    fn setup_document_actions(
-        &self,
-        window: &adw::ApplicationWindow,
-        state: &SharedAppState,
-        sidebar: &SharedSidebar,
-    ) {
-        // adw::ApplicationWindow extends gtk4::ApplicationWindow, so we can use upcast_ref
-        let gtk_app_window: &gtk4::ApplicationWindow = window.upcast_ref();
-        doc_actions::setup_document_actions(gtk_app_window, state, sidebar);
-    }
-
     /// Sets up miscellaneous actions (drag-drop)
     fn setup_misc_actions(
         &self,
@@ -2242,7 +2238,15 @@ impl MainWindow {
         }
 
         let protocol = get_protocol_string(&conn.protocol_config);
-        let logging_enabled = state_ref.settings().logging.enabled;
+        // Either switch is enough to arm session logging: the connection's own
+        // Logs tab or the global one in Settings → Terminal → Logging. Before
+        // 0.19.10 only the global flag was consulted, so a connection that had
+        // logging configured never wrote a line (issue #247).
+        let logging_enabled = state_ref.settings().logging.enabled
+            || conn
+                .log_config
+                .as_ref()
+                .is_some_and(|config| config.enabled);
 
         // Clone connection data before dropping borrow
         let mut conn_clone = conn.clone();

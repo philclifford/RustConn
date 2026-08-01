@@ -1,4 +1,25 @@
 -------------------------------------------------------------------
+Sat Aug 01 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.10
+
+- Version bump to 0.19.10
+- Added "Session Logs..." to the primary menu and "Session Log..." to a connection's context menu, opening the directory that connection actually writes to (#247)
+- Added expansion of a leading ~ in a log path template; a relative template now resolves inside the log directory from Settings (#247)
+- Fixed session logging configured on a connection never writing anything: the Logs tab settings had no reader outside the dialog (#247)
+- Fixed session logs recording typed passwords in clear text; every written line is now redacted (#247)
+- Fixed "Retention (days)" never deleting a file: age-based pruning now also runs when a session log is opened (#247)
+- Fixed the "Timestamps" switch doing nothing; it now controls the session transcript layout (#247)
+- Fixed a log file that could not be created failing silently; the failure now raises an error toast naming the reason (#247)
+- Fixed the KDBX "Use password" and "Use key file" switches only hiding rows without changing which credentials opened the database
+- Fixed eight RDP and VNC dropdown labels being untranslated in every language
+- Fixed RDP and VNC sessions freezing instead of reconnecting after the computer woke from sleep: both embedded clients now set TCP keepalive and TCP_USER_TIMEOUT (#248)
+- Added resume detection so a session frozen by a suspend is dimmed and offered its reconnect banner immediately (#248)
+- Fixed picking a key from the SSH agent not restricting which key was offered: the choice is now passed as -i with IdentitiesOnly=yes
+- Changed an empty per-connection Log Path to mean the log directory from Settings
+- Removed the Encrypted Documents feature, which was never reachable from the user interface
+- Removed ProgressDialog, a second unused retry model, three unreachable menu actions and two configuration fields nothing read
+- Updated time 0.3.54 to 0.3.55
+
+-------------------------------------------------------------------
 Sat Aug 01 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.9
 
 - Version bump to 0.19.9

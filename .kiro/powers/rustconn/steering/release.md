@@ -313,6 +313,23 @@ grep -r "X.Y.Z" Cargo.toml debian/changelog packaging/ rustconn/assets/*.xml doc
 | `metainfo.xml` | `<release version="X.Y.Z"` |
 | `docs/USER_GUIDE.md` | `Version X.Y.Z` |
 | `docs/ARCHITECTURE.md` | `Version X.Y.Z` |
+| `docs/AI_DEVELOPMENT.md` | `Version X.Y.Z` |
+| `flake.nix` | `version = "X.Y.Z";` |
+| `rustconn/Cargo.toml` | `rustconn-core = { … version = "X.Y.Z" … }` |
+| `rustconn-cli/Cargo.toml` | `rustconn-core = { … version = "X.Y.Z" … }` |
+| `po/rustconn.pot` | `Project-Id-Version: rustconn X.Y.Z` |
+
+`release.sh` additionally enforces, beyond mere presence of the version:
+
+- the newest entry of `debian/changelog`, `packaging/obs/debian.changelog`,
+  `packaging/obs/rustconn.changes`, the spec `%changelog` and `metainfo.xml`
+  `<releases>` is **this** version, not one left by an aborted release;
+- no file that should carry only the current version still mentions the
+  previous tag (this is what caught `debian.dsc` shipping a `Files:` line for
+  `rustconn-0.19.8.tar.xz` under `Version: 0.19.9-1`);
+- the release date agrees across CHANGELOG.md, both Debian trailers, the OBS
+  `.changes` header and the spec `%changelog` header;
+- `metainfo.xml` is well-formed XML and passes `appstreamcli validate`.
 
 ## Changelog conversion
 

@@ -126,7 +126,6 @@ fn arb_rdp_client_config() -> impl Strategy<Value = RdpClientConfig> {
                     graphics_quality: Default::default(),
                     gateway: Default::default(),
                     monitor_layout: Default::default(),
-                    reconnect_policy: Default::default(),
                     printer_enabled: false,
                     printers: vec!["Office_LaserJet".to_owned(), "PDF".to_owned()],
                     smartcard_enabled: false,

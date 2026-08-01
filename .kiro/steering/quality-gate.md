@@ -27,6 +27,29 @@ Run sequentially in workspace root:
 3. Before tests: `pgrep -f 'cargo test'` — if running, report "Tests already in progress, skipping" and stop.
 4. `cargo test --workspace` — run directly, NO pipes (no tail/grep). Allow 180s timeout (argon2 ~120s is normal).
 
+### A cached clippy run reports zero warnings even when warnings exist
+
+This is the single easiest way to report a false green. When nothing has changed,
+clippy prints `Finished \`dev\` profile ... in 0.2s` and emits no diagnostics at
+all — not because the code is clean, but because it never re-checked it.
+
+Before claiming clippy passed, confirm from the output that compilation actually
+happened (`Checking rustconn-core`, `Compiling rustconn`, a runtime of seconds
+rather than milliseconds). If it was a cache hit, force a real re-check:
+
+```bash
+find rustconn rustconn-core rustconn-cli -name '*.rs' -exec touch {} +
+cargo clippy --all-targets -- -D warnings
+```
+
+State in the report which of the two you got.
+
+### Never use `--all-features`
+
+It enables a gtk3-dependent path that fails at build time — `gdk-3.0.pc` is not
+available via pkg-config. `--all-targets` is the flag that matters here; it covers
+tests, benches and examples, which is the actual goal.
+
 Report pass/fail for each step. If tests fail — list failing test names.
 
 ## Tests only

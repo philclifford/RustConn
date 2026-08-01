@@ -283,7 +283,6 @@ impl PredefinedTemplate {
             provider: ZeroTrustProvider::Generic,
             provider_config: ZeroTrustProviderConfig::Generic(generic_config),
             custom_args: Vec::new(),
-            detected_provider: None,
         };
         let protocol_config = ProtocolConfig::ZeroTrust(zt_config);
 

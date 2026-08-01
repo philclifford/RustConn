@@ -5,8 +5,93 @@
 
 use super::*;
 
+/// The connection-derived values a session log needs besides its configuration.
+struct LogContextParts {
+    /// Connection name, expanded as `${connection_name}`
+    connection_name: String,
+    /// Protocol id, expanded as `${protocol}`
+    protocol: String,
+    /// Log directory `RustConn` manages itself (pruning is confined to it)
+    managed_dir: std::path::PathBuf,
+}
+
 impl MainWindow {
+    /// Resolves the effective session-logging configuration for a connection.
+    ///
+    /// Returns the configuration together with the protocol name needed for
+    /// `${protocol}` expansion and the directory `RustConn` manages itself (the
+    /// only place age-based pruning is allowed to run). `None` means logging is
+    /// off for this session.
+    fn resolve_log_config(
+        state: &SharedAppState,
+        connection_id: Uuid,
+    ) -> Option<(rustconn_core::session::LogConfig, LogContextParts)> {
+        let state_ref = state.try_borrow().ok()?;
+        let settings = state_ref.settings();
+        let managed_dir = Self::managed_log_dir_from(&state_ref);
+        let conn = state_ref.get_connection(connection_id)?;
+        let config = rustconn_core::session::LogConfig::resolve(
+            &settings.logging,
+            settings.terminal.log_timestamps,
+            &managed_dir,
+            conn.log_config.as_ref(),
+        )?;
+        let parts = LogContextParts {
+            connection_name: conn.name.clone(),
+            protocol: conn.protocol_config.protocol_type().as_str().to_string(),
+            managed_dir,
+        };
+        Some((config, parts))
+    }
+
+    /// The log directory `RustConn` manages itself.
+    ///
+    /// This is where the global logging switch writes and the only directory
+    /// age-based pruning is allowed to touch. A relative setting is resolved
+    /// against the configuration directory.
+    pub(super) fn managed_log_dir(state: &SharedAppState) -> Option<std::path::PathBuf> {
+        let state_ref = state.try_borrow().ok()?;
+        Some(Self::managed_log_dir_from(&state_ref))
+    }
+
+    fn managed_log_dir_from(state_ref: &crate::state::AppState) -> std::path::PathBuf {
+        let configured = &state_ref.settings().logging.log_directory;
+        if configured.is_absolute() {
+            configured.clone()
+        } else {
+            state_ref.config_manager().config_dir().join(configured)
+        }
+    }
+
+    /// The directory a connection's session logs are written to.
+    ///
+    /// A per-connection path template can put them anywhere, so this expands the
+    /// template the same way a session start would and returns its parent. Falls
+    /// back to the managed directory when the connection logs nowhere of its own.
+    pub(super) fn session_log_dir(
+        state: &SharedAppState,
+        connection_id: Uuid,
+    ) -> Option<std::path::PathBuf> {
+        let Some((config, parts)) = Self::resolve_log_config(state, connection_id) else {
+            return Self::managed_log_dir(state);
+        };
+        let context =
+            rustconn_core::session::LogContext::new(&parts.connection_name, &parts.protocol);
+        rustconn_core::session::SessionLogger::expand_path_template(
+            &config.path_template,
+            &context,
+            None,
+        )
+        .ok()
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        .or(Some(parts.managed_dir))
+    }
+
     /// Sets up session logging for a terminal session
+    ///
+    /// The per-connection configuration (connection editor → Logs) takes
+    /// precedence over the global switch (Settings → Terminal → Logging); when
+    /// both are off nothing is written and this returns immediately.
     ///
     /// Directory creation and file opening are performed asynchronously
     /// to avoid blocking the GTK main thread on slow storage.
@@ -17,116 +102,67 @@ impl MainWindow {
         connection_id: Uuid,
         connection_name: &str,
     ) {
-        // Get the log directory and logging modes from settings
-        let (log_dir, log_activity, log_input, log_output) =
-            if let Ok(state_ref) = state.try_borrow() {
-                let settings = state_ref.settings();
-                let dir = if settings.logging.log_directory.is_absolute() {
-                    settings.logging.log_directory.clone()
-                } else {
-                    state_ref
-                        .config_manager()
-                        .config_dir()
-                        .join(&settings.logging.log_directory)
-                };
-                (
-                    dir,
-                    settings.logging.log_activity,
-                    settings.logging.log_input,
-                    settings.logging.log_output,
-                )
-            } else {
-                return;
-            };
+        let Some((config, parts)) = Self::resolve_log_config(state, connection_id) else {
+            return;
+        };
 
-        // Create log file path with timestamp
-        let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
-        let sanitized_name: String = connection_name
-            .chars()
-            .map(|c| {
-                if c.is_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .take(64)
-            .collect();
-        let log_filename = format!("{}_{}.log", sanitized_name, timestamp);
-        let log_path = log_dir.join(&log_filename);
+        let retention_days = config.retention_days;
+        let path_template = config.path_template.clone();
+        let managed_dir = parts.managed_dir;
 
-        // Clone data for the background thread (must be owned/static)
+        let context = rustconn_core::session::LogContext::new(connection_name, parts.protocol);
         let connection_name_for_header = connection_name.to_string();
         let connection_name_for_callback = connection_name.to_string();
-        let log_dir_clone = log_dir.clone();
-        let log_path_clone = log_path.clone();
-
-        // Clone notebook for the callback
         let notebook_clone = notebook.clone();
 
-        // Perform directory creation and file opening in background thread
+        // Template expansion, directory creation and the first write all touch
+        // the filesystem, so they happen off the GTK main thread.
         crate::utils::spawn_blocking_with_callback(
             move || {
-                // Ensure log directory exists
-                if let Err(e) = std::fs::create_dir_all(&log_dir_clone) {
-                    return Err(format!(
-                        "Failed to create log directory '{}': {}",
-                        log_dir_clone.display(),
-                        e
-                    ));
-                }
+                // Age-based pruning is destructive, so it is confined to the
+                // directory RustConn owns. A user-supplied absolute template
+                // may point anywhere — those files are never touched.
+                rustconn_core::session::prune_logs(&managed_dir, retention_days);
 
-                // Create the log file and write header
-                match std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&log_path_clone)
-                {
-                    Ok(mut file) => {
-                        use std::io::Write;
-                        let header = format!(
-                            "=== Session Log ===\nConnection: {}\nConnection ID: {}\nSession ID: {}\nStarted: {}\n\n",
-                            connection_name_for_header,
-                            connection_id,
-                            session_id,
-                            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
-                        );
-                        if let Err(e) = file.write_all(header.as_bytes()) {
-                            return Err(format!("Failed to write log header: {}", e));
-                        }
-                        Ok(log_path_clone)
-                    }
-                    Err(e) => Err(format!(
-                        "Failed to create log file '{}': {}",
-                        log_path_clone.display(),
-                        e
-                    )),
-                }
+                let mut logger = rustconn_core::session::SessionLogger::new(config, &context, None)
+                    .map_err(|e| e.to_string())?;
+                let header = format!(
+                    "=== Session Log ===\nConnection: {}\nConnection ID: {}\nSession ID: {}\nStarted: {}\n",
+                    connection_name_for_header,
+                    connection_id,
+                    session_id,
+                    chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+                );
+                logger.write_record(&header).map_err(|e| e.to_string())?;
+                logger.flush().map_err(|e| e.to_string())?;
+                Ok(logger)
             },
-            move |result: Result<std::path::PathBuf, String>| {
-                match result {
-                    Ok(log_path) => {
-                        tracing::info!(
-                            connection_name = %connection_name_for_callback,
-                            log_path = %log_path.display(),
-                            "Session logging enabled"
-                        );
+            move |result: Result<rustconn_core::session::SessionLogger, String>| match result {
+                Ok(logger) => {
+                    let log_path = logger.log_path().to_path_buf();
+                    tracing::info!(
+                        connection_name = %connection_name_for_callback,
+                        log_path = %log_path.display(),
+                        "Session logging enabled"
+                    );
 
-                        // Store log file path in session info
-                        notebook_clone.set_log_file(session_id, log_path.clone());
+                    // Store log file path in session info
+                    notebook_clone.set_log_file(session_id, log_path);
 
-                        // Set up logging handlers based on settings
-                        Self::setup_logging_handlers(
-                            &notebook_clone,
-                            session_id,
-                            &log_path,
-                            log_activity,
-                            log_input,
-                            log_output,
+                    Self::setup_logging_handlers(&notebook_clone, session_id, logger);
+                }
+                Err(e) => {
+                    tracing::error!(%e, template = %path_template, "Session logging setup failed");
+                    // A silent failure is what made issue #247 so hard to
+                    // diagnose: the log simply never appeared anywhere.
+                    if let Some(root) = notebook_clone.widget().root()
+                        && let Some(window) = root.downcast_ref::<gtk4::Window>()
+                    {
+                        crate::toast::show_toast_on_window(
+                            window,
+                            &crate::i18n::i18n_f("Session log could not be created: {}", &[&e]),
+                            crate::toast::ToastType::Error,
                         );
-                    }
-                    Err(e) => {
-                        tracing::error!(%e, "Session logging setup failed");
                     }
                 }
             },
@@ -472,8 +508,9 @@ impl MainWindow {
                 .get_session_info(session_id)
                 .and_then(|info| info.history_entry_id);
 
-            // Update session status in state manager
-            // This also closes the session logger and finalizes the log file
+            // Update session status in state manager. The session log itself is
+            // owned by the handlers in `setup_logging_handlers`, which flush it
+            // on the same signal.
             if let Ok(mut state_mut) = state_clone.try_borrow_mut()
                 && let Err(e) = state_mut.terminate_session(session_id) { tracing::warn!(?e, %session_id, "Failed to terminate session"); }
 
@@ -746,41 +783,30 @@ impl MainWindow {
     /// - Activity: logs change counts (default, lightweight)
     /// - Input: logs user commands sent to terminal
     /// - Output: logs full terminal transcript
+    ///
+    /// Everything goes through [`rustconn_core::session::SessionLogger`], so the
+    /// configured timestamp format, size rotation, retention and credential
+    /// redaction all apply — whether the configuration came from the connection
+    /// editor or from the global settings.
     fn setup_logging_handlers(
         notebook: &SharedNotebook,
         session_id: Uuid,
-        log_path: &std::path::Path,
-        log_activity: bool,
-        log_input: bool,
-        log_output: bool,
+        logger: rustconn_core::session::SessionLogger,
     ) {
-        use std::cell::RefCell;
-        use std::fs::OpenOptions;
-        use std::io::Write;
-        use std::rc::Rc;
-
-        // Create a shared writer for the log file
-        let log_writer: Rc<RefCell<Option<std::io::BufWriter<std::fs::File>>>> =
-            Rc::new(RefCell::new(None));
-
-        // Open the log file for appending
-        match OpenOptions::new().append(true).open(log_path) {
-            Ok(file) => {
-                *log_writer.borrow_mut() = Some(std::io::BufWriter::new(file));
-            }
-            Err(e) => {
-                tracing::error!(
-                    %e,
-                    log_path = %log_path.display(),
-                    "Failed to open log file for session logging"
-                );
-                return;
-            }
-        }
+        let (log_activity, log_input, log_output, per_line_timestamps) = {
+            let config = logger.config();
+            (
+                config.log_activity,
+                config.log_input,
+                config.log_output,
+                config.log_timestamps,
+            )
+        };
+        let logger = Rc::new(RefCell::new(logger));
 
         // Set up activity logging (change counts)
         if log_activity {
-            let log_writer_clone = log_writer.clone();
+            let logger_clone = logger.clone();
             let change_counter: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
             let last_log_time: Rc<RefCell<std::time::Instant>> =
                 Rc::new(RefCell::new(std::time::Instant::now()));
@@ -797,20 +823,14 @@ impl MainWindow {
                 let elapsed = now.duration_since(*last_log_time.borrow());
 
                 if *counter >= 100 || elapsed.as_secs() >= 5 {
-                    if let Ok(mut writer_opt) = log_writer_clone.try_borrow_mut()
-                        && let Some(ref mut writer) = *writer_opt
-                    {
-                        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                        let _ = writeln!(
-                            writer,
-                            "[{}] Terminal activity ({} changes)",
-                            timestamp, *counter
-                        );
-
-                        if *flush_count >= 10 || elapsed.as_secs() >= 30 {
-                            let _ = writer.flush();
-                            *flush_count = 0;
-                        }
+                    let flush = *flush_count >= 10 || elapsed.as_secs() >= 30;
+                    log_event(
+                        &logger_clone,
+                        &format!("Terminal activity ({} changes)", *counter),
+                        flush,
+                    );
+                    if flush {
+                        *flush_count = 0;
                     }
 
                     *counter = 0;
@@ -821,7 +841,7 @@ impl MainWindow {
 
         // Set up input logging (user commands)
         if log_input {
-            let log_writer_clone = log_writer.clone();
+            let logger_clone = logger.clone();
             let input_buffer: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
             let last_flush: Rc<RefCell<std::time::Instant>> =
                 Rc::new(RefCell::new(std::time::Instant::now()));
@@ -835,14 +855,7 @@ impl MainWindow {
                         '\r' | '\n' => {
                             // End of command - log it
                             if !buffer.is_empty() {
-                                if let Ok(mut writer_opt) = log_writer_clone.try_borrow_mut()
-                                    && let Some(ref mut writer) = *writer_opt
-                                {
-                                    let timestamp =
-                                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                                    let _ = writeln!(writer, "[{}] INPUT: {}", timestamp, *buffer);
-                                    let _ = writer.flush();
-                                }
+                                log_event(&logger_clone, &format!("INPUT: {}", *buffer), true);
                                 buffer.clear();
                             }
                         }
@@ -852,24 +865,12 @@ impl MainWindow {
                         }
                         '\x03' => {
                             // Ctrl+C
-                            if let Ok(mut writer_opt) = log_writer_clone.try_borrow_mut()
-                                && let Some(ref mut writer) = *writer_opt
-                            {
-                                let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                                let _ = writeln!(writer, "[{}] INPUT: ^C", timestamp);
-                                let _ = writer.flush();
-                            }
+                            log_event(&logger_clone, "INPUT: ^C", true);
                             buffer.clear();
                         }
                         '\x04' => {
                             // Ctrl+D
-                            if let Ok(mut writer_opt) = log_writer_clone.try_borrow_mut()
-                                && let Some(ref mut writer) = *writer_opt
-                            {
-                                let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                                let _ = writeln!(writer, "[{}] INPUT: ^D", timestamp);
-                                let _ = writer.flush();
-                            }
+                            log_event(&logger_clone, "INPUT: ^D", true);
                         }
                         _ if ch.is_control() => {
                             // Skip other control characters
@@ -883,13 +884,11 @@ impl MainWindow {
                 // Periodic flush for long-running commands
                 let now = std::time::Instant::now();
                 if now.duration_since(*last_flush.borrow()).as_secs() >= 30 && !buffer.is_empty() {
-                    if let Ok(mut writer_opt) = log_writer_clone.try_borrow_mut()
-                        && let Some(ref mut writer) = *writer_opt
-                    {
-                        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                        let _ = writeln!(writer, "[{}] INPUT (partial): {}", timestamp, *buffer);
-                        let _ = writer.flush();
-                    }
+                    log_event(
+                        &logger_clone,
+                        &format!("INPUT (partial): {}", *buffer),
+                        true,
+                    );
                     *last_flush.borrow_mut() = now;
                 }
             });
@@ -897,7 +896,7 @@ impl MainWindow {
 
         // Set up output logging (full transcript)
         if log_output {
-            let log_writer_clone = log_writer.clone();
+            let logger_clone = logger.clone();
             let notebook_clone = notebook.clone();
             let last_content: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
             let last_log_time: Rc<RefCell<std::time::Instant>> =
@@ -919,15 +918,26 @@ impl MainWindow {
                                 current_text.lines().skip(last.lines().count()).collect();
 
                             if !new_lines.is_empty()
-                                && let Ok(mut writer_opt) = log_writer_clone.try_borrow_mut()
-                                && let Some(ref mut writer) = *writer_opt
+                                && let Ok(mut logger) = logger_clone.try_borrow_mut()
                             {
-                                let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                                let _ = writeln!(writer, "[{}] OUTPUT:", timestamp);
-                                for line in new_lines {
-                                    let _ = writeln!(writer, "  {}", line);
+                                let result = if per_line_timestamps {
+                                    // Every transcript line carries its own
+                                    // timestamp — what "Timestamps" promises.
+                                    logger.write(new_lines.join("\n").as_bytes())
+                                } else {
+                                    // One stamped header, then the lines
+                                    // indented beneath it (pre-0.19.10 layout).
+                                    let stamp = logger.current_timestamp();
+                                    let block = std::iter::once(format!("[{stamp}] OUTPUT:"))
+                                        .chain(new_lines.iter().map(|l| format!("  {l}")))
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+                                    logger.write_record(&block)
+                                };
+                                let result = result.and_then(|()| logger.flush());
+                                if let Err(e) = result {
+                                    tracing::warn!(%e, "Session transcript write failed");
                                 }
-                                let _ = writer.flush();
                             }
 
                             *last = current_text;
@@ -938,5 +948,42 @@ impl MainWindow {
                 }
             });
         }
+
+        // Flush when the session's process exits, so the log is readable while
+        // the tab lingers on the reconnect overlay. Deliberately not `close()`:
+        // an in-place reconnect reuses this terminal and keeps these handlers,
+        // so closing the writer here would silently end logging for the rest of
+        // the tab's life. The "Session ended" marker is written by the logger's
+        // `Drop` when the tab is finally closed.
+        notebook.connect_child_exited(session_id, move |_exit_status| {
+            if let Ok(mut logger) = logger.try_borrow_mut()
+                && let Err(e) = logger.flush()
+            {
+                tracing::warn!(%e, "Session log flush on exit failed");
+            }
+        });
+    }
+}
+
+/// Writes one timestamped event record through the session logger.
+///
+/// A VTE signal can fire while another handler still holds the logger, so a
+/// failed borrow drops the record instead of panicking — losing one activity
+/// line is preferable to killing the session.
+fn log_event(
+    logger: &Rc<RefCell<rustconn_core::session::SessionLogger>>,
+    event: &str,
+    flush: bool,
+) {
+    let Ok(mut logger) = logger.try_borrow_mut() else {
+        return;
+    };
+    let record = format!("[{}] {event}", logger.current_timestamp());
+    if let Err(e) = logger.write_record(&record) {
+        tracing::warn!(%e, "Session log write failed");
+        return;
+    }
+    if flush && let Err(e) = logger.flush() {
+        tracing::warn!(%e, "Session log flush failed");
     }
 }

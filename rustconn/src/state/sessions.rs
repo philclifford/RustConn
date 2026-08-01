@@ -187,13 +187,6 @@ impl AppState {
         &mut self,
         template: rustconn_core::ConnectionTemplate,
     ) -> Result<(), String> {
-        // Add to active document if one exists
-        if let Some(doc_id) = self.active_document_id
-            && let Some(doc) = self.document_manager.get_mut(doc_id)
-        {
-            doc.add_template(template.clone());
-        }
-
         // Persist via template manager
         self.template_manager
             .create_template(template)
@@ -208,14 +201,6 @@ impl AppState {
         template: rustconn_core::ConnectionTemplate,
     ) -> Result<(), String> {
         let id = template.id;
-
-        // Update in active document if one exists
-        if let Some(doc_id) = self.active_document_id
-            && let Some(doc) = self.document_manager.get_mut(doc_id)
-        {
-            doc.remove_template(id);
-            doc.add_template(template.clone());
-        }
 
         // Persist via template manager (create if not found, update if exists)
         let result = if self.template_manager.get_template(id).is_some() {
@@ -233,14 +218,6 @@ impl AppState {
 
     /// Deletes a template and persists via `TemplateManager`
     pub fn delete_template(&mut self, template_id: uuid::Uuid) -> Result<(), String> {
-        // Remove from active document if one exists
-        if let Some(doc_id) = self.active_document_id
-            && let Some(doc) = self.document_manager.get_mut(doc_id)
-        {
-            doc.remove_template(template_id);
-        }
-
-        // Remove via template manager (ignore not-found — may only exist in document)
         if self.template_manager.get_template(template_id).is_some() {
             self.template_manager
                 .delete_template(template_id)
@@ -252,25 +229,13 @@ impl AppState {
         }
     }
 
-    /// Gets all templates (from `TemplateManager` and active document)
+    /// Gets all templates from the `TemplateManager`
     pub fn get_all_templates(&self) -> Vec<rustconn_core::ConnectionTemplate> {
-        let mut templates: Vec<rustconn_core::ConnectionTemplate> = self
-            .template_manager
+        self.template_manager
             .list_templates()
             .into_iter()
             .cloned()
-            .collect();
-
-        // Also include templates from active document
-        if let Some(doc) = self.active_document() {
-            for doc_template in &doc.templates {
-                if !templates.iter().any(|t| t.id == doc_template.id) {
-                    templates.push(doc_template.clone());
-                }
-            }
-        }
-
-        templates
+            .collect()
     }
 
     // ========== Connection History Operations ==========

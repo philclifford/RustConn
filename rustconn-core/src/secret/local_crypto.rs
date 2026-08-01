@@ -215,8 +215,8 @@ pub(crate) fn decrypt_credential_aes(
 
 /// Derives a 256-bit key from the machine key using Argon2id.
 ///
-/// Uses lighter parameters than document encryption since settings encryption
-/// happens on every save and the key material is already high-entropy
+/// Uses lighter Argon2 parameters than credential hashing since settings
+/// encryption happens on every save and the key material is already high-entropy
 /// (machine-specific UUID or machine-id).
 ///
 /// # Errors

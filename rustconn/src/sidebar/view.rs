@@ -803,26 +803,10 @@ pub fn bind_list_item(
                 .push(handler_id);
         }
 
-        // Update label with dirty indicator for documents. Use the bound name
-        // label captured above (`status_icon.next_sibling()`), not
-        // `content_box.last_child()`: the last child is the split marker, so the
-        // dirty CSS class and tooltip were previously never applied.
-        {
-            let name = item.name();
-            if item.is_document() && item.is_dirty() {
-                set_label_text(&label, &name);
-                // Add CSS dot indicator for dirty documents
-                label.add_css_class("document-dirty");
-                label.set_tooltip_text(Some(&i18n("Document has unsaved changes")));
-                label.update_property(&[gtk4::accessible::Property::Label(&i18n(
-                    "Unsaved changes",
-                ))]);
-            } else {
-                set_label_text(&label, &name);
-                label.remove_css_class("document-dirty");
-                label.set_tooltip_text(None);
-            }
-        }
+        // Use the bound name label captured above (`status_icon.next_sibling()`),
+        // not `content_box.last_child()`: the last child is the split marker.
+        set_label_text(&label, &item.name());
+        label.set_tooltip_text(None);
     }
 }
 

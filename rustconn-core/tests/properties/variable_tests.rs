@@ -161,86 +161,44 @@ proptest! {
     }
 
     #[test]
-    fn variable_override_document_takes_precedence_over_global(
-        var_name in arb_var_name(),
-        global_value in arb_var_value(),
-        doc_value in arb_var_value()
-    ) {
-        prop_assume!(global_value != doc_value);
-
-        let mut manager = VariableManager::new();
-        let doc_id = uuid::Uuid::new_v4();
-
-        // Set global variable
-        manager.set_global(Variable::new(var_name.clone(), global_value.clone()));
-
-        // Set document variable with same name
-        manager.set_document(doc_id, Variable::new(var_name.clone(), doc_value.clone()));
-
-        // Resolution at document scope should return document value
-        let result = manager.resolve(&var_name, VariableScope::Document(doc_id)).unwrap();
-        prop_assert_eq!(
-            result, doc_value,
-            "Document-scoped variable should override global"
-        );
-    }
-
-    #[test]
-    fn variable_override_connection_takes_precedence_over_document(
-        var_name in arb_var_name(),
-        doc_value in arb_var_value(),
-        conn_value in arb_var_value()
-    ) {
-        prop_assume!(doc_value != conn_value);
-
-        let mut manager = VariableManager::new();
-        let doc_id = uuid::Uuid::new_v4();
-        let conn_id = uuid::Uuid::new_v4();
-
-        // Set document variable
-        manager.set_document(doc_id, Variable::new(var_name.clone(), doc_value.clone()));
-
-        // Set connection variable with same name
-        manager.set_connection(conn_id, Variable::new(var_name.clone(), conn_value.clone()));
-
-        // Associate connection with document
-        manager.set_connection_document(conn_id, doc_id);
-
-        // Resolution at connection scope should return connection value
-        let result = manager.resolve(&var_name, VariableScope::Connection(conn_id)).unwrap();
-        prop_assert_eq!(
-            result, conn_value,
-            "Connection-scoped variable should override document"
-        );
-    }
-
-    #[test]
     fn variable_fallback_to_parent_scope(
         var_name in arb_var_name(),
         global_value in arb_var_value()
     ) {
         let mut manager = VariableManager::new();
-        let doc_id = uuid::Uuid::new_v4();
         let conn_id = uuid::Uuid::new_v4();
 
         // Only set global variable
         manager.set_global(Variable::new(var_name.clone(), global_value.clone()));
 
-        // Associate connection with document
-        manager.set_connection_document(conn_id, doc_id);
-
         // Resolution at connection scope should fall back to global
         let result = manager.resolve(&var_name, VariableScope::Connection(conn_id)).unwrap();
         prop_assert_eq!(
-            result, global_value.clone(),
-            "Should fall back to global when not defined in connection or document"
+            result, global_value,
+            "Should fall back to global when not defined in connection"
         );
+    }
 
-        // Resolution at document scope should also fall back to global
-        let doc_result = manager.resolve(&var_name, VariableScope::Document(doc_id)).unwrap();
-        prop_assert_eq!(
-            doc_result, global_value,
-            "Should fall back to global when not defined in document"
+    #[test]
+    fn variable_connection_scope_is_isolated(
+        var_name in arb_var_name(),
+        conn_value in arb_var_value()
+    ) {
+        let mut manager = VariableManager::new();
+        let conn_id = uuid::Uuid::new_v4();
+        let other_conn_id = uuid::Uuid::new_v4();
+
+        // Set variable only on one connection
+        manager.set_connection(conn_id, Variable::new(var_name.clone(), conn_value));
+
+        // Another connection must not see it, and neither must global scope
+        prop_assert!(
+            manager.resolve(&var_name, VariableScope::Connection(other_conn_id)).is_err(),
+            "Connection-scoped variable must not leak into a sibling connection"
+        );
+        prop_assert!(
+            manager.resolve(&var_name, VariableScope::Global).is_err(),
+            "Connection-scoped variable must not leak into global scope"
         );
     }
 }
@@ -641,16 +599,10 @@ mod edge_case_tests {
     #[test]
     fn test_empty_scope_returns_undefined() {
         let manager = VariableManager::new();
-        let doc_id = uuid::Uuid::new_v4();
         let conn_id = uuid::Uuid::new_v4();
 
         // All scopes should return undefined for non-existent variable
         assert!(manager.resolve("var", VariableScope::Global).is_err());
-        assert!(
-            manager
-                .resolve("var", VariableScope::Document(doc_id))
-                .is_err()
-        );
         assert!(
             manager
                 .resolve("var", VariableScope::Connection(conn_id))

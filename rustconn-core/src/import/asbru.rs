@@ -471,7 +471,6 @@ impl AsbruImporter {
                         compression,
                         custom_options,
                         startup_command: None,
-                        sftp_enabled: false,
                         port_forwards: Vec::new(),
                         waypipe: false,
                         ssh_agent_socket: None,

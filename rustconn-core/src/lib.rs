@@ -54,7 +54,6 @@ pub mod config;
 pub mod connection;
 pub mod dialog_utils;
 pub mod display_geometry;
-pub mod document;
 pub mod drag_drop;
 pub mod dynamic_folder;
 pub mod embedded_client_error;
@@ -143,10 +142,6 @@ pub use connection::{
     log_interning_stats, log_interning_stats_with_warning, looks_like_password_prompt,
 };
 pub use display_geometry::{DesktopRequest, desktop_request_for_area};
-pub use document::{
-    DOCUMENT_FORMAT_VERSION, Document, DocumentError, DocumentManager, DocumentResult,
-    EncryptionStrength,
-};
 pub use drag_drop::{
     DropConfig, DropPosition, ItemType, calculate_drop_position, calculate_indicator_y,
     calculate_row_index, is_valid_drop_position,

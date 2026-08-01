@@ -6,7 +6,10 @@
 #     (e.g. `0.15.0`, `0.14.10`).
 #   - The branch name MUST match `[workspace.package].version` in Cargo.toml.
 #   - CHANGELOG.md must contain `## [<version>] - YYYY-MM-DD` for that version.
-#   - The same date must appear in debian/changelog and metainfo.xml.
+#   - The same date must appear in metainfo.xml, both Debian changelogs, the OBS
+#     .changes header and the spec %changelog header.
+#   - Every changelog-style file must LEAD with this version, and no
+#     version-only file may still mention the previous release.
 #   - Tag `v<version>` MUST NOT exist yet.
 #
 # Usage:
@@ -14,13 +17,15 @@
 #   ./scripts/release.sh --dry-run      # validate + show what WOULD be done
 #   ./scripts/release.sh --no-push      # validate + merge + tag locally; skip push
 #   ./scripts/release.sh --skip-tests   # skip cargo test (saves ~120s)
-#   ./scripts/release.sh --skip-checks  # skip cargo fmt/clippy/tests (NOT recommended)
+#   ./scripts/release.sh --skip-checks  # skip cargo fmt/clippy/tests AND the
+#                                       # cargo-sources.json check (NOT recommended)
 #   ./scripts/release.sh --yes          # do not prompt before push
 #
 # Exit codes:
-#   0 — release operations completed (or dry-run validation passed)
-#   1 — validation failed
-#   2 — error (missing tools, dirty tree, etc.)
+#   0 — release operations completed, or dry-run validation passed, or the user
+#       declined at the confirmation prompt
+#   1 — any validation gate failed, a required tool is missing, the tree is
+#       dirty, or the release dates were refreshed and need review
 
 set -euo pipefail
 
@@ -62,7 +67,10 @@ for arg in "$@"; do
         --skip-checks) SKIP_CHECKS=true ;;
         --yes|-y)      ASSUME_YES=true ;;
         --help|-h)
-            sed -n '2,25p' "$0"
+            # Print the leading comment block: every line from 2 up to (but not
+            # including) the first non-comment line. Hard-coded line numbers went
+            # stale the moment the header grew, and printed `set -euo pipefail`.
+            awk 'NR > 1 { if ($0 !~ /^#/) exit; print }' "$0"
             exit 0
             ;;
         *)
@@ -107,24 +115,24 @@ update_release_dates() {
     obs_date="$(LC_ALL=C date '+%a %b %d %Y')"
 
     # CHANGELOG.md: ## [X.Y.Z] - YYYY-MM-DD
-    sedi "s|^## \[$VERSION\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$|## [$VERSION] - $iso|" CHANGELOG.md
+    sedi "s|^## \[$VERSION_RE\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$|## [$VERSION] - $iso|" CHANGELOG.md
 
     # metainfo.xml: <release version="X.Y.Z" date="YYYY-MM-DD">
-    sedi "s|(<release version=\"$VERSION\" date=\")[0-9-]+(\")|\\1$iso\\2|" "$METAINFO"
+    sedi "s|(<release version=\"$VERSION_RE\" date=\")[0-9-]+(\")|\\1$iso\\2|" "$METAINFO"
 
     # Debian changelogs: trailer line of this version's entry
     #   -- Name <email>  Tue, 10 Jun 2026 14:00:00 +0300
     local f
     for f in debian/changelog packaging/obs/debian.changelog; do
-        sedi "/^rustconn \($VERSION-1\)/,/^ -- /{s|^( -- .*>)  .*\$|\\1  $deb_date|;}" "$f"
+        sedi "/^rustconn \($VERSION_RE-1\)/,/^ -- /{s|^( -- .*>)  .*\$|\\1  $deb_date|;}" "$f"
     done
 
     # OBS rustconn.changes: entry header  Tue Jun 10 2026 Name <email> - X.Y.Z
-    sedi "s|^[A-Z][a-z]{2} [A-Z][a-z]{2} [0-9]{1,2} [0-9]{4}( .* - $VERSION)$|$obs_date\\1|" \
+    sedi "s|^[A-Z][a-z]{2} [A-Z][a-z]{2} [0-9]{1,2} [0-9]{4}( .* - $VERSION_RE)$|$obs_date\\1|" \
         packaging/obs/rustconn.changes
 
     # rustconn.spec %changelog: * Tue Jun 10 2026 Name <email> - X.Y.Z-N
-    sedi "s|^\* [A-Z][a-z]{2} [A-Z][a-z]{2} [0-9]{1,2} [0-9]{4}( .* - $VERSION(-[0-9]+)?)$|* $obs_date\\1|" \
+    sedi "s|^\* [A-Z][a-z]{2} [A-Z][a-z]{2} [0-9]{1,2} [0-9]{4}( .* - $VERSION_RE(-[0-9]+)?)$|* $obs_date\\1|" \
         packaging/obs/rustconn.spec
 }
 
@@ -139,6 +147,9 @@ if [[ ! "$BRANCH" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 VERSION="$BRANCH"
 TAG="v$VERSION"
+# Dots are regex wildcards: unescaped, "0.19.1" also matches "0x19y1". Every
+# grep pattern below interpolates VERSION_RE so a version is matched literally.
+VERSION_RE="${VERSION//./\\.}"
 ok "Release branch: $BRANCH"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -155,7 +166,7 @@ ok "Cargo.toml version matches branch: $VERSION"
 # ──────────────────────────────────────────────────────────────────────────────
 # 3. CHANGELOG.md has `## [<version>] - YYYY-MM-DD`
 # ──────────────────────────────────────────────────────────────────────────────
-CHANGELOG_LINE="$(grep -m1 -E "^## \[$VERSION\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md || true)"
+CHANGELOG_LINE="$(grep -m1 -E "^## \[$VERSION_RE\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md || true)"
 [[ -n "$CHANGELOG_LINE" ]] || fail "CHANGELOG.md missing '## [$VERSION] - YYYY-MM-DD' header"
 
 CHANGELOG_DATE="$(echo "$CHANGELOG_LINE" | awk '{print $4}')"
@@ -194,7 +205,7 @@ fi
 # 4. metainfo.xml has matching <release version="..." date="...">
 #    ($METAINFO is defined next to update_release_dates above)
 # ──────────────────────────────────────────────────────────────────────────────
-META_LINE="$(grep -m1 -E "<release version=\"$VERSION\" date=\"[0-9]{4}-[0-9]{2}-[0-9]{2}\"" "$METAINFO" || true)"
+META_LINE="$(grep -m1 -E "<release version=\"$VERSION_RE\" date=\"[0-9]{4}-[0-9]{2}-[0-9]{2}\"" "$METAINFO" || true)"
 [[ -n "$META_LINE" ]] || fail "$METAINFO missing <release version=\"$VERSION\" date=\"...\">"
 
 META_DATE="$(echo "$META_LINE" | sed -nE 's/.*date="([0-9-]+)".*/\1/p')"
@@ -202,6 +213,85 @@ if [[ "$META_DATE" != "$CHANGELOG_DATE" ]]; then
     fail "Date mismatch: CHANGELOG.md=$CHANGELOG_DATE, metainfo.xml=$META_DATE"
 fi
 ok "metainfo.xml release date matches: $META_DATE"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 4b. metainfo.xml is well-formed and valid AppStream
+#     The <release> block is hand-written every release, and a broken one is
+#     only discovered by the Flathub build — long after the tag was pushed.
+# ──────────────────────────────────────────────────────────────────────────────
+if command -v xmllint >/dev/null; then
+    xmllint --noout "$METAINFO" 2>&1 || fail "$METAINFO is not well-formed XML"
+    ok "metainfo.xml is well-formed XML"
+else
+    warn "xmllint not installed — skipping metainfo XML well-formedness check"
+fi
+
+if command -v appstreamcli >/dev/null; then
+    # --no-net: no screenshot fetching, so this stays offline and fast.
+    # Pedantic hints do not affect the exit status; only errors and warnings do.
+    if ! appstreamcli validate --no-net "$METAINFO" >/dev/null 2>&1; then
+        appstreamcli validate --no-net "$METAINFO" >&2 || true
+        fail "appstreamcli validate failed on $METAINFO"
+    fi
+    ok "metainfo.xml passes appstreamcli validate"
+else
+    warn "appstreamcli not installed — skipping AppStream validation"
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 4c. The release date agrees across every changelog format
+#     The header convention says the same date must appear in debian/changelog
+#     too, but only metainfo.xml was ever verified. update_release_dates already
+#     rewrites the Debian/OBS/spec dates, so verify them and close the loop —
+#     a hand-written entry otherwise ships a date CHANGELOG.md disagrees with.
+#     Needs GNU `date -d`; BSD date parses neither format, so macOS skips this.
+# ──────────────────────────────────────────────────────────────────────────────
+if date -d 2026-01-01 +%Y-%m-%d >/dev/null 2>&1; then
+    DATE_FAILED=0
+
+    # <label> <raw date string> — empty or unparsable counts as a failure.
+    check_release_date() {
+        local label="$1" raw="$2" iso
+        if [[ -z "$raw" ]]; then
+            warn "$label: no dated $VERSION entry found"
+            ((DATE_FAILED += 1))
+            return
+        fi
+        iso="$(LC_ALL=C date -d "$raw" +%Y-%m-%d 2>/dev/null || true)"
+        if [[ -z "$iso" ]]; then
+            warn "$label: cannot parse date '$raw'"
+            ((DATE_FAILED += 1))
+        elif [[ "$iso" != "$CHANGELOG_DATE" ]]; then
+            warn "$label: date $iso disagrees with CHANGELOG.md ($CHANGELOG_DATE)"
+            ((DATE_FAILED += 1))
+        fi
+    }
+
+    # Debian trailer:  -- Anton Isaiev <a@b>  Sat, 01 Aug 2026 12:00:00 +0300
+    for f in debian/changelog packaging/obs/debian.changelog; do
+        [[ -f "$f" ]] || continue
+        check_release_date "$f" "$(awk -v pat="^rustconn \\\\($VERSION-1\\\\)" '
+            $0 ~ pat { found = 1 }
+            found && /^ -- / { sub(/^ -- .*>[[:space:]]+/, ""); print; exit }' "$f")"
+    done
+
+    # OBS .changes header:  Sat Aug 01 2026 Anton Isaiev <a@b> - 0.19.10
+    check_release_date "packaging/obs/rustconn.changes" \
+        "$(grep -m1 -E " - $VERSION_RE\$" packaging/obs/rustconn.changes \
+            | sed -E 's/^([A-Za-z]{3} [A-Za-z]{3} [0-9]{1,2} [0-9]{4}).*/\1/')"
+
+    # spec %changelog top entry:  * Sat Aug 01 2026 Anton Isaiev <a@b> - 0.19.10-0
+    check_release_date "packaging/obs/rustconn.spec" \
+        "$(sed -n '/^%changelog/,$p' packaging/obs/rustconn.spec | grep -m1 '^\* ' \
+            | sed -E 's/^\* ([A-Za-z]{3} [A-Za-z]{3} [0-9]{1,2} [0-9]{4}).*/\1/')"
+
+    if (( DATE_FAILED > 0 )); then
+        fail "$DATE_FAILED release file(s) have a date that disagrees with CHANGELOG.md"
+    fi
+    ok "Release date $CHANGELOG_DATE consistent across CHANGELOG, Debian, OBS and spec"
+else
+    warn "GNU 'date -d' unavailable — skipping cross-format date check"
+fi
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 5. Packaging files version sync
@@ -230,26 +320,34 @@ PKG_FILES=(
     "docs/AI_DEVELOPMENT.md"
     "rustconn/Cargo.toml"
     "rustconn-cli/Cargo.toml"
+    "po/rustconn.pot"
 )
 PKG_PATS=(
-    "^rustconn \\($VERSION-1\\)"
-    "^rustconn \\($VERSION-1\\)"
-    "^Version: $VERSION-1$"
-    "^Version: $VERSION-1$"
-    "^Version:[[:space:]]+$VERSION$"
-    " - $VERSION(-[0-9]+)?$"
-    "revision\">v$VERSION<"
-    "^[[:space:]]+version: $VERSION$"
-    "tag: v$VERSION$"
-    "tag: v$VERSION$"
-    "^version: '$VERSION'$"
-    "version = \"$VERSION\""
-    "\\*\\*Version $VERSION\\*\\*"
-    "\\*\\*Version $VERSION\\*\\*"
-    "\\*\\*Version $VERSION\\*\\*"
-    "version = \"$VERSION\""
-    "version = \"$VERSION\""
+    "^rustconn \\($VERSION_RE-1\\)"
+    "^rustconn \\($VERSION_RE-1\\)"
+    "^Version: $VERSION_RE-1$"
+    "^Version: $VERSION_RE-1$"
+    "^Version:[[:space:]]+$VERSION_RE$"
+    " - $VERSION_RE(-[0-9]+)?$"
+    "revision\">v$VERSION_RE<"
+    "^[[:space:]]+version: $VERSION_RE$"
+    "tag: v$VERSION_RE$"
+    "tag: v$VERSION_RE$"
+    "^version: '$VERSION_RE'$"
+    "version = \"$VERSION_RE\""
+    "\\*\\*Version $VERSION_RE\\*\\*"
+    "\\*\\*Version $VERSION_RE\\*\\*"
+    "\\*\\*Version $VERSION_RE\\*\\*"
+    "version = \"$VERSION_RE\""
+    "version = \"$VERSION_RE\""
+    "^\"Project-Id-Version: rustconn $VERSION_RE"
 )
+
+# The two arrays are indexed in parallel; a length mismatch would silently drop
+# the checks for the trailing files instead of reporting anything.
+if (( ${#PKG_FILES[@]} != ${#PKG_PATS[@]} )); then
+    fail "release.sh bug: PKG_FILES has ${#PKG_FILES[@]} entries, PKG_PATS has ${#PKG_PATS[@]}"
+fi
 
 PKG_FAILED=0
 for i in "${!PKG_FILES[@]}"; do
@@ -272,19 +370,128 @@ fi
 ok "All ${#PKG_FILES[@]} packaging files synced to $VERSION"
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 5b. The new version is the TOP entry of every changelog-style file
+#
+# The gate above uses plain grep, which is satisfied by an entry anywhere in the
+# file — including one left behind by an aborted release. Package tooling reads
+# only the newest entry, so verify the newest entry is actually this version.
+# ──────────────────────────────────────────────────────────────────────────────
+TOP_FAILED=0
+
+# <label> <expected> <actual>
+check_top_entry() {
+    local label="$1" want="$2" got="$3"
+    if [[ "$got" != "$want" ]]; then
+        warn "$label: newest entry is '${got:-<none>}', expected '$want'"
+        ((TOP_FAILED += 1))
+    fi
+}
+
+for f in debian/changelog packaging/obs/debian.changelog; do
+    [[ -f "$f" ]] || continue
+    check_top_entry "$f" "$VERSION" \
+        "$(sed -nE '/^rustconn \(/{s/^rustconn \(([^-)]+).*/\1/p;q;}' "$f")"
+done
+
+if [[ -f packaging/obs/rustconn.changes ]]; then
+    check_top_entry "packaging/obs/rustconn.changes" "$VERSION" \
+        "$(sed -nE '/ - [0-9]+\.[0-9]+\.[0-9]+$/{s/.* - //p;q;}' packaging/obs/rustconn.changes)"
+fi
+
+if [[ -f packaging/obs/rustconn.spec ]]; then
+    check_top_entry "packaging/obs/rustconn.spec %changelog" "$VERSION" \
+        "$(sed -n '/^%changelog/,$p' packaging/obs/rustconn.spec \
+            | sed -nE '/^\* /{s/.* - ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p;q;}')"
+fi
+
+check_top_entry "$METAINFO <releases>" "$VERSION" \
+    "$(sed -nE '/<release version="/{s/.*<release version="([^"]+)".*/\1/p;q;}' "$METAINFO")"
+
+if (( TOP_FAILED > 0 )); then
+    fail "$TOP_FAILED changelog file(s) do not lead with $VERSION"
+fi
+ok "debian, OBS, spec and metainfo changelogs all lead with $VERSION"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 5c. No packaging file still carries the PREVIOUS release version
+#
+# The sync gate proves the new version is present; it cannot notice a second,
+# stale version left beside it. That is a real failure mode: debian.dsc carried
+# `Version: 0.19.9-1` with `Files: rustconn-0.19.8.tar.xz` for a whole release
+# because only the Version: line was ever checked. Restricted to files that
+# hold nothing but the current version — changelogs legitimately keep history.
+# ──────────────────────────────────────────────────────────────────────────────
+VERSION_ONLY_FILES=(
+    "Cargo.toml"
+    "rustconn/Cargo.toml"
+    "rustconn-cli/Cargo.toml"
+    "packaging/obs/rustconn.dsc"
+    "packaging/obs/debian.dsc"
+    "packaging/obs/_service"
+    "packaging/obs/AppImageBuilder.yml"
+    "packaging/flatpak/io.github.totoshko88.RustConn.yml"
+    "packaging/flathub/io.github.totoshko88.RustConn.yml"
+    "snap/snapcraft.yaml"
+    "flake.nix"
+    "po/rustconn.pot"
+)
+
+PREV_VERSION=""
+if PREV_TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null)"; then
+    PREV_VERSION="${PREV_TAG#v}"
+fi
+
+if [[ -z "$PREV_VERSION" || "$PREV_VERSION" == "$VERSION" ]]; then
+    info "No distinct previous tag to scan for — skipping stale-version check"
+else
+    PREV_RE="${PREV_VERSION//./\\.}"
+    STALE_FAILED=0
+    for file in "${VERSION_ONLY_FILES[@]}"; do
+        [[ -f "$file" ]] || continue
+        if hits="$(grep -nE -- "$PREV_RE" "$file")"; then
+            warn "$file still references the previous version $PREV_VERSION:"
+            printf '%s\n' "$hits" >&2
+            ((STALE_FAILED += 1))
+        fi
+    done
+    if (( STALE_FAILED > 0 )); then
+        fail "$STALE_FAILED file(s) still carry $PREV_VERSION — bump them to $VERSION"
+    fi
+    ok "No file carries the previous version $PREV_VERSION"
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 6. Tag does not exist yet (local + remote)
 # ──────────────────────────────────────────────────────────────────────────────
 info "Fetching latest tags from origin..."
-git fetch --tags --quiet origin 2>/dev/null || warn "git fetch failed — checking local only"
+# A non-zero exit here is usually NOT a network problem — it is normally a local
+# tag that disagrees with origin ("would clobber existing tag"), which git
+# refuses to overwrite. Either way the authoritative verdict comes from
+# ls-remote below, so this is informational only.
+git fetch --tags --quiet origin 2>/dev/null \
+    || warn "git fetch --tags returned non-zero (diverged local tag, or network) — relying on ls-remote"
 
-if git rev-parse "$TAG" >/dev/null 2>&1; then
-    fail "Tag $TAG already exists (local or remote). Aborting."
+# refs/tags/ explicitly: a bare `git rev-parse v0.19.10` also resolves a BRANCH
+# of that name, which would abort the release for the wrong reason.
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+    fail "Tag $TAG already exists locally. Aborting."
 fi
-# Definitive remote check — catches the case where fetch failed above
-if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-    fail "Tag $TAG already exists on origin. Aborting."
-fi
-ok "Tag $TAG does not exist yet"
+
+# Definitive remote check. Exit codes are distinct and must be told apart:
+#   0   — the tag is on origin, this release was already published
+#   2   — no such ref, which is what we want
+#   128 — transport/auth error; treating that as "absent" would let the script
+#         validate against a remote it never actually reached
+set +e
+git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1
+LS_REMOTE_RC=$?
+set -e
+case "$LS_REMOTE_RC" in
+    0)  fail "Tag $TAG already exists on origin. Aborting." ;;
+    2)  ok "Tag $TAG does not exist yet (verified against origin)" ;;
+    *)  warn "Cannot reach origin (git ls-remote exit $LS_REMOTE_RC) — tag checked locally only"
+        ok "Tag $TAG does not exist locally" ;;
+esac
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 7. Working tree status

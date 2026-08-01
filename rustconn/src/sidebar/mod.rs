@@ -1230,8 +1230,8 @@ impl ConnectionSidebar {
                     return true;
                 }
 
-                // Check children if it's a group or document
-                if (item.is_group() || item.is_document())
+                // Check children if it's a group
+                if item.is_group()
                     && let Some(children) = item.children()
                     && Self::update_item_status_recursive(&children, id, status)
                 {
@@ -1266,7 +1266,7 @@ impl ConnectionSidebar {
                     return true;
                 }
 
-                if (item.is_group() || item.is_document())
+                if item.is_group()
                     && let Some(children) = item.children()
                     && Self::update_item_recording_recursive(&children, id, recording)
                 {
@@ -1306,7 +1306,7 @@ impl ConnectionSidebar {
                     return true;
                 }
 
-                if (item.is_group() || item.is_document())
+                if item.is_group()
                     && let Some(children) = item.children()
                     && Self::update_item_external_session_recursive(&children, id, external)
                 {
@@ -1348,7 +1348,7 @@ impl ConnectionSidebar {
                     return true;
                 }
 
-                if (item.is_group() || item.is_document())
+                if item.is_group()
                     && let Some(children) = item.children()
                     && Self::update_item_split_color_recursive(&children, id, color)
                 {
@@ -1638,14 +1638,14 @@ impl ConnectionSidebar {
         let drop_zone_size = row_height * DROP_ZONE_RATIO;
 
         // Try to get the item to check if it's a group
-        let is_group_or_document = Self::is_row_widget_group_or_document(list_view, &row_widget);
+        let is_group = Self::is_row_widget_group(&row_widget);
 
-        let position = if is_group_or_document {
+        let position = if is_group {
             // Check if this is an Import group — block "Into" drops
             let is_import_group = Self::get_item_from_widget(&row_widget)
                 .is_some_and(|item| item.sync_mode() == "import");
 
-            // For groups/documents: top zone = before, middle = into, bottom = after
+            // For groups: top zone = before, middle = into, bottom = after
             // Import groups: never allow "Into" — treat as before/after only
             if is_import_group {
                 if y_in_widget < row_height / 2.0 {
@@ -1679,8 +1679,8 @@ impl ConnectionSidebar {
         gdk::DragAction::MOVE
     }
 
-    /// Checks if a row widget represents a group or document
-    fn is_row_widget_group_or_document(_list_view: &ListView, row_widget: &Widget) -> bool {
+    /// Checks if a row widget represents a group
+    fn is_row_widget_group(row_widget: &Widget) -> bool {
         if let Some(item) = Self::get_item_from_widget(row_widget) {
             return item.is_group();
         }
@@ -1842,8 +1842,8 @@ impl ConnectionSidebar {
                 .and_then(|o| o.downcast::<TreeListRow>().ok())
                 && let Some(item) = row.item().and_then(|o| o.downcast::<ConnectionItem>().ok())
             {
-                // Include both groups and documents that are expanded
-                if (item.is_group() || item.is_document())
+                // Include groups that are expanded
+                if item.is_group()
                     && row.is_expanded()
                     && let Ok(id) = Uuid::parse_str(&item.id())
                 {
@@ -1891,7 +1891,7 @@ impl ConnectionSidebar {
                     && row.is_expandable()
                     && !row.is_expanded()
                     && let Some(item) = row.item().and_then(|o| o.downcast::<ConnectionItem>().ok())
-                    && (item.is_group() || item.is_document())
+                    && item.is_group()
                     && let Ok(id) = Uuid::parse_str(&item.id())
                     && expanded.contains(&id)
                 {
@@ -2058,10 +2058,6 @@ mod imp {
         #[property(get, set)]
         is_group: RefCell<bool>,
         #[property(get, set)]
-        is_document: RefCell<bool>,
-        #[property(get, set)]
-        is_dirty: RefCell<bool>,
-        #[property(get, set)]
         host: RefCell<String>,
         #[property(get, set)]
         status: RefCell<String>,
@@ -2110,8 +2106,6 @@ mod imp {
                 name: RefCell::default(),
                 protocol: RefCell::default(),
                 is_group: RefCell::default(),
-                is_document: RefCell::default(),
-                is_dirty: RefCell::default(),
                 host: RefCell::default(),
                 status: RefCell::default(),
                 is_pinned: RefCell::default(),
@@ -2156,8 +2150,6 @@ impl ConnectionItem {
             .property("name", name)
             .property("protocol", protocol)
             .property("is-group", false)
-            .property("is-document", false)
-            .property("is-dirty", false)
             .property("host", host)
             .property("status", "disconnected")
             .property("is-pinned", false)
@@ -2179,8 +2171,6 @@ impl ConnectionItem {
             .property("name", name)
             .property("protocol", protocol)
             .property("is-group", false)
-            .property("is-document", false)
-            .property("is-dirty", false)
             .property("host", host)
             .property("status", status)
             .property("is-pinned", false)
@@ -2217,8 +2207,6 @@ impl ConnectionItem {
             .property("name", name)
             .property("protocol", protocol)
             .property("is-group", false)
-            .property("is-document", false)
-            .property("is-dirty", false)
             .property("host", host)
             .property("status", status)
             .property("is-pinned", is_pinned)
@@ -2275,8 +2263,6 @@ impl ConnectionItem {
             .property("name", name)
             .property("protocol", "")
             .property("is-group", true)
-            .property("is-document", false)
-            .property("is-dirty", false)
             .property("host", "")
             .property("icon", icon)
             .property("sync-mode", sync_mode)
@@ -2291,26 +2277,7 @@ impl ConnectionItem {
         item
     }
 
-    /// Creates a new document item
-    #[must_use]
-    pub fn new_document(id: &str, name: &str, is_dirty: bool) -> Self {
-        let item: Self = glib::Object::builder()
-            .property("id", id)
-            .property("name", name)
-            .property("protocol", "")
-            .property("is-group", false)
-            .property("is-document", true)
-            .property("is-dirty", is_dirty)
-            .property("host", "")
-            .build();
-
-        // Initialize children store for documents (they contain groups and connections)
-        *item.imp().children.borrow_mut() = Some(gio::ListStore::new::<Self>());
-
-        item
-    }
-
-    /// Returns the children list store for groups/documents
+    /// Returns the children list store for groups
     pub fn children(&self) -> Option<gio::ListModel> {
         self.imp()
             .children
@@ -2319,16 +2286,11 @@ impl ConnectionItem {
             .map(|store| store.clone().upcast())
     }
 
-    /// Adds a child item to this group/document
+    /// Adds a child item to this group
     pub fn add_child(&self, child: &Self) {
         if let Some(ref store) = *self.imp().children.borrow() {
             store.append(child);
         }
-    }
-
-    /// Sets the dirty flag for this item
-    pub fn set_dirty(&self, dirty: bool) {
-        self.set_is_dirty(dirty);
     }
 }
 

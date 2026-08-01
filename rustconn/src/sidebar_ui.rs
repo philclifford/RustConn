@@ -244,6 +244,13 @@ pub fn show_context_menu_for_item(
             &i18n("Run Snippet..."),
             "run-snippet-for-connection",
         ));
+        // Opens the log viewer where this connection writes its session logs.
+        // Always offered: the point is to show the location even when nothing
+        // has been recorded yet (issue #247).
+        items.push(ContextMenuItem::action(
+            &i18n("Session Log..."),
+            "show-connection-log",
+        ));
         if is_ssh {
             items.push(ContextMenuItem::action(&i18n("Open SFTP"), "open-sftp"));
         }

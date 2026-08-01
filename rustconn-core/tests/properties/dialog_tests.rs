@@ -321,7 +321,6 @@ fn arb_ssh_config() -> impl Strategy<Value = SshConfig> {
         custom_options: HashMap::new(),
         startup_command: None,
         jump_host_id: None,
-        sftp_enabled: false,
         port_forwards: Vec::new(),
         waypipe: false,
         ssh_agent_socket: None,

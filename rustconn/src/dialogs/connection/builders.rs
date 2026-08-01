@@ -1028,21 +1028,11 @@ impl ConnectionDialogData<'_> {
 
         let custom_args = Self::parse_args(&self.zt_custom_args_entry.text());
 
-        // Build the config first to get the command for provider detection
-        let mut config = ZeroTrustConfig {
+        ZeroTrustConfig {
             provider,
             provider_config,
             custom_args,
-            detected_provider: None,
-        };
-
-        // Detect and persist the provider based on the generated command
-        let (program, args) = config.build_command(None);
-        let full_command = format!("{} {}", program, args.join(" "));
-        let detected = rustconn_core::detect_provider(&full_command);
-        config.detected_provider = Some(detected.icon_name().to_string());
-
-        config
+        }
     }
 
     fn build_telnet_config(&self) -> rustconn_core::models::TelnetConfig {
@@ -1418,7 +1408,6 @@ impl ConnectionDialogData<'_> {
             mptcp: self.ssh_mptcp.is_active(),
             custom_options,
             startup_command,
-            sftp_enabled: true,
             port_forwards: self.ssh_port_forwards.borrow().clone(),
             ssh_agent_socket,
             keep_alive_interval,

@@ -275,6 +275,11 @@ async fn run_vnc_client(
             .map_err(|e| VncClientError::ConnectionFailed(e.to_string()))?
     };
 
+    // Same rationale as RDP: a suspended machine leaves this socket half-open,
+    // and the frame loop would otherwise wait on it forever, showing a frozen
+    // desktop with no error (issue #248). Covers both paths above.
+    crate::connection::set_interactive_keepalive(&tcp, "vnc");
+
     // Build the VNC connector
     //
     // The vnc connector's auth setter consumes an owned plain `String`; the

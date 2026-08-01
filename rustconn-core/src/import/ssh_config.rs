@@ -342,7 +342,6 @@ impl SshConfigImporter {
             compression,
             custom_options: self.extract_recognized_options(options),
             startup_command: None,
-            sftp_enabled: false,
             port_forwards: Vec::new(),
             waypipe: false,
             ssh_agent_socket: None,

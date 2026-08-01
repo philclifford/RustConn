@@ -205,8 +205,3 @@ pub(super) fn is_descendant_of(
     }
     false
 }
-
-/// Shows an error in a modal alert dialog.
-pub fn show_error_dialog(window: &impl gtk4::prelude::IsA<gtk4::Widget>, message: &str) {
-    alert::show_error(window, &i18n("Error"), message);
-}

@@ -353,7 +353,6 @@ impl PartialConnection {
                     provider,
                     provider_config,
                     custom_args: Vec::new(),
-                    detected_provider: None,
                 };
                 ProtocolConfig::ZeroTrust(cfg)
             }
@@ -765,7 +764,6 @@ impl ConnectionWizard {
                     provider,
                     provider_config,
                     custom_args: Vec::new(),
-                    detected_provider: None,
                 };
                 ProtocolConfig::ZeroTrust(zt_cfg)
             }
