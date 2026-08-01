@@ -428,6 +428,11 @@ impl FreeRdpThread {
             plain_args.push("+clipboard".to_string());
         }
 
+        // State the audio routing explicitly — FreeRDP's implicit default is
+        // "no audio at all" (issue #245). Before extra_args so a hand-written
+        // override still wins.
+        plain_args.push(config.audio_mode.freerdp_arg().to_string());
+
         for arg in &config.extra_args {
             plain_args.push(arg.clone());
         }

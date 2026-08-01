@@ -2088,26 +2088,24 @@ msgid "Quality/speed tradeoff for image rendering"
 msgstr "图像渲染的质量/速度权衡"
 
 #: rustconn/src/dialogs/connection/rdp.rs:132
-#, fuzzy
 msgid "Automatic"
-msgstr "自动化"
+msgstr "自动"
 
 #: rustconn/src/dialogs/connection/rdp.rs:133
 msgid "Legacy (Compatible)"
-msgstr ""
+msgstr "传统（兼容）"
 
 #: rustconn/src/dialogs/connection/rdp.rs:134
-#, fuzzy
 msgid "RemoteFX"
-msgstr "移除"
+msgstr "RemoteFX"
 
 #: rustconn/src/dialogs/connection/rdp.rs:144
 msgid "Graphics Pipeline"
-msgstr ""
+msgstr "图形管线"
 
 #: rustconn/src/dialogs/connection/rdp.rs:146
 msgid "Automatic uses GFX/H.264 when available. Legacy for older servers."
-msgstr ""
+msgstr "自动模式在可用时使用 GFX/H.264。传统模式适用于较旧的服务器。"
 
 #: rustconn/src/dialogs/connection/rdp.rs:173
 #: rustconn/src/dialogs/template.rs:855
@@ -2270,7 +2268,7 @@ msgstr "完全重新连接而非动态调整大小（适用于旧服务器或固
 msgid ""
 "Use multiple network paths for seamless mobility (Linux 5.6+, embedded mode "
 "only)"
-msgstr ""
+msgstr "使用多条网络路径实现无缝移动（Linux 5.6+，仅嵌入模式）"
 
 #: rustconn/src/dialogs/connection/rdp.rs:360
 #: rustconn/src/dialogs/connection/vnc.rs:261
@@ -3319,13 +3317,12 @@ msgid "Tunnel VNC through an SSH connection"
 msgstr "通过 SSH 连接隧道传输 VNC"
 
 #: rustconn/src/dialogs/connection/web.rs:46
-#, fuzzy
 msgid "Browser Mode"
-msgstr "浏览器"
+msgstr "浏览器模式"
 
 #: rustconn/src/dialogs/connection/web.rs:47
 msgid "Choose how the URL is opened"
-msgstr ""
+msgstr "选择 URL 的打开方式"
 
 #: rustconn/src/dialogs/connection/web.rs:57
 msgid "Custom Browser"
@@ -3333,12 +3330,11 @@ msgstr "自定义浏览器"
 
 #: rustconn/src/dialogs/connection/web.rs:59
 msgid "Specify a browser command when Custom mode is selected."
-msgstr ""
+msgstr "选择自定义模式时请指定浏览器命令。"
 
 #: rustconn/src/dialogs/connection/web.rs:63
-#, fuzzy
 msgid "Browser Command"
-msgstr "自定义命令"
+msgstr "浏览器命令"
 
 #: rustconn/src/dialogs/connection/web.rs:65
 msgid "Command or path to browser binary (e.g. firefox, chromium)"
@@ -3346,20 +3342,19 @@ msgstr "浏览器命令或二进制文件路径（例如 firefox、chromium）"
 
 #: rustconn/src/dialogs/connection/web.rs:67
 msgid "Required for Custom mode"
-msgstr ""
+msgstr "自定义模式必填"
 
 #: rustconn/src/dialogs/connection/web.rs:75
 msgid "Embedded Browser Settings"
-msgstr ""
+msgstr "内嵌浏览器设置"
 
 #: rustconn/src/dialogs/connection/web.rs:76
 msgid "Settings applied when using the embedded browser"
-msgstr ""
+msgstr "使用内嵌浏览器时应用的设置"
 
 #: rustconn/src/dialogs/connection/web.rs:85
-#, fuzzy
 msgid "User Agent"
-msgstr "用户输入"
+msgstr "用户代理"
 
 #: rustconn/src/dialogs/connection/web.rs:93
 #: rustconn/src/dialogs/settings/monitoring_tab.rs:52
@@ -3369,7 +3364,7 @@ msgstr "常规"
 
 #: rustconn/src/dialogs/connection/web.rs:156
 msgid "How the URL is opened"
-msgstr ""
+msgstr "URL 的打开方式"
 
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:68
 #: rustconn/src/dialogs/export.rs:771
@@ -3488,6 +3483,8 @@ msgid ""
 "tab; ${host}, ${port}, ${username} and ${name} come from the connection "
 "itself"
 msgstr ""
+"类似 ${id} 的占位符取自“数据”标签页中的局部变量；${host}、${port}、$"
+"{username} 和 ${name} 来自连接本身"
 
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:240
 msgid "Web Bookmark"
@@ -4570,9 +4567,8 @@ msgid "Import from Remmina connection files"
 msgstr "从 Remmina 连接文件导入"
 
 #: rustconn/src/dialogs/import/sources.rs:130
-#, fuzzy
 msgid "Royal TS (.rtsz, .rtsx)"
-msgstr "Royal TS (.rtsz)"
+msgstr "Royal TS (.rtsz, .rtsx)"
 
 #: rustconn/src/dialogs/import/sources.rs:131
 msgid "Import from a Royal TS export file"
@@ -4740,9 +4736,8 @@ msgid "Select Royal TS File"
 msgstr "选择 Royal TS 文件"
 
 #: rustconn/src/dialogs/import/sources.rs:736
-#, fuzzy
 msgid "Royal TS files (*.rtsz, *.rtsx)"
-msgstr "Royal TS 文件 (*.rtsz, *.json)"
+msgstr "Royal TS 文件 (*.rtsz, *.rtsx)"
 
 #: rustconn/src/dialogs/import/sources.rs:819
 msgid "Select RDM JSON File"
@@ -6661,11 +6656,11 @@ msgstr "自动打开会话"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:295
 msgid "Show Welcome tab"
-msgstr ""
+msgstr "显示欢迎标签页"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:296
 msgid "Display Welcome tab when no session opens at startup"
-msgstr ""
+msgstr "启动时没有会话打开时显示欢迎标签页"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:306
 msgid "System Tray"
@@ -8095,7 +8090,7 @@ msgstr "连接失败：服务器不可达。请检查主机地址和端口。"
 
 #: rustconn/src/embedded_rdp/connection.rs:91
 msgid "Server certificate has changed since the last connection."
-msgstr ""
+msgstr "服务器证书自上次连接以来已更改。"
 
 #: rustconn/src/embedded_rdp/connection.rs:95
 msgid "RDP connection failed ({}). Run with RUST_LOG=debug for details."
@@ -8129,7 +8124,7 @@ msgstr "已保存 {} 个文件"
 
 #: rustconn/src/embedded_rdp/connection.rs:1602
 msgid "RTT: {} ms | {} | MPTCP"
-msgstr ""
+msgstr "RTT：{} 毫秒 | {} | MPTCP"
 
 #: rustconn/src/embedded_rdp/connection.rs:1607
 msgid "RTT: {} ms | {}"
@@ -8497,16 +8492,15 @@ msgstr "使用外部查看器（不支持的加密）"
 #: rustconn/src/embedded_web/navigation.rs:97
 #: rustconn/src/embedded_web/navigation.rs:98
 msgid "Reload"
-msgstr ""
+msgstr "重新加载"
 
 #: rustconn/src/embedded_web/mod.rs:333
-#, fuzzy
 msgid "No credentials configured for this connection"
-msgstr "此连接未配置密码"
+msgstr "此连接未配置凭据"
 
 #: rustconn/src/embedded_web/mod.rs:562
 msgid "TLS certificate accepted (self-signed or untrusted)"
-msgstr ""
+msgstr "已接受 TLS 证书（自签名或不受信任）"
 
 #: rustconn/src/embedded_web/mod.rs:666
 msgid "Downloaded: {}"
@@ -8518,20 +8512,18 @@ msgstr "此页面未找到登录表单字段"
 
 #: rustconn/src/embedded_web/navigation.rs:83
 #: rustconn/src/embedded_web/navigation.rs:84
-#, fuzzy
 msgid "Back"
-msgstr "后端"
+msgstr "后退"
 
 #: rustconn/src/embedded_web/navigation.rs:90
 #: rustconn/src/embedded_web/navigation.rs:91
-#, fuzzy
 msgid "Forward"
-msgstr "转发"
+msgstr "前进"
 
 #: rustconn/src/embedded_web/navigation.rs:103
 #: rustconn/src/embedded_web/navigation.rs:104
 msgid "Home"
-msgstr ""
+msgstr "主页"
 
 #: rustconn/src/embedded_web/navigation.rs:112
 msgid "Enter URL"
@@ -8539,25 +8531,24 @@ msgstr "输入 URL"
 
 #: rustconn/src/embedded_web/navigation.rs:113
 msgid "URL address bar"
-msgstr ""
+msgstr "URL 地址栏"
 
 #: rustconn/src/embedded_web/navigation.rs:128
 #: rustconn/src/embedded_web/navigation.rs:130
-#, fuzzy
 msgid "Autofill credentials"
-msgstr "默认凭据"
+msgstr "自动填充凭据"
 
 #: rustconn/src/embedded_web/navigation.rs:136
 #: rustconn/src/embedded_web/navigation.rs:137
 #: rustconn/src/embedded_web/navigation.rs:333
 msgid "Zoom in"
-msgstr ""
+msgstr "放大"
 
 #: rustconn/src/embedded_web/navigation.rs:142
 #: rustconn/src/embedded_web/navigation.rs:143
 #: rustconn/src/embedded_web/navigation.rs:334
 msgid "Zoom out"
-msgstr ""
+msgstr "缩小"
 
 #: rustconn/src/embedded_web/navigation.rs:151
 #: rustconn/src/embedded_web/navigation.rs:152 rustconn/src/window/ui.rs:100
@@ -8574,16 +8565,15 @@ msgstr "在系统浏览器中打开"
 
 #: rustconn/src/embedded_web/navigation.rs:427
 msgid "Zoom Reset (100%)"
-msgstr ""
+msgstr "重置缩放（100%）"
 
 #: rustconn/src/embedded_web/navigation.rs:431
 msgid "Clear Session Data"
 msgstr "清除会话数据"
 
 #: rustconn/src/embedded_web/navigation.rs:447
-#, fuzzy
 msgid "URL copied to clipboard"
-msgstr "密码已复制到剪贴板"
+msgstr "已将 URL 复制到剪贴板"
 
 #: rustconn/src/embedded_web/navigation.rs:496
 msgid "Session data cleared"
@@ -9084,8 +9074,8 @@ msgid "Double-click a connection in the sidebar to get started"
 msgstr "双击侧边栏中的连接以开始"
 
 #: rustconn/src/split_view/bridge.rs:1735
-msgid "Don\\u{2019}t show this page at startup"
-msgstr ""
+msgid "Don't show this page at startup"
+msgstr "启动时不显示此页面"
 
 #: rustconn/src/split_view/bridge.rs:1760
 msgid "Embedded SSH, RDP, VNC, SPICE"
@@ -10402,9 +10392,8 @@ msgid "No SPICE viewer found. Install virt-viewer."
 msgstr "未找到 SPICE 查看器。请安装 virt-viewer。"
 
 #: rustconn/src/window/protocols.rs:1293 rustconn/src/window/protocols.rs:1767
-#, fuzzy
 msgid "Invalid variable: {}"
-msgstr "配置无效：{}"
+msgstr "无效变量：{}"
 
 #: rustconn/src/window/protocols.rs:1684
 msgid "Invalid config: {}"
@@ -10448,11 +10437,11 @@ msgstr "仍然连接"
 
 #: rustconn/src/window/rdp_vnc.rs:743
 msgid "Certificate changed"
-msgstr ""
+msgstr "证书已更改"
 
 #: rustconn/src/window/rdp_vnc.rs:745
 msgid "Accept new certificate"
-msgstr ""
+msgstr "接受新证书"
 
 #: rustconn/src/window/session_lifecycle.rs:299
 msgid "Activity detected: {}"
@@ -10464,19 +10453,19 @@ msgstr "检测到静默：{}"
 
 #: rustconn/src/window/session_restore.rs:179
 msgid "Restore previous session?"
-msgstr ""
+msgstr "是否恢复上一次会话？"
 
 #: rustconn/src/window/session_restore.rs:181
 msgid "Reopen the {} connections that were open when RustConn last closed."
-msgstr ""
+msgstr "重新打开 RustConn 上次关闭时处于打开状态的 {} 个连接。"
 
 #: rustconn/src/window/session_restore.rs:185
 msgid "Not Now"
-msgstr ""
+msgstr "暂不"
 
 #: rustconn/src/window/session_restore.rs:245
 msgid "{} restored connections no longer exist"
-msgstr ""
+msgstr "{} 个恢复的连接已不存在"
 
 #: rustconn/src/window/sessions.rs:38
 msgid "Active Sessions"

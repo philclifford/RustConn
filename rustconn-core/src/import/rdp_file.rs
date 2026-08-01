@@ -9,8 +9,8 @@
 //! - `full address` — host\[:port\]
 //! - `username` — login name
 //! - `domain` — Windows domain
-//! - `gatewayhostname` — RD Gateway server
-//! - `gatewayusagemethod` — 1 = always use gateway
+//! - `gatewayhostname` — RD Gateway server as `host` or `host:port`
+//! - `gatewayusagemethod` — 0 = never use the gateway, anything else enables it
 //! - `desktopwidth` / `desktopheight` — resolution
 //! - `screen mode id` — 1 = windowed, 2 = fullscreen
 //! - `audiomode` — 0 = local, 1 = remote, 2 = none
@@ -126,20 +126,7 @@ impl RdpFileImporter {
         // Printer redirection
         let printer_enabled = fields.get_bool("redirectprinters").unwrap_or(false);
 
-        // Gateway
-        let gateway = fields
-            .get("gatewayhostname")
-            .filter(|s| !s.is_empty())
-            .map(|gw_host| {
-                let gw_port = fields.get_u16("gatewayport").unwrap_or(443);
-                RdpGateway {
-                    hostname: gw_host.to_string(),
-                    port: gw_port,
-                    username: fields
-                        .get("gatewaycredentialssource")
-                        .and_then(|_| username.clone()),
-                }
-            });
+        let gateway = parse_gateway(&fields);
 
         let name = path
             .file_stem()
@@ -218,6 +205,82 @@ impl ImportSource for RdpFileImporter {
         result.connections.push(connection);
         Ok(result)
     }
+}
+
+/// Default RD Gateway port (HTTPS).
+const DEFAULT_GATEWAY_PORT: u16 = 443;
+
+/// `gatewayusagemethod` value that disables the gateway entirely
+/// (`TSC_PROXY_MODE_NONE_DIRECT`).
+const GATEWAY_USAGE_NONE: u32 = 0;
+
+/// Builds the RD Gateway configuration from parsed `.rdp` fields.
+///
+/// Returns `None` when no gateway is named or when `gatewayusagemethod` is 0,
+/// which means the profile explicitly connects direct. Every other usage method
+/// (always, on-failure, deployment default, bypass-local) results in a gateway
+/// being configured, matching how FreeRDP treats a named gateway.
+fn parse_gateway(fields: &RdpFileFields) -> Option<RdpGateway> {
+    if fields.get_u32("gatewayusagemethod") == Some(GATEWAY_USAGE_NONE) {
+        return None;
+    }
+
+    let raw_host = fields
+        .get("gatewayhostname")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+
+    // MSTSC stores the port inside `gatewayhostname` (`gw.example.com:444`).
+    // `gatewayport` is not part of the documented format but some third-party
+    // writers emit it, so it supplies the default when no port is embedded.
+    let default_port = fields
+        .get_u16("gatewayport")
+        .filter(|port| *port > 0)
+        .unwrap_or(DEFAULT_GATEWAY_PORT);
+    let (hostname, port) = split_gateway_host(raw_host, default_port);
+
+    Some(RdpGateway {
+        hostname,
+        port,
+        // `.rdp` has no field for a separate gateway account — MSTSC reuses the
+        // session credentials, which `gatewaycredentialssource` only describes
+        // the prompt style for. `None` means "same user as the session".
+        // `gatewayusername` is a third-party extension and honoured when set.
+        username: fields
+            .get("gatewayusername")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from),
+    })
+}
+
+/// Splits `host[:port]` from a `gatewayhostname` value.
+///
+/// Bare IPv6 literals are left intact — RD Gateway endpoints are DNS names, and
+/// `::1` would otherwise be read as host `::` on port 1 — while the bracketed
+/// `[addr]:port` form is split.
+fn split_gateway_host(value: &str, default_port: u16) -> (String, u16) {
+    if let Some(rest) = value.strip_prefix('[')
+        && let Some((addr, tail)) = rest.split_once(']')
+    {
+        let port = tail
+            .strip_prefix(':')
+            .and_then(|p| p.parse().ok())
+            .filter(|port| *port > 0)
+            .unwrap_or(default_port);
+        return (addr.to_string(), port);
+    }
+
+    if let Some((host, port_str)) = value.rsplit_once(':')
+        && !host.contains(':')
+        && !host.is_empty()
+        && let Ok(port) = port_str.parse::<u16>()
+        && port > 0
+    {
+        return (host.to_string(), port);
+    }
+
+    (value.to_string(), default_port)
 }
 
 /// Parses `host:port` or `host` from the `full address` field.
@@ -315,6 +378,131 @@ desktopheight:i:1080
         } else {
             panic!("Expected RDP protocol config");
         }
+    }
+
+    /// Extracts the RDP protocol config, panicking on any other variant.
+    fn rdp_config(conn: &Connection) -> &RdpConfig {
+        match conn.protocol_config {
+            ProtocolConfig::Rdp(ref rdp) => rdp,
+            _ => panic!("Expected RDP protocol config"),
+        }
+    }
+
+    fn import_rdp(dir: &std::path::Path, name: &str, content: &str) -> Connection {
+        let path = dir.join(name);
+        fs::write(&path, content).unwrap();
+        RdpFileImporter::parse_rdp_file(&path).unwrap()
+    }
+
+    #[test]
+    fn gateway_port_comes_from_the_hostname_field() {
+        // MSTSC writes the gateway port inside `gatewayhostname`.
+        let dir = tempfile::tempdir().unwrap();
+        let conn = import_rdp(
+            dir.path(),
+            "corp.rdp",
+            "full address:s:host.internal\ngatewayhostname:s:gw.example.com:444\n",
+        );
+        let gw = rdp_config(&conn).gateway.as_ref().unwrap();
+        assert_eq!(gw.hostname, "gw.example.com");
+        assert_eq!(gw.port, 444);
+    }
+
+    #[test]
+    fn embedded_gateway_port_wins_over_gatewayport_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = import_rdp(
+            dir.path(),
+            "corp.rdp",
+            "full address:s:host.internal\n\
+             gatewayhostname:s:gw.example.com:444\n\
+             gatewayport:i:8443\n",
+        );
+        let gw = rdp_config(&conn).gateway.as_ref().unwrap();
+        assert_eq!(gw.port, 444);
+    }
+
+    #[test]
+    fn gatewayport_field_is_used_without_an_embedded_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = import_rdp(
+            dir.path(),
+            "corp.rdp",
+            "full address:s:host.internal\n\
+             gatewayhostname:s:gw.example.com\n\
+             gatewayport:i:8443\n",
+        );
+        let gw = rdp_config(&conn).gateway.as_ref().unwrap();
+        assert_eq!(gw.hostname, "gw.example.com");
+        assert_eq!(gw.port, 8443);
+    }
+
+    #[test]
+    fn gateway_usage_method_zero_disables_the_gateway() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = import_rdp(
+            dir.path(),
+            "direct.rdp",
+            "full address:s:host.internal\n\
+             gatewayhostname:s:gw.example.com\n\
+             gatewayusagemethod:i:0\n",
+        );
+        assert!(rdp_config(&conn).gateway.is_none());
+    }
+
+    #[test]
+    fn gateway_username_is_not_inferred_from_credentials_source() {
+        // `gatewaycredentialssource` describes the prompt style, not a separate
+        // account; `None` keeps "same user as the session".
+        let dir = tempfile::tempdir().unwrap();
+        let conn = import_rdp(
+            dir.path(),
+            "corp.rdp",
+            "full address:s:host.internal\n\
+             username:s:jdoe\n\
+             gatewayhostname:s:gw.example.com\n\
+             gatewaycredentialssource:i:4\n",
+        );
+        let gw = rdp_config(&conn).gateway.as_ref().unwrap();
+        assert_eq!(gw.username, None);
+        assert_eq!(conn.username, Some("jdoe".to_string()));
+    }
+
+    #[test]
+    fn explicit_gateway_username_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = import_rdp(
+            dir.path(),
+            "corp.rdp",
+            "full address:s:host.internal\n\
+             username:s:jdoe\n\
+             gatewayhostname:s:gw.example.com\n\
+             gatewayusername:s:gwadmin\n",
+        );
+        let gw = rdp_config(&conn).gateway.as_ref().unwrap();
+        assert_eq!(gw.username, Some("gwadmin".to_string()));
+    }
+
+    #[test]
+    fn split_gateway_host_handles_ipv6_and_defaults() {
+        assert_eq!(
+            split_gateway_host("gw.example.com", 443),
+            ("gw.example.com".to_string(), 443)
+        );
+        assert_eq!(
+            split_gateway_host("gw.example.com:0", 443),
+            ("gw.example.com:0".to_string(), 443)
+        );
+        // Bare IPv6 must not be split into host `::` on port 1.
+        assert_eq!(split_gateway_host("::1", 443), ("::1".to_string(), 443));
+        assert_eq!(
+            split_gateway_host("[2001:db8::1]:444", 443),
+            ("2001:db8::1".to_string(), 444)
+        );
+        assert_eq!(
+            split_gateway_host("[2001:db8::1]", 443),
+            ("2001:db8::1".to_string(), 443)
+        );
     }
 
     #[test]

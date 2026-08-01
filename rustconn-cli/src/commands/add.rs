@@ -84,6 +84,7 @@ pub(super) struct AddParams<'a> {
     pub disable_nla: bool,
     pub keyboard_layout: Option<u32>,
     pub audio_redirect: bool,
+    pub audio_mode: Option<&'a str>,
     pub printer: bool,
     pub shared_folder: &'a [String],
     // VNC
@@ -349,6 +350,7 @@ pub(super) fn cmd_add(config_path: Option<&Path>, params: AddParams<'_>) -> Resu
         || params.disable_nla
         || params.keyboard_layout.is_some()
         || params.audio_redirect
+        || params.audio_mode.is_some()
         || params.printer
         || !params.shared_folder.is_empty()
     {
@@ -1116,9 +1118,17 @@ pub(super) fn apply_rdp_fields(
         cfg.keyboard_layout = Some(klid);
     }
 
-    // Audio
+    // Audio. --audio-mode is the full three-state control; --audio-redirect is
+    // kept as the shorthand for "local" and loses to an explicit mode.
     if params.audio_redirect {
-        cfg.audio_redirect = true;
+        cfg.set_audio_mode(rustconn_core::models::RdpAudioMode::Local);
+    }
+    if let Some(mode) = params.audio_mode {
+        // Already validated by clap's value_parser, so an unknown token here
+        // would be a bug rather than bad input.
+        if let Some(parsed) = rustconn_core::models::RdpAudioMode::from_cli_str(mode) {
+            cfg.set_audio_mode(parsed);
+        }
     }
 
     // Printer

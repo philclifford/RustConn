@@ -137,12 +137,30 @@ pub(super) async fn establish_connection(
     let (stream, client_addr) = if config.uses_gateway() {
         // Connect through RD Gateway (MS-TSGU) via ironrdp-mstsgu
         let gw = &config.gateway;
-        let gw_endpoint = if gw.port == 443 {
-            gw.hostname.clone()
-        } else {
-            format!("{}:{}", gw.hostname, gw.port)
-        };
-        let gw_user = gw.username.clone().unwrap_or_default();
+        // `ironrdp-mstsgu` hands this endpoint straight to `TcpStream::connect`,
+        // so the port must always be present — a bare hostname is rejected as
+        // an invalid socket address.
+        let gw_endpoint = format!("{}:{}", gw.hostname, gw.port);
+        // `ironrdp-mstsgu` 0.0.1 hard-codes the tunnel target port to 3389
+        // (`HTTP_CHANNEL_PACKET`), so a non-standard target port cannot be
+        // reached through the embedded tunnel. GUI callers route those
+        // connections to the external FreeRDP client instead; warn in case a
+        // caller ever skips that check.
+        if config.port != 3389 {
+            tracing::warn!(
+                protocol = "rdp",
+                port = config.port,
+                "RD Gateway tunnel always targets port 3389; configured port is ignored"
+            );
+        }
+        // Gateway account: a dedicated gateway user when configured, otherwise
+        // the session user, domain-qualified for AD-backed gateways. An empty
+        // user is rejected by the gateway's HTTP Basic challenge.
+        let gw_user = crate::rdp_client::gateway::resolve_gateway_user(
+            gw.username.as_deref(),
+            config.username.as_deref(),
+            config.domain.as_deref(),
+        );
         // Gateway password: reuse the session password when no explicit
         // gateway password is set. `ironrdp-mstsgu` requires an owned String,
         // so erase that allocation immediately after the bounded connect call.

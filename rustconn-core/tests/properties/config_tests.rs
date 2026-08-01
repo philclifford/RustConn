@@ -177,6 +177,9 @@ fn arb_rdp_config() -> impl Strategy<Value = RdpConfig> {
                 resolution,
                 color_depth,
                 audio_redirect,
+                // None exercises the legacy-bool fallback in
+                // effective_audio_mode(), which is what old profiles hit.
+                audio_mode: None,
                 printer_enabled: false,
                 gateway,
                 shared_folders: Vec::new(),

@@ -112,9 +112,10 @@ impl RdpProtocol {
             if let Some(depth) = rdp_config.color_depth {
                 args.push(format!("/bpp:{depth}"));
             }
-            if rdp_config.audio_redirect {
-                args.push("/sound".to_string());
-            }
+            // Always explicit: without an audio flag FreeRDP leaves both
+            // AudioPlayback and RemoteConsoleAudio false, which the server
+            // reads as "no audio device in this session" (issue #245).
+            args.push(rdp_config.effective_audio_mode().freerdp_arg().to_string());
             // Security layer selection (FreeRDP /sec: flags)
             if let Some(sec_arg) = rdp_config.security_layer.freerdp_arg() {
                 args.push(sec_arg.to_string());

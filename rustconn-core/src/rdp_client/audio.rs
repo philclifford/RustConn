@@ -177,8 +177,15 @@ impl RdpsndClientHandler for RustConnAudioBackend {
     }
 
     fn get_flags(&self) -> AudioFormatFlags {
-        // Request volume control capability
-        AudioFormatFlags::VOLUME
+        // Request volume control capability — but only when we actually play
+        // audio. A disabled backend advertising VOLUME alongside an empty
+        // format list is contradictory, and invites the server to send volume
+        // PDUs for a stream that will never exist.
+        if self.enabled {
+            AudioFormatFlags::VOLUME
+        } else {
+            AudioFormatFlags::empty()
+        }
     }
 
     fn wave(&mut self, format_no: usize, ts: u32, data: Cow<'_, [u8]>) {
@@ -217,6 +224,9 @@ impl RdpsndClientHandler for RustConnAudioBackend {
     }
 
     fn set_volume(&mut self, volume: VolumePdu) {
+        if !self.enabled {
+            return;
+        }
         debug!(
             "Audio volume changed: left={}, right={}",
             volume.volume_left, volume.volume_right
@@ -233,6 +243,9 @@ impl RdpsndClientHandler for RustConnAudioBackend {
     }
 
     fn close(&mut self) {
+        if !self.enabled {
+            return;
+        }
         debug!("Audio channel closed");
         self.current_format = None;
         let _ = self.event_tx.send(RdpClientEvent::AudioClose);

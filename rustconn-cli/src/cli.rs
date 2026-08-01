@@ -332,9 +332,13 @@ pub enum Commands {
         #[arg(long, value_name = "KLID")]
         keyboard_layout: Option<u32>,
 
-        /// Enable audio redirection for RDP
+        /// Enable audio redirection for RDP (shorthand for --audio-mode local)
         #[arg(long)]
         audio_redirect: bool,
+
+        /// Where RDP session audio is played: local, remote or none
+        #[arg(long, value_name = "MODE", value_parser = ["local", "remote", "none"])]
+        audio_mode: Option<String>,
 
         /// Enable printer redirection for RDP (maps local CUPS printer)
         #[arg(long)]
@@ -826,9 +830,13 @@ pub enum Commands {
         #[arg(long, value_name = "KLID")]
         keyboard_layout: Option<u32>,
 
-        /// Enable audio redirection for RDP
+        /// Enable audio redirection for RDP (shorthand for --audio-mode local)
         #[arg(long)]
         audio_redirect: bool,
+
+        /// Where RDP session audio is played: local, remote or none
+        #[arg(long, value_name = "MODE", value_parser = ["local", "remote", "none"])]
+        audio_mode: Option<String>,
 
         /// Enable printer redirection for RDP (maps local CUPS printer)
         #[arg(long)]

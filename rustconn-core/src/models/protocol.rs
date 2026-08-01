@@ -1446,6 +1446,132 @@ impl RdpSecurityLayer {
     }
 }
 
+/// Where the remote session's audio is played.
+///
+/// Mirrors the three RDP audio modes defined by MS-RDPBCGR and offered by
+/// `mstsc`: bring the sound to the client, leave it on the remote machine's
+/// own output, or disable session audio entirely. The wire representation is
+/// two independent Client Info flags (`INFO_NOAUDIOPLAYBACK` and
+/// `INFO_REMOTECONSOLEAUDIO`), which is why a plain bool cannot express it —
+/// "not redirected" and "played on the server" are different states, and
+/// neither of them is the absence of the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RdpAudioMode {
+    /// Do not play session audio anywhere (`/audio-mode:2`).
+    ///
+    /// Default, because it matches what RustConn has always done and what the
+    /// previous `audio_redirect: false` meant. Windows reports no audio device
+    /// inside the session in this mode.
+    #[default]
+    None,
+    /// Redirect the remote audio to this computer (`/sound`).
+    Local,
+    /// Leave the audio on the remote computer's own output
+    /// (`/audio-mode:1`).
+    Remote,
+}
+
+impl RdpAudioMode {
+    /// Returns all available audio modes, in dropdown order.
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
+        &[Self::None, Self::Local, Self::Remote]
+    }
+
+    /// Returns the untranslated display name for this mode.
+    ///
+    /// Callers in the GUI wrap the result in `i18n()`.
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::None => "Do not play",
+            Self::Local => "Play on this computer",
+            Self::Remote => "Play on the remote computer",
+        }
+    }
+
+    /// Returns the dropdown index for this mode.
+    #[must_use]
+    pub const fn index(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Local => 1,
+            Self::Remote => 2,
+        }
+    }
+
+    /// Creates a mode from a dropdown index.
+    #[must_use]
+    pub const fn from_index(index: u32) -> Self {
+        match index {
+            1 => Self::Local,
+            2 => Self::Remote,
+            _ => Self::None,
+        }
+    }
+
+    /// Returns the FreeRDP argument that selects this mode.
+    ///
+    /// Always returns an argument: leaving the mode implicit makes FreeRDP
+    /// apply its own default (`AudioPlayback` and `RemoteConsoleAudio` both
+    /// false, i.e. no audio at all), which is what issue #245 was about.
+    /// Numeric `/audio-mode:` values are used rather than the `redirect`,
+    /// `server` and `none` aliases because the aliases only exist in recent
+    /// FreeRDP 3.x, while the numbers are accepted by FreeRDP 2 as well.
+    #[must_use]
+    pub const fn freerdp_arg(self) -> &'static str {
+        match self {
+            // `/sound` also selects the platform audio backend, which a bare
+            // `/audio-mode:0` does not do.
+            Self::Local => "/sound",
+            Self::Remote => "/audio-mode:1",
+            Self::None => "/audio-mode:2",
+        }
+    }
+
+    /// Whether this mode requires FreeRDP instead of IronRDP.
+    ///
+    /// `ironrdp-connector` only exposes `enable_audio_playback`, which maps to
+    /// `INFO_NOAUDIOPLAYBACK`. It never sets `INFO_REMOTECONSOLEAUDIO`, so
+    /// "play on the remote computer" cannot be expressed by the embedded
+    /// client and has to go through FreeRDP.
+    #[must_use]
+    pub const fn requires_freerdp(self) -> bool {
+        matches!(self, Self::Remote)
+    }
+
+    /// Whether the remote audio stream is played by this client.
+    #[must_use]
+    pub const fn is_local_playback(self) -> bool {
+        matches!(self, Self::Local)
+    }
+
+    /// Returns the CLI token for this mode.
+    #[must_use]
+    pub const fn as_cli_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Local => "local",
+            Self::Remote => "remote",
+        }
+    }
+
+    /// Parses a mode from its CLI token, case-insensitively.
+    ///
+    /// Returns `None` for anything else, so the caller can report the invalid
+    /// value rather than silently picking a default.
+    #[must_use]
+    pub fn from_cli_str(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "none" | "off" => Some(Self::None),
+            "local" | "client" => Some(Self::Local),
+            "remote" | "server" => Some(Self::Remote),
+            _ => None,
+        }
+    }
+}
+
 /// RDP protocol configuration
 // Allow 4 bools - these are distinct RDP connection options
 #[expect(
@@ -1471,9 +1597,20 @@ pub struct RdpConfig {
     /// Color depth (8, 15, 16, 24, or 32) - overrides performance_mode if set
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color_depth: Option<u8>,
-    /// Enable audio redirection
+    /// Enable audio redirection to this computer.
+    ///
+    /// Superseded by [`RdpConfig::audio_mode`], kept for compatibility: older
+    /// RustConn versions and the import/export formats (Remmina, `MobaXterm`,
+    /// `.rdp`) only understand this boolean. It is written on save so that
+    /// downgrading does not lose the setting, and it is the fallback when
+    /// `audio_mode` is absent. Read it through
+    /// [`RdpConfig::effective_audio_mode`] rather than directly.
     #[serde(default)]
     pub audio_redirect: bool,
+    /// Where the session audio is played. `None` means "not migrated yet" —
+    /// fall back to `audio_redirect`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_mode: Option<RdpAudioMode>,
     /// Enable printer redirection (maps local CUPS printer into the session)
     #[serde(default)]
     pub printer_enabled: bool,
@@ -1584,11 +1721,40 @@ impl RdpConfig {
             .unwrap_or_else(|| self.performance_mode.color_depth())
     }
 
+    /// Returns where the session audio should be played.
+    ///
+    /// Prefers the three-state [`RdpConfig::audio_mode`] and falls back to the
+    /// legacy `audio_redirect` boolean for profiles written before the mode
+    /// existed: `true` becomes [`RdpAudioMode::Local`], `false` becomes
+    /// [`RdpAudioMode::None`], which is what that boolean actually meant on
+    /// the wire.
+    #[must_use]
+    pub fn effective_audio_mode(&self) -> RdpAudioMode {
+        self.audio_mode.unwrap_or({
+            if self.audio_redirect {
+                RdpAudioMode::Local
+            } else {
+                RdpAudioMode::None
+            }
+        })
+    }
+
+    /// Sets the audio mode, keeping the legacy `audio_redirect` bool in sync.
+    ///
+    /// Writing both means an older RustConn reading the same profile still
+    /// sees local redirection turned on or off correctly, and the Remmina /
+    /// `MobaXterm` exporters keep working unchanged.
+    pub const fn set_audio_mode(&mut self, mode: RdpAudioMode) {
+        self.audio_mode = Some(mode);
+        self.audio_redirect = mode.is_local_playback();
+    }
+
     /// Whether this configuration requires FreeRDP instead of IronRDP.
     ///
     /// Returns `true` when the security layer or TLS level is incompatible
-    /// with IronRDP's `rustls` backend (TLS 1.2+ only), or when RemoteApp
-    /// is configured (IronRDP does not support RAIL protocol).
+    /// with IronRDP's `rustls` backend (TLS 1.2+ only), when RemoteApp
+    /// is configured (IronRDP does not support RAIL protocol), or when the
+    /// audio mode is one IronRDP cannot signal.
     #[must_use]
     pub fn requires_freerdp_fallback(&self) -> bool {
         // RemoteApp requires RAIL protocol — not supported by IronRDP
@@ -1603,6 +1769,11 @@ impl RdpConfig {
         if let Some(level) = self.tls_security_level
             && level < 2
         {
+            return true;
+        }
+        // "Play on the remote computer" needs INFO_REMOTECONSOLEAUDIO, which
+        // ironrdp-connector never sets (issue #245)
+        if self.effective_audio_mode().requires_freerdp() {
             return true;
         }
         false

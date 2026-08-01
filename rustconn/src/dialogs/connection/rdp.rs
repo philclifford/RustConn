@@ -4,7 +4,7 @@
 //! - Client mode selection (Embedded/External)
 //! - Performance mode (Quality/Balanced/Speed)
 //! - Resolution and color depth settings
-//! - Audio redirection
+//! - Audio routing (this computer / remote computer / off)
 //! - RDP Gateway configuration
 //! - Shared folders management
 //! - Security layer and TLS settings
@@ -21,7 +21,9 @@ use gtk4::{
     StringList,
 };
 use libadwaita as adw;
-use rustconn_core::models::{RdpClientMode, RdpPerformanceMode, ScaleOverride, SharedFolder};
+use rustconn_core::models::{
+    RdpAudioMode, RdpClientMode, RdpPerformanceMode, ScaleOverride, SharedFolder,
+};
 
 use crate::i18n::i18n;
 
@@ -36,7 +38,7 @@ pub(super) fn create_rdp_options() -> (
     SpinButton,
     DropDown,
     DropDown,
-    adw::SwitchRow,
+    DropDown,
     adw::SwitchRow,
     Entry,
     SpinButton,
@@ -254,13 +256,26 @@ pub(super) fn create_rdp_options() -> (
         .title(i18n("Features"))
         .build();
 
-    // Audio redirect
-    let audio_check = adw::SwitchRow::builder()
-        .title(i18n("Audio Redirection"))
-        .subtitle(i18n("Play remote audio locally"))
-        .active(false)
+    // Audio routing. Three states rather than a switch: "not redirected" and
+    // "played on the remote machine" are different things on the wire, and a
+    // bool could only ever express one of them (issue #245).
+    let audio_items: Vec<String> = RdpAudioMode::all()
+        .iter()
+        .map(|m| crate::dialogs::rdp_audio_mode_label(*m))
+        .collect();
+    let audio_strs: Vec<&str> = audio_items.iter().map(String::as_str).collect();
+    let audio_list = StringList::new(&audio_strs);
+    let audio_mode_dropdown = DropDown::builder()
+        .model(&audio_list)
+        .valign(gtk4::Align::Center)
         .build();
-    features_group.add(&audio_check);
+    audio_mode_dropdown.set_selected(RdpAudioMode::default().index());
+    let audio_row = adw::ActionRow::builder()
+        .title(i18n("Audio"))
+        .subtitle(i18n("Where the remote sound is played"))
+        .build();
+    audio_row.add_suffix(&audio_mode_dropdown);
+    features_group.add(&audio_row);
 
     // Printer redirection
     let printer_check = adw::SwitchRow::builder()
@@ -720,7 +735,7 @@ pub(super) fn create_rdp_options() -> (
         height_spin,
         color_dropdown,
         scale_override_dropdown,
-        audio_check,
+        audio_mode_dropdown,
         printer_check,
         gateway_entry,
         gateway_port_spin,

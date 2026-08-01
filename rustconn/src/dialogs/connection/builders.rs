@@ -24,9 +24,9 @@ use rustconn_core::automation::{ConnectionTask, ExpectRule, TaskCondition};
 use rustconn_core::models::{
     AwsSsmConfig, AzureBastionConfig, AzureSshConfig, BoundaryConfig, CloudflareAccessConfig,
     Connection, ConnectionThemeOverride, CustomProperty, GcpIapConfig, GenericZeroTrustConfig,
-    HighlightRule, HoopDevConfig, OciBastionConfig, PasswordSource, ProtocolConfig, RdpClientMode,
-    RdpConfig, RdpPerformanceMode, Resolution, ScaleOverride, SharedFolder, SpiceConfig,
-    SpiceImageCompression, SshAuthMethod, SshConfig, SshKeySource, TailscaleSshConfig,
+    HighlightRule, HoopDevConfig, OciBastionConfig, PasswordSource, ProtocolConfig, RdpAudioMode,
+    RdpClientMode, RdpConfig, RdpPerformanceMode, Resolution, ScaleOverride, SharedFolder,
+    SpiceConfig, SpiceImageCompression, SshAuthMethod, SshConfig, SshKeySource, TailscaleSshConfig,
     TeleportConfig, VncClientMode, VncConfig, VncPerformanceMode, ZeroTrustConfig,
     ZeroTrustProvider, ZeroTrustProviderConfig,
 };
@@ -82,7 +82,7 @@ pub(super) struct ConnectionDialogData<'a> {
     pub rdp_height_spin: &'a SpinButton,
     pub rdp_color_dropdown: &'a DropDown,
     pub rdp_scale_override_dropdown: &'a DropDown,
-    pub rdp_audio_check: &'a adw::SwitchRow,
+    pub rdp_audio_mode_dropdown: &'a DropDown,
     pub rdp_printer_check: &'a adw::SwitchRow,
     pub rdp_gateway_entry: &'a Entry,
     pub rdp_gateway_port_spin: &'a SpinButton,
@@ -1478,6 +1478,11 @@ impl ConnectionDialogData<'_> {
 
         let custom_args = Self::parse_args(&self.rdp_custom_args_entry.text());
 
+        // The legacy `audio_redirect` bool is written alongside the mode so an
+        // older RustConn reading this profile still sees local redirection
+        // correctly, and the Remmina/MobaXterm exporters keep working.
+        let audio_mode = RdpAudioMode::from_index(self.rdp_audio_mode_dropdown.selected());
+
         let shared_folders = self.rdp_shared_folders.borrow().clone();
 
         RdpConfig {
@@ -1490,7 +1495,8 @@ impl ConnectionDialogData<'_> {
             },
             resolution,
             color_depth,
-            audio_redirect: self.rdp_audio_check.is_active(),
+            audio_redirect: audio_mode.is_local_playback(),
+            audio_mode: Some(audio_mode),
             printer_enabled: self.rdp_printer_check.is_active(),
             gateway,
             shared_folders,

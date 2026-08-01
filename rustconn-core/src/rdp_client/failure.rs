@@ -28,6 +28,8 @@ pub enum RdpFailureClass {
     /// The server rejected the supplied credentials (CredSSP/NLA `NTSTATUS`
     /// logon failure, disabled or locked account, expired password).
     Authentication,
+    /// The MS-TSGU tunnel to the RD Gateway could not be established.
+    GatewayFailure,
     /// The GFX pipeline produced no decodable frame or failed to decode.
     GraphicsPipeline,
     /// The server offers only a security protocol IronRDP does not implement.
@@ -44,7 +46,10 @@ impl RdpFailureClass {
     pub const fn warrants_freerdp_fallback(self) -> bool {
         matches!(
             self,
-            Self::SecurityUnsupported | Self::ProtocolIncompatible | Self::GraphicsPipeline
+            Self::SecurityUnsupported
+                | Self::ProtocolIncompatible
+                | Self::GraphicsPipeline
+                | Self::GatewayFailure
         )
     }
 
@@ -86,6 +91,13 @@ const AUTH_MARKERS: &[&str] = &[
     "status_logon_type_not_granted",
     "accessdenied",
 ];
+
+/// Markers of a failed MS-TSGU tunnel to the RD Gateway.
+///
+/// Produced by the gateway branch of the embedded connect path; the external
+/// FreeRDP client speaks the same protocol with a wider set of authentication
+/// methods (`ironrdp-mstsgu` only offers HTTP Basic), so it is worth a try.
+const GATEWAY_MARKERS: &[&str] = &["rd gateway connection failed"];
 
 /// TLS, certificate, and transport failures that must not trigger fallback.
 const NON_FALLBACK_MARKERS: &[&str] = &[
@@ -130,14 +142,24 @@ const PROTOCOL_MARKERS: &[&str] = &[
 
 /// Classifies an embedded RDP failure message into a [`RdpFailureClass`].
 ///
-/// Authentication is checked first. TLS, certificate, and transport roots then
-/// take precedence over fallback-worthy protocol markers.
+/// Authentication is checked first, then RD Gateway tunnel failures. TLS,
+/// certificate, and transport roots take precedence over fallback-worthy
+/// protocol markers.
 #[must_use]
 pub fn classify_rdp_failure(msg: &str) -> RdpFailureClass {
     let lower = msg.to_ascii_lowercase();
 
     if is_authentication_failure_lower(&lower) {
         return RdpFailureClass::Authentication;
+    }
+    // Checked before the transport markers on purpose: a gateway failure wraps
+    // the underlying cause ("TCP connect", "TLS connect", "WS Upgrade"), and
+    // those words would otherwise classify the whole message as a plain
+    // transport error and strand the session (issue #246). The external client
+    // implements the same tunnel with more authentication methods, so handing
+    // it over is worthwhile whatever the inner cause was.
+    if GATEWAY_MARKERS.iter().any(|m| lower.contains(m)) {
+        return RdpFailureClass::GatewayFailure;
     }
     if NON_FALLBACK_MARKERS.iter().any(|m| lower.contains(m)) {
         return RdpFailureClass::Other;
@@ -273,10 +295,54 @@ mod tests {
     }
 
     #[test]
+    fn gateway_tunnel_failure_falls_back_to_external_client() {
+        // Exact message built by the gateway branch of `establish_connection`.
+        let class = classify_rdp_failure("RD Gateway connection failed: WS Upgrade error");
+        assert_eq!(class, RdpFailureClass::GatewayFailure);
+        assert!(class.warrants_freerdp_fallback());
+        assert!(!class.requires_explicit_consent());
+    }
+
+    #[test]
+    fn gateway_failure_wins_over_wrapped_transport_cause() {
+        // The wrapped cause carries transport/TLS wording; the gateway class
+        // must still win so the session reaches the external client (#246).
+        for msg in [
+            "RD Gateway connection failed: TCP connect: connection refused (os error 111)",
+            "RD Gateway connection failed: TLS connect: invalid peer certificate",
+            "RD Gateway connection failed: custom error: host not found",
+        ] {
+            let class = classify_rdp_failure(msg);
+            assert_eq!(class, RdpFailureClass::GatewayFailure, "message: {msg}");
+            assert!(class.warrants_freerdp_fallback(), "message: {msg}");
+        }
+    }
+
+    #[test]
+    fn rejected_gateway_credentials_stay_authentication() {
+        // Credential rejection outranks the gateway marker: the external client
+        // would be refused by the same account.
+        let class = classify_rdp_failure(
+            "RD Gateway connection failed: nstatus: Some(NStatusCode(0xc000006d))",
+        );
+        assert_eq!(class, RdpFailureClass::Authentication);
+        assert!(!class.warrants_freerdp_fallback());
+    }
+
+    #[test]
+    fn direct_transport_failures_are_not_gateway_failures() {
+        assert_eq!(
+            classify_rdp_failure("Failed to connect to host.internal:3389: connection refused"),
+            RdpFailureClass::Other
+        );
+    }
+
+    #[test]
     fn only_legacy_security_fallback_requires_explicit_consent() {
         assert!(RdpFailureClass::SecurityUnsupported.requires_explicit_consent());
         for class in [
             RdpFailureClass::Authentication,
+            RdpFailureClass::GatewayFailure,
             RdpFailureClass::GraphicsPipeline,
             RdpFailureClass::ProtocolIncompatible,
             RdpFailureClass::Other,

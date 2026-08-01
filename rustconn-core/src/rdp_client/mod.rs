@@ -85,7 +85,9 @@ pub use event::{
     create_frame_update_with_conversion,
 };
 pub use failure::{RdpFailureClass, classify_rdp_failure, is_authentication_failure};
-pub use gateway::{GatewayAuthMethod, GatewayConfig, GatewayError, GatewayState};
+pub use gateway::{
+    GatewayAuthMethod, GatewayConfig, GatewayError, GatewayState, resolve_gateway_user,
+};
 pub use graphics::{
     FrameStatistics, GraphicsError, GraphicsMode, GraphicsQuality, ServerGraphicsCapabilities,
 };

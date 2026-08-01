@@ -267,6 +267,12 @@ modules:
       - -DWITH_CLIENT_SDL2=OFF
       - -DWITH_CLIENT_SDL3=ON
       - -DCHANNEL_URBDRC=OFF
+      # Audio backends are pinned rather than left to autodetection: they
+      # default to ON but degrade to OFF silently when the SDK headers are
+      # missing, which would ship a FreeRDP that cannot play session sound at
+      # all (issue #245). ON makes a missing backend a build failure instead.
+      - -DWITH_PULSE=ON
+      - -DWITH_ALSA=ON
       - -DWITH_CUPS=OFF
       - -DWITH_PCSC=OFF
       - -DWITH_SWSCALE=OFF
@@ -332,7 +338,7 @@ modules:
         # chicken-and-egg problem and any placeholder would be a fake pin.
         # The immutable commit is added once the tag exists — by hand or by the
         # Flathub bot — in the Flathub repository, not here.
-        tag: v0.19.8
+        tag: v0.19.9
         x-checker-data:
           type: git
           tag-pattern: ^v([\d.]+)$
