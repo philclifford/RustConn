@@ -47,7 +47,7 @@ mod input;
 mod resize;
 
 // Re-export types for external use
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::process::Child;
 use std::rc::Rc;
 
@@ -261,6 +261,13 @@ pub struct EmbeddedRdpWidget {
     cairo_buffer: Rc<RefCell<CairoBackedBuffer>>,
     /// Current connection state
     state: Rc<RefCell<RdpConnectionState>>,
+    /// Whether the frame on screen may no longer reflect the server.
+    ///
+    /// Set when the machine resumes from sleep: the socket is very likely dead,
+    /// but the kernel has not confirmed it yet, so the picture is *stale*
+    /// rather than wrong. Drawn dimmed so a frozen desktop cannot be mistaken
+    /// for a live one, and cleared by the next frame that arrives (issue #248).
+    stale: Rc<Cell<bool>>,
     /// Current configuration
     config: Rc<RefCell<Option<RdpConfig>>>,
     /// FreeRDP child process (for external mode)
@@ -299,6 +306,8 @@ pub struct EmbeddedRdpWidget {
     on_reconnect: Rc<RefCell<Option<Box<dyn Fn() + 'static>>>>,
     /// Reconnect banner (shown when disconnected, at bottom of container)
     reconnect_banner: GtkBox,
+    /// Label inside the reconnect banner, so its wording can state the reason.
+    reconnect_label: Label,
     /// Reconnect button inside the banner
     reconnect_button: Button,
     /// Reconnect timer source ID for debounced resize reconnect
@@ -725,6 +734,8 @@ impl EmbeddedRdpWidget {
             RefCell<Option<tokio::sync::mpsc::UnboundedSender<RdpClientCommand>>>,
         > = Rc::new(RefCell::new(None));
 
+        let stale_frame = Rc::new(Cell::new(false));
+
         let widget = Self {
             container,
             toolbar,
@@ -736,6 +747,7 @@ impl EmbeddedRdpWidget {
             drawing_area,
             cairo_buffer,
             state,
+            stale: stale_frame,
             config: Rc::new(RefCell::new(None)),
             process: Rc::new(RefCell::new(None)),
             stderr_lines: Rc::new(RefCell::new(None)),
@@ -755,6 +767,7 @@ impl EmbeddedRdpWidget {
             on_cert_changed: Rc::new(RefCell::new(None)),
             on_reconnect: Rc::new(RefCell::new(None)),
             reconnect_banner,
+            reconnect_label,
             reconnect_button,
             reconnect_timer: Rc::new(RefCell::new(None)),
             remote_clipboard_text: Rc::new(RefCell::new(None)),
@@ -1771,6 +1784,55 @@ impl EmbeddedRdpWidget {
     #[must_use]
     pub fn config(&self) -> Option<RdpConfig> {
         self.config.borrow().clone()
+    }
+
+    /// Marks the displayed frame as possibly stale after the machine resumed.
+    ///
+    /// A suspend leaves the TCP connection half-open, and the kernel needs up to
+    /// the keepalive detection window to confirm it. Until then the session
+    /// still reports itself as connected while showing a picture that may be
+    /// minutes old. Rather than guess, the frame is dimmed and the reconnect
+    /// banner is offered so the user can act at once instead of staring at a
+    /// frozen desktop (issue #248).
+    ///
+    /// Non-destructive on purpose: a session that survived a short sleep clears
+    /// the mark by itself as soon as the next frame arrives.
+    pub fn mark_stale(&self) {
+        // Only meaningful while the widget still believes it is connected; a
+        // session that already failed has the real banner up.
+        if *self.state.borrow() != RdpConnectionState::Connected || self.stale.get() {
+            return;
+        }
+        self.stale.set(true);
+        self.reconnect_label.set_text(&i18n(
+            "Connection may have been lost while the computer slept",
+        ));
+        self.reconnect_banner.set_visible(true);
+        self.drawing_area.queue_draw();
+    }
+
+    /// Clears the stale mark once the session proves it is still alive.
+    ///
+    /// Called from the event pump when a frame arrives. Restores the banner text
+    /// so a later genuine disconnect reads correctly.
+    pub fn clear_stale(&self) {
+        if !self.stale.get() {
+            return;
+        }
+        self.stale.set(false);
+        self.reconnect_label.set_text(&i18n("Session disconnected"));
+        // Hide only if the session is genuinely live; a real disconnect that
+        // arrived in the meantime owns the banner now.
+        if *self.state.borrow() == RdpConnectionState::Connected {
+            self.reconnect_banner.set_visible(false);
+        }
+        self.drawing_area.queue_draw();
+    }
+
+    /// Returns whether the displayed frame is marked as possibly stale.
+    #[must_use]
+    pub fn is_stale(&self) -> bool {
+        self.stale.get()
     }
 }
 

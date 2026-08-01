@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: rustconn 0.12.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-01 16:31+0300\n"
+"POT-Creation-Date: 2026-08-01 18:32+0300\n"
 "PO-Revision-Date: 2026-04-25 10:46+0000\n"
 "Last-Translator: p-bo <https://github.com/p-bo>\n"
 "Language-Team: Czech\n"
@@ -38,7 +38,7 @@ msgstr "OK"
 #: rustconn/src/window/batch_edit.rs:63
 #: rustconn/src/window/connection_dialogs.rs:1055
 #: rustconn/src/window/edit_group.rs:1738
-#: rustconn/src/window/edit_group.rs:1786 rustconn/src/window/mod.rs:3270
+#: rustconn/src/window/edit_group.rs:1786 rustconn/src/window/mod.rs:3280
 #: rustconn/src/window/operations.rs:82 rustconn/src/window/operations.rs:415
 #: rustconn/src/window/operations.rs:584 rustconn/src/window/sessions.rs:339
 #: rustconn/src/window/workspaces.rs:548
@@ -77,7 +77,7 @@ msgid "KeePass password not loaded from keyring — re-enter it in Settings"
 msgstr ""
 "Heslo KeePass nebylo načteno z klíčenky — zadejte jej znovu v Nastavení"
 
-#: rustconn/src/app.rs:641 rustconn/src/embedded_rdp/mod.rs:368
+#: rustconn/src/app.rs:641 rustconn/src/embedded_rdp/mod.rs:377
 #: rustconn/src/split_view/bridge.rs:1842 rustconn/src/window/ui.rs:113
 msgid "Settings"
 msgstr "Nastavení"
@@ -150,7 +150,10 @@ msgstr "Všem přispěvatelům a podporovatelům"
 msgid "{} — RustConn"
 msgstr "{} — RustConn"
 
-#: rustconn/src/detached_window.rs:137 rustconn/src/embedded_rdp/mod.rs:702
+#: rustconn/src/detached_window.rs:137
+#: rustconn/src/embedded_rdp/connection.rs:1235
+#: rustconn/src/embedded_rdp/connection.rs:1281
+#: rustconn/src/embedded_rdp/mod.rs:711 rustconn/src/embedded_rdp/mod.rs:1823
 #: rustconn/src/embedded_vnc/ui.rs:108 rustconn/src/terminal/mod.rs:2054
 msgid "Session disconnected"
 msgstr "Relace odpojena"
@@ -176,7 +179,7 @@ msgid "Enter Password Manually"
 msgstr "Zadat heslo ručně"
 
 #: rustconn/src/dialogs/backend_missing.rs:43 rustconn/src/vault_ops.rs:58
-#: rustconn/src/window/mod.rs:647
+#: rustconn/src/window/mod.rs:648
 msgid "Open Settings"
 msgstr "Otevřít nastavení"
 
@@ -2807,7 +2810,7 @@ msgstr "Přesměrovat USB zařízení na vzdálený"
 #: rustconn/src/dialogs/connection/spice.rs:179
 #: rustconn/src/dialogs/connection/vnc.rs:107
 #: rustconn/src/dialogs/snippet.rs:219 rustconn/src/dialogs/template.rs:1256
-#: rustconn/src/embedded_rdp/mod.rs:377
+#: rustconn/src/embedded_rdp/mod.rs:386
 msgid "Auto"
 msgstr "Auto"
 
@@ -4184,7 +4187,7 @@ msgstr ""
 #: rustconn/src/dialogs/settings/cloud_sync_tab.rs:238
 #: rustconn/src/dialogs/tunnel_builder/mod.rs:618
 #: rustconn/src/dialogs/widgets.rs:460 rustconn/src/terminal/tab_menu.rs:400
-#: rustconn/src/vault_ops.rs:57 rustconn/src/window/mod.rs:3271
+#: rustconn/src/vault_ops.rs:57 rustconn/src/window/mod.rs:3281
 msgid "Close"
 msgstr "Zavřít"
 
@@ -7043,11 +7046,11 @@ msgstr "Cíl"
 msgid "Where this snippet can be executed"
 msgstr "Kde lze tento úryvek spustit"
 
-#: rustconn/src/dialogs/snippet.rs:220 rustconn/src/embedded_rdp/mod.rs:378
+#: rustconn/src/dialogs/snippet.rs:220 rustconn/src/embedded_rdp/mod.rs:387
 msgid "Clipboard (fast)"
 msgstr "Schránka (rychle)"
 
-#: rustconn/src/dialogs/snippet.rs:221 rustconn/src/embedded_rdp/mod.rs:379
+#: rustconn/src/dialogs/snippet.rs:221 rustconn/src/embedded_rdp/mod.rs:388
 msgid "Autotype (reliable)"
 msgstr "Automatické psaní (spolehlivé)"
 
@@ -7921,7 +7924,7 @@ msgstr "Nepodařilo se načíst tajemství. Zkontrolujte backend v Nastavení."
 msgid "Fetched from vault at connect time"
 msgstr "Načteno z trezoru při připojení"
 
-#: rustconn/src/dialogs/widgets.rs:465 rustconn/src/embedded_rdp/mod.rs:548
+#: rustconn/src/dialogs/widgets.rs:465 rustconn/src/embedded_rdp/mod.rs:557
 #: rustconn/src/embedded_trait.rs:205 rustconn/src/embedded_vnc/ui.rs:47
 #: rustconn/src/terminal/config.rs:162
 msgid "Copy"
@@ -8086,8 +8089,8 @@ msgid "Clipboard channel not ready"
 msgstr "Kanál schránky není připraven"
 
 #: rustconn/src/embedded_rdp/connection.rs:71
-#: rustconn/src/embedded_rdp/connection.rs:2088
-#: rustconn/src/embedded_rdp/connection.rs:2092
+#: rustconn/src/embedded_rdp/connection.rs:2105
+#: rustconn/src/embedded_rdp/connection.rs:2109
 msgid "Authentication failed: invalid username or password."
 msgstr "Ověření selhalo: neplatné uživatelské jméno nebo heslo."
 
@@ -8125,7 +8128,7 @@ msgid "RDP connection failed ({}). Run with RUST_LOG=debug for details."
 msgstr "Připojení RDP selhalo ({}). Spusťte s RUST_LOG=debug pro podrobnosti."
 
 #: rustconn/src/embedded_rdp/connection.rs:311
-#: rustconn/src/embedded_rdp/connection.rs:1940
+#: rustconn/src/embedded_rdp/connection.rs:1957
 msgid "Connection cancelled because the server requires legacy RDP security."
 msgstr ""
 "Připojení bylo zrušeno, protože server vyžaduje zastaralé zabezpečení RDP."
@@ -8135,114 +8138,116 @@ msgid ""
 "Custom FreeRDP arguments are ignored by the embedded "
 "client.                          Set the RDP client mode to External to "
 "apply them."
-msgstr "Vestavěný klient ignoruje vlastní argumenty FreeRDP. Chcete-li je použít, přepněte režim klienta RDP na Externí."
+msgstr ""
+"Vestavěný klient ignoruje vlastní argumenty FreeRDP. Chcete-li je použít, "
+"přepněte režim klienta RDP na Externí."
 
-#: rustconn/src/embedded_rdp/connection.rs:1307
+#: rustconn/src/embedded_rdp/connection.rs:1324
 msgid "Copy remote clipboard to local"
 msgstr "Kopírovat vzdálenou schránku do místní"
 
-#: rustconn/src/embedded_rdp/connection.rs:1521
-#: rustconn/src/embedded_rdp/connection.rs:1600
+#: rustconn/src/embedded_rdp/connection.rs:1538
+#: rustconn/src/embedded_rdp/connection.rs:1617
 msgid "Save {} Files"
 msgstr "Uložit {} souborů"
 
-#: rustconn/src/embedded_rdp/connection.rs:1525
+#: rustconn/src/embedded_rdp/connection.rs:1542
 msgid "Save {} files from remote clipboard"
 msgstr "Uložit {} souborů ze vzdálené schránky"
 
-#: rustconn/src/embedded_rdp/connection.rs:1563
+#: rustconn/src/embedded_rdp/connection.rs:1580
 msgid "Downloaded {}/{} files"
 msgstr "Staženo {}/{} souborů"
 
-#: rustconn/src/embedded_rdp/connection.rs:1605
+#: rustconn/src/embedded_rdp/connection.rs:1622
 msgid "Saved {} files"
 msgstr "Uloženo {} souborů"
 
-#: rustconn/src/embedded_rdp/connection.rs:1684
+#: rustconn/src/embedded_rdp/connection.rs:1701
 msgid "RTT: {} ms | {} | MPTCP"
 msgstr "RTT: {} ms | {} | MPTCP"
 
-#: rustconn/src/embedded_rdp/connection.rs:1689
+#: rustconn/src/embedded_rdp/connection.rs:1706
 msgid "RTT: {} ms | {}"
 msgstr "RTT: {} ms | {}"
 
-#: rustconn/src/embedded_rdp/connection.rs:1974
+#: rustconn/src/embedded_rdp/connection.rs:1991
 msgid "Could not prepare the external RDP compatibility client."
 msgstr ""
 "Nepodařilo se připravit externího klienta RDP pro zajištění kompatibility."
 
-#: rustconn/src/embedded_rdp/connection.rs:1994
-#: rustconn/src/embedded_rdp/connection.rs:2477
+#: rustconn/src/embedded_rdp/connection.rs:2011
+#: rustconn/src/embedded_rdp/connection.rs:2494
 msgid "The external RDP client could not be started."
 msgstr "Externího klienta RDP se nepodařilo spustit."
 
-#: rustconn/src/embedded_rdp/connection.rs:2027
+#: rustconn/src/embedded_rdp/connection.rs:2044
 msgid ""
 "Could not start the external RDP client. Install FreeRDP 3 and try again."
 msgstr ""
 "Externího klienta RDP se nepodařilo spustit. Nainstalujte FreeRDP 3 a zkuste "
 "to znovu."
 
-#: rustconn/src/embedded_rdp/connection.rs:2037
+#: rustconn/src/embedded_rdp/connection.rs:2054
 msgid "Using external RDP client (server incompatible)"
 msgstr "Používá se externí RDP klient (server nekompatibilní)"
 
-#: rustconn/src/embedded_rdp/connection.rs:2096
+#: rustconn/src/embedded_rdp/connection.rs:2113
 msgid "Authentication failed: account restrictions prevent this login."
 msgstr "Ověření selhalo: omezení účtu brání přihlášení."
 
-#: rustconn/src/embedded_rdp/connection.rs:2100
+#: rustconn/src/embedded_rdp/connection.rs:2117
 msgid "Authentication failed: password must be changed before first login."
 msgstr "Ověření selhalo: heslo je třeba změnit před prvním přihlášením."
 
-#: rustconn/src/embedded_rdp/connection.rs:2104
+#: rustconn/src/embedded_rdp/connection.rs:2121
 msgid "Authentication failed: account is disabled."
 msgstr "Ověření selhalo: účet je zakázán."
 
-#: rustconn/src/embedded_rdp/connection.rs:2108
+#: rustconn/src/embedded_rdp/connection.rs:2125
 msgid "Authentication failed: account is locked out."
 msgstr "Ověření selhalo: účet je uzamčen."
 
-#: rustconn/src/embedded_rdp/connection.rs:2112
+#: rustconn/src/embedded_rdp/connection.rs:2129
 msgid "Authentication failed: password has expired."
 msgstr "Ověření selhalo: platnost hesla vypršela."
 
-#: rustconn/src/embedded_rdp/connection.rs:2116
+#: rustconn/src/embedded_rdp/connection.rs:2133
 msgid "Authentication failed: account has expired."
 msgstr "Ověření selhalo: platnost účtu vypršela."
 
-#: rustconn/src/embedded_rdp/connection.rs:2120
+#: rustconn/src/embedded_rdp/connection.rs:2137
 msgid "Authentication failed: user is not allowed to log on to this computer."
 msgstr ""
 "Ověření selhalo: uživatel nemá oprávnění přihlásit se k tomuto počítači."
 
-#: rustconn/src/embedded_rdp/connection.rs:2124
+#: rustconn/src/embedded_rdp/connection.rs:2141
 msgid "NLA authentication failed. Check username and password."
 msgstr "Ověření NLA selhalo. Zkontrolujte uživatelské jméno a heslo."
 
-#: rustconn/src/embedded_rdp/connection.rs:2128
+#: rustconn/src/embedded_rdp/connection.rs:2145
 msgid "TLS connection failed. The server may not support this security level."
 msgstr ""
 "Připojení TLS selhalo. Server nemusí podporovat tuto úroveň zabezpečení."
 
-#: rustconn/src/embedded_rdp/connection.rs:2132
+#: rustconn/src/embedded_rdp/connection.rs:2149
 msgid "Connection refused. Check host and port."
 msgstr "Připojení odmítnuto. Zkontrolujte hostitele a port."
 
-#: rustconn/src/embedded_rdp/connection.rs:2135
+#: rustconn/src/embedded_rdp/connection.rs:2152
 msgid "Connection timed out. Check that the host is reachable."
 msgstr ""
 "Časový limit připojení vypršel. Zkontrolujte, zda je hostitel dostupný."
 
-#: rustconn/src/embedded_rdp/connection.rs:2457
+#: rustconn/src/embedded_rdp/connection.rs:2474
 msgid "RDP session will open in an external window"
 msgstr "Relace RDP se otevře v externím okně"
 
-#: rustconn/src/embedded_rdp/connection.rs:2516
+#: rustconn/src/embedded_rdp/connection.rs:2533
 msgid "RDP connection failed. Install FreeRDP 3 for external RDP sessions."
 msgstr "Připojení RDP selhalo. Pro externí relace RDP nainstalujte FreeRDP 3."
 
-#: rustconn/src/embedded_rdp/connection.rs:2518
+#: rustconn/src/embedded_rdp/connection.rs:2535
 msgid "Failed to start FreeRDP: {}"
 msgstr "Nepodařilo se spustit FreeRDP: {}"
 
@@ -8254,162 +8259,166 @@ msgstr "Přetahování souborů zakázáno: {}"
 msgid "Try Again"
 msgstr "Zkusit znovu"
 
-#: rustconn/src/embedded_rdp/mod.rs:367
+#: rustconn/src/embedded_rdp/mod.rs:376
 msgid "Task Manager"
 msgstr "Správce úloh"
 
-#: rustconn/src/embedded_rdp/mod.rs:369
+#: rustconn/src/embedded_rdp/mod.rs:378
 msgid "Registry Editor"
 msgstr "Editor registru"
 
-#: rustconn/src/embedded_rdp/mod.rs:370
+#: rustconn/src/embedded_rdp/mod.rs:379
 msgid "Device Manager"
 msgstr "Správce zařízení"
 
-#: rustconn/src/embedded_rdp/mod.rs:371
+#: rustconn/src/embedded_rdp/mod.rs:380
 msgid "Event Viewer"
 msgstr "Prohlížeč událostí"
 
-#: rustconn/src/embedded_rdp/mod.rs:372
+#: rustconn/src/embedded_rdp/mod.rs:381
 msgid "Services"
 msgstr "Služby"
 
-#: rustconn/src/embedded_rdp/mod.rs:373
+#: rustconn/src/embedded_rdp/mod.rs:382
 msgid "Disk Management"
 msgstr "Správa disků"
 
-#: rustconn/src/embedded_rdp/mod.rs:374
+#: rustconn/src/embedded_rdp/mod.rs:383
 msgid "Resource Monitor"
 msgstr "Monitor prostředků"
 
-#: rustconn/src/embedded_rdp/mod.rs:375
+#: rustconn/src/embedded_rdp/mod.rs:384
 msgid "Computer Management"
 msgstr "Správa počítače"
 
-#: rustconn/src/embedded_rdp/mod.rs:381 rustconn/src/embedded_rdp/mod.rs:941
+#: rustconn/src/embedded_rdp/mod.rs:390 rustconn/src/embedded_rdp/mod.rs:954
 msgid "Shell Launchers"
 msgstr "Spouštěče shellu"
 
-#: rustconn/src/embedded_rdp/mod.rs:383 rustconn/src/embedded_rdp/mod.rs:958
+#: rustconn/src/embedded_rdp/mod.rs:392 rustconn/src/embedded_rdp/mod.rs:971
 msgid "Scripts"
 msgstr "Skripty"
 
-#: rustconn/src/embedded_rdp/mod.rs:385 rustconn/src/embedded_rdp/mod.rs:936
+#: rustconn/src/embedded_rdp/mod.rs:394 rustconn/src/embedded_rdp/mod.rs:949
 msgid "PowerShell (Admin)"
 msgstr "PowerShell (Admin)"
 
-#: rustconn/src/embedded_rdp/mod.rs:386 rustconn/src/embedded_rdp/mod.rs:940
+#: rustconn/src/embedded_rdp/mod.rs:395 rustconn/src/embedded_rdp/mod.rs:953
 msgid "CMD (Admin)"
 msgstr "CMD (Admin)"
 
-#: rustconn/src/embedded_rdp/mod.rs:529 rustconn/src/embedded_rdp/mod.rs:531
+#: rustconn/src/embedded_rdp/mod.rs:538 rustconn/src/embedded_rdp/mod.rs:540
 msgid "Fit resolution to window"
 msgstr "Přizpůsobit vzdálenou plochu velikosti okna"
 
-#: rustconn/src/embedded_rdp/mod.rs:550
+#: rustconn/src/embedded_rdp/mod.rs:559
 msgid "Copy remote clipboard to local (waiting for remote data...)"
 msgstr "Kopírovat vzdálenou schránku do místní (čekání na vzdálená data…)"
 
-#: rustconn/src/embedded_rdp/mod.rs:556 rustconn/src/embedded_trait.rs:213
+#: rustconn/src/embedded_rdp/mod.rs:565 rustconn/src/embedded_trait.rs:213
 #: rustconn/src/embedded_vnc/ui.rs:52 rustconn/src/terminal/config.rs:163
 msgid "Paste"
 msgstr "Vložit"
 
-#: rustconn/src/embedded_rdp/mod.rs:557 rustconn/src/embedded_trait.rs:214
+#: rustconn/src/embedded_rdp/mod.rs:566 rustconn/src/embedded_trait.rs:214
 #: rustconn/src/embedded_vnc/ui.rs:53
 msgid "Paste from local clipboard to remote session"
 msgstr "Vložit z místní schránky do vzdálené relace"
 
-#: rustconn/src/embedded_rdp/mod.rs:562 rustconn/src/embedded_rdp/mod.rs:567
+#: rustconn/src/embedded_rdp/mod.rs:571 rustconn/src/embedded_rdp/mod.rs:576
 msgid "Autotype"
 msgstr "Automatické psaní"
 
-#: rustconn/src/embedded_rdp/mod.rs:564
+#: rustconn/src/embedded_rdp/mod.rs:573
 msgid "Send text as keystrokes (bypasses paste restrictions)"
 msgstr "Odeslat text jako stisky kláves (obchází omezení vkládání)"
 
-#: rustconn/src/embedded_rdp/mod.rs:571
+#: rustconn/src/embedded_rdp/mod.rs:580
 msgid "Type Clipboard"
 msgstr "Zadat schránku"
 
-#: rustconn/src/embedded_rdp/mod.rs:574
+#: rustconn/src/embedded_rdp/mod.rs:583
 msgid "Type Text…"
 msgstr "Zadat text…"
 
-#: rustconn/src/embedded_rdp/mod.rs:588
+#: rustconn/src/embedded_rdp/mod.rs:597
 msgid "Run PowerShell script on remote"
 msgstr "Spustit skript PowerShell na vzdáleném počítači"
 
-#: rustconn/src/embedded_rdp/mod.rs:591
+#: rustconn/src/embedded_rdp/mod.rs:600
 msgid "Run script on remote"
 msgstr "Spustit skript na vzdáleném počítači"
 
-#: rustconn/src/embedded_rdp/mod.rs:606 rustconn/src/embedded_trait.rs:227
+#: rustconn/src/embedded_rdp/mod.rs:615 rustconn/src/embedded_trait.rs:227
 #: rustconn/src/embedded_vnc/ui.rs:63
 msgid "Ctrl+Alt+Del"
 msgstr "Ctrl+Alt+Del"
 
-#: rustconn/src/embedded_rdp/mod.rs:608 rustconn/src/embedded_trait.rs:229
+#: rustconn/src/embedded_rdp/mod.rs:617 rustconn/src/embedded_trait.rs:229
 #: rustconn/src/embedded_trait.rs:231 rustconn/src/embedded_vnc/ui.rs:65
 msgid "Send Ctrl+Alt+Del to remote session"
 msgstr "Odeslat Ctrl+Alt+Del do vzdálené relace"
 
-#: rustconn/src/embedded_rdp/mod.rs:614 rustconn/src/embedded_rdp/mod.rs:617
+#: rustconn/src/embedded_rdp/mod.rs:623 rustconn/src/embedded_rdp/mod.rs:626
 msgid "Windows admin tools"
 msgstr "Nástroje pro správu Windows"
 
-#: rustconn/src/embedded_rdp/mod.rs:641
+#: rustconn/src/embedded_rdp/mod.rs:650
 msgid "Save Files"
 msgstr "Uložit soubory"
 
-#: rustconn/src/embedded_rdp/mod.rs:644
+#: rustconn/src/embedded_rdp/mod.rs:653
 msgid "Save files from remote clipboard"
 msgstr "Uložit soubory ze vzdálené schránky"
 
-#: rustconn/src/embedded_rdp/mod.rs:705 rustconn/src/embedded_trait.rs:236
+#: rustconn/src/embedded_rdp/mod.rs:714 rustconn/src/embedded_trait.rs:236
 #: rustconn/src/embedded_vnc/ui.rs:111 rustconn/src/terminal/mod.rs:1490
 #: rustconn/src/terminal/mod.rs:1579 rustconn/src/terminal/mod.rs:2067
 msgid "Reconnect"
 msgstr "Znovu připojit"
 
-#: rustconn/src/embedded_rdp/mod.rs:707 rustconn/src/embedded_vnc/ui.rs:113
+#: rustconn/src/embedded_rdp/mod.rs:716 rustconn/src/embedded_vnc/ui.rs:113
 #: rustconn/src/terminal/mod.rs:1492 rustconn/src/terminal/mod.rs:1581
 #: rustconn/src/terminal/mod.rs:2069
 msgid "Reconnect to this session"
 msgstr "Znovu připojit k této relaci"
 
-#: rustconn/src/embedded_rdp/mod.rs:875
+#: rustconn/src/embedded_rdp/mod.rs:888
 msgid "{} file(s) ready to paste on remote"
 msgstr "{} soubor(ů) připraven(o) k vložení na vzdáleném"
 
-#: rustconn/src/embedded_rdp/mod.rs:934
+#: rustconn/src/embedded_rdp/mod.rs:947
 msgid "PowerShell"
 msgstr "PowerShell"
 
-#: rustconn/src/embedded_rdp/mod.rs:939
+#: rustconn/src/embedded_rdp/mod.rs:952
 msgid "CMD"
 msgstr "CMD"
 
-#: rustconn/src/embedded_rdp/mod.rs:1015 rustconn/src/embedded_rdp/mod.rs:1086
-#: rustconn/src/embedded_rdp/mod.rs:1289
+#: rustconn/src/embedded_rdp/mod.rs:1028 rustconn/src/embedded_rdp/mod.rs:1099
+#: rustconn/src/embedded_rdp/mod.rs:1302
 msgid "Channel not ready"
 msgstr "Kanál není připraven"
 
-#: rustconn/src/embedded_rdp/mod.rs:1060 rustconn/src/embedded_rdp/mod.rs:1113
+#: rustconn/src/embedded_rdp/mod.rs:1073 rustconn/src/embedded_rdp/mod.rs:1126
 msgid "Script sent"
 msgstr "Skript odeslán"
 
-#: rustconn/src/embedded_rdp/mod.rs:1334
+#: rustconn/src/embedded_rdp/mod.rs:1347
 msgid "Select folder to save files"
 msgstr "Vybrat složku pro uložení souborů"
 
-#: rustconn/src/embedded_rdp/mod.rs:1363
+#: rustconn/src/embedded_rdp/mod.rs:1376
 msgid "Downloading..."
 msgstr "Stahování…"
 
-#: rustconn/src/embedded_rdp/mod.rs:1396
+#: rustconn/src/embedded_rdp/mod.rs:1409
 msgid "Downloading files..."
 msgstr "Stahování souborů..."
+
+#: rustconn/src/embedded_rdp/mod.rs:1808
+msgid "Connection may have been lost while the computer slept"
+msgstr "Připojení mohlo být přerušeno, když počítač spal"
 
 #: rustconn/src/embedded_rdp/resize.rs:226
 #: rustconn/src/embedded_rdp/resize.rs:431
@@ -9238,7 +9247,7 @@ msgid "Tab Overview"
 msgstr "Přehled karet"
 
 #: rustconn/src/terminal/mod.rs:318 rustconn/src/terminal/mod.rs:621
-#: rustconn/src/terminal/mod.rs:636 rustconn/src/window/mod.rs:3000
+#: rustconn/src/terminal/mod.rs:636 rustconn/src/window/mod.rs:3010
 msgid "Welcome"
 msgstr "Vítejte"
 
@@ -10192,63 +10201,63 @@ msgstr ""
 "Nepodařilo se uložit tajemství do trezoru. Zkontrolujte backend tajemství v "
 "nastavení."
 
-#: rustconn/src/window/mod.rs:634
+#: rustconn/src/window/mod.rs:635
 msgid "Dismiss"
 msgstr "Zavřít"
 
-#: rustconn/src/window/mod.rs:1965
+#: rustconn/src/window/mod.rs:1975
 msgid "Already running in an external window"
 msgstr "Již běží v externím okně"
 
-#: rustconn/src/window/mod.rs:2104
+#: rustconn/src/window/mod.rs:2114
 msgid "Connection to ‘{}’ failed"
 msgstr "Připojení k ‘{}’ selhalo"
 
-#: rustconn/src/window/mod.rs:2330 rustconn/src/window/mod.rs:2344
+#: rustconn/src/window/mod.rs:2340 rustconn/src/window/mod.rs:2354
 msgid "Pre-connect task failed: {}"
 msgstr "Úloha před připojením selhala: {}"
 
-#: rustconn/src/window/mod.rs:2378
+#: rustconn/src/window/mod.rs:2388
 msgid "Port knock failed: {}"
 msgstr "Port knock selhal: {}"
 
-#: rustconn/src/window/mod.rs:2427
+#: rustconn/src/window/mod.rs:2437
 msgid "SPA failed: {}"
 msgstr "SPA selhalo: {}"
 
-#: rustconn/src/window/mod.rs:2626 rustconn/src/window/mod.rs:2801
+#: rustconn/src/window/mod.rs:2636 rustconn/src/window/mod.rs:2811
 msgid "Connection “{}” created"
 msgstr "Připojení “{}” vytvořeno"
 
-#: rustconn/src/window/mod.rs:3005
+#: rustconn/src/window/mod.rs:3015
 msgid "RustConn - {}"
 msgstr "RustConn — {}"
 
-#: rustconn/src/window/mod.rs:3264
+#: rustconn/src/window/mod.rs:3274
 msgid "Close RustConn?"
 msgstr "Zavřít RustConn?"
 
-#: rustconn/src/window/mod.rs:3266
+#: rustconn/src/window/mod.rs:3276
 msgid "{} session tab(s) are open. Active connections will be disconnected."
 msgstr "Počet otevřených karet relací: {}. Aktivní připojení budou odpojena."
 
-#: rustconn/src/window/mod.rs:3301
+#: rustconn/src/window/mod.rs:3311
 msgid "Cloud sync failed for '{}': {}"
 msgstr "Synchronizace s cloudem selhala pro „{}“: {}"
 
-#: rustconn/src/window/mod.rs:3482
+#: rustconn/src/window/mod.rs:3492
 msgid "Startup connection not found"
 msgstr "Připojení pro spuštění nenalezeno"
 
-#: rustconn/src/window/mod.rs:3518
+#: rustconn/src/window/mod.rs:3528
 msgid "Failed to open .rdp file"
 msgstr "Nepodařilo se otevřít soubor .rdp"
 
-#: rustconn/src/window/mod.rs:3554
+#: rustconn/src/window/mod.rs:3564
 msgid "Failed to open .vv file"
 msgstr "Nepodařilo se otevřít soubor .vv"
 
-#: rustconn/src/window/mod.rs:3937
+#: rustconn/src/window/mod.rs:3947
 msgid "Successfully exported {} connection(s). {} skipped."
 msgstr "Úspěšně exportováno {} připojení. {} přeskočeno."
 
@@ -10500,6 +10509,10 @@ msgstr "Certifikát se změnil"
 #: rustconn/src/window/rdp_vnc.rs:751
 msgid "Accept new certificate"
 msgstr "Přijmout nový certifikát"
+
+#: rustconn/src/window/resume_monitor.rs:111
+msgid "Computer resumed from sleep — checking remote sessions"
+msgstr "Počítač se probudil ze spánku — kontrola vzdálených sezení"
 
 #: rustconn/src/window/session_lifecycle.rs:163
 msgid "Session log could not be created: {}"

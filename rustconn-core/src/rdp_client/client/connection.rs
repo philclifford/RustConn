@@ -209,6 +209,10 @@ pub(super) async fn establish_connection(
         let stream = match tcp_result {
             Ok(Ok(stream)) => {
                 let _ = stream.set_nodelay(true);
+                // Without this a suspend leaves the socket half-open and the
+                // session loop parks in read() forever — a frozen picture with
+                // no error (issue #248).
+                crate::connection::set_interactive_keepalive(&stream, "rdp");
                 stream
             }
             Ok(Err(e)) => {
@@ -259,6 +263,10 @@ pub(super) async fn establish_connection(
         let stream = match tcp_result {
             Ok(Ok(stream)) => {
                 let _ = stream.set_nodelay(true);
+                // Without this a suspend leaves the socket half-open and the
+                // session loop parks in read() forever — a frozen picture with
+                // no error (issue #248).
+                crate::connection::set_interactive_keepalive(&stream, "rdp");
                 stream
             }
             Ok(Err(e)) => {

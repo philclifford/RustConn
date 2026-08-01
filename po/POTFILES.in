@@ -32,6 +32,7 @@ rustconn/src/window/history_actions.rs
 rustconn/src/window/navigation_actions.rs
 rustconn/src/window/network_monitor.rs
 rustconn/src/window/operations.rs
+rustconn/src/window/resume_monitor.rs
 rustconn/src/window/sorting.rs
 rustconn/src/window/templates.rs
 rustconn/src/window/terminal_actions.rs

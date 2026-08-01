@@ -68,7 +68,6 @@ pub mod keyboard_layout;
 pub mod multimonitor;
 #[cfg(feature = "rdp-embedded")]
 pub mod rdpdr;
-pub mod reconnect;
 
 pub mod quick_actions;
 
@@ -97,7 +96,6 @@ pub use quick_actions::{
     QUICK_ACTIONS, QuickAction, build_enter_sequence, build_hotkey_sequence, build_open_run_dialog,
     run_command_for,
 };
-pub use reconnect::{ConnectionQuality, DisconnectReason, ReconnectPolicy, ReconnectState};
 
 /// Check if embedded RDP support is available
 ///

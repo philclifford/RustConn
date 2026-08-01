@@ -398,6 +398,18 @@ Right-click a group in the sidebar → **Connect All** to open all connections i
 
 When an SSH session disconnects unexpectedly (server reboot, network failure), RustConn automatically starts polling the host (every 5s for up to 5 minutes) and reconnects when the server comes back online. The reconnect banner is still shown for manual reconnect if auto-reconnect times out.
 
+### After the Computer Wakes from Sleep
+
+Suspending the machine leaves every open connection half-open: the link is dead but neither side has said so. RustConn handles that on two levels.
+
+**Kernel-level detection.** Embedded RDP and VNC sessions enable TCP keepalive on their socket — the first probe after 15 s of silence, then up to three probes 5 s apart — so a connection that did not survive the sleep is reported within about 30 s instead of hanging indefinitely. A 30 s `TCP_USER_TIMEOUT` covers the other half: without it, input you send to a dead session would be retransmitted by the kernel for 13 to 30 minutes before failing.
+
+**Immediate feedback.** Waiting even 30 s in front of a picture that may be minutes old is misleading, so RustConn notices the resume itself. Every embedded RDP session that still reports itself as connected is **dimmed** and shown its reconnect banner, with a note that the connection may have been lost while the computer slept. The dimming is the honest signal: RustConn does not yet know whether the session is alive.
+
+Nothing is disconnected on suspicion. A session that outlived a short sleep un-dims by itself as soon as its next frame arrives. Five seconds after the resume, sessions that have meanwhile been confirmed dead are reconnected — but only those, and only where auto-reconnect is enabled for the connection.
+
+> **Note:** Reconnecting an RDP session starts a new logon; it does not resume the same Windows session, because the embedded client cannot present the server's auto-reconnect cookie. Whether your open windows come back is up to the server's own session policy.
+
 ### Network Change Monitor
 
 RustConn monitors network interface changes via `gio::NetworkMonitor` and reacts immediately when a network switch occurs (e.g. WiFi → Ethernet, VPN reconnect, dock/undock):

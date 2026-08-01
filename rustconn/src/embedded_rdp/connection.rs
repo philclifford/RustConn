@@ -825,6 +825,11 @@ impl super::EmbeddedRdpWidget {
         const FIRST_FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
         let state = self.state.clone();
+        // Resume-from-sleep marker: a frame proves the socket outlived the
+        // suspend, so the dimming and its banner are withdrawn (issue #248).
+        let stale_frame = self.stale.clone();
+        let stale_banner = self.reconnect_banner.clone();
+        let stale_label = self.reconnect_label.clone();
         let drawing_area = self.drawing_area.clone();
         let toolbar = self.toolbar.clone();
         let on_state_changed = self.on_state_changed.clone();
@@ -1224,6 +1229,12 @@ impl super::EmbeddedRdpWidget {
                                     );
                                 }
                                 *first_frame_received.borrow_mut() = true;
+                                // The server is still talking to us, so the
+                                // session survived the suspend after all.
+                                if stale_frame.replace(false) {
+                                    stale_label.set_text(&i18n("Session disconnected"));
+                                    stale_banner.set_visible(false);
+                                }
                                 needs_redraw = true;
                             }
                             RdpClientEvent::FullFrameUpdate {
@@ -1264,6 +1275,12 @@ impl super::EmbeddedRdpWidget {
                                     );
                                 }
                                 *first_frame_received.borrow_mut() = true;
+                                // The server is still talking to us, so the
+                                // session survived the suspend after all.
+                                if stale_frame.replace(false) {
+                                    stale_label.set_text(&i18n("Session disconnected"));
+                                    stale_banner.set_visible(false);
+                                }
                                 needs_redraw = true;
                             }
                             RdpClientEvent::ResolutionChanged { width, height } => {

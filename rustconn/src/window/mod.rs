@@ -21,6 +21,7 @@ mod operations;
 mod protocols;
 mod protocols_ssh;
 mod rdp_vnc;
+mod resume_monitor;
 mod session_lifecycle;
 pub mod session_restore;
 mod sessions;
@@ -1031,6 +1032,15 @@ impl MainWindow {
             &main_window.state,
             &main_window.terminal_notebook,
             &main_window.sidebar,
+            &main_window.toast_overlay,
+        );
+
+        // Notice when the machine wakes from sleep, so a session whose socket
+        // died during the suspend is reported at once rather than after the
+        // keepalive timeout — and never shown as a live frozen desktop (#248)
+        resume_monitor::setup_resume_monitor(
+            &main_window.state,
+            &main_window.terminal_notebook,
             &main_window.toast_overlay,
         );
 
