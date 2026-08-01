@@ -4,7 +4,7 @@ All notable changes to RustConn will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-    дава
+
 ## [0.19.10] - 2026-08-01
 
 ### Added
@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SSH Agent authentication is described** — `docs/USER_GUIDE.md` now has its own paragraph next to the FIDO2 and PKCS#11 ones, stating that the picked key is the only one offered, which flags that produces, where the public key file is written, and what happens when the agent is unavailable.
 
 - **The Encrypted Documents chapter is gone** — the section in `docs/USER_GUIDE.md`, its table-of-contents entry and its row in the Backup & Restore table are removed with the feature, as are the `DocumentManager` lines in `docs/ARCHITECTURE.md`.
+
+### Dependencies
+
+- **Updated**: time 0.3.54 → 0.3.55
 
 ## [0.19.9] - 2026-08-01
 

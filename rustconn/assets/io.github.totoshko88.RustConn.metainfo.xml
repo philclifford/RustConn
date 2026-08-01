@@ -140,6 +140,25 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.10" date="2026-08-01">
+      <description>
+        <p>Version 0.19.10 - session logging that works, and reconnect after sleep:</p>
+        <ul>
+          <li>Added Session Logs to the primary menu and Session Log to a connection's context menu</li>
+          <li>Fixed session logging configured on a connection never writing anything</li>
+          <li>Fixed session logs recording typed passwords in clear text</li>
+          <li>Fixed Retention (days) never deleting a file</li>
+          <li>Fixed the Timestamps switch doing nothing</li>
+          <li>Fixed a log file that could not be created failing silently</li>
+          <li>Fixed the KDBX use password and use key file switches only hiding rows</li>
+          <li>Fixed eight RDP and VNC dropdown labels being untranslated in every language</li>
+          <li>Fixed RDP and VNC sessions freezing instead of reconnecting after the computer woke from sleep</li>
+          <li>Added resume detection so a frozen session is dimmed and offered its reconnect banner at once</li>
+          <li>Fixed picking a key from the SSH agent not restricting which key was offered</li>
+          <li>Removed the Encrypted Documents feature, which was never reachable</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.9" date="2026-08-01">
       <description>
         <p>Version 0.19.9 - RDP audio routing, snap startup and RD Gateway fixes:</p>
