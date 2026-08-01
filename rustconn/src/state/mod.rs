@@ -9,7 +9,6 @@ mod sync;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -18,7 +17,6 @@ use rustconn_core::automation::FolderConnectionTracker;
 use rustconn_core::cluster::ClusterManager;
 use rustconn_core::config::{AppSettings, ConfigManager};
 use rustconn_core::connection::ConnectionManager;
-use rustconn_core::document::{Document, DocumentManager, EncryptionStrength};
 use rustconn_core::models::{
     Connection, ConnectionGroup, ConnectionHistoryEntry, Credentials, PasswordSource,
 };
@@ -172,12 +170,8 @@ pub struct AppState {
     secret_manager: SecretManager,
     /// Configuration manager for persistence
     config_manager: ConfigManager,
-    /// Document manager for multi-document support
-    document_manager: DocumentManager,
     /// Cluster manager for connection clusters
     cluster_manager: ClusterManager,
-    /// Currently active document ID
-    active_document_id: Option<Uuid>,
     /// Application settings
     settings: AppSettings,
     /// Session-level password cache (cleared on app exit)
@@ -488,9 +482,6 @@ impl AppState {
         // Initialize secret manager with backends from settings
         let secret_manager = SecretManager::build_from_settings(&settings.secrets);
 
-        // Initialize document manager
-        let document_manager = DocumentManager::new();
-
         // Initialize cluster manager and load clusters
         let mut cluster_manager = ClusterManager::new();
         if let Ok(clusters) = config_manager.load_clusters() {
@@ -520,9 +511,7 @@ impl AppState {
             template_manager,
             secret_manager,
             config_manager,
-            document_manager,
             cluster_manager,
-            active_document_id: None,
             settings,
             password_cache: HashMap::new(),
             clipboard: ConnectionClipboard::new(),
@@ -1323,104 +1312,6 @@ impl AppState {
     /// Gets the connection manager
     pub fn connection_manager(&mut self) -> &mut ConnectionManager {
         &mut self.connection_manager
-    }
-
-    /// Creates a new document
-    pub fn create_document(&mut self, name: String) -> Uuid {
-        let id = self.document_manager.create(name);
-        // Set as active if no active document
-        if self.active_document_id.is_none() {
-            self.active_document_id = Some(id);
-        }
-        id
-    }
-
-    /// Opens a document from a file
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be read or parsed
-    pub fn open_document(&mut self, path: &Path, password: Option<&str>) -> Result<Uuid, String> {
-        self.document_manager
-            .load(path, password)
-            .map_err(|e| format!("Failed to open document: {e}"))
-    }
-
-    /// Saves a document to a file
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the document cannot be saved
-    pub fn save_document(
-        &mut self,
-        id: Uuid,
-        path: &Path,
-        password: Option<&str>,
-        strength: EncryptionStrength,
-    ) -> Result<(), String> {
-        self.document_manager
-            .save(id, path, password, strength)
-            .map_err(|e| format!("Failed to save document: {e}"))
-    }
-
-    /// Closes a document
-    ///
-    /// Returns the document if it was removed
-    pub fn close_document(&mut self, id: Uuid) -> Option<Document> {
-        let doc = self.document_manager.remove(id);
-        // Update active document if needed
-        if self.active_document_id == Some(id) {
-            self.active_document_id = self.document_manager.document_ids().first().copied();
-        }
-        doc
-    }
-
-    /// Gets a document by ID
-    pub fn get_document(&self, id: Uuid) -> Option<&Document> {
-        self.document_manager.get(id)
-    }
-
-    /// Returns true if the document has unsaved changes
-    pub fn is_document_dirty(&self, id: Uuid) -> bool {
-        self.document_manager.is_dirty(id)
-    }
-
-    /// Gets the file path for a document if it has been saved
-    pub fn get_document_path(&self, id: Uuid) -> Option<&Path> {
-        self.document_manager.get_path(id)
-    }
-
-    /// Gets the currently active document ID
-    pub const fn active_document_id(&self) -> Option<Uuid> {
-        self.active_document_id
-    }
-
-    /// Gets the currently active document
-    pub fn active_document(&self) -> Option<&Document> {
-        self.active_document_id
-            .and_then(|id| self.document_manager.get(id))
-    }
-
-    /// Exports a document to a portable file
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the document cannot be exported
-    pub fn export_document(&self, id: Uuid, path: &Path) -> Result<(), String> {
-        self.document_manager
-            .export(id, path)
-            .map_err(|e| format!("Failed to export document: {e}"))
-    }
-
-    /// Imports a document from a file
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the document cannot be imported
-    pub fn import_document(&mut self, path: &Path) -> Result<Uuid, String> {
-        self.document_manager
-            .import(path)
-            .map_err(|e| format!("Failed to import document: {e}"))
     }
 
     // ========== Cluster Operations ==========

@@ -150,7 +150,46 @@ impl MainWindow {
         window: &adw::ApplicationWindow,
         state: &SharedAppState,
     ) {
-        use crate::dialogs::{HistoryDialog, StatisticsDialog, show_password_generator_dialog};
+        use crate::dialogs::{
+            HistoryDialog, LogViewerDialog, StatisticsDialog, show_password_generator_dialog,
+        };
+
+        // Session logs action — issue #247: without an entry point the log files
+        // were effectively invisible, whatever the settings said.
+        let show_logs_action = gio::SimpleAction::new("show-logs", None);
+        let window_weak = window.downgrade();
+        let state_for_logs = state.clone();
+        show_logs_action.connect_activate(move |_, _| {
+            if let Some(win) = window_weak.upgrade()
+                && let Some(log_dir) = Self::managed_log_dir(&state_for_logs)
+            {
+                LogViewerDialog::new(Some(win.upcast_ref::<gtk4::Window>()), log_dir).show();
+            }
+        });
+        window.add_action(&show_logs_action);
+
+        // Session log of the selected connection — a per-connection path template
+        // can point anywhere, so this opens the viewer where that connection
+        // actually writes (issue #247).
+        let show_connection_log_action = gio::SimpleAction::new("show-connection-log", None);
+        let window_weak = window.downgrade();
+        let state_for_conn_log = state.clone();
+        let sidebar_for_conn_log = self.sidebar.clone();
+        show_connection_log_action.connect_activate(move |_, _| {
+            let Some(win) = window_weak.upgrade() else {
+                return;
+            };
+            let log_dir = sidebar_for_conn_log
+                .get_selected_item()
+                .filter(|item| !item.is_group())
+                .and_then(|item| Uuid::parse_str(&item.id()).ok())
+                .and_then(|id| Self::session_log_dir(&state_for_conn_log, id))
+                .or_else(|| Self::managed_log_dir(&state_for_conn_log));
+            if let Some(log_dir) = log_dir {
+                LogViewerDialog::new(Some(win.upcast_ref::<gtk4::Window>()), log_dir).show();
+            }
+        });
+        window.add_action(&show_connection_log_action);
 
         // Show history action
         let show_history_action = gio::SimpleAction::new("show-history", None);

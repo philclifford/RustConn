@@ -149,6 +149,53 @@ fn jump_host_askpass_script_for_env(env_var_name: &str) -> Option<std::path::Pat
     Some(path)
 }
 
+/// Resolves the identity file for a connection that authenticates with a key
+/// picked from the SSH agent.
+///
+/// The dialog stores the choice as `SshKeySource::Agent { fingerprint, .. }`
+/// (mirrored in the legacy `agent_key_fingerprint` field), but until now nothing
+/// consumed it: `ssh` was launched with no `-i` at all, so the agent offered
+/// every key it held and the picker had no effect on the connection.
+///
+/// Passing the *private* key path is not an option — it makes ssh try file-based
+/// auth first and produces a second agent confirmation prompt (issue #125).
+/// Instead the selected key's public half is written to a file and used as the
+/// identity; ssh then signs through the agent with exactly that key.
+///
+/// Returns `None` when the connection does not use an agent key, when no agent
+/// is reachable, or when the agent no longer holds the selected key — in that
+/// case the caller falls back to the previous behaviour (all agent keys offered)
+/// rather than failing the connection.
+fn agent_identity_file(ssh_config: &rustconn_core::SshConfig) -> Option<String> {
+    use rustconn_core::SshKeySource;
+    use rustconn_core::ssh_agent::SshAgentManager;
+
+    let fingerprint = match &ssh_config.key_source {
+        SshKeySource::Agent { fingerprint, .. } if !fingerprint.trim().is_empty() => {
+            fingerprint.trim()
+        }
+        // Legacy connections stored the choice only in `agent_key_fingerprint`.
+        _ => ssh_config
+            .agent_key_fingerprint
+            .as_deref()
+            .map(str::trim)
+            .filter(|f| !f.is_empty())?,
+    };
+
+    match SshAgentManager::from_env().materialize_agent_identity(fingerprint) {
+        Ok(path) => Some(path.to_string_lossy().to_string()),
+        Err(e) => {
+            // Fingerprints are public key material — safe to log.
+            tracing::warn!(
+                fingerprint,
+                error = %e,
+                "cannot restrict connection to the selected agent key; offering all agent keys"
+            );
+            None
+        }
+    }
+}
+
 /// Builds the SSH command pieces shared by initial connect and in-place
 /// reconnect: the resolved identity file, the extra CLI args (including the
 /// jump-host `ProxyCommand`/`-J` wiring and Flatpak known_hosts), whether
@@ -189,10 +236,36 @@ fn build_ssh_command_args(
         })
         .map(|p| p.to_string_lossy().to_string());
 
+    // When the user picked a specific key from the SSH agent, honour it.
+    // `resolve_ssh_key_path` returns None for agent sources by design — it deals
+    // in private key paths — so the selected key is materialized as a PUBLIC key
+    // file instead and `-i` points at that. See `agent_identity_file`.
+    let (key, restrict_to_agent_key) = match key {
+        Some(path) => (Some(path), false),
+        None => match agent_identity_file(ssh_config) {
+            Some(path) => (Some(path), true),
+            None => (None, false),
+        },
+    };
+
     // Use build_command_args() for all SSH-specific flags:
     // identity, IdentitiesOnly, proxy_jump, ControlMaster/Persist,
     // agent forwarding, X11, compression, custom options, port forwards
     let mut args = ssh_config.build_command_args();
+
+    // The agent identity is only meaningful together with IdentitiesOnly: without
+    // it ssh keeps offering every other key the agent holds, which is exactly the
+    // restriction the picker promises. `build_command_args` cannot add this — for
+    // an agent source with no identity file, IdentitiesOnly would hide all agent
+    // keys and break authentication outright.
+    if restrict_to_agent_key
+        && !args
+            .windows(2)
+            .any(|w| w[0] == "-o" && w[1] == "IdentitiesOnly=yes")
+    {
+        args.push("-o".to_string());
+        args.push("IdentitiesOnly=yes".to_string());
+    }
 
     // Remove -i <path> from args because the identity file is already
     // resolved separately via resolve_ssh_key_path() and passed as

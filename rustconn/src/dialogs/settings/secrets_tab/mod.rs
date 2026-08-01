@@ -1905,9 +1905,16 @@ pub fn collect_secret_settings(
         }
     };
 
+    // The "Use key file" / "Use password" switches decide which credentials the
+    // KDBX backend is handed. Until 0.19.10 they only hid the rows, so a key
+    // file left in the entry was still passed to the database after the switch
+    // had been turned off.
+    let kdbx_use_key_file = widgets.kdbx_use_key_file_check.is_active();
+    let kdbx_use_password = widgets.kdbx_use_password_check.is_active();
+
     let kdbx_key_file = {
         let key_file_text = widgets.kdbx_key_file_entry.text();
-        if key_file_text.is_empty() {
+        if !kdbx_use_key_file || key_file_text.is_empty() {
             None
         } else {
             Some(std::path::PathBuf::from(key_file_text.as_str()))
@@ -1917,7 +1924,7 @@ pub fn collect_secret_settings(
     let (kdbx_password, kdbx_password_encrypted) = {
         let storage = storage_combo_value(&widgets.kdbx_storage_combo);
         match storage {
-            CredentialStorage::EncryptedFile => {
+            CredentialStorage::EncryptedFile if kdbx_use_password => {
                 let password_text = widgets.kdbx_password_entry.text();
                 if password_text.is_empty() {
                     (
@@ -1935,8 +1942,11 @@ pub fn collect_secret_settings(
                     (Some(password), encrypted)
                 }
             }
-            // For System keyring or None: never write encrypted blob.
-            CredentialStorage::SystemKeyring | CredentialStorage::None => (None, None),
+            // For System keyring, None, or password authentication turned off:
+            // never write an encrypted blob.
+            CredentialStorage::EncryptedFile
+            | CredentialStorage::SystemKeyring
+            | CredentialStorage::None => (None, None),
         }
     };
 
@@ -2103,7 +2113,7 @@ pub fn collect_secret_settings(
             save_pb_passphrase_to_keyring(&pp);
         }
     }
-    if kdbx_storage == CredentialStorage::SystemKeyring {
+    if kdbx_storage == CredentialStorage::SystemKeyring && kdbx_use_password {
         let pw = widgets.kdbx_password_entry.text();
         if !pw.is_empty() {
             save_kdbx_password_to_keyring(&pw);
@@ -2118,8 +2128,8 @@ pub fn collect_secret_settings(
         kdbx_password,
         kdbx_password_encrypted,
         kdbx_key_file,
-        kdbx_use_key_file: widgets.kdbx_use_key_file_check.is_active(),
-        kdbx_use_password: widgets.kdbx_use_password_check.is_active(),
+        kdbx_use_key_file,
+        kdbx_use_password,
         bitwarden_password,
         bitwarden_password_encrypted,
         bitwarden_use_api_key,

@@ -12,24 +12,6 @@ impl MainWindow {
         terminal_notebook: &SharedNotebook,
         sidebar: &SharedSidebar,
     ) {
-        // New snippet action
-        let new_snippet_action = gio::SimpleAction::new("new-snippet", None);
-        let window_weak = window.downgrade();
-        let state_clone = state.clone();
-        let toast_clone = self.toast_overlay.clone();
-        let notebook_clone = terminal_notebook.clone();
-        new_snippet_action.connect_activate(move |_, _| {
-            if let Some(win) = window_weak.upgrade() {
-                snippets::show_new_snippet_dialog(
-                    win.upcast_ref(),
-                    state_clone.clone(),
-                    toast_clone.clone(),
-                    notebook_clone.clone(),
-                );
-            }
-        });
-        window.add_action(&new_snippet_action);
-
         // Manage snippets action
         let manage_snippets_action = gio::SimpleAction::new("manage-snippets", None);
         let window_weak = window.downgrade();
@@ -196,24 +178,6 @@ impl MainWindow {
         terminal_notebook: &SharedNotebook,
         sidebar: &SharedSidebar,
     ) {
-        // New cluster action
-        let new_cluster_action = gio::SimpleAction::new("new-cluster", None);
-        let window_weak = window.downgrade();
-        let state_clone = state.clone();
-        let notebook_clone = terminal_notebook.clone();
-        let toast_clone = self.toast_overlay.clone();
-        new_cluster_action.connect_activate(move |_, _| {
-            if let Some(win) = window_weak.upgrade() {
-                clusters::show_new_cluster_dialog(
-                    win.upcast_ref(),
-                    state_clone.clone(),
-                    notebook_clone.clone(),
-                    toast_clone.clone(),
-                );
-            }
-        });
-        window.add_action(&new_cluster_action);
-
         // Manage clusters action
         let manage_clusters_action = gio::SimpleAction::new("manage-clusters", None);
         let window_weak = window.downgrade();

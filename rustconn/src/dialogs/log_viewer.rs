@@ -29,9 +29,12 @@ pub struct LogViewerDialog {
 }
 
 impl LogViewerDialog {
-    /// Creates a new log viewer dialog
+    /// Creates a new log viewer dialog for the given log directory.
+    ///
+    /// `log_dir` is shown as the dialog subtitle: knowing where the files live
+    /// is half of what the feature is for (issue #247).
     #[must_use]
-    pub fn new(parent: Option<&gtk4::Window>) -> Self {
+    pub fn new(parent: Option<&gtk4::Window>, log_dir: PathBuf) -> Self {
         let dialog = adw::Dialog::builder()
             .title(i18n("Session Logs"))
             .content_width(600)
@@ -39,7 +42,7 @@ impl LogViewerDialog {
             .build();
 
         // Create UI components
-        let (toolbar_view, paned, refresh_btn) = Self::create_header_and_layout();
+        let (toolbar_view, paned, refresh_btn) = Self::create_header_and_layout(&log_dir);
         dialog.set_child(Some(&toolbar_view));
 
         let (log_list, list_scrolled) = Self::create_log_list();
@@ -48,8 +51,6 @@ impl LogViewerDialog {
         // Assemble paned layout
         Self::assemble_paned_layout(&paned, list_scrolled, content_scrolled);
 
-        // Get default log directory
-        let log_dir = Self::get_default_log_dir();
         let selected_file: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
         let file_paths: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -102,9 +103,13 @@ impl LogViewerDialog {
     }
 
     /// Creates the header bar and main layout components
-    fn create_header_and_layout() -> (adw::ToolbarView, Paned, Button) {
+    fn create_header_and_layout(log_dir: &Path) -> (adw::ToolbarView, Paned, Button) {
         // Header bar with standard window close button (×) and Refresh icon (GNOME HIG)
         let header = adw::HeaderBar::new();
+        header.set_title_widget(Some(&adw::WindowTitle::new(
+            &i18n("Session Logs"),
+            &log_dir.display().to_string(),
+        )));
         let refresh_btn = Button::from_icon_name("view-refresh-symbolic");
         refresh_btn.add_css_class("flat");
         refresh_btn.set_tooltip_text(Some(&i18n("Refresh log list")));
@@ -190,25 +195,6 @@ impl LogViewerDialog {
         right_box.append(&content_label);
         right_box.append(&content_scrolled);
         paned.set_end_child(Some(&right_box));
-    }
-
-    /// Gets the default log directory
-    fn get_default_log_dir() -> PathBuf {
-        // Use XDG data directory or fallback to home directory
-        std::env::var("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|_| {
-                std::env::var("HOME").map(|h| PathBuf::from(h).join(".local").join("share"))
-            })
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("rustconn")
-            .join("logs")
-    }
-
-    /// Sets the log directory to browse
-    pub fn set_log_dir(&mut self, dir: PathBuf) {
-        self.log_dir = dir;
-        self.populate_log_list();
     }
 
     /// Populates the log file list

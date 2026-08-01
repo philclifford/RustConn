@@ -181,6 +181,113 @@ impl LogConfig {
         }
         Ok(())
     }
+
+    /// Resolves the effective logging configuration for one session.
+    ///
+    /// A connection's own configuration (connection editor → Logs) wins when it
+    /// is enabled; otherwise the global settings (Settings → Terminal →
+    /// Logging) apply with `log_dir` as the destination. Returns `None` when
+    /// logging is switched off in both places.
+    ///
+    /// `global_timestamps` comes from `TerminalSettings::log_timestamps`: the
+    /// global logging settings have no `LogConfig` of their own to carry it.
+    #[must_use]
+    pub fn resolve(
+        global: &crate::config::LoggingSettings,
+        global_timestamps: bool,
+        log_dir: &Path,
+        per_connection: Option<&Self>,
+    ) -> Option<Self> {
+        if let Some(per) = per_connection.filter(|c| c.enabled) {
+            return Some(Self {
+                path_template: anchor_template(&per.path_template, log_dir),
+                ..per.clone()
+            });
+        }
+
+        if !global.enabled {
+            return None;
+        }
+
+        Some(Self {
+            enabled: true,
+            // Reproduces the historical global-logging file name
+            // `<connection>_<YYYY-MM-DD_HH-MM-SS>.log`.
+            path_template: log_dir
+                .join("${connection_name}_${datetime}.log")
+                .to_string_lossy()
+                .into_owned(),
+            // The global logging UI exposes no size limit, so nothing rotates
+            // by size there; age-based pruning still applies.
+            max_size_mb: 0,
+            retention_days: global.retention_days,
+            log_activity: global.log_activity,
+            log_input: global.log_input,
+            log_output: global.log_output,
+            log_timestamps: global_timestamps,
+            ..Self::default()
+        })
+    }
+}
+
+/// Anchors a relative path template to `base_dir`.
+///
+/// A leading `~/` becomes `${HOME}/` so the free-text path field in the
+/// connection editor behaves the way a shell would. Templates that are already
+/// absolute — literally, or via a leading `${HOME}` — are returned unchanged;
+/// anything else is joined onto `base_dir`, which keeps a bare
+/// `${connection_name}.log` inside the configured log directory instead of the
+/// process working directory.
+fn anchor_template(template: &str, base_dir: &Path) -> String {
+    let template = template.trim();
+    let normalized = if template == "~" {
+        "${HOME}".to_string()
+    } else if let Some(rest) = template.strip_prefix("~/") {
+        format!("${{HOME}}/{rest}")
+    } else {
+        template.to_string()
+    };
+
+    if normalized.starts_with('/') || normalized.starts_with("${HOME}") {
+        normalized
+    } else {
+        base_dir.join(normalized).to_string_lossy().into_owned()
+    }
+}
+
+/// Deletes `*.log` files directly inside `dir` that are older than
+/// `retention_days`.
+///
+/// Returns the number of files removed. Does nothing when `retention_days` is
+/// `0` (retain forever) or when `dir` cannot be read. Only the directory it is
+/// given is scanned — never a parent, never recursively — so callers must pass
+/// a directory that belongs to `RustConn`.
+pub fn prune_logs(dir: &Path, retention_days: u32) -> usize {
+    if retention_days == 0 {
+        return 0;
+    }
+
+    let cutoff = std::time::SystemTime::now()
+        - std::time::Duration::from_secs(u64::from(retention_days) * 24 * 60 * 60);
+
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0; // Directory might not exist yet
+    };
+
+    let mut removed = 0;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "log")
+            && let Ok(metadata) = fs::metadata(&path)
+            && metadata.is_file()
+            && let Ok(modified) = metadata.modified()
+            && modified < cutoff
+            && fs::remove_file(&path).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 // Implement serde traits manually to support serialization
@@ -296,6 +403,11 @@ pub struct SessionLogger {
     bytes_written: u64,
     /// Rotation counter for current session
     rotation_count: u32,
+    /// Redaction applied to everything written through this logger.
+    ///
+    /// A session log records what the user typed, so a password answered at a
+    /// prompt would otherwise land on disk in clear text.
+    sanitize: SanitizeConfig,
 }
 
 impl SessionLogger {
@@ -324,6 +436,7 @@ impl SessionLogger {
                 writer: None,
                 bytes_written: 0,
                 rotation_count: 0,
+                sanitize: SanitizeConfig::new(),
             });
         }
 
@@ -358,7 +471,15 @@ impl SessionLogger {
             writer: Some(writer),
             bytes_written,
             rotation_count: 0,
+            sanitize: SanitizeConfig::new(),
         })
+    }
+
+    /// Replaces the redaction rules applied to written data.
+    #[must_use]
+    pub fn with_sanitize(mut self, sanitize: SanitizeConfig) -> Self {
+        self.sanitize = sanitize;
+        self
     }
 
     /// Expands a path template with context variables
@@ -373,6 +494,8 @@ impl SessionLogger {
     /// - Any custom variables from the context
     /// - Any variables from the `VariableManager`
     ///
+    /// A leading `~` or `~/` is treated as the user's home directory.
+    ///
     /// # Errors
     ///
     /// Returns an error if a variable cannot be expanded or is undefined.
@@ -382,7 +505,15 @@ impl SessionLogger {
         variable_manager: Option<&VariableManager>,
     ) -> LogResult<PathBuf> {
         let now = Local::now();
-        let mut result = template.to_string();
+        // The path field is free text, so a shell-style `~/` has to be honored
+        // here — nothing else in the chain expands it, and a literal `~`
+        // directory is never what the user meant.
+        let mut result = match template.trim() {
+            "~" => "${HOME}".to_string(),
+            other => other
+                .strip_prefix("~/")
+                .map_or_else(|| other.to_string(), |rest| format!("${{HOME}}/{rest}")),
+        };
 
         // Built-in variables
         let builtins = [
@@ -491,7 +622,7 @@ impl SessionLogger {
         self.rotate_if_needed()?;
 
         // Write lines, optionally with timestamp prefix
-        let data_str = String::from_utf8_lossy(data);
+        let data_str = sanitize_output(&String::from_utf8_lossy(data), &self.sanitize);
 
         for line in data_str.lines() {
             let formatted = if self.config.log_timestamps {
@@ -514,6 +645,34 @@ impl SessionLogger {
             self.bytes_written += bytes.len() as u64;
         }
 
+        Ok(())
+    }
+
+    /// Writes one already-formatted record as a single line.
+    ///
+    /// Unlike [`Self::write`], the caller owns the formatting — including any
+    /// timestamp prefix — so event records such as `INPUT:` lines keep their
+    /// own layout. Redaction and size-based rotation still apply.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if rotation or writing fails.
+    pub fn write_record(&mut self, record: &str) -> LogResult<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+
+        self.rotate_if_needed()?;
+
+        let sanitized = sanitize_output(record, &self.sanitize);
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| LogError::WriteError("Log file not open".to_string()))?;
+
+        writeln!(writer, "{sanitized}")
+            .map_err(|e| LogError::WriteError(format!("Failed to write: {e}")))?;
+        self.bytes_written += sanitized.len() as u64 + 1;
         Ok(())
     }
 
@@ -646,32 +805,8 @@ impl SessionLogger {
 
     /// Cleans up old log files based on retention policy
     fn cleanup_old_logs(&self) {
-        if self.config.retention_days == 0 {
-            return; // No retention limit
-        }
-
-        let Some(parent) = self.log_path.parent() else {
-            return;
-        };
-
-        let cutoff = std::time::SystemTime::now()
-            - std::time::Duration::from_secs(u64::from(self.config.retention_days) * 24 * 60 * 60);
-
-        let Ok(entries) = fs::read_dir(parent) else {
-            return; // Directory might not exist yet
-        };
-
-        for entry in entries.filter_map(Result::ok) {
-            let path = entry.path();
-
-            // Only process log files
-            if path.extension().is_some_and(|ext| ext == "log")
-                && let Ok(metadata) = fs::metadata(&path)
-                && let Ok(modified) = metadata.modified()
-                && modified < cutoff
-            {
-                let _ = fs::remove_file(&path);
-            }
+        if let Some(parent) = self.log_path.parent() {
+            prune_logs(parent, self.config.retention_days);
         }
     }
 
@@ -1214,5 +1349,178 @@ mod tests {
         assert!(result.ends_with('\n'));
         assert!(result.contains("line1"));
         assert!(result.contains("line3"));
+    }
+
+    // ===== Effective configuration resolution (issue #247) =====
+
+    fn logging_settings(enabled: bool) -> crate::config::LoggingSettings {
+        crate::config::LoggingSettings {
+            enabled,
+            ..Default::default()
+        }
+    }
+
+    /// Creates `path` with a modification time `days` in the past.
+    fn write_aged_file(path: &Path, days: u64) {
+        let mut file = File::create(path).expect("create");
+        file.write_all(b"x").ok();
+        let when = std::time::SystemTime::now() - std::time::Duration::from_secs(days * 24 * 3600);
+        file.set_modified(when).expect("backdate");
+    }
+
+    #[test]
+    fn resolve_returns_none_when_logging_is_off_everywhere() {
+        let dir = TempDir::new().expect("temp dir");
+        assert!(
+            LogConfig::resolve(&logging_settings(false), false, dir.path(), None).is_none(),
+            "no logging configured anywhere must not open a log file"
+        );
+    }
+
+    #[test]
+    fn resolve_ignores_a_disabled_connection_config() {
+        let dir = TempDir::new().expect("temp dir");
+        let per_connection = LogConfig::new("/tmp/never.log").with_enabled(false);
+        assert!(
+            LogConfig::resolve(
+                &logging_settings(false),
+                false,
+                dir.path(),
+                Some(&per_connection)
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_uses_the_connection_config_even_when_the_global_switch_is_off() {
+        let dir = TempDir::new().expect("temp dir");
+        let per_connection = LogConfig::new("${HOME}/logs/${connection_name}.log")
+            .with_log_output(true)
+            .with_log_timestamps(true);
+        let resolved = LogConfig::resolve(
+            &logging_settings(false),
+            false,
+            dir.path(),
+            Some(&per_connection),
+        )
+        .expect("connection logging must win over the global switch");
+        assert_eq!(
+            resolved.path_template,
+            "${HOME}/logs/${connection_name}.log"
+        );
+        assert!(resolved.log_output);
+        assert!(
+            resolved.log_timestamps,
+            "the connection's own timestamp choice must survive"
+        );
+    }
+
+    #[test]
+    fn resolve_anchors_a_relative_connection_template_to_the_log_directory() {
+        let dir = TempDir::new().expect("temp dir");
+        let per_connection = LogConfig::new("${connection_name}.log");
+        let resolved = LogConfig::resolve(
+            &logging_settings(false),
+            false,
+            dir.path(),
+            Some(&per_connection),
+        )
+        .expect("enabled connection config resolves");
+        assert_eq!(
+            resolved.path_template,
+            dir.path()
+                .join("${connection_name}.log")
+                .to_string_lossy()
+                .into_owned()
+        );
+    }
+
+    #[test]
+    fn resolve_falls_back_to_the_global_settings() {
+        let dir = TempDir::new().expect("temp dir");
+        let mut global = logging_settings(true);
+        global.log_output = true;
+        global.retention_days = 7;
+        let resolved = LogConfig::resolve(&global, true, dir.path(), None)
+            .expect("the global switch alone must arm logging");
+        assert!(
+            resolved
+                .path_template
+                .starts_with(&*dir.path().to_string_lossy())
+        );
+        assert!(
+            resolved
+                .path_template
+                .ends_with("${connection_name}_${datetime}.log")
+        );
+        assert!(resolved.log_output);
+        assert!(
+            resolved.log_timestamps,
+            "global timestamp switch is honored"
+        );
+        assert_eq!(resolved.retention_days, 7);
+        assert_eq!(
+            resolved.max_size_mb, 0,
+            "the global UI has no size limit, so nothing rotates by size"
+        );
+    }
+
+    #[test]
+    fn expand_path_template_expands_a_leading_tilde() {
+        let context = LogContext::new("host", "ssh");
+        let home = dirs::home_dir().expect("home dir");
+        let path = SessionLogger::expand_path_template("~/logs/session.log", &context, None)
+            .expect("tilde expands");
+        assert_eq!(path, home.join("logs/session.log"));
+    }
+
+    // ===== Retention (issue #247) =====
+
+    #[test]
+    fn prune_logs_removes_only_expired_log_files() {
+        let dir = TempDir::new().expect("temp dir");
+        let old = dir.path().join("old.log");
+        let fresh = dir.path().join("fresh.log");
+        let unrelated = dir.path().join("notes.txt");
+        write_aged_file(&old, 10);
+        write_aged_file(&fresh, 0);
+        write_aged_file(&unrelated, 10);
+
+        assert_eq!(prune_logs(dir.path(), 3), 1);
+        assert!(!old.exists(), "an expired log is deleted");
+        assert!(fresh.exists(), "a recent log is kept");
+        assert!(unrelated.exists(), "non-log files are never touched");
+    }
+
+    #[test]
+    fn prune_logs_keeps_everything_when_retention_is_disabled() {
+        let dir = TempDir::new().expect("temp dir");
+        let path = dir.path().join("ancient.log");
+        write_aged_file(&path, 400);
+
+        assert_eq!(prune_logs(dir.path(), 0), 0);
+        assert!(path.exists(), "retention 0 means keep forever");
+    }
+
+    // ===== Redaction of what lands on disk (issue #247) =====
+
+    #[test]
+    fn write_record_redacts_a_credential_line() {
+        let dir = TempDir::new().expect("temp dir");
+        let config = LogConfig::new(dir.path().join("s.log").to_string_lossy().into_owned());
+        let mut logger = SessionLogger::new(config, &LogContext::new("host", "ssh"), None)
+            .expect("logger opens");
+        logger
+            .write_record("[10:00:00] INPUT: password: hunter2")
+            .expect("write");
+        logger.flush().expect("flush");
+
+        let written = fs::read_to_string(logger.log_path()).expect("read back");
+        assert!(
+            !written.contains("hunter2"),
+            "a typed password must not reach the log file: {written}"
+        );
+        assert!(written.contains("[REDACTED]"));
     }
 }

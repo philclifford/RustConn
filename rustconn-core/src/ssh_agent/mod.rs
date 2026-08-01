@@ -200,6 +200,59 @@ echo Agent pid 12346;";
 }
 
 // ============================================================================
+// Agent Identity Files
+// ============================================================================
+
+/// Turns a key fingerprint into a filename-safe stem.
+///
+/// SHA256 fingerprints are base64 and contain `:`, `/` and `+`, none of which
+/// belong in a path component. Every character outside `[A-Za-z0-9._-]` is
+/// replaced by `_`.
+#[must_use]
+pub fn sanitize_fingerprint(fingerprint: &str) -> String {
+    fingerprint
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod identity_file_tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_sha256_fingerprint() {
+        let sanitized = sanitize_fingerprint("SHA256:ab/cd+ef=gh");
+        assert_eq!(sanitized, "SHA256_ab_cd_ef_gh");
+    }
+
+    #[test]
+    fn test_sanitize_keeps_safe_characters() {
+        assert_eq!(sanitize_fingerprint("a.b-c_1"), "a.b-c_1");
+    }
+
+    #[test]
+    fn test_sanitize_never_yields_path_separators() {
+        let sanitized = sanitize_fingerprint("../../etc/passwd");
+        assert!(!sanitized.contains('/'));
+        assert!(!sanitized.contains(std::path::MAIN_SEPARATOR));
+    }
+
+    #[test]
+    fn test_materialize_requires_socket() {
+        let manager = SshAgentManager::new(None);
+        let result = manager.materialize_agent_identity("SHA256:whatever");
+        assert!(matches!(result, Err(AgentError::NotRunning)));
+    }
+}
+
+// ============================================================================
 // SSH Key List Parsing
 // ============================================================================
 
@@ -866,6 +919,51 @@ impl SshAgentManager {
         }
 
         Err(AgentError::KeyNotFound(fingerprint.to_string()))
+    }
+
+    /// Writes the agent key with `fingerprint` to a public-key file for `ssh -i`.
+    ///
+    /// `ssh -i` accepts a `.pub` file: OpenSSH then asks the agent to sign with
+    /// the matching private key instead of reading key material from disk.
+    /// Combined with `-o IdentitiesOnly=yes` this restricts the connection to
+    /// exactly the selected agent key. Unlike pointing `-i` at the *private*
+    /// key, it produces a single agent confirmation prompt (issue #125).
+    ///
+    /// The file holds only public key material. It is written to
+    /// `$XDG_RUNTIME_DIR/rustconn/agent-keys/` (mode 0600 inside a 0700
+    /// directory), falling back to the system temp directory when the runtime
+    /// directory is unavailable. Rewriting an existing file is intentional: the
+    /// agent is the source of truth and the content is derived from it.
+    ///
+    /// # Errors
+    /// Returns `AgentError::NotRunning` if no socket is configured,
+    /// `AgentError::KeyNotFound` if the agent holds no key with that
+    /// fingerprint, and `AgentError::Io` if the file cannot be written.
+    pub fn materialize_agent_identity(&self, fingerprint: &str) -> AgentResult<PathBuf> {
+        let public_key = self.get_public_key_by_fingerprint(fingerprint)?;
+
+        let base = std::env::var_os("XDG_RUNTIME_DIR")
+            .map_or_else(std::env::temp_dir, PathBuf::from)
+            .join("rustconn")
+            .join("agent-keys");
+        std::fs::create_dir_all(&base)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700))?;
+        }
+
+        let path = base.join(format!("{}.pub", sanitize_fingerprint(fingerprint)));
+        std::fs::write(&path, format!("{}\n", public_key.trim()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+
+        Ok(path)
     }
 
     /// Checks if a file contains a private key by reading its header

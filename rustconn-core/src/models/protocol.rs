@@ -802,10 +802,6 @@ pub struct SshConfig {
     /// ID of another connection to use as a Jump Host
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jump_host_id: Option<uuid::Uuid>,
-    /// Enable SFTP file browser for this SSH connection
-    /// (always true — SFTP is available for all SSH connections)
-    #[serde(default = "default_true")]
-    pub sftp_enabled: bool,
     /// Port forwarding rules (local, remote, dynamic)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub port_forwards: Vec<PortForward>,
@@ -2220,10 +2216,6 @@ pub struct ZeroTrustConfig {
     /// Custom command-line arguments (appended to generated command)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_args: Vec<String>,
-    /// Cached detected provider for consistent icon display
-    /// This is auto-detected from the command and persisted for consistent display
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detected_provider: Option<String>,
 }
 
 impl Default for ZeroTrustConfig {
@@ -2232,7 +2224,6 @@ impl Default for ZeroTrustConfig {
             provider: ZeroTrustProvider::default(),
             provider_config: ZeroTrustProviderConfig::AwsSsm(AwsSsmConfig::default()),
             custom_args: Vec::new(),
-            detected_provider: None,
         }
     }
 }
@@ -2944,7 +2935,6 @@ mod zerotrust_tests {
                 region: Some("us-west-2".to_string()),
             }),
             custom_args: vec![],
-            detected_provider: None,
         };
 
         let (program, args) = config.build_command(None);
@@ -2969,7 +2959,6 @@ mod zerotrust_tests {
                 project: Some("my-project".to_string()),
             }),
             custom_args: vec![],
-            detected_provider: None,
         };
 
         let (program, args) = config.build_command(None);
@@ -2993,7 +2982,6 @@ mod zerotrust_tests {
                 cluster: Some("production".to_string()),
             }),
             custom_args: vec![],
-            detected_provider: None,
         };
 
         let (program, args) = config.build_command(Some("admin"));
@@ -3013,7 +3001,6 @@ mod zerotrust_tests {
                 username: Some("root".to_string()),
             }),
             custom_args: vec![],
-            detected_provider: None,
         };
 
         let (program, args) = config.build_command(None);
@@ -3031,7 +3018,6 @@ mod zerotrust_tests {
                     .to_string(),
             }),
             custom_args: vec![],
-            detected_provider: None,
         };
 
         let (program, args) = config.build_command(None);
@@ -3050,7 +3036,6 @@ mod zerotrust_tests {
                 region: None,
             }),
             custom_args: vec!["--debug".to_string(), "--verbose".to_string()],
-            detected_provider: None,
         };
 
         let (_, args) = config.build_command(None);
@@ -3068,7 +3053,6 @@ mod zerotrust_tests {
                 region: None,
             }),
             custom_args: vec![],
-            detected_provider: Some("aws".to_string()),
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -3142,7 +3126,6 @@ mod zerotrust_tests {
                 grpc_url: None,
             }),
             custom_args: vec![],
-            detected_provider: None,
         };
         assert!(
             config.validate().is_err(),
@@ -3160,7 +3143,6 @@ mod zerotrust_tests {
                 grpc_url: None,
             }),
             custom_args: vec![],
-            detected_provider: None,
         };
         assert!(
             config.validate().is_err(),
@@ -3178,7 +3160,6 @@ mod zerotrust_tests {
                 grpc_url: Some("grpc.hoop.dev:8443".to_string()),
             }),
             custom_args: vec![],
-            detected_provider: None,
         };
         assert!(
             config.validate().is_ok(),
@@ -3196,7 +3177,6 @@ mod zerotrust_tests {
                 grpc_url: None,
             }),
             custom_args: vec![],
-            detected_provider: None,
         };
         let (program, args) = config.build_command(None);
         assert_eq!(program, "hoop");
@@ -3213,7 +3193,6 @@ mod zerotrust_tests {
                 grpc_url: Some("grpc.hoop.dev:8443".to_string()),
             }),
             custom_args: vec![],
-            detected_provider: None,
         };
         let (program, args) = config.build_command(None);
         assert_eq!(program, "hoop");
@@ -3240,7 +3219,6 @@ mod zerotrust_tests {
                 grpc_url: None,
             }),
             custom_args: vec!["--debug".to_string(), "--verbose".to_string()],
-            detected_provider: None,
         };
         let (program, args) = config.build_command(None);
         assert_eq!(program, "hoop");

@@ -16,7 +16,7 @@ mod session;
 
 pub use logger::{
     LogConfig, LogContext, LogError, LogResult, SanitizeConfig, SessionLogger,
-    contains_sensitive_prompt, sanitize_output,
+    contains_sensitive_prompt, prune_logs, sanitize_output,
 };
 pub use manager::{
     DEFAULT_HEALTH_CHECK_INTERVAL_SECS, HealthCheckConfig, HealthCheckEvent, HealthStatus,

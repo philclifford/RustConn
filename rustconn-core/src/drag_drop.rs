@@ -12,7 +12,7 @@ pub enum DropPosition {
     Before,
     /// Drop after the target item (line indicator below)
     After,
-    /// Drop into the target item (for groups/documents only)
+    /// Drop into the target item (for groups only)
     Into,
 }
 
@@ -23,8 +23,6 @@ pub enum ItemType {
     Connection,
     /// A group/folder item
     Group,
-    /// A document item
-    Document,
 }
 
 /// Configuration for drop position calculation
@@ -47,7 +45,7 @@ impl Default for DropConfig {
 
 /// Calculates the drop position based on Y coordinate within a row
 ///
-/// For groups and documents, the row is divided into three zones:
+/// For groups, the row is divided into three zones:
 /// - Top zone (`drop_zone_ratio`): Before
 /// - Middle zone: Into
 /// - Bottom zone (`drop_zone_ratio`): After
@@ -72,8 +70,8 @@ pub fn calculate_drop_position(
     let drop_zone_size = config.row_height * config.drop_zone_ratio;
 
     match item_type {
-        ItemType::Group | ItemType::Document => {
-            // For groups/documents: top zone = before, middle = into, bottom = after
+        ItemType::Group => {
+            // For groups: top zone = before, middle = into, bottom = after
             if y_in_row < drop_zone_size {
                 DropPosition::Before
             } else if y_in_row > config.row_height - drop_zone_size {
@@ -141,7 +139,7 @@ pub fn calculate_row_index(y: f64, config: &DropConfig) -> u32 {
 /// Validates that a drop position is valid for the given item type
 ///
 /// - Connections can only have Before or After positions
-/// - Groups and Documents can have Before, After, or Into positions
+/// - Groups can have Before, After, or Into positions
 ///
 /// # Arguments
 /// * `position` - The drop position to validate
@@ -153,7 +151,7 @@ pub fn calculate_row_index(y: f64, config: &DropConfig) -> u32 {
 pub const fn is_valid_drop_position(position: DropPosition, item_type: ItemType) -> bool {
     match item_type {
         ItemType::Connection => !matches!(position, DropPosition::Into),
-        ItemType::Group | ItemType::Document => true,
+        ItemType::Group => true,
     }
 }
 

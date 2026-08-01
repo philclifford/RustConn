@@ -2406,7 +2406,6 @@ impl TemplateDialog {
                 Some(startup_command.into())
             },
             custom_options: std::collections::HashMap::new(),
-            sftp_enabled: true,
             port_forwards: Vec::new(),
             waypipe: false,
             ssh_agent_socket: None,
@@ -2753,7 +2752,6 @@ impl TemplateDialog {
             provider,
             provider_config,
             custom_args: custom_args_vec,
-            detected_provider: None,
         })
     }
 

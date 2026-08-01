@@ -275,6 +275,7 @@ pub fn create_app_menu() -> gio::Menu {
     );
     sessions_submenu.append(Some(&i18n("Statistics...")), Some("win.show-statistics"));
     sessions_submenu.append(Some(&i18n("Recordings...")), Some("win.manage-recordings"));
+    sessions_submenu.append(Some(&i18n("Session Logs...")), Some("win.show-logs"));
 
     let sessions_section = gio::Menu::new();
     sessions_section.append_submenu(Some(&i18n("Sessions")), &sessions_submenu);

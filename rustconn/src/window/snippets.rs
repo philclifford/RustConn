@@ -17,7 +17,6 @@ use crate::dialogs::SnippetDialog;
 use crate::i18n::i18n;
 use crate::state::SharedAppState;
 use crate::terminal::TerminalNotebook;
-use crate::window::SharedToastOverlay;
 use crate::window::types::SessionSplitBridges;
 
 /// Type alias for shared terminal notebook
@@ -45,34 +44,6 @@ fn send_text_to_focused(
     }
     // Fallback: send to the active tab's terminal
     notebook.send_text(text);
-}
-
-/// Shows the new snippet dialog
-pub fn show_new_snippet_dialog(
-    window: &gtk4::Window,
-    state: SharedAppState,
-    toast: SharedToastOverlay,
-    notebook: SharedNotebook,
-) {
-    let dialog = SnippetDialog::new(Some(&window.clone().upcast()));
-
-    let window_clone = window.clone();
-    dialog.run(move |result| {
-        if let Some(snippet) = result
-            && let Ok(mut state_mut) = state.try_borrow_mut()
-        {
-            match state_mut.create_snippet(snippet) {
-                Ok(_) => {
-                    toast.show_success(&i18n("Snippet has been saved successfully."));
-                    drop(state_mut);
-                    notebook.rebuild_snippet_menu(&state);
-                }
-                Err(e) => {
-                    crate::alert::show_error(&window_clone, &i18n("Error Creating Snippet"), &e);
-                }
-            }
-        }
-    });
 }
 
 /// Shows the snippets manager dialog

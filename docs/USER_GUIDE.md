@@ -52,7 +52,6 @@ RustConn is a modern connection manager designed for Linux with Wayland-first ap
    - [Password Generator](#password-generator)
    - [Wake-on-LAN](#wake-on-lan)
    - [Connection History & Statistics](#connection-history)
-   - [Encrypted Documents](#encrypted-documents)
    - [Remote Monitoring](#remote-monitoring)
    - [SSH Tunnel Manager](#ssh-tunnel-manager)
 8. [Settings](#settings)
@@ -203,6 +202,11 @@ The full editor provides access to all connection options:**Basic Tab:**
   - **None** — No password (key-based auth)
 - SSH key selection
 - Key passphrase
+
+**SSH Agent Authentication:**
+Set the auth method (or the key source) to **SSH Agent** and pick one of the keys the agent currently holds from the dropdown. That choice is honoured at connect time: RustConn restricts the connection to the selected key with `-i <public key> -o IdentitiesOnly=yes`, so the other keys in the agent are not offered. The identity passed to `ssh` is the key's *public* half, written to `$XDG_RUNTIME_DIR/rustconn/agent-keys/`; the private key never leaves the agent and you are asked to confirm at most once. This matters on an agent holding many keys, where a server with a low `MaxAuthTries` can refuse the connection before the right key is reached.
+
+If the agent is not running when the session starts, or no longer holds the selected key, the connection still goes ahead with every agent key offered, and the reason is written to the log.
 
 **Security Key / FIDO2 Authentication (SSH):**
 SSH connections support hardware security keys (YubiKey, SoloKey, etc.) via the `security-key` auth method. Requirements:
@@ -1362,19 +1366,74 @@ When a terminal session disconnects (SSH, Telnet, Serial, Kubernetes), a "Reconn
 
 ### Session Logging
 
-Three logging modes (Settings → Terminal page → Logging):
+Logging is armed by either of two switches, and the per-connection one wins when
+both are set:
+
+- **Globally** — Settings → Terminal page → Logging → "Persist logs". Applies to
+  every session and writes into the log directory configured next to it.
+- **Per connection** — Connection dialog → Logs tab → "Enable Logging". Applies
+  to that connection only, with its own path, timestamp format, size limit and
+  retention.
+
+Three logging modes:
 - **Activity** — Track session activity changes
 - **User Input** — Capture typed commands
 - **Terminal Output** — Full transcript
 
-Optional timestamps (Settings → Terminal page → Logging):
+Optional timestamps:
 - Enable "Timestamps" to prepend `[HH:MM:SS]` to each line in log files
 
-Per-connection logging options (Connection dialog → Logging tab → Content Options):
+Per-connection logging options (Connection dialog → Logs tab → Content Options):
 - **Log Activity** — Record connection and disconnection events
 - **Log Input** — Record keyboard input sent to remote
 - **Log Output** — Record terminal output from remote
 - **Add Timestamps** — Prepend timestamp to each log line
+
+#### Where the log files go
+
+The **Log Directory** in Settings is the default destination. A relative value is
+resolved against the configuration directory, so the out-of-the-box location is
+`~/.config/rustconn/logs/`. In Flatpak that is
+`~/.var/app/io.github.totoshko88.RustConn/config/rustconn/logs/`.
+
+The per-connection **Log Path** is a template. A relative template lands in the
+same log directory; an absolute one is used as written. These variables are
+expanded:
+
+| Variable | Expands to |
+|----------|-----------|
+| `${connection_name}` | Connection name, sanitized for use in a file name |
+| `${protocol}` | Protocol id (`ssh`, `rdp`, ...) |
+| `${date}` | `YYYY-MM-DD` |
+| `${time}` | `HH-MM-SS` |
+| `${datetime}` | `YYYY-MM-DD_HH-MM-SS` |
+| `${HOME}` or a leading `~` | Home directory |
+
+An unknown `${variable}` is an error: the session starts, but no log is written
+and a toast reports why.
+
+In Flatpak, `${HOME}` and `~` resolve to the sandbox home
+(`~/.var/app/io.github.totoshko88.RustConn`), not your real home directory. The
+sandbox can only write outside it where a filesystem permission exists — of the
+usual locations that means `~/Downloads` (granted for SFTP transfers), which has
+to be given as an absolute path such as `/home/<user>/Downloads/rustconn/`.
+
+To read the files, use **Session Logs...** in the primary menu (Sessions
+submenu), or **Session Log...** in a connection's context menu to open the
+directory that connection writes to. Both show the directory path in the dialog
+header.
+
+#### Rotation, retention and redaction
+
+- **Max Size (MB)** rotates the current file once it grows past the limit; `0`
+  disables rotation. The global logging settings have no size field, so a
+  connection without its own configuration never rotates by size.
+- **Retention (days)** deletes `*.log` files older than the limit, and only
+  inside the log directory RustConn manages. A log written to a path of your own
+  is never deleted automatically.
+- Lines that look like a credential prompt or a secret (passwords, API keys,
+  tokens, private keys, AWS keys, JWTs) are replaced with `[REDACTED]` before
+  anything reaches the file.
 
 ### Terminal Search
 
@@ -2189,18 +2248,6 @@ Menu → Tools → **Connection Statistics**
 
 Tracks: total connections, success rate, connection duration (average/total), most used connections, protocol breakdown, last connected timestamps. Use **Reset** to clear all statistics.
 
-### Encrypted Documents
-
-Store sensitive notes, certificates, and credentials in AES-256-GCM encrypted documents within RustConn.
-
-**Create:** Menu → File → **New Document** → enter name → optionally set protection password → write content → save with Ctrl+S.
-
-**Protection:** Right-click document → Set/Remove Protection. Protected documents require the password each time they are opened. Unprotected documents are encrypted with the application master key.
-
-**Use Cases:** Runbooks, API tokens, SSH key passphrases, network diagrams, compliance notes.
-
-**Backup:** Documents are stored in `~/.config/rustconn/documents/`. They are **not** included in Settings Backup/Restore or in RustConn Native export (.rcn) — back up the `documents/` directory manually if needed.
-
 ### Remote Monitoring
 
 MobaXterm-style monitoring bar below SSH terminals showing real-time system metrics from remote Linux hosts. Completely agentless — no software needs to be installed on the remote host. RustConn collects data by parsing `/proc/*` and `df` output over a separate SSH connection. For Telnet and Kubernetes sessions, monitoring is available if the host is also reachable via SSH.
@@ -2492,10 +2539,10 @@ Back up your entire RustConn configuration as a single ZIP archive.
 | Included | Not Included |
 |----------|-------------|
 | Connections and groups | Passwords (stored in secret backend) |
-| Templates and snippets | Encrypted documents |
-| Clusters | SSH keys |
-| Global variables (names only; secret values are in vault) | Session logs |
-| Keybindings | Flatpak-installed CLI tools |
+| Templates and snippets | SSH keys |
+| Clusters | Session logs |
+| Global variables (names only; secret values are in vault) | Flatpak-installed CLI tools |
+| Keybindings | |
 | Application settings | |
 | Connection history and statistics | |
 

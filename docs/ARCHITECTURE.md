@@ -106,7 +106,6 @@ pub struct AppState {
     template_manager: TemplateManager,
     secret_manager: SecretManager,
     config_manager: ConfigManager,
-    document_manager: DocumentManager,
     cluster_manager: ClusterManager,
     // ... cached credentials, clipboard, etc.
 }
@@ -170,7 +169,6 @@ Each domain has a dedicated manager in `rustconn-core`:
 | `SessionManager` | Active session tracking, logging |
 | `SecretManager` | Credential storage with backend fallback |
 | `ConfigManager` | Settings persistence |
-| `DocumentManager` | Multi-document support |
 | `SnippetManager` | Command snippets |
 | `TemplateManager` | Connection template CRUD, search, import/export |
 | `ClusterManager` | Connection clusters |

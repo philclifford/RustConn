@@ -9,6 +9,8 @@
 //!
 //! Keep in sync with:
 //! - `rustconn-core/src/template/predefined.rs` (descriptions + category names)
+//! - `rustconn-core/src/models/protocol.rs` (`display_name()` of the RDP/VNC
+//!   client-mode and performance-mode enums)
 
 #![allow(
     dead_code,
@@ -48,4 +50,16 @@ fn _never_called() {
     crate::i18n::i18n("Ad-hoc command on remote host");
     crate::i18n::i18n("Wake server then connect");
     crate::i18n::i18n("Remote Nix build via SSH");
+
+    // === RDP/VNC dropdown labels from `display_name()` ===
+    // The call sites already wrap these in `i18n()`, but the literals live in
+    // rustconn-core, which `po/update-pot.sh` does not scan — without a marker
+    // here the labels stayed English in every locale.
+    crate::i18n::i18n("External RDP client");
+    crate::i18n::i18n("External VNC client");
+    crate::i18n::i18n("Quality (RemoteFX)");
+    crate::i18n::i18n("Balanced (Adaptive)");
+    crate::i18n::i18n("Speed (Legacy)");
+    crate::i18n::i18n("Balanced");
+    crate::i18n::i18n("Speed");
 }

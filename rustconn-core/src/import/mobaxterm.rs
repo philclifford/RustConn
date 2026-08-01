@@ -345,7 +345,6 @@ impl MobaXtermImporter {
             compression,
             custom_options: HashMap::new(),
             startup_command,
-            sftp_enabled: false,
             port_forwards: Vec::new(),
             waypipe: false,
             ssh_agent_socket: None,

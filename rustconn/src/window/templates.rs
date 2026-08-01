@@ -31,7 +31,7 @@ pub fn show_templates_manager(
 ) {
     let manager_dialog = TemplateManagerDialog::new(Some(window));
 
-    // Load templates from config file and active document
+    // Load templates from config file
     let templates = {
         let state_ref = state.borrow();
         state_ref.get_all_templates()
@@ -82,7 +82,7 @@ pub fn show_templates_manager(
                 if let Some(template) = result {
                     // Add to state templates (local cache)
                     templates_inner.borrow_mut().push(template.clone());
-                    // Save to config file and active document
+                    // Save to config file
                     if let Ok(mut state_mut) = state_inner.try_borrow_mut()
                         && let Err(e) = state_mut.add_template(template)
                     {
@@ -117,7 +117,7 @@ pub fn show_templates_manager(
                         templates[pos] = updated.clone();
                     }
                     drop(templates);
-                    // Update in config file and active document
+                    // Update in config file
                     if let Ok(mut state_mut) = state_inner.try_borrow_mut()
                         && let Err(e) = state_mut.update_template(updated)
                     {
@@ -154,7 +154,7 @@ pub fn show_templates_manager(
                     if confirmed {
                         // Remove from state templates (local cache)
                         templates_inner.borrow_mut().retain(|t| t.id != id);
-                        // Remove from config file and active document
+                        // Remove from config file
                         if let Ok(mut state_mut) = state_inner.try_borrow_mut()
                             && let Err(e) = state_mut.delete_template(id)
                         {
