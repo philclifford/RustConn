@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.10
+Version:        0.19.11
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,19 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Sun Aug 02 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.11-0
+- Version bump to 0.19.11
+- Fixed the Homebrew release automation patching only commented-out examples, which left the tap formula pinned to v0.19.6 since that release (#251)
+- Fixed KeePassXC group passwords failing to load when the database is password-protected: both group dialogs now pass the stored master password (#250)
+- Fixed the snap keyring error naming the exact snap connect command instead of implying the keyring is broken (#249)
+- Improved embedded RDP CPU usage for background tabs: the polling loop now skips 15 of every 16 ticks when the drawing area is not mapped
+- Improved connection and group listing with list_connections_owned and list_groups_owned, removing the intermediate Vec<&T> at 39 window call sites and in both persist paths
+- Improved the readability of setup_ironrdp_polling by extracting its event handling into polling_handlers.rs behind two borrowed context structs
+- Improved allocation behaviour in hot paths with with_capacity hints for trash, the group hierarchy index and sidebar filtering
+- Improved responsiveness of emptying the trash by moving webkit session directory removal to a background thread
+- Removed PackageManager, detect_package_manager and get_system_install_command from the rustconn-core re-exports
+- Documented password-manager-service as a manual snap interface, which it has always been
+
 * Sat Aug 01 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.10-0
 - Version bump to 0.19.10
 - Added "Session Logs..." to the primary menu and "Session Log..." to a connection's context menu, opening the directory that connection actually writes to (#247)

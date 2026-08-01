@@ -830,7 +830,7 @@ pub fn start_ssh_connection_observed(
     let groups: Vec<rustconn_core::ConnectionGroup> = state
         .try_borrow()
         .ok()
-        .map(|s| s.list_groups().into_iter().cloned().collect())
+        .map(|s| s.list_groups_owned())
         .unwrap_or_default();
     let has_inherited_proxy = ssh_inheritance::resolve_ssh_proxy_jump(conn, &groups).is_some();
     // Use centralized probe-bypass logic + inherited proxy jump from groups
@@ -1004,7 +1004,7 @@ fn start_ssh_connection_internal(
     let groups: Vec<rustconn_core::ConnectionGroup> = state
         .try_borrow()
         .ok()
-        .map(|s| s.list_groups().into_iter().cloned().collect())
+        .map(|s| s.list_groups_owned())
         .unwrap_or_default();
 
     // Detect jump host / proxy for status detection and monitoring
@@ -1494,7 +1494,7 @@ pub fn reconnect_ssh_in_place(
     let groups: Vec<rustconn_core::ConnectionGroup> = state
         .try_borrow()
         .ok()
-        .map(|s| s.list_groups().into_iter().cloned().collect())
+        .map(|s| s.list_groups_owned())
         .unwrap_or_default();
 
     let has_jump_host = matches!(

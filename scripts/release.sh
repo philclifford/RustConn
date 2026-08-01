@@ -321,6 +321,7 @@ PKG_FILES=(
     "rustconn/Cargo.toml"
     "rustconn-cli/Cargo.toml"
     "po/rustconn.pot"
+    "packaging/macos/rustconn.rb"
 )
 PKG_PATS=(
     "^rustconn \\($VERSION_RE-1\\)"
@@ -341,6 +342,7 @@ PKG_PATS=(
     "version = \"$VERSION_RE\""
     "version = \"$VERSION_RE\""
     "^\"Project-Id-Version: rustconn $VERSION_RE"
+    "archive/refs/tags/v$VERSION_RE\\.tar\\.gz"
 )
 
 # The two arrays are indexed in parallel; a length mismatch would silently drop
@@ -434,6 +436,7 @@ VERSION_ONLY_FILES=(
     "snap/snapcraft.yaml"
     "flake.nix"
     "po/rustconn.pot"
+    "packaging/macos/rustconn.rb"
 )
 
 PREV_VERSION=""
@@ -458,6 +461,53 @@ else
         fail "$STALE_FAILED file(s) still carry $PREV_VERSION — bump them to $VERSION"
     fi
     ok "No file carries the previous version $PREV_VERSION"
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 5d. Homebrew formula template is CI-ready
+#
+# The release workflow copies packaging/macos/rustconn.rb into the Homebrew tap
+# and patches the archive URL version + sha256 via sed. If the template drifts
+# (e.g. back to a git+tag source), the sed silently fails and the tap stays
+# pinned to an old version (see issue #251). Verify the expected format here.
+# ──────────────────────────────────────────────────────────────────────────────
+BREW_FORMULA="packaging/macos/rustconn.rb"
+if [[ -f "$BREW_FORMULA" ]]; then
+    BREW_FAILED=0
+
+    # Must have exactly one active archive URL line
+    if ! grep -qE '^  url "https://github.com/totoshko88/RustConn/archive/refs/tags/v[^"]+\.tar\.gz"' "$BREW_FORMULA"; then
+        warn "$BREW_FORMULA: missing active archive URL (expected '  url \"https://...archive/refs/tags/vX.Y.Z.tar.gz\"')"
+        ((BREW_FAILED += 1))
+    fi
+
+    # Must have an active sha256 line: either the placeholder that CI replaces,
+    # or a real 64-char lowercase hash as emitted by sha256sum. Anything else
+    # (a truncated hash, a stray comment) would let CI's sed produce a formula
+    # Homebrew rejects at install time.
+    if ! grep -qE '^  sha256 "([a-f0-9]{64}|PLACEHOLDER_SHA256)"' "$BREW_FORMULA"; then
+        warn "$BREW_FORMULA: missing active sha256 line (expected PLACEHOLDER_SHA256 or a 64-char hash)"
+        ((BREW_FAILED += 1))
+    fi
+
+    # The archive URL must reference the current version
+    if ! grep -qE "^  url.*v$VERSION_RE\\.tar\\.gz" "$BREW_FORMULA"; then
+        warn "$BREW_FORMULA: archive URL does not reference v$VERSION"
+        ((BREW_FAILED += 1))
+    fi
+
+    # Must NOT have a git+tag source (the old broken format)
+    if grep -qE '^  url "https://github.com/totoshko88/RustConn\.git"' "$BREW_FORMULA"; then
+        warn "$BREW_FORMULA: still uses git+tag source — CI sed patterns will not work"
+        ((BREW_FAILED += 1))
+    fi
+
+    if (( BREW_FAILED > 0 )); then
+        fail "$BREW_FORMULA is not in the expected format for CI automation (see issue #251)"
+    fi
+    ok "$BREW_FORMULA template is CI-ready (archive URL v$VERSION + sha256)"
+else
+    warn "$BREW_FORMULA not found — skipping Homebrew formula check"
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────

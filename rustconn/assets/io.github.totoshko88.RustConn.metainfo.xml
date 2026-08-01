@@ -140,6 +140,19 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.11" date="2026-08-02">
+      <description>
+        <p>Version 0.19.11 - vault and packaging fixes, lighter background sessions:</p>
+        <ul>
+          <li>Fixed KeePassXC group passwords failing to load from a password-protected database</li>
+          <li>Fixed the Homebrew formula staying pinned to an old version after every automated release</li>
+          <li>Fixed the snap keyring error not naming the snap connect command needed to fix it</li>
+          <li>Improved embedded RDP CPU usage for sessions in a background tab</li>
+          <li>Improved allocation behaviour when listing connections and groups</li>
+          <li>Improved responsiveness of emptying the trash</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.10" date="2026-08-01">
       <description>
         <p>Version 0.19.10 - session logging that works, and reconnect after sleep:</p>

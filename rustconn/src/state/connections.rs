@@ -146,29 +146,40 @@ impl AppState {
 
         // Remove webkit session data/cache directories for permanently deleted connections
         #[cfg(feature = "web-embedded")]
-        for conn_id in &trashed_connection_ids {
-            let data_dir = crate::embedded_web::session_data_dir(conn_id);
-            let cache_dir = crate::embedded_web::session_cache_dir(conn_id);
-            if data_dir.exists()
-                && let Err(e) = std::fs::remove_dir_all(&data_dir)
-            {
-                tracing::warn!(
-                    connection_id = %conn_id,
-                    path = %data_dir.display(),
-                    error = %e,
-                    "Failed to remove webkit session data directory"
-                );
-            }
-            if cache_dir.exists()
-                && let Err(e) = std::fs::remove_dir_all(&cache_dir)
-            {
-                tracing::warn!(
-                    connection_id = %conn_id,
-                    path = %cache_dir.display(),
-                    error = %e,
-                    "Failed to remove webkit session cache directory"
-                );
-            }
+        {
+            let dirs_to_remove: Vec<(std::path::PathBuf, std::path::PathBuf)> =
+                trashed_connection_ids
+                    .iter()
+                    .map(|conn_id| {
+                        (
+                            crate::embedded_web::session_data_dir(conn_id),
+                            crate::embedded_web::session_cache_dir(conn_id),
+                        )
+                    })
+                    .collect();
+            // Move directory removal off the main thread to avoid blocking UI
+            std::thread::spawn(move || {
+                for (data_dir, cache_dir) in dirs_to_remove {
+                    if data_dir.exists()
+                        && let Err(e) = std::fs::remove_dir_all(&data_dir)
+                    {
+                        tracing::warn!(
+                            path = %data_dir.display(),
+                            error = %e,
+                            "Failed to remove webkit session data directory"
+                        );
+                    }
+                    if cache_dir.exists()
+                        && let Err(e) = std::fs::remove_dir_all(&cache_dir)
+                    {
+                        tracing::warn!(
+                            path = %cache_dir.display(),
+                            error = %e,
+                            "Failed to remove webkit session cache directory"
+                        );
+                    }
+                }
+            });
         }
 
         self.connection_manager.empty_trash()
@@ -233,6 +244,11 @@ impl AppState {
     /// Lists all connections
     pub fn list_connections(&self) -> Vec<&Connection> {
         self.connection_manager.list_connections()
+    }
+
+    /// Returns an owned copy of all connections in a single allocation
+    pub fn list_connections_owned(&self) -> Vec<Connection> {
+        self.connection_manager.list_connections_owned()
     }
 
     /// Gets connections by group
@@ -381,7 +397,7 @@ impl AppState {
         let parent_changed = old_parent_id.is_some_and(|old| old != new_parent_id);
 
         let old_groups_snapshot: Vec<rustconn_core::models::ConnectionGroup> = if parent_changed {
-            self.list_groups().into_iter().cloned().collect()
+            self.list_groups_owned()
         } else {
             Vec::new()
         };
@@ -395,8 +411,8 @@ impl AppState {
 
         // Migrate vault entries if parent changed (KeePass paths affected)
         if parent_changed {
-            let new_groups: Vec<_> = self.list_groups().into_iter().cloned().collect();
-            let connections: Vec<_> = self.list_connections().into_iter().cloned().collect();
+            let new_groups: Vec<_> = self.list_groups_owned();
+            let connections: Vec<_> = self.list_connections_owned();
             let settings = self.settings.clone();
             migrate_vault_entries_on_group_change(
                 &settings,
@@ -423,6 +439,11 @@ impl AppState {
     /// Lists all groups
     pub fn list_groups(&self) -> Vec<&ConnectionGroup> {
         self.connection_manager.list_groups()
+    }
+
+    /// Returns an owned copy of all groups in a single allocation
+    pub fn list_groups_owned(&self) -> Vec<ConnectionGroup> {
+        self.connection_manager.list_groups_owned()
     }
 
     /// Gets root-level groups

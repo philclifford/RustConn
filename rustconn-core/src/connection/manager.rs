@@ -173,12 +173,12 @@ impl ConnectionManager {
         let connections = connections_vec.into_iter().map(|c| (c.id, c)).collect();
         let groups = groups_vec.into_iter().map(|g| (g.id, g)).collect();
 
-        let mut trash_connections = HashMap::new();
+        let mut trash_connections = HashMap::with_capacity(trash_connections_vec.len());
         for (conn, time) in trash_connections_vec {
             trash_connections.insert(conn.id, (conn, time));
         }
 
-        let mut trash_groups = HashMap::new();
+        let mut trash_groups = HashMap::with_capacity(trash_groups_vec.len());
         for (group, time) in trash_groups_vec {
             trash_groups.insert(group.id, (group, time));
         }
@@ -428,6 +428,17 @@ impl ConnectionManager {
     #[must_use]
     pub fn list_connections(&self) -> Vec<&Connection> {
         self.connections.values().collect()
+    }
+
+    /// Returns an owned copy of all connections in a single allocation
+    ///
+    /// More efficient than `list_connections().into_iter().cloned().collect()`
+    /// because it avoids the intermediate `Vec<&Connection>`.
+    #[must_use]
+    pub fn list_connections_owned(&self) -> Vec<Connection> {
+        let mut connections = Vec::with_capacity(self.connections.len());
+        connections.extend(self.connections.values().cloned());
+        connections
     }
 
     /// Gets all connections in a specific group
@@ -718,7 +729,8 @@ impl ConnectionManager {
     /// Collects a group and all its descendant groups
     fn collect_descendant_groups(&self, group_id: Uuid) -> Vec<Uuid> {
         // Build parent → children index for O(n) traversal instead of O(n²)
-        let mut children_index: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+        let mut children_index: HashMap<Uuid, Vec<Uuid>> =
+            HashMap::with_capacity(self.groups.len());
         for (id, group) in &self.groups {
             if let Some(parent) = group.parent_id {
                 children_index.entry(parent).or_default().push(*id);
@@ -863,6 +875,17 @@ impl ConnectionManager {
     #[must_use]
     pub fn list_groups(&self) -> Vec<&ConnectionGroup> {
         self.groups.values().collect()
+    }
+
+    /// Returns an owned copy of all groups in a single allocation
+    ///
+    /// More efficient than `list_groups().into_iter().cloned().collect()`
+    /// because it avoids the intermediate `Vec<&ConnectionGroup>`.
+    #[must_use]
+    pub fn list_groups_owned(&self) -> Vec<ConnectionGroup> {
+        let mut groups = Vec::with_capacity(self.groups.len());
+        groups.extend(self.groups.values().cloned());
+        groups
     }
 
     /// Gets all root-level groups
@@ -1112,21 +1135,17 @@ impl ConnectionManager {
     /// Persists all connections to storage asynchronously
     /// Persists all connections to storage asynchronously (debounced)
     fn persist_connections(&self) -> ConfigResult<()> {
-        let connections: Vec<Connection> = self.connections.values().cloned().collect();
-
         // Send latest snapshot via watch channel; worker will debounce and save
-        self.conn_tx.send_replace(Some(connections));
+        self.conn_tx
+            .send_replace(Some(self.list_connections_owned()));
 
         Ok(())
     }
 
-    /// Persists all groups to storage asynchronously
     /// Persists all groups to storage asynchronously (debounced)
     fn persist_groups(&self) -> ConfigResult<()> {
-        let groups: Vec<ConnectionGroup> = self.groups.values().cloned().collect();
-
         // Send latest snapshot via watch channel; worker will debounce and save
-        self.group_tx.send_replace(Some(groups));
+        self.group_tx.send_replace(Some(self.list_groups_owned()));
 
         Ok(())
     }

@@ -1016,6 +1016,11 @@ impl super::EmbeddedRdpWidget {
         // fully torn down yet. (Issue #218)
         let gfx_retry_attempted = std::rc::Rc::new(std::cell::RefCell::new(false));
 
+        // Background-tab throttle counter: when the drawing area is not
+        // mapped (tab in background), we skip frame processing to save CPU.
+        // Lifecycle events (connect, disconnect, error) are still handled.
+        let background_tick_counter = std::rc::Rc::new(std::cell::Cell::new(0u32));
+
         glib::timeout_add_local(
             std::time::Duration::from_millis(polling_interval),
             move || {
@@ -1060,6 +1065,20 @@ impl super::EmbeddedRdpWidget {
                     return glib::ControlFlow::Break;
                 }
 
+                // Background-tab optimization: when the drawing area is not
+                // mapped (tab not visible), skip most ticks to save CPU. We
+                // still poll every ~16th tick (~250ms at 16ms interval) to
+                // handle lifecycle events (disconnect, error, watchdog).
+                let is_background = !drawing_area.is_mapped();
+                if is_background {
+                    let tick = background_tick_counter.get().wrapping_add(1);
+                    background_tick_counter.set(tick);
+                    // Only process every 16th tick when backgrounded (~256ms)
+                    if !tick.is_multiple_of(16) {
+                        return glib::ControlFlow::Continue;
+                    }
+                }
+
                 // Track if we need to redraw
                 let mut needs_redraw = false;
                 let mut should_break = false;
@@ -1067,6 +1086,28 @@ impl super::EmbeddedRdpWidget {
                 // client_ref.borrow_mut() which conflicts with the immutable
                 // borrow held by the event polling loop (#57)
                 let mut deferred_error: Option<String> = None;
+
+                // Borrowed view of the frame state the extracted handlers need.
+                // Built once per tick; every field is a reference to a variable
+                // this closure already owns, so it costs nothing.
+                let frame_ctx = super::polling_handlers::FrameContext {
+                    cairo_buffer: &cairo_buffer,
+                    rdp_width: &rdp_width_ref,
+                    rdp_height: &rdp_height_ref,
+                    first_frame_received: &first_frame_received,
+                    connected_at: &connected_at,
+                    stale_frame: &stale_frame,
+                    stale_label: &stale_label,
+                    stale_banner: &stale_banner,
+                    ironrdp_tx: &ironrdp_tx,
+                };
+                let file_ctx = super::polling_handlers::FileTransferContext {
+                    file_transfer: &file_transfer,
+                    save_files_button: &save_files_button,
+                    status_label: &status_label,
+                    on_file_progress: &on_file_progress,
+                    on_file_complete: &on_file_complete,
+                };
 
                 // Poll for events from IronRDP client
                 if let Some(ref client) = *client_ref.borrow() {
@@ -1203,38 +1244,9 @@ impl super::EmbeddedRdpWidget {
                                 break;
                             }
                             RdpClientEvent::FrameUpdate { rect, data } => {
-                                // Update Cairo-backed buffer (zero-copy path)
-                                let mut cbuf = cairo_buffer.borrow_mut();
-                                cbuf.update_region(
-                                    u32::from(rect.x),
-                                    u32::from(rect.y),
-                                    u32::from(rect.width),
-                                    u32::from(rect.height),
-                                    &data,
-                                    u32::from(rect.width) * 4,
+                                super::polling_handlers::handle_frame_update(
+                                    &frame_ctx, rect, &data,
                                 );
-                                // NOTE: The legacy PixelBuffer is only read by the
-                                // FreeRDP fallback path (which populates it via
-                                // on_end_paint); on the IronRDP path the Cairo buffer
-                                // above is authoritative, so a second per-frame copy
-                                // here was pure overhead (~33 MB/frame at 4K).
-                                if !*first_frame_received.borrow()
-                                    && let Some(t) = *connected_at.borrow()
-                                {
-                                    tracing::info!(
-                                        protocol = "rdp",
-                                        elapsed_ms = u64::try_from(t.elapsed().as_millis())
-                                            .unwrap_or(u64::MAX),
-                                        "[IronRDP] First displayable frame received"
-                                    );
-                                }
-                                *first_frame_received.borrow_mut() = true;
-                                // The server is still talking to us, so the
-                                // session survived the suspend after all.
-                                if stale_frame.replace(false) {
-                                    stale_label.set_text(&i18n("Session disconnected"));
-                                    stale_banner.set_visible(false);
-                                }
                                 needs_redraw = true;
                             }
                             RdpClientEvent::FullFrameUpdate {
@@ -1242,109 +1254,27 @@ impl super::EmbeddedRdpWidget {
                                 height,
                                 data,
                             } => {
-                                // Full screen update — resize + blit into Cairo buffer
-                                {
-                                    let mut cbuf = cairo_buffer.borrow_mut();
-                                    if cbuf.width() != u32::from(width)
-                                        || cbuf.height() != u32::from(height)
-                                    {
-                                        cbuf.resize(u32::from(width), u32::from(height));
-                                        *rdp_width_ref.borrow_mut() = u32::from(width);
-                                        *rdp_height_ref.borrow_mut() = u32::from(height);
-                                    }
-                                    cbuf.update_region(
-                                        0,
-                                        0,
-                                        u32::from(width),
-                                        u32::from(height),
-                                        &data,
-                                        u32::from(width) * 4,
-                                    );
-                                }
-                                // Legacy PixelBuffer intentionally not updated here —
-                                // see the FrameUpdate handler above (IronRDP renders
-                                // from the Cairo buffer; PixelBuffer is FreeRDP-only).
-                                if !*first_frame_received.borrow()
-                                    && let Some(t) = *connected_at.borrow()
-                                {
-                                    tracing::info!(
-                                        protocol = "rdp",
-                                        elapsed_ms = u64::try_from(t.elapsed().as_millis())
-                                            .unwrap_or(u64::MAX),
-                                        "[IronRDP] First displayable frame received"
-                                    );
-                                }
-                                *first_frame_received.borrow_mut() = true;
-                                // The server is still talking to us, so the
-                                // session survived the suspend after all.
-                                if stale_frame.replace(false) {
-                                    stale_label.set_text(&i18n("Session disconnected"));
-                                    stale_banner.set_visible(false);
-                                }
+                                super::polling_handlers::handle_full_frame_update(
+                                    &frame_ctx, width, height, &data,
+                                );
                                 needs_redraw = true;
                             }
                             RdpClientEvent::ResolutionChanged { width, height } => {
-                                tracing::debug!(
-                                    protocol = "rdp",
-                                    width,
-                                    height,
-                                    "Resolution changed"
+                                super::polling_handlers::handle_resolution_changed(
+                                    &frame_ctx, width, height,
                                 );
-                                *rdp_width_ref.borrow_mut() = u32::from(width);
-                                *rdp_height_ref.borrow_mut() = u32::from(height);
-                                {
-                                    let mut cbuf = cairo_buffer.borrow_mut();
-                                    cbuf.resize(u32::from(width), u32::from(height));
-                                    cbuf.fill_solid(0x1E, 0x1E, 0x1E, 0xFF);
-                                }
-                                // The reactivated desktop is repainted by the server
-                                // only where content changed, leaving the gray fill
-                                // above as a seam on untouched regions. Request a full
-                                // repaint so the whole desktop is resent (no-op if the
-                                // server ignores the Refresh Rect).
-                                if let Some(ref sender) = *ironrdp_tx.borrow() {
-                                    let _ = sender.send(RdpClientCommand::RefreshScreen);
-                                }
                                 needs_redraw = true;
                             }
                             RdpClientEvent::AuthRequired => {
                                 tracing::debug!(protocol = "rdp", "Authentication required");
                             }
                             RdpClientEvent::ClipboardText(text) => {
-                                // Server sent clipboard text - store it, enable Copy button,
-                                // and auto-sync to local GTK clipboard
-                                tracing::debug!(
-                                    protocol = "rdp",
-                                    chars = text.len(),
-                                    "Received clipboard text from server"
-                                );
-                                *remote_clipboard_text.borrow_mut() = Some(text.clone());
-                                copy_button.set_sensitive(true);
-                                copy_button.set_tooltip_text(Some(&i18n(
-                                    "Copy remote clipboard to local",
-                                )));
-
-                                // Phase 2: Auto-sync server clipboard to local GTK clipboard.
-                                // Use root native surface for reliable Wayland clipboard ownership.
-                                *clipboard_sync_suppressed.borrow_mut() = true;
-                                let clipboard = if let Some(root) = drawing_area.root()
-                                    && let Some(window) = root.downcast_ref::<gtk4::Window>()
-                                {
-                                    gtk4::prelude::WidgetExt::display(window).clipboard()
-                                } else {
-                                    drawing_area.display().clipboard()
-                                };
-                                clipboard.set_text(&text);
-                                let suppressed = clipboard_sync_suppressed.clone();
-                                glib::timeout_add_local_once(
-                                    std::time::Duration::from_millis(100),
-                                    move || {
-                                        *suppressed.borrow_mut() = false;
-                                    },
-                                );
-                                tracing::debug!(
-                                    chars = text.len(),
-                                    "[Clipboard] Auto-synced server text to local clipboard"
+                                super::polling_handlers::handle_clipboard_text(
+                                    &drawing_area,
+                                    &remote_clipboard_text,
+                                    &copy_button,
+                                    &clipboard_sync_suppressed,
+                                    text,
                                 );
                             }
                             RdpClientEvent::ClipboardFormatsAvailable(formats) => {
@@ -1517,121 +1447,18 @@ impl super::EmbeddedRdpWidget {
                                 }
                             }
                             RdpClientEvent::ClipboardFileList(files) => {
-                                tracing::info!(
-                                    protocol = "rdp",
-                                    file_count = files.len(),
-                                    "Clipboard file list received"
+                                super::polling_handlers::handle_clipboard_file_list(
+                                    &file_ctx, files,
                                 );
-                                for file in &files {
-                                    tracing::debug!(
-                                        protocol = "rdp",
-                                        name = %file.name,
-                                        size = file.size,
-                                        is_dir = file.is_directory(),
-                                        "Clipboard file entry"
-                                    );
-                                }
-                                let file_count = files.len();
-                                file_transfer.borrow_mut().set_available_files(files);
-                                if file_count > 0 {
-                                    save_files_button.set_label(&i18n_f(
-                                        "Save {} Files",
-                                        &[&file_count.to_string()],
-                                    ));
-                                    save_files_button.set_tooltip_text(Some(&i18n_f(
-                                        "Save {} files from remote clipboard",
-                                        &[&file_count.to_string()],
-                                    )));
-                                    save_files_button.set_visible(true);
-                                    save_files_button.set_sensitive(true);
-                                } else {
-                                    save_files_button.set_visible(false);
-                                }
                             }
                             RdpClientEvent::ClipboardFileContents {
                                 stream_id,
                                 data,
                                 is_last,
                             } => {
-                                tracing::debug!(
-                                    protocol = "rdp",
-                                    stream_id,
-                                    bytes = data.len(),
-                                    is_last,
-                                    "Clipboard file contents"
+                                super::polling_handlers::handle_clipboard_file_contents(
+                                    &file_ctx, stream_id, &data, is_last,
                                 );
-                                file_transfer
-                                    .borrow_mut()
-                                    .append_data(stream_id, &data, is_last);
-
-                                let (progress, completed, total) = {
-                                    let transfer = file_transfer.borrow();
-                                    (
-                                        transfer.overall_progress(),
-                                        transfer.completed_count,
-                                        transfer.total_files,
-                                    )
-                                };
-
-                                if let Some(ref callback) = *on_file_progress.borrow() {
-                                    callback(
-                                        progress,
-                                        &i18n_f(
-                                            "Downloaded {}/{} files",
-                                            &[&completed.to_string(), &total.to_string()],
-                                        ),
-                                    );
-                                }
-
-                                if is_last {
-                                    match file_transfer.borrow().save_download(stream_id) {
-                                        Ok(path) => {
-                                            tracing::info!(
-                                                protocol = "rdp",
-                                                path = %path.display(),
-                                                "Saved clipboard file"
-                                            );
-                                        }
-                                        Err(e) => {
-                                            tracing::error!(
-                                                protocol = "rdp",
-                                                error = %e,
-                                                "Failed to save clipboard file"
-                                            );
-                                        }
-                                    }
-                                }
-
-                                if file_transfer.borrow().all_complete() {
-                                    let count = file_transfer.borrow().completed_count;
-                                    let target = file_transfer
-                                        .borrow()
-                                        .target_directory
-                                        .as_ref()
-                                        .map(|p| p.display().to_string())
-                                        .unwrap_or_default();
-
-                                    save_files_button.set_sensitive(true);
-                                    let file_count = file_transfer.borrow().available_files.len();
-                                    save_files_button.set_label(&i18n_f(
-                                        "Save {} Files",
-                                        &[&file_count.to_string()],
-                                    ));
-
-                                    status_label
-                                        .set_text(&i18n_f("Saved {} files", &[&count.to_string()]));
-                                    let status_hide = status_label.clone();
-                                    glib::timeout_add_local_once(
-                                        std::time::Duration::from_secs(3),
-                                        move || {
-                                            status_hide.set_visible(false);
-                                        },
-                                    );
-
-                                    if let Some(ref callback) = *on_file_complete.borrow() {
-                                        callback(count, &target);
-                                    }
-                                }
                             }
                             RdpClientEvent::ClipboardFileSize { stream_id, size } => {
                                 tracing::debug!(
@@ -1650,71 +1477,23 @@ impl super::EmbeddedRdpWidget {
                                 snap();
                             }
                             RdpClientEvent::DisplayControlUnavailable { width, height } => {
-                                // Server does not support Display Control Channel
-                                // (e.g. Windows Server without RDPEDISP). The only
-                                // way to change resolution is a full reconnect.
-                                // We always reconnect here — the "Reconnect on Resize"
-                                // toggle controls whether resize.rs sends the initial
-                                // SetDesktopSize attempt at all (force path), but once
-                                // we already tried dynamic resize and the server said
-                                // "no", reconnect is the correct fallback.
-                                tracing::info!(
-                                    protocol = "rdp",
+                                super::polling_handlers::handle_display_control_unavailable(
+                                    &config,
+                                    &ironrdp_tx,
+                                    &on_reconnect,
                                     width,
                                     height,
-                                    "Display Control Channel unavailable — \
-                                     reconnecting with new resolution"
-                                );
-                                // Update config with the requested resolution
-                                {
-                                    let current_config = config.borrow().clone();
-                                    if let Some(mut cfg) = current_config {
-                                        cfg = cfg
-                                            .with_resolution(u32::from(width), u32::from(height));
-                                        *config.borrow_mut() = Some(cfg);
-                                    }
-                                }
-                                // Disconnect current session
-                                if let Some(ref sender) = *ironrdp_tx.borrow() {
-                                    let _ = sender.send(RdpClientCommand::Disconnect);
-                                }
-                                // Trigger reconnect via callback
-                                let reconnect_cb_clone = on_reconnect.clone();
-                                glib::timeout_add_local_once(
-                                    std::time::Duration::from_millis(500),
-                                    move || {
-                                        if let Some(ref callback) = *reconnect_cb_clone.borrow() {
-                                            callback();
-                                        }
-                                    },
                                 );
                             }
                             RdpClientEvent::Rtt {
                                 rtt_ms,
                                 active_graphics_mode,
                             } => {
-                                // Display RTT, active graphics mode, and MPTCP status
-                                let mptcp_active =
-                                    config.borrow().as_ref().is_some_and(|c| c.mptcp);
-                                let status_text = if mptcp_active {
-                                    i18n_f(
-                                        "RTT: {} ms | {} | MPTCP",
-                                        &[&rtt_ms.to_string(), active_graphics_mode.display_name()],
-                                    )
-                                } else {
-                                    i18n_f(
-                                        "RTT: {} ms | {}",
-                                        &[&rtt_ms.to_string(), active_graphics_mode.display_name()],
-                                    )
-                                };
-                                status_label.set_text(&status_text);
-                                status_label.set_visible(true);
-                                tracing::debug!(
-                                    protocol = "rdp",
+                                super::polling_handlers::handle_rtt(
+                                    &config,
+                                    &status_label,
                                     rtt_ms,
-                                    graphics_mode = active_graphics_mode.display_name(),
-                                    mptcp_active,
-                                    "RTT measurement from server Auto-Detect"
+                                    active_graphics_mode,
                                 );
                             }
                             RdpClientEvent::FileClipboardUnsupported => {
@@ -1753,8 +1532,8 @@ impl super::EmbeddedRdpWidget {
                     }
                 }
 
-                // Only redraw once after processing all events
-                if needs_redraw {
+                // Only redraw once after processing all events (skip if backgrounded)
+                if needs_redraw && !is_background {
                     drawing_area.queue_draw();
                 }
 

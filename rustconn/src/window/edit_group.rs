@@ -404,7 +404,7 @@ pub fn show_edit_group_dialog(
         // Get settings and group path for vault access
         let state_ref = state_for_load.borrow();
         let settings = state_ref.settings().clone();
-        let groups: Vec<_> = state_ref.list_groups().into_iter().cloned().collect();
+        let groups: Vec<_> = state_ref.list_groups_owned();
         let grp = state_ref.get_group(group_id_for_load).cloned();
         drop(state_ref);
 
@@ -451,6 +451,7 @@ pub fn show_edit_group_dialog(
                 btn_clone.set_icon_name("folder-symbolic");
                 return;
             };
+            let db_password = settings.secrets.kdbx_password.clone();
             let key_file = settings.secrets.kdbx_key_file.clone();
 
             crate::utils::spawn_blocking_with_callback(
@@ -458,7 +459,7 @@ pub fn show_edit_group_dialog(
                     let key_file_path = key_file.as_ref().map(std::path::Path::new);
                     rustconn_core::secret::KeePassStatus::get_password_from_kdbx_with_key(
                         std::path::Path::new(&kdbx_path),
-                        None,
+                        db_password.as_ref(),
                         key_file_path,
                         &group_path,
                         None, // No protocol for groups
@@ -1655,7 +1656,7 @@ pub fn show_edit_group_dialog(
                 let parent_changed = existing.parent_id != updated.parent_id;
                 let old_groups_snapshot: Vec<rustconn_core::models::ConnectionGroup> =
                     if name_changed || parent_changed {
-                        state_mut.list_groups().into_iter().cloned().collect()
+                        state_mut.list_groups_owned()
                     } else {
                         Vec::new()
                     };
@@ -1667,9 +1668,8 @@ pub fn show_edit_group_dialog(
 
                 // Migrate vault entries if group name or parent changed (KeePass paths affected)
                 if name_changed || parent_changed {
-                    let new_groups: Vec<_> = state_mut.list_groups().into_iter().cloned().collect();
-                    let connections: Vec<_> =
-                        state_mut.list_connections().into_iter().cloned().collect();
+                    let new_groups: Vec<_> = state_mut.list_groups_owned();
+                    let connections: Vec<_> = state_mut.list_connections_owned();
                     let settings = state_mut.settings().clone();
                     crate::state::migrate_vault_entries_on_group_change(
                         &settings,
@@ -1683,7 +1683,7 @@ pub fn show_edit_group_dialog(
                 // Save password if provided and source requires it
                 if has_new_password {
                     // Get group path for hierarchical storage
-                    let groups: Vec<_> = state_mut.list_groups().into_iter().cloned().collect();
+                    let groups: Vec<_> = state_mut.list_groups_owned();
                     let grp = state_mut.get_group(group_id).cloned();
                     let settings = state_mut.settings().clone();
 

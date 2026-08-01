@@ -651,8 +651,7 @@ impl MainWindow {
             let use_mc = state_ref.settings().terminal.sftp_use_mc;
 
             // Collect groups for SSH inheritance resolution
-            let groups: Vec<rustconn_core::models::ConnectionGroup> =
-                state_ref.list_groups().into_iter().cloned().collect();
+            let groups: Vec<rustconn_core::models::ConnectionGroup> = state_ref.list_groups_owned();
 
             // Ensure SSH key is in agent before SFTP (mc and
             // file managers cannot pass identity files directly).
@@ -1237,8 +1236,7 @@ impl MainWindow {
             return;
         };
         let use_mc = state_ref.settings().terminal.sftp_use_mc;
-        let groups: Vec<rustconn_core::models::ConnectionGroup> =
-            state_ref.list_groups().into_iter().cloned().collect();
+        let groups: Vec<rustconn_core::models::ConnectionGroup> = state_ref.list_groups_owned();
         let key_path = rustconn_core::sftp::get_ssh_key_path(conn, &groups)
             .and_then(|p| rustconn_core::resolve_key_path(&p));
 

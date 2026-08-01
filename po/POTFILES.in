@@ -135,6 +135,7 @@ rustconn/src/embedded_rdp/autotype.rs
 rustconn/src/embedded_rdp/clipboard.rs
 rustconn/src/embedded_rdp/ui.rs
 rustconn/src/embedded_rdp/connection.rs
+rustconn/src/embedded_rdp/polling_handlers.rs
 rustconn/src/embedded_rdp/file_dnd.rs
 rustconn/src/embedded_rdp/resize.rs
 rustconn/src/embedded_web/mod.rs

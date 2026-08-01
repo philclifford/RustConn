@@ -67,7 +67,7 @@ pub fn edit_selected_connection(
         // Set available groups
         {
             let state_ref = state.borrow();
-            let mut groups: Vec<_> = state_ref.list_groups().into_iter().cloned().collect();
+            let mut groups: Vec<_> = state_ref.list_groups_owned();
             groups.sort_by_key(|a| a.name.to_lowercase());
             dialog.set_groups(&groups);
         }
@@ -169,8 +169,7 @@ pub fn edit_selected_connection(
                                 && let Some(pwd) = password
                             {
                                 let settings = state_mut.settings().clone();
-                                let groups: Vec<_> =
-                                    state_mut.list_groups().into_iter().cloned().collect();
+                                let groups: Vec<_> = state_mut.list_groups_owned();
                                 let conn_for_path = state_mut.get_connection(id).cloned();
                                 let username = conn_username.unwrap_or_default();
 
@@ -309,7 +308,7 @@ pub fn rename_selected_item(
                         if old_name_val == new_name {
                             Vec::new()
                         } else {
-                            state_mut.list_groups().into_iter().cloned().collect()
+                            state_mut.list_groups_owned()
                         };
 
                     if let Err(e) = state_mut.update_group(id, updated) {
@@ -319,10 +318,8 @@ pub fn rename_selected_item(
 
                     // Migrate vault entries if name changed (KeePass paths affected)
                     if old_name_val != new_name {
-                        let new_groups: Vec<_> =
-                            state_mut.list_groups().into_iter().cloned().collect();
-                        let connections: Vec<_> =
-                            state_mut.list_connections().into_iter().cloned().collect();
+                        let new_groups: Vec<_> = state_mut.list_groups_owned();
+                        let connections: Vec<_> = state_mut.list_connections_owned();
                         let settings = state_mut.settings().clone();
                         crate::state::migrate_vault_entries_on_group_change(
                             &settings,

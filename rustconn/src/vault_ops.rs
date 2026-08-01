@@ -45,10 +45,15 @@ fn show_vault_save_error(err: &rustconn_core::error::SecretError) {
 
         // Recovery action: point the user at Settings -> Secrets to choose a
         // backend that works on their desktop (R1.5).
-        let recovery = crate::i18n::i18n(
-            "No system keyring is responding. Open Settings, then Secrets, \
-             and choose another backend such as Encrypted file or KeePassXC.",
-        );
+        let recovery = if rustconn_core::snap::is_snap() {
+            crate::i18n::i18n(
+                "The system keyring is not accessible. Run: sudo snap connect rustconn:password-manager-service — or open Settings, then Secrets, and choose another backend.",
+            )
+        } else {
+            crate::i18n::i18n(
+                "No system keyring is responding. Open Settings, then Secrets, and choose another backend such as Encrypted file or KeePassXC.",
+            )
+        };
         // Body = cause followed by the recovery action (R1.1).
         let body = crate::i18n::i18n_f("{}\n\n{}", &[&cause, &recovery]);
 
