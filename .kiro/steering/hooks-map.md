@@ -11,15 +11,15 @@ Quick reference for all `.kiro/hooks/*.json` — what fires when, what it does, 
 
 | Hook | Matcher | Type | Latency | Side-effects |
 |------|---------|------|---------|--------------|
-| **crate-boundary-guard** | `fs_write\|fs_append\|str_replace\|delete_file\|code` | agent | <1s (prompt reflection) | Can DENY the write. Silent if non-.rs or clean. |
+| **crate-boundary-guard** | `fs_write\|fs_append\|str_replace\|delete_file\|code` | command | <50ms | Blocks with exit 2. Zero model cost when clean. Fails open. |
 
 ## PostFileSave (after user or agent saves)
 
 | Hook | Matcher | Type | Latency | Side-effects |
 |------|---------|------|---------|--------------|
-| **translation-sync** | `rustconn/src/.*\.rs$` | agent | ~2s | May edit `po/POTFILES.in` |
+| **translation-sync** | `rustconn/src/.*\.rs$` | command | <100ms | Silent unless a `POTFILES.in` line must be added |
 | **security-review** | `secret/.*\.rs$\|credential.*\.rs$\|password.*\.rs$` | agent | ~10s | Invokes `security-reviewer` sub-agent (read-only audit) |
-| **uk-translation-review** | `po/uk\.po$` | agent | ~15s | Invokes `uk-translation-reviewer` sub-agent, may edit `po/uk.po` |
+| **uk-translation-review** | `po/uk\.po$` | agent | ~15s | Delegates to `uk-translation-reviewer` when available, otherwise reviews in place (the reviewer cannot invoke itself). May edit `po/uk.po` |
 | **cargo-security-scan** | `Cargo\.lock$` | command | ~5s | Runs `cargo deny`/`cargo audit` (read-only) |
 | **flatpak-manifest-check** | `Cargo\.lock$` | agent | ~2s | Warns about stale cargo-sources.json (no auto-fix) |
 | **kirograph-mark-dirty-on-save** | `\.(rs\|toml)$` | command | <100ms | Writes `.kirograph/dirty`; logs to `.kirograph/hook.log` |
@@ -82,7 +82,7 @@ When editing a `.rs` file in `rustconn/src/secret/`:
 1. `crate-boundary-guard` fires **before** write (PreToolUse)
 2. After save, **three** PostFileSave hooks fire simultaneously:
    - `kirograph-mark-dirty-on-save` (~instant, command)
-   - `translation-sync` (~2s, agent — checks for i18n calls)
+   - `translation-sync` (<100ms, command — checks for i18n calls)
    - `security-review` (~10s, agent — invokes sub-agent)
 
 When editing `Cargo.lock`:

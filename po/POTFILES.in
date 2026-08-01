@@ -130,6 +130,7 @@ rustconn/src/automation.rs
 rustconn/src/monitoring.rs
 rustconn/src/embedded.rs
 rustconn/src/embedded_rdp/mod.rs
+rustconn/src/embedded_toolbar_overflow.rs
 rustconn/src/embedded_rdp/autotype.rs
 rustconn/src/embedded_rdp/clipboard.rs
 rustconn/src/embedded_rdp/ui.rs

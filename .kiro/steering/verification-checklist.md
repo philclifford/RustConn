@@ -9,9 +9,22 @@ Use after completing a feature or before merge. Adapted from AI-DLC methodology.
 ## 1. Compilation & Quality
 
 - [ ] `cargo fmt --check` — no errors
-- [ ] `cargo clippy --all-targets` — 0 warnings
+- [ ] `cargo clippy --all-targets` — 0 warnings, **and the run actually re-checked**
+      (a cache hit prints `Finished ... in 0.2s` and reports zero warnings without
+      looking at anything — see steering `quality-gate.md`)
 - [ ] `cargo test --workspace` — all tests pass
-- [ ] `getDiagnostics` on modified files — no errors
+- [ ] `getDiagnostics` on modified files — no errors. Note that `git diff` does not
+      list **untracked** new files; check those separately.
+
+## 1b. When a Subsystem Was Deleted
+
+- [ ] `grep -rn "<Name>" .kiro/` — steering, POWER.md and agent descriptions all
+      name concrete types, and none of it is compiler-checked. `DocumentManager`
+      survived in POWER.md after the feature it described was removed.
+- [ ] `./scripts/check-potfiles.sh` — a deleted GUI file leaves a stale POTFILES
+      entry, which breaks `po/update-pot.sh`
+- [ ] `.kiro/powers/rustconn/` and `~/.kiro/powers/installed/rustconn/` are copies
+      of each other — edit both, or the installed one silently drifts
 
 ## 2. Architecture
 

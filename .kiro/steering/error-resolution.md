@@ -42,6 +42,15 @@ Do not apply superficial fixes — find the root cause.
 | `missing_errors_doc` | Add `/// # Errors\n/// Returns error if...` |
 | `significant_drop_tightening` | Explicitly `drop(guard)` before the next operation |
 | `option_if_let_else` (allowed) | Ignore — allowed in .clippy.toml |
+| `similar_names` | Fires on pairs that differ by one letter. `stale` next to an existing `state` binding trips it — name the local `stale_frame`. Rename the *local*, not the struct field; field names are not checked. |
+| `unreadable_literal` / large `Duration` | `Duration::from_secs(7_200)` is rejected in favour of a larger unit: use `Duration::from_hours(2)`, `from_mins(90)`. |
+
+## Platform Traps
+
+| Assumption | Reality |
+|-----------|---------|
+| `Instant` measures elapsed wall time | On Linux `Instant` is `CLOCK_MONOTONIC`, which does **not** advance while the machine is suspended (`CLOCK_BOOTTIME` does). A monotonic timer sees an ordinary tick across a two-hour sleep, so it cannot detect suspend at all. Use `SystemTime` when the question is "how much real time passed", and accept that a clock step then looks the same as a sleep. |
+| A blocking socket read fails when the peer dies | Only if something probes. Without `SO_KEEPALIVE` the read parks forever on a half-open connection, and pending writes retransmit under `tcp_retries2` for 13–30 minutes. Long-lived interactive sockets go through `rustconn_core::connection::set_interactive_keepalive`. |
 
 ## thiserror Patterns
 

@@ -82,17 +82,27 @@ jobs:
       - name: Check i18n string escapes
         run: ./scripts/check-i18n-escapes.sh
 
+      # Both directions of POTFILES.in rot silently. A stale entry breaks
+      # po/update-pot.sh; a missing one means the file's strings are never
+      # extracted, so they render untranslated in all 16 locales while every
+      # catalogue still reports 100% complete.
+      - name: Check POTFILES.in consistency
+        run: ./scripts/check-potfiles.sh
+
       - name: Install gettext
         run: sudo apt-get update && sudo apt-get install -y gettext
 
-      # Catches malformed catalogues and format-placeholder mismatches between
-      # msgid and msgstr (e.g. a translation that drops a {} argument).
-      - name: Validate translation catalogues
-        run: |
-          for po in po/*.po; do
-            echo "== $po"
-            msgfmt --check --check-format --statistics -o /dev/null "$po"
-          done
+      # Also catches malformed catalogues and format-placeholder mismatches
+      # between msgid and msgstr (e.g. a translation that drops a {} argument).
+      #
+      # Fuzzy entries are the reason this is a gate rather than a report:
+      # gettext ignores them and falls back to English, so a fuzzy translation
+      # looks identical to a missing one at runtime while --statistics still
+      # counts the catalogue as populated. msgmerge also guesses badly — it
+      # once rendered "Play on the remote computer" as the German for
+      # "Trigger only once, then remove the rule".
+      - name: Validate translation catalogues are complete
+        run: ./scripts/check-po-complete.sh
 
   clippy:
     name: Clippy
