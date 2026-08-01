@@ -2111,26 +2111,26 @@ msgid "Quality/speed tradeoff for image rendering"
 msgstr "Kvalitets-/hastighedsafvejning for billedgengivelse"
 
 #: rustconn/src/dialogs/connection/rdp.rs:132
-#, fuzzy
 msgid "Automatic"
-msgstr "Automatisering"
+msgstr "Automatisk"
 
 #: rustconn/src/dialogs/connection/rdp.rs:133
 msgid "Legacy (Compatible)"
-msgstr ""
+msgstr "Ældre (kompatibel)"
 
 #: rustconn/src/dialogs/connection/rdp.rs:134
-#, fuzzy
 msgid "RemoteFX"
-msgstr "Fjern"
+msgstr "RemoteFX"
 
 #: rustconn/src/dialogs/connection/rdp.rs:144
 msgid "Graphics Pipeline"
-msgstr ""
+msgstr "Grafikpipeline"
 
 #: rustconn/src/dialogs/connection/rdp.rs:146
 msgid "Automatic uses GFX/H.264 when available. Legacy for older servers."
 msgstr ""
+"Automatisk bruger GFX/H.264, når det er tilgængeligt. Ældre til ældre "
+"servere."
 
 #: rustconn/src/dialogs/connection/rdp.rs:173
 #: rustconn/src/dialogs/template.rs:855
@@ -2296,6 +2296,8 @@ msgid ""
 "Use multiple network paths for seamless mobility (Linux 5.6+, embedded mode "
 "only)"
 msgstr ""
+"Brug flere netværksstier for problemfri mobilitet (Linux 5.6+, kun indlejret "
+"tilstand)"
 
 #: rustconn/src/dialogs/connection/rdp.rs:360
 #: rustconn/src/dialogs/connection/vnc.rs:261
@@ -3362,13 +3364,12 @@ msgid "Tunnel VNC through an SSH connection"
 msgstr "Tunnel VNC gennem en SSH-forbindelse"
 
 #: rustconn/src/dialogs/connection/web.rs:46
-#, fuzzy
 msgid "Browser Mode"
-msgstr "Browser"
+msgstr "Browsertilstand"
 
 #: rustconn/src/dialogs/connection/web.rs:47
 msgid "Choose how the URL is opened"
-msgstr ""
+msgstr "Vælg, hvordan URL'en åbnes"
 
 #: rustconn/src/dialogs/connection/web.rs:57
 msgid "Custom Browser"
@@ -3376,12 +3377,11 @@ msgstr "Brugerdefineret browser"
 
 #: rustconn/src/dialogs/connection/web.rs:59
 msgid "Specify a browser command when Custom mode is selected."
-msgstr ""
+msgstr "Angiv en browserkommando, når brugerdefineret tilstand er valgt."
 
 #: rustconn/src/dialogs/connection/web.rs:63
-#, fuzzy
 msgid "Browser Command"
-msgstr "Brugerdefineret kommando"
+msgstr "Browserkommando"
 
 #: rustconn/src/dialogs/connection/web.rs:65
 msgid "Command or path to browser binary (e.g. firefox, chromium)"
@@ -3389,20 +3389,19 @@ msgstr "Kommando eller sti til browser-binær (f.eks. firefox, chromium)"
 
 #: rustconn/src/dialogs/connection/web.rs:67
 msgid "Required for Custom mode"
-msgstr ""
+msgstr "Påkrævet for brugerdefineret tilstand"
 
 #: rustconn/src/dialogs/connection/web.rs:75
 msgid "Embedded Browser Settings"
-msgstr ""
+msgstr "Indstillinger for indlejret browser"
 
 #: rustconn/src/dialogs/connection/web.rs:76
 msgid "Settings applied when using the embedded browser"
-msgstr ""
+msgstr "Indstillinger, der anvendes ved brug af den indlejrede browser"
 
 #: rustconn/src/dialogs/connection/web.rs:85
-#, fuzzy
 msgid "User Agent"
-msgstr "Brugerinput"
+msgstr "User Agent"
 
 #: rustconn/src/dialogs/connection/web.rs:93
 #: rustconn/src/dialogs/settings/monitoring_tab.rs:52
@@ -3412,7 +3411,7 @@ msgstr "Generelt"
 
 #: rustconn/src/dialogs/connection/web.rs:156
 msgid "How the URL is opened"
-msgstr ""
+msgstr "Hvordan URL'en åbnes"
 
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:68
 #: rustconn/src/dialogs/export.rs:771
@@ -3531,6 +3530,8 @@ msgid ""
 "tab; ${host}, ${port}, ${username} and ${name} come from the connection "
 "itself"
 msgstr ""
+"Pladsholdere som ${id} tages fra de lokale variabler på fanen Data; ${host}, "
+"${port}, ${username} og ${name} kommer fra selve forbindelsen"
 
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:240
 msgid "Web Bookmark"
@@ -4618,9 +4619,8 @@ msgid "Import from Remmina connection files"
 msgstr "Importer fra Remmina-forbindelsesfiler"
 
 #: rustconn/src/dialogs/import/sources.rs:130
-#, fuzzy
 msgid "Royal TS (.rtsz, .rtsx)"
-msgstr "Royal TS (.rtsz)"
+msgstr "Royal TS (.rtsz, .rtsx)"
 
 #: rustconn/src/dialogs/import/sources.rs:131
 msgid "Import from a Royal TS export file"
@@ -4790,9 +4790,8 @@ msgid "Select Royal TS File"
 msgstr "Vælg Royal TS-fil"
 
 #: rustconn/src/dialogs/import/sources.rs:736
-#, fuzzy
 msgid "Royal TS files (*.rtsz, *.rtsx)"
-msgstr "Royal TS-filer (*.rtsz, *.json)"
+msgstr "Royal TS-filer (*.rtsz, *.rtsx)"
 
 #: rustconn/src/dialogs/import/sources.rs:819
 msgid "Select RDM JSON File"
@@ -6735,11 +6734,11 @@ msgstr "Åbn session automatisk"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:295
 msgid "Show Welcome tab"
-msgstr ""
+msgstr "Vis Velkommen-fanen"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:296
 msgid "Display Welcome tab when no session opens at startup"
-msgstr ""
+msgstr "Vis Velkommen-fanen, når ingen session åbnes ved opstart"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:306
 msgid "System Tray"
@@ -8183,7 +8182,7 @@ msgstr ""
 
 #: rustconn/src/embedded_rdp/connection.rs:91
 msgid "Server certificate has changed since the last connection."
-msgstr ""
+msgstr "Servercertifikatet er ændret siden sidste forbindelse."
 
 #: rustconn/src/embedded_rdp/connection.rs:95
 msgid "RDP connection failed ({}). Run with RUST_LOG=debug for details."
@@ -8595,16 +8594,15 @@ msgstr "Bruger ekstern fremviser (ikke-understøttet kryptering)"
 #: rustconn/src/embedded_web/navigation.rs:97
 #: rustconn/src/embedded_web/navigation.rs:98
 msgid "Reload"
-msgstr ""
+msgstr "Genindlæs"
 
 #: rustconn/src/embedded_web/mod.rs:333
-#, fuzzy
 msgid "No credentials configured for this connection"
-msgstr "Ingen adgangskode konfigureret for denne forbindelse"
+msgstr "Ingen legitimationsoplysninger konfigureret for denne forbindelse"
 
 #: rustconn/src/embedded_web/mod.rs:562
 msgid "TLS certificate accepted (self-signed or untrusted)"
-msgstr ""
+msgstr "TLS-certifikat accepteret (selvsigneret eller ikke tillidsværdigt)"
 
 #: rustconn/src/embedded_web/mod.rs:666
 msgid "Downloaded: {}"
@@ -8616,20 +8614,18 @@ msgstr "Ingen loginformularfelter fundet på denne side"
 
 #: rustconn/src/embedded_web/navigation.rs:83
 #: rustconn/src/embedded_web/navigation.rs:84
-#, fuzzy
 msgid "Back"
-msgstr "Backend"
+msgstr "Tilbage"
 
 #: rustconn/src/embedded_web/navigation.rs:90
 #: rustconn/src/embedded_web/navigation.rs:91
-#, fuzzy
 msgid "Forward"
-msgstr "Videresendelser"
+msgstr "Frem"
 
 #: rustconn/src/embedded_web/navigation.rs:103
 #: rustconn/src/embedded_web/navigation.rs:104
 msgid "Home"
-msgstr ""
+msgstr "Hjem"
 
 #: rustconn/src/embedded_web/navigation.rs:112
 msgid "Enter URL"
@@ -8637,25 +8633,24 @@ msgstr "Indtast URL"
 
 #: rustconn/src/embedded_web/navigation.rs:113
 msgid "URL address bar"
-msgstr ""
+msgstr "URL-adresselinje"
 
 #: rustconn/src/embedded_web/navigation.rs:128
 #: rustconn/src/embedded_web/navigation.rs:130
-#, fuzzy
 msgid "Autofill credentials"
-msgstr "Standardlegitimationsoplysninger"
+msgstr "Udfyld legitimationsoplysninger automatisk"
 
 #: rustconn/src/embedded_web/navigation.rs:136
 #: rustconn/src/embedded_web/navigation.rs:137
 #: rustconn/src/embedded_web/navigation.rs:333
 msgid "Zoom in"
-msgstr ""
+msgstr "Zoom ind"
 
 #: rustconn/src/embedded_web/navigation.rs:142
 #: rustconn/src/embedded_web/navigation.rs:143
 #: rustconn/src/embedded_web/navigation.rs:334
 msgid "Zoom out"
-msgstr ""
+msgstr "Zoom ud"
 
 #: rustconn/src/embedded_web/navigation.rs:151
 #: rustconn/src/embedded_web/navigation.rs:152 rustconn/src/window/ui.rs:100
@@ -8672,16 +8667,15 @@ msgstr "Åbn i systembrowser"
 
 #: rustconn/src/embedded_web/navigation.rs:427
 msgid "Zoom Reset (100%)"
-msgstr ""
+msgstr "Nulstil zoom (100 %)"
 
 #: rustconn/src/embedded_web/navigation.rs:431
 msgid "Clear Session Data"
 msgstr "Ryd sessionsdata"
 
 #: rustconn/src/embedded_web/navigation.rs:447
-#, fuzzy
 msgid "URL copied to clipboard"
-msgstr "Adgangskode kopieret til udklipsholder"
+msgstr "URL kopieret til udklipsholder"
 
 #: rustconn/src/embedded_web/navigation.rs:496
 msgid "Session data cleared"
@@ -9182,8 +9176,8 @@ msgid "Double-click a connection in the sidebar to get started"
 msgstr "Dobbeltklik på en forbindelse i sidebjælken for at komme i gang"
 
 #: rustconn/src/split_view/bridge.rs:1735
-msgid "Don\\u{2019}t show this page at startup"
-msgstr ""
+msgid "Don't show this page at startup"
+msgstr "Vis ikke denne side ved opstart"
 
 #: rustconn/src/split_view/bridge.rs:1760
 msgid "Embedded SSH, RDP, VNC, SPICE"
@@ -10525,9 +10519,8 @@ msgid "No SPICE viewer found. Install virt-viewer."
 msgstr "Ingen SPICE-fremviser fundet. Installer virt-viewer."
 
 #: rustconn/src/window/protocols.rs:1293 rustconn/src/window/protocols.rs:1767
-#, fuzzy
 msgid "Invalid variable: {}"
-msgstr "Ugyldig konfiguration: {}"
+msgstr "Ugyldig variabel: {}"
 
 #: rustconn/src/window/protocols.rs:1684
 msgid "Invalid config: {}"
@@ -10572,11 +10565,11 @@ msgstr "Forbind alligevel"
 
 #: rustconn/src/window/rdp_vnc.rs:743
 msgid "Certificate changed"
-msgstr ""
+msgstr "Certifikat ændret"
 
 #: rustconn/src/window/rdp_vnc.rs:745
 msgid "Accept new certificate"
-msgstr ""
+msgstr "Acceptér nyt certifikat"
 
 #: rustconn/src/window/session_lifecycle.rs:299
 msgid "Activity detected: {}"
@@ -10588,19 +10581,20 @@ msgstr "Stilhed registreret: {}"
 
 #: rustconn/src/window/session_restore.rs:179
 msgid "Restore previous session?"
-msgstr ""
+msgstr "Gendan tidligere session?"
 
 #: rustconn/src/window/session_restore.rs:181
 msgid "Reopen the {} connections that were open when RustConn last closed."
 msgstr ""
+"Genåbn de {} forbindelser, der var åbne, da RustConn sidst blev lukket."
 
 #: rustconn/src/window/session_restore.rs:185
 msgid "Not Now"
-msgstr ""
+msgstr "Ikke nu"
 
 #: rustconn/src/window/session_restore.rs:245
 msgid "{} restored connections no longer exist"
-msgstr ""
+msgstr "{} gendannede forbindelser findes ikke længere"
 
 #: rustconn/src/window/sessions.rs:38
 msgid "Active Sessions"

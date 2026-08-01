@@ -373,6 +373,22 @@ jobs:
           echo "snap=$SNAP_FILE" >> $GITHUB_OUTPUT
           echo "Built: $SNAP_FILE"
 
+      - name: Verify runtime libraries resolve
+        # Gate the store publish below: a '-dev' entry in build-packages satisfies
+        # the linker at build time but ships nothing, so without the matching
+        # stage-packages entry the snap packs, uploads and installs cleanly and
+        # then dies at the dynamic linker before main() (issue #244, shipped in
+        # 0.19.0 and unnoticed for six releases). Resolve the packed binaries'
+        # DT_NEEDED list against what the snap, the base and the gnome platform
+        # actually provide at runtime.
+        run: |
+          command -v unsquashfs > /dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends squashfs-tools
+          }
+          sudo snap install core24 gnome-46-2404 mesa-2404
+          ./scripts/check-snap-runtime-libs.sh "${{ steps.build.outputs.snap }}"
+
       - name: Upload Snap artifact
         uses: actions/upload-artifact@v7
         with:

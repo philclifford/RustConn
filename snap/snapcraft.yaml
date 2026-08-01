@@ -1,6 +1,6 @@
 name: rustconn
 base: core24
-version: '0.19.8'
+version: '0.19.9'
 title: RustConn
 summary: Manage remote connections easily
 description: |
@@ -51,6 +51,10 @@ description: |
   (SSH, RDP via IronRDP, VNC via vnc-rs) bundled in the snap. Optional
   helper CLIs are downloaded on demand into the snap's writable user data and
   run inside the sandbox — no host access is required.
+
+  Web connections open in your system browser or a browser command of your
+  choice; the in-tab WebKitGTK browser is available in the Flatpak and
+  distribution packages only.
 
 grade: stable
 confinement: strict
@@ -196,7 +200,6 @@ parts:
       - libgtk-4-dev
       - libadwaita-1-dev
       - libvte-2.91-gtk4-dev
-      - libwebkitgtk-6.0-dev
       - libssl-dev
       - libasound2-dev
       - pkg-config
@@ -272,9 +275,27 @@ parts:
       # core24 gnome platform provides libadwaita 1.5, and the 1.6/1.7/1.8
       # widgets have cfg-gated 1.5 fallbacks). Global LTO via --config keeps the
       # binary small (equivalent to the plugin's rust-use-global-lto).
+      #
+      # web-embedded is dropped here (issue #244): it links libwebkitgtk-6.0.so.4
+      # and libjavascriptcoregtk-6.0.so.1, and NOTHING in the snap's runtime
+      # provides them — the gnome-46-2404 platform ships only the GTK3-flavoured
+      # libwebkit2gtk-4.1 (different soname), so the app died at the dynamic
+      # linker before main(). Staging WebKit ourselves is not a drop-in: the two
+      # libraries are ~120 MB, ICU is absent from both core24 and the platform,
+      # and WebKit's helper binaries are looked up at the compiled-in absolute
+      # path /usr/lib/<triplet>/webkitgtk-6.0 (no WEBKIT_EXEC_PATH override
+      # exists any more), which under strict confinement needs its own `layout:`
+      # bind — the same trick the gnome extension uses for webkit2gtk-4.1. Until
+      # that is built and tested, Web connections in the snap use the System or
+      # Custom browser mode; `browser_mode = "embedded"` falls back to the system
+      # browser with a warning. Every other feature of the default set is kept
+      # verbatim, so this list must be updated whenever `default` in
+      # rustconn/Cargo.toml changes.
       cargo build --release \
         --config 'profile.release.lto = true' \
         --config 'profile.release.codegen-units = 1' \
+        --no-default-features \
+        --features 'tray,system-keyring,vnc-embedded,rdp-embedded,gfx-h264,rdp-audio,rd-gateway,wayland-native' \
         -p rustconn
       cargo build --release \
         --config 'profile.release.lto = true' \

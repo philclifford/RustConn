@@ -2117,26 +2117,26 @@ msgid "Quality/speed tradeoff for image rendering"
 msgstr "Kwaliteit/snelheid-afweging voor beeldweergave"
 
 #: rustconn/src/dialogs/connection/rdp.rs:132
-#, fuzzy
 msgid "Automatic"
-msgstr "Automatisering"
+msgstr "Automatisch"
 
 #: rustconn/src/dialogs/connection/rdp.rs:133
 msgid "Legacy (Compatible)"
-msgstr ""
+msgstr "Verouderd (compatibel)"
 
 #: rustconn/src/dialogs/connection/rdp.rs:134
-#, fuzzy
 msgid "RemoteFX"
-msgstr "Verwijderen"
+msgstr "RemoteFX"
 
 #: rustconn/src/dialogs/connection/rdp.rs:144
 msgid "Graphics Pipeline"
-msgstr ""
+msgstr "Grafische pipeline"
 
 #: rustconn/src/dialogs/connection/rdp.rs:146
 msgid "Automatic uses GFX/H.264 when available. Legacy for older servers."
 msgstr ""
+"Automatisch gebruikt GFX/H.264 indien beschikbaar. Verouderd voor oudere "
+"servers."
 
 #: rustconn/src/dialogs/connection/rdp.rs:173
 #: rustconn/src/dialogs/template.rs:855
@@ -2302,6 +2302,8 @@ msgid ""
 "Use multiple network paths for seamless mobility (Linux 5.6+, embedded mode "
 "only)"
 msgstr ""
+"Meerdere netwerkpaden gebruiken voor naadloze mobiliteit (Linux 5.6+, alleen "
+"ingebedde modus)"
 
 #: rustconn/src/dialogs/connection/rdp.rs:360
 #: rustconn/src/dialogs/connection/vnc.rs:261
@@ -3377,13 +3379,12 @@ msgid "Tunnel VNC through an SSH connection"
 msgstr "VNC tunnelen via een SSH-verbinding"
 
 #: rustconn/src/dialogs/connection/web.rs:46
-#, fuzzy
 msgid "Browser Mode"
-msgstr "Browser"
+msgstr "Browsermodus"
 
 #: rustconn/src/dialogs/connection/web.rs:47
 msgid "Choose how the URL is opened"
-msgstr ""
+msgstr "Kies hoe de URL wordt geopend"
 
 #: rustconn/src/dialogs/connection/web.rs:57
 msgid "Custom Browser"
@@ -3392,11 +3393,11 @@ msgstr "Aangepaste browser"
 #: rustconn/src/dialogs/connection/web.rs:59
 msgid "Specify a browser command when Custom mode is selected."
 msgstr ""
+"Geef een browsercommando op wanneer de aangepaste modus is geselecteerd."
 
 #: rustconn/src/dialogs/connection/web.rs:63
-#, fuzzy
 msgid "Browser Command"
-msgstr "Aangepast commando"
+msgstr "Browsercommando"
 
 #: rustconn/src/dialogs/connection/web.rs:65
 msgid "Command or path to browser binary (e.g. firefox, chromium)"
@@ -3404,20 +3405,19 @@ msgstr "Opdracht of pad naar browserprogramma (bijv. firefox, chromium)"
 
 #: rustconn/src/dialogs/connection/web.rs:67
 msgid "Required for Custom mode"
-msgstr ""
+msgstr "Vereist voor aangepaste modus"
 
 #: rustconn/src/dialogs/connection/web.rs:75
 msgid "Embedded Browser Settings"
-msgstr ""
+msgstr "Instellingen ingebedde browser"
 
 #: rustconn/src/dialogs/connection/web.rs:76
 msgid "Settings applied when using the embedded browser"
-msgstr ""
+msgstr "Instellingen die worden toegepast bij gebruik van de ingebedde browser"
 
 #: rustconn/src/dialogs/connection/web.rs:85
-#, fuzzy
 msgid "User Agent"
-msgstr "Gebruikersinvoer"
+msgstr "User-Agent"
 
 #: rustconn/src/dialogs/connection/web.rs:93
 #: rustconn/src/dialogs/settings/monitoring_tab.rs:52
@@ -3427,7 +3427,7 @@ msgstr "Algemeen"
 
 #: rustconn/src/dialogs/connection/web.rs:156
 msgid "How the URL is opened"
-msgstr ""
+msgstr "Hoe de URL wordt geopend"
 
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:68
 #: rustconn/src/dialogs/export.rs:771
@@ -3546,6 +3546,9 @@ msgid ""
 "tab; ${host}, ${port}, ${username} and ${name} come from the connection "
 "itself"
 msgstr ""
+"Plaatshouders zoals ${id} komen uit de lokale variabelen op het tabblad "
+"Gegevens; ${host}, ${port}, ${username} en ${name} komen uit de verbinding "
+"zelf"
 
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:240
 msgid "Web Bookmark"
@@ -4635,9 +4638,8 @@ msgid "Import from Remmina connection files"
 msgstr "Importeren uit Remmina-verbindingsbestanden"
 
 #: rustconn/src/dialogs/import/sources.rs:130
-#, fuzzy
 msgid "Royal TS (.rtsz, .rtsx)"
-msgstr "Royal TS (.rtsz)"
+msgstr "Royal TS (.rtsz, .rtsx)"
 
 #: rustconn/src/dialogs/import/sources.rs:131
 msgid "Import from a Royal TS export file"
@@ -4807,9 +4809,8 @@ msgid "Select Royal TS File"
 msgstr "Royal TS-bestand selecteren"
 
 #: rustconn/src/dialogs/import/sources.rs:736
-#, fuzzy
 msgid "Royal TS files (*.rtsz, *.rtsx)"
-msgstr "Royal TS-bestanden (*.rtsz, *.json)"
+msgstr "Royal TS-bestanden (*.rtsz, *.rtsx)"
 
 #: rustconn/src/dialogs/import/sources.rs:819
 msgid "Select RDM JSON File"
@@ -6770,11 +6771,12 @@ msgstr "Sessie automatisch openen"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:295
 msgid "Show Welcome tab"
-msgstr ""
+msgstr "Tabblad Welkom weergeven"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:296
 msgid "Display Welcome tab when no session opens at startup"
 msgstr ""
+"Tabblad Welkom weergeven wanneer bij het opstarten geen sessie wordt geopend"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:306
 msgid "System Tray"
@@ -8225,7 +8227,7 @@ msgstr ""
 
 #: rustconn/src/embedded_rdp/connection.rs:91
 msgid "Server certificate has changed since the last connection."
-msgstr ""
+msgstr "Het servercertificaat is gewijzigd sinds de laatste verbinding."
 
 #: rustconn/src/embedded_rdp/connection.rs:95
 msgid "RDP connection failed ({}). Run with RUST_LOG=debug for details."
@@ -8638,16 +8640,15 @@ msgstr "Externe viewer wordt gebruikt (niet-ondersteunde versleuteling)"
 #: rustconn/src/embedded_web/navigation.rs:97
 #: rustconn/src/embedded_web/navigation.rs:98
 msgid "Reload"
-msgstr ""
+msgstr "Herladen"
 
 #: rustconn/src/embedded_web/mod.rs:333
-#, fuzzy
 msgid "No credentials configured for this connection"
-msgstr "Geen wachtwoord geconfigureerd voor deze verbinding"
+msgstr "Geen inloggegevens geconfigureerd voor deze verbinding"
 
 #: rustconn/src/embedded_web/mod.rs:562
 msgid "TLS certificate accepted (self-signed or untrusted)"
-msgstr ""
+msgstr "TLS-certificaat geaccepteerd (zelfondertekend of niet vertrouwd)"
 
 #: rustconn/src/embedded_web/mod.rs:666
 msgid "Downloaded: {}"
@@ -8659,20 +8660,18 @@ msgstr "Geen inlogvelden gevonden op deze pagina"
 
 #: rustconn/src/embedded_web/navigation.rs:83
 #: rustconn/src/embedded_web/navigation.rs:84
-#, fuzzy
 msgid "Back"
-msgstr "Backend"
+msgstr "Terug"
 
 #: rustconn/src/embedded_web/navigation.rs:90
 #: rustconn/src/embedded_web/navigation.rs:91
-#, fuzzy
 msgid "Forward"
-msgstr "Doorsturen"
+msgstr "Vooruit"
 
 #: rustconn/src/embedded_web/navigation.rs:103
 #: rustconn/src/embedded_web/navigation.rs:104
 msgid "Home"
-msgstr ""
+msgstr "Startpagina"
 
 #: rustconn/src/embedded_web/navigation.rs:112
 msgid "Enter URL"
@@ -8680,25 +8679,24 @@ msgstr "URL invoeren"
 
 #: rustconn/src/embedded_web/navigation.rs:113
 msgid "URL address bar"
-msgstr ""
+msgstr "URL-adresbalk"
 
 #: rustconn/src/embedded_web/navigation.rs:128
 #: rustconn/src/embedded_web/navigation.rs:130
-#, fuzzy
 msgid "Autofill credentials"
-msgstr "Standaard inloggegevens"
+msgstr "Inloggegevens automatisch invullen"
 
 #: rustconn/src/embedded_web/navigation.rs:136
 #: rustconn/src/embedded_web/navigation.rs:137
 #: rustconn/src/embedded_web/navigation.rs:333
 msgid "Zoom in"
-msgstr ""
+msgstr "Inzoomen"
 
 #: rustconn/src/embedded_web/navigation.rs:142
 #: rustconn/src/embedded_web/navigation.rs:143
 #: rustconn/src/embedded_web/navigation.rs:334
 msgid "Zoom out"
-msgstr ""
+msgstr "Uitzoomen"
 
 #: rustconn/src/embedded_web/navigation.rs:151
 #: rustconn/src/embedded_web/navigation.rs:152 rustconn/src/window/ui.rs:100
@@ -8715,16 +8713,15 @@ msgstr "Openen in systeembrowser"
 
 #: rustconn/src/embedded_web/navigation.rs:427
 msgid "Zoom Reset (100%)"
-msgstr ""
+msgstr "Zoom herstellen (100%)"
 
 #: rustconn/src/embedded_web/navigation.rs:431
 msgid "Clear Session Data"
 msgstr "Sessiegegevens wissen"
 
 #: rustconn/src/embedded_web/navigation.rs:447
-#, fuzzy
 msgid "URL copied to clipboard"
-msgstr "Wachtwoord gekopieerd naar klembord"
+msgstr "URL gekopieerd naar klembord"
 
 #: rustconn/src/embedded_web/navigation.rs:496
 msgid "Session data cleared"
@@ -9225,8 +9222,8 @@ msgid "Double-click a connection in the sidebar to get started"
 msgstr "Dubbelklik op een verbinding in de zijbalk om te beginnen"
 
 #: rustconn/src/split_view/bridge.rs:1735
-msgid "Don\\u{2019}t show this page at startup"
-msgstr ""
+msgid "Don't show this page at startup"
+msgstr "Deze pagina niet weergeven bij het opstarten"
 
 #: rustconn/src/split_view/bridge.rs:1760
 msgid "Embedded SSH, RDP, VNC, SPICE"
@@ -10580,9 +10577,8 @@ msgid "No SPICE viewer found. Install virt-viewer."
 msgstr "Geen SPICE-viewer gevonden. Installeer virt-viewer."
 
 #: rustconn/src/window/protocols.rs:1293 rustconn/src/window/protocols.rs:1767
-#, fuzzy
 msgid "Invalid variable: {}"
-msgstr "Ongeldige configuratie: {}"
+msgstr "Ongeldige variabele: {}"
 
 #: rustconn/src/window/protocols.rs:1684
 msgid "Invalid config: {}"
@@ -10626,11 +10622,11 @@ msgstr "Toch verbinden"
 
 #: rustconn/src/window/rdp_vnc.rs:743
 msgid "Certificate changed"
-msgstr ""
+msgstr "Certificaat gewijzigd"
 
 #: rustconn/src/window/rdp_vnc.rs:745
 msgid "Accept new certificate"
-msgstr ""
+msgstr "Nieuw certificaat accepteren"
 
 #: rustconn/src/window/session_lifecycle.rs:299
 msgid "Activity detected: {}"
@@ -10642,19 +10638,21 @@ msgstr "Stilte gedetecteerd: {}"
 
 #: rustconn/src/window/session_restore.rs:179
 msgid "Restore previous session?"
-msgstr ""
+msgstr "Vorige sessie herstellen?"
 
 #: rustconn/src/window/session_restore.rs:181
 msgid "Reopen the {} connections that were open when RustConn last closed."
 msgstr ""
+"De {} verbindingen die open waren toen RustConn voor het laatst werd "
+"afgesloten opnieuw openen."
 
 #: rustconn/src/window/session_restore.rs:185
 msgid "Not Now"
-msgstr ""
+msgstr "Niet nu"
 
 #: rustconn/src/window/session_restore.rs:245
 msgid "{} restored connections no longer exist"
-msgstr ""
+msgstr "{} herstelde verbindingen bestaan niet meer"
 
 #: rustconn/src/window/sessions.rs:38
 msgid "Active Sessions"

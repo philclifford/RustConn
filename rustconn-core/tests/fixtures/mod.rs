@@ -153,6 +153,7 @@ pub fn sample_rdp_connection_with_domain() -> Connection {
         resolution: Some(Resolution::new(1920, 1080)),
         color_depth: Some(32),
         audio_redirect: true,
+        audio_mode: Some(rustconn_core::models::RdpAudioMode::Local),
         printer_enabled: false,
         gateway: None,
         shared_folders: Vec::new(),

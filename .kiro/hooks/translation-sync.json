@@ -3,12 +3,12 @@
   "hooks": [
     {
       "name": "Translation Sync",
-      "description": "When Rust source files in the GUI crate are edited, checks if new i18n() calls were added and ensures POTFILES.in includes the file",
+      "description": "When Rust source files in the GUI crate are edited, ensures POTFILES.in includes the file and rejects Rust-only \\u{...} escapes in translatable strings",
       "trigger": "PostFileSave",
       "matcher": "rustconn/src/.*[^/]*\\.rs$",
       "action": {
         "type": "agent",
-        "prompt": "A Rust source file in rustconn/src/ was edited. First, quickly check if the file contains any `i18n(` calls. If it does NOT contain `i18n(`, do nothing — stop here.\n\nOnly if the file DOES contain `i18n(` calls:\n1. Verify the file is listed in `po/POTFILES.in`. If NOT listed, add it in alphabetical order within the GUI application source files section.\n2. If a new file was added to POTFILES.in, inform the developer to run `po/update-pot.sh` to regenerate the .pot template.\n\nDo NOT read the full file content — just check for the presence of `i18n(` pattern."
+        "prompt": "A Rust source file in rustconn/src/ was edited. First, quickly check if the file contains any `i18n(` calls. If it does NOT contain `i18n(`, do nothing — stop here.\n\nOnly if the file DOES contain `i18n(` calls:\n1. Verify the file is listed in `po/POTFILES.in`. If NOT listed, add it in alphabetical order within the GUI application source files section. Exception: do NOT add transient scratch/probe files that are about to be deleted — a POTFILES.in entry pointing at a missing file breaks po/update-pot.sh.\n2. If a new file was added to POTFILES.in, inform the developer to run `po/update-pot.sh` to regenerate the .pot template.\n3. Run `./scripts/check-i18n-escapes.sh`. It must print OK. If it FAILS, the file has a Rust-only `\\u{...}` escape inside a translatable literal: xgettext runs with --language=C, cannot decode that escape, and copies it verbatim into the msgid — so the runtime lookup (where rustc has already decoded the literal) never matches and the string renders untranslated in every locale, even though the .po files report 100% complete. Report the offending file:line and fix it by putting the character directly in the literal (ASCII apostrophe is the project convention, cf. i18n(\"Don't Save\") in rustconn/src/alert.rs). If the msgid already exists in po/*.po under the escaped form, rename it there too rather than leaving a stale entry.\n\nDo NOT read the full file content — just check for the presence of `i18n(` pattern."
       },
       "enabled": true
     }

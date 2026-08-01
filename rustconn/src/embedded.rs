@@ -331,6 +331,8 @@ impl RdpLauncher {
     /// * `window_geometry` - Optional window geometry (x, y, width, height)
     /// * `remember_window_position` - Whether to apply window geometry
     /// * `shared_folders` - Shared folders for drive redirection (share_name, local_path)
+    /// * `printer_enabled` - Map the local default printer into the session
+    /// * `audio_mode` - Where the session audio is played
     /// * `ignore_certificate` - Skip TLS certificate verification
     /// * `on_early_failure` - Invoked on the main loop with a user-friendly error
     ///   message if the client exits with a failure shortly after launch
@@ -358,6 +360,7 @@ impl RdpLauncher {
         remember_window_position: bool,
         shared_folders: &[(String, std::path::PathBuf)],
         printer_enabled: bool,
+        audio_mode: rustconn_core::models::RdpAudioMode,
         ignore_certificate: bool,
         on_early_failure: impl FnOnce(String) + 'static,
     ) -> Result<(), EmbeddingError> {
@@ -410,6 +413,9 @@ impl RdpLauncher {
         if printer_enabled {
             plain_args.push("/printer".to_string());
         }
+        // Explicit audio routing — FreeRDP's implicit default is no audio at
+        // all (issue #245). Before extra_args so a user override still wins.
+        plain_args.push(audio_mode.freerdp_arg().to_string());
         plain_args.extend(extra_args.iter().cloned());
         if port == 3389 {
             plain_args.push(format!("/v:{host}"));

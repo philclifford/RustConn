@@ -9183,7 +9183,7 @@ msgid "Double-click a connection in the sidebar to get started"
 msgstr "Двічі клацни з'єднок на бічній панелі, щоб розпочати"
 
 #: rustconn/src/split_view/bridge.rs:1735
-msgid "Don\\u{2019}t show this page at startup"
+msgid "Don't show this page at startup"
 msgstr "Не показуй цю сторінку під час запуску"
 
 #: rustconn/src/split_view/bridge.rs:1760
@@ -10525,9 +10525,8 @@ msgid "No SPICE viewer found. Install virt-viewer."
 msgstr "Переглядач SPICE не знайдено. Встанови virt-viewer."
 
 #: rustconn/src/window/protocols.rs:1293 rustconn/src/window/protocols.rs:1767
-#, fuzzy
 msgid "Invalid variable: {}"
-msgstr "Хибна конфігурація: {}"
+msgstr "Хибна змінниця: {}"
 
 #: rustconn/src/window/protocols.rs:1684
 msgid "Invalid config: {}"
@@ -10588,19 +10587,21 @@ msgstr "Виявлено тишу: {}"
 
 #: rustconn/src/window/session_restore.rs:179
 msgid "Restore previous session?"
-msgstr ""
+msgstr "Відновити попередній сеанс?"
 
 #: rustconn/src/window/session_restore.rs:181
 msgid "Reopen the {} connections that were open when RustConn last closed."
 msgstr ""
+"Повторно відкрити {} з'єднків, що були відкриті під час останнього закриття "
+"RustConn."
 
 #: rustconn/src/window/session_restore.rs:185
 msgid "Not Now"
-msgstr ""
+msgstr "Не зараз"
 
 #: rustconn/src/window/session_restore.rs:245
 msgid "{} restored connections no longer exist"
-msgstr ""
+msgstr "{} відновлених з'єднків більше не існує"
 
 #: rustconn/src/window/sessions.rs:38
 msgid "Active Sessions"

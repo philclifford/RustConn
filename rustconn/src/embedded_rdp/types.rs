@@ -49,8 +49,9 @@ pub enum EmbeddedRdpError {
     #[error("Falling back to external mode: {0}")]
     FallbackToExternal(String),
 
-    /// RD Gateway configured but not supported by embedded IronRDP client
-    #[error("RD Gateway requires external RDP client (IronRDP does not support gateway yet)")]
+    /// RD Gateway configured, but this connection cannot use the embedded
+    /// MS-TSGU tunnel (feature disabled, or a target port other than 3389).
+    #[error("RD Gateway requires the external RDP client for this connection")]
     GatewayNotSupported,
 
     /// Thread communication error
@@ -121,6 +122,9 @@ pub struct RdpConfig {
     pub shared_folders: Vec<EmbeddedSharedFolder>,
     /// Enable printer redirection (maps local CUPS printer into the session)
     pub printer_enabled: bool,
+    /// Where the session audio is played. `Remote` forces FreeRDP fallback —
+    /// IronRDP cannot signal `INFO_REMOTECONSOLEAUDIO` (issue #245).
+    pub audio_mode: rustconn_core::models::RdpAudioMode,
     /// Additional FreeRDP arguments
     pub extra_args: Vec<String>,
     /// Window geometry for external mode (x, y, width, height)
@@ -137,7 +141,9 @@ pub struct RdpConfig {
     pub scale_override: rustconn_core::models::ScaleOverride,
     /// Show local mouse cursor over embedded viewer (disable to avoid double cursor)
     pub show_local_cursor: bool,
-    /// Gateway hostname (if set, IronRDP will fall back to external xfreerdp)
+    /// Gateway hostname. When set, the embedded client tunnels the session
+    /// through it (MS-TSGU); targets on a port other than 3389 and builds
+    /// without the `rd-gateway` feature use the external FreeRDP client.
     pub gateway_hostname: Option<String>,
     /// Gateway port (default: 443)
     pub gateway_port: u16,
@@ -205,6 +211,7 @@ impl Default for RdpConfig {
             performance_mode: RdpPerformanceMode::default(),
             shared_folders: Vec::new(),
             printer_enabled: false,
+            audio_mode: rustconn_core::models::RdpAudioMode::default(),
             extra_args: Vec::new(),
             window_geometry: None,
             remember_window_position: true,
@@ -305,6 +312,13 @@ impl RdpConfig {
     #[must_use]
     pub const fn with_printer(mut self, enabled: bool) -> Self {
         self.printer_enabled = enabled;
+        self
+    }
+
+    /// Sets where the session audio is played
+    #[must_use]
+    pub const fn with_audio_mode(mut self, mode: rustconn_core::models::RdpAudioMode) -> Self {
+        self.audio_mode = mode;
         self
     }
 

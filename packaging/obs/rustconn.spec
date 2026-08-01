@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.8
+Version:        0.19.9
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,22 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Sat Aug 01 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.9-0
+- Version bump to 0.19.9
+- Added a three-state RDP audio setting: play on this computer, on the remote computer, or not at all (#245)
+- Fixed the RDP audio setting being ignored at connect time, which left every session with audio disabled (#245)
+- Fixed custom FreeRDP arguments being dropped silently in embedded mode (#245)
+- Fixed the disabled audio backend still advertising volume control (#245)
+- Pinned the PulseAudio and ALSA backends in the bundled FreeRDP so it cannot ship without sound (#245)
+- Fixed the snap package failing to start because WebKitGTK libraries were missing from the runtime (#244)
+- Added a CI check that resolves every snap binary's shared libraries before publishing (#244)
+- Fixed RDP through an RD Gateway resolving the target host locally and failing (#246)
+- Fixed the RD Gateway tunnel sending an empty user name and a portless endpoint (#246)
+- Fixed a failed gateway tunnel stranding the session instead of falling back to FreeRDP (#246)
+- Fixed gateway connections to a target port other than 3389 going to the wrong port (#246)
+- Fixed .rdp import reading the gateway port from a non-standard field (#246)
+- Updated clap 4.6.4 to 4.6.5
+
 * Fri Jul 31 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.8-0
 - Version bump to 0.19.8
 - Added a setting to open a new session on every double-click (#242)

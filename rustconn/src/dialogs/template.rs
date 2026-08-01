@@ -22,10 +22,10 @@ use libadwaita as adw;
 use rustconn_core::models::{
     AwsSsmConfig, AzureBastionConfig, AzureSshConfig, BoundaryConfig, CloudflareAccessConfig,
     ConnectionTemplate, GcpIapConfig, GenericZeroTrustConfig, HoopDevConfig, OciBastionConfig,
-    ProtocolConfig, ProtocolType, RdpClientMode, RdpConfig, RdpPerformanceMode, RdpSecurityLayer,
-    Resolution, ScaleOverride, SpiceConfig, SpiceImageCompression, SshAuthMethod, SshConfig,
-    SshKeySource, TailscaleSshConfig, TeleportConfig, VncClientMode, VncConfig, VncPerformanceMode,
-    ZeroTrustConfig, ZeroTrustProvider, ZeroTrustProviderConfig,
+    ProtocolConfig, ProtocolType, RdpAudioMode, RdpClientMode, RdpConfig, RdpPerformanceMode,
+    RdpSecurityLayer, Resolution, ScaleOverride, SpiceConfig, SpiceImageCompression, SshAuthMethod,
+    SshConfig, SshKeySource, TailscaleSshConfig, TeleportConfig, VncClientMode, VncConfig,
+    VncPerformanceMode, ZeroTrustConfig, ZeroTrustProvider, ZeroTrustProviderConfig,
 };
 use uuid::Uuid;
 
@@ -66,7 +66,7 @@ pub struct TemplateDialog {
     rdp_width_spin: SpinButton,
     rdp_height_spin: SpinButton,
     rdp_color_dropdown: DropDown,
-    rdp_audio_check: adw::SwitchRow,
+    rdp_audio_mode_dropdown: DropDown,
     rdp_gateway_entry: Entry,
     rdp_custom_args_entry: Entry,
     // VNC fields
@@ -215,7 +215,7 @@ impl TemplateDialog {
             rdp_width_spin,
             rdp_height_spin,
             rdp_color_dropdown,
-            rdp_audio_check,
+            rdp_audio_mode_dropdown,
             rdp_gateway_entry,
             rdp_custom_args_entry,
         ) = Self::create_rdp_options();
@@ -352,7 +352,7 @@ impl TemplateDialog {
             &rdp_width_spin,
             &rdp_height_spin,
             &rdp_color_dropdown,
-            &rdp_audio_check,
+            &rdp_audio_mode_dropdown,
             &rdp_gateway_entry,
             &rdp_custom_args_entry,
             &vnc_client_mode_dropdown,
@@ -424,7 +424,7 @@ impl TemplateDialog {
             rdp_width_spin,
             rdp_height_spin,
             rdp_color_dropdown,
-            rdp_audio_check,
+            rdp_audio_mode_dropdown,
             rdp_gateway_entry,
             rdp_custom_args_entry,
             vnc_client_mode_dropdown,
@@ -784,7 +784,7 @@ impl TemplateDialog {
         SpinButton,
         SpinButton,
         DropDown,
-        adw::SwitchRow,
+        DropDown,
         Entry,
         Entry,
     ) {
@@ -899,12 +899,24 @@ impl TemplateDialog {
             .title(i18n("Features"))
             .build();
 
-        // Audio redirect
-        let audio_check = adw::SwitchRow::builder()
-            .title(i18n("Audio Redirection"))
-            .subtitle(i18n("Play remote audio locally"))
+        // Audio routing — three states, see RdpAudioMode (issue #245)
+        let audio_items: Vec<String> = RdpAudioMode::all()
+            .iter()
+            .map(|m| super::rdp_audio_mode_label(*m))
+            .collect();
+        let audio_strs: Vec<&str> = audio_items.iter().map(String::as_str).collect();
+        let audio_list = StringList::new(&audio_strs);
+        let audio_mode_dropdown = DropDown::builder()
+            .model(&audio_list)
+            .valign(gtk4::Align::Center)
             .build();
-        features_group.add(&audio_check);
+        audio_mode_dropdown.set_selected(RdpAudioMode::default().index());
+        let audio_row = adw::ActionRow::builder()
+            .title(i18n("Audio"))
+            .subtitle(i18n("Where the remote sound is played"))
+            .build();
+        audio_row.add_suffix(&audio_mode_dropdown);
+        features_group.add(&audio_row);
 
         // Gateway
         let gateway_entry = Entry::builder()
@@ -954,7 +966,7 @@ impl TemplateDialog {
             width_spin,
             height_spin,
             color_dropdown,
-            audio_check,
+            audio_mode_dropdown,
             gateway_entry,
             custom_args_entry,
         )
@@ -1958,7 +1970,7 @@ impl TemplateDialog {
         rdp_width_spin: &SpinButton,
         rdp_height_spin: &SpinButton,
         rdp_color_dropdown: &DropDown,
-        rdp_audio_check: &adw::SwitchRow,
+        rdp_audio_mode_dropdown: &DropDown,
         rdp_gateway_entry: &Entry,
         rdp_custom_args_entry: &Entry,
         vnc_client_mode_dropdown: &DropDown,
@@ -2027,7 +2039,7 @@ impl TemplateDialog {
         let rdp_width_spin = rdp_width_spin.clone();
         let rdp_height_spin = rdp_height_spin.clone();
         let rdp_color_dropdown = rdp_color_dropdown.clone();
-        let rdp_audio_check = rdp_audio_check.clone();
+        let rdp_audio_mode_dropdown = rdp_audio_mode_dropdown.clone();
         let rdp_gateway_entry = rdp_gateway_entry.clone();
         let rdp_custom_args_entry = rdp_custom_args_entry.clone();
         let vnc_client_mode_dropdown = vnc_client_mode_dropdown.clone();
@@ -2096,7 +2108,7 @@ impl TemplateDialog {
                 &rdp_width_spin,
                 &rdp_height_spin,
                 &rdp_color_dropdown,
-                &rdp_audio_check,
+                &rdp_audio_mode_dropdown,
                 &rdp_gateway_entry,
                 &rdp_custom_args_entry,
                 &vnc_client_mode_dropdown,
@@ -2215,7 +2227,7 @@ impl TemplateDialog {
         rdp_width_spin: &SpinButton,
         rdp_height_spin: &SpinButton,
         rdp_color_dropdown: &DropDown,
-        rdp_audio_check: &adw::SwitchRow,
+        rdp_audio_mode_dropdown: &DropDown,
         rdp_gateway_entry: &Entry,
         rdp_custom_args_entry: &Entry,
         vnc_client_mode_dropdown: &DropDown,
@@ -2265,7 +2277,7 @@ impl TemplateDialog {
                 rdp_width_spin,
                 rdp_height_spin,
                 rdp_color_dropdown,
-                rdp_audio_check,
+                rdp_audio_mode_dropdown,
                 rdp_gateway_entry,
                 rdp_custom_args_entry,
             ),
@@ -2423,7 +2435,7 @@ impl TemplateDialog {
         width_spin: &SpinButton,
         height_spin: &SpinButton,
         color_dropdown: &DropDown,
-        audio_check: &adw::SwitchRow,
+        audio_mode_dropdown: &DropDown,
         gateway_entry: &Entry,
         custom_args_entry: &Entry,
     ) -> ProtocolConfig {
@@ -2468,7 +2480,9 @@ impl TemplateDialog {
             graphics_mode: rustconn_core::rdp_client::graphics::GraphicsMode::default(),
             resolution: Some(resolution),
             color_depth: Some(color_depth),
-            audio_redirect: audio_check.is_active(),
+            audio_redirect: RdpAudioMode::from_index(audio_mode_dropdown.selected())
+                .is_local_playback(),
+            audio_mode: Some(RdpAudioMode::from_index(audio_mode_dropdown.selected())),
             // ponytail: template editor doesn't expose printer redirection yet;
             // configure it per-connection in the connection editor. Wire a switch
             // here if templates need it.
@@ -2869,7 +2883,8 @@ impl TemplateDialog {
             _ => 0,
         };
         self.rdp_color_dropdown.set_selected(color_idx);
-        self.rdp_audio_check.set_active(config.audio_redirect);
+        self.rdp_audio_mode_dropdown
+            .set_selected(config.effective_audio_mode().index());
         if let Some(ref gw) = config.gateway {
             self.rdp_gateway_entry.set_text(&gw.hostname);
         }

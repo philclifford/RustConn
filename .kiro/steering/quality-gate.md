@@ -37,6 +37,23 @@ Use when the developer explicitly asks to run tests.
 2. `cargo test --workspace` — run directly, NO pipes. Allow 180s.
 3. Report final summary (e.g. "test result: ok. 42 passed; 0 failed"). If failures — list test names.
 
+## i18n checks
+
+Run when translatable strings were touched (any `i18n()` call added or edited,
+or any change under `po/`). Cheap — no cargo, no toolchain.
+
+1. `./scripts/check-i18n-escapes.sh` — must print `OK`. Fails on Rust-only
+   `\u{...}` escapes inside translatable literals. `xgettext --language=C`
+   cannot decode them, so the extracted msgid never matches the runtime lookup
+   and the string stays untranslated in every locale while the `.po` files
+   still report 100% complete. Fix by putting the character in the literal
+   directly (ASCII apostrophe is the project convention), then re-run
+   `po/update-pot.sh`.
+2. `msgfmt --check --check-format -o /dev/null po/<lang>.po` for changed
+   catalogues — catches format-placeholder mismatches between msgid and msgstr.
+
+Both also run in CI as the `i18n` job.
+
 ## Rules (all modes)
 
 - **Never** pipe cargo output through `tail`, `grep`, or any filter.

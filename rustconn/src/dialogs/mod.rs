@@ -1,5 +1,22 @@
 //! Dialog windows for `RustConn`
 
+/// Returns the translated label for an RDP audio mode.
+///
+/// The variants' `display_name()` strings live in `rustconn-core`, which
+/// `xgettext` never scans (`po/update-pot.sh` walks `rustconn/src` only), so
+/// wrapping that runtime value in `i18n()` would leave the labels permanently
+/// untranslated. Matching on the variant here puts real literals in the GUI
+/// crate where the extractor can find them.
+#[must_use]
+pub(crate) fn rdp_audio_mode_label(mode: rustconn_core::models::RdpAudioMode) -> String {
+    use rustconn_core::models::RdpAudioMode;
+    match mode {
+        RdpAudioMode::None => crate::i18n::i18n("Do not play"),
+        RdpAudioMode::Local => crate::i18n::i18n("Play on this computer"),
+        RdpAudioMode::Remote => crate::i18n::i18n("Play on the remote computer"),
+    }
+}
+
 mod adw_dialogs;
 mod backend_missing;
 mod cluster;

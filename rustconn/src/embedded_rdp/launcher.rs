@@ -531,6 +531,14 @@ impl SafeFreeRdpLauncher {
             args.push("/printer".to_string());
         }
 
+        // Audio routing is always stated explicitly. With no audio argument
+        // FreeRDP leaves AudioPlayback and RemoteConsoleAudio both false, which
+        // Windows reads as "no audio device in this session" — the user could
+        // neither hear the session locally nor leave the sound on the remote
+        // machine (issue #245). Emitted before extra_args so that a hand-written
+        // /sound or /audio-mode there still takes precedence.
+        args.push(config.audio_mode.freerdp_arg().to_string());
+
         let mut skip_next_value = false;
         for arg in &config.extra_args {
             if skip_next_value {

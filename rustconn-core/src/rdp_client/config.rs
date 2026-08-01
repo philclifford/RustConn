@@ -623,4 +623,25 @@ mod tests {
         assert!(config.clipboard_enabled);
         assert!(config.nla_enabled);
     }
+
+    #[test]
+    fn gateway_is_used_for_a_target_that_only_exists_behind_it() {
+        // Regression guard for issue #246: the target of a gateway connection is
+        // typically an internal name or a private address, and the connect path
+        // must tunnel instead of resolving it locally.
+        for host in ["host.internal", "10.10.0.5", "192.168.1.20"] {
+            let config = RdpClientConfig::new(host).with_gateway(GatewayConfig::always_for_target(
+                "gw.example.com",
+                443,
+                None,
+            ));
+            assert!(config.uses_gateway(), "host must use the gateway: {host}");
+        }
+    }
+
+    #[test]
+    fn no_gateway_configured_means_direct_connect() {
+        let config = RdpClientConfig::new("host.example.com");
+        assert!(!config.uses_gateway());
+    }
 }

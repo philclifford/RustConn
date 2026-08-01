@@ -535,6 +535,11 @@ fn start_embedded_rdp_session(
     // Enable printer redirection (maps local CUPS printer into the session)
     embedded_config = embedded_config.with_printer(rdp_config.printer_enabled);
 
+    // Where the session audio plays. Before 0.19.9 this was collected in the
+    // dialog and then never read at connect time, so every session silently
+    // ran with audio disabled (issue #245).
+    embedded_config = embedded_config.with_audio_mode(rdp_config.effective_audio_mode());
+
     // Pass keyboard layout override if configured
     embedded_config.keyboard_layout = rdp_config.keyboard_layout;
 
@@ -544,8 +549,9 @@ fn start_embedded_rdp_session(
     // Pass local cursor visibility preference
     embedded_config.show_local_cursor = rdp_config.show_local_cursor;
 
-    // Pass gateway configuration so IronRDP can detect it and fall back
-    // to external xfreerdp (IronRDP 0.14 does not support RD Gateway)
+    // Pass gateway configuration. The embedded client tunnels through it with
+    // MS-TSGU (`rd-gateway` feature); without the feature, or for a target port
+    // other than 3389, the connect path hands the session to external FreeRDP.
     if let Some(ref gateway) = rdp_config.gateway {
         embedded_config.gateway_hostname = Some(gateway.hostname.clone());
         embedded_config.gateway_port = gateway.port;
@@ -945,6 +951,7 @@ fn start_external_rdp_session(
         false,
         &shared_folders,
         rdp_config.printer_enabled,
+        rdp_config.effective_audio_mode(),
         rdp_config.ignore_certificate,
         on_early_failure,
     ) {

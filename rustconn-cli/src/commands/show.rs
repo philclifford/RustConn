@@ -153,6 +153,10 @@ fn print_json(
             if config.audio_redirect {
                 map.insert("audio_redirect".to_string(), serde_json::Value::Bool(true));
             }
+            map.insert(
+                "audio_mode".to_string(),
+                serde_json::Value::String(config.effective_audio_mode().as_cli_str().to_string()),
+            );
             if config.printer_enabled {
                 map.insert("printer_enabled".to_string(), serde_json::Value::Bool(true));
             }
@@ -413,9 +417,7 @@ fn print_table(connection: &Connection, connections: &[Connection]) -> Result<()
             if !config.clipboard_enabled {
                 println!("  Clipboard: disabled");
             }
-            if config.audio_redirect {
-                println!("  Audio:    enabled");
-            }
+            println!("  Audio:    {}", config.effective_audio_mode().as_cli_str());
             if config.printer_enabled {
                 println!("  Printer:  enabled");
             }

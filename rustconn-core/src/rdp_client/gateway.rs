@@ -59,6 +59,36 @@ impl GatewayConfig {
         }
     }
 
+    /// Creates an always-on gateway configuration for a target behind it.
+    ///
+    /// Unlike [`GatewayConfig::new`], local-address bypass is disabled. Hosts
+    /// reached through an RD Gateway are normally RFC 1918 addresses or
+    /// `.internal`/`.local` names, which [`GatewayConfig::should_bypass`]
+    /// treats as local; bypassing them would dial an address that only exists
+    /// on the far side of the gateway ([issue #246]).
+    ///
+    /// A zero `port` falls back to [`GatewayConfig::DEFAULT_PORT`].
+    ///
+    /// [issue #246]: https://github.com/totoshko88/RustConn/issues/246
+    #[must_use]
+    pub fn always_for_target(
+        hostname: impl Into<String>,
+        port: u16,
+        username: Option<String>,
+    ) -> Self {
+        Self {
+            enabled: true,
+            hostname: hostname.into(),
+            port: if port == 0 { Self::DEFAULT_PORT } else { port },
+            username,
+            domain: None,
+            // `ironrdp-mstsgu` authenticates the tunnel with HTTP Basic.
+            auth_method: GatewayAuthMethod::Basic,
+            bypass_local: false,
+            bypass_list: Vec::new(),
+        }
+    }
+
     /// Creates a disabled gateway configuration
     #[must_use]
     pub const fn disabled() -> Self {
@@ -221,6 +251,34 @@ pub enum GatewayError {
     NotSupported(String),
 }
 
+/// Resolves the account name sent to the RD Gateway.
+///
+/// Falls back to the session user when no dedicated gateway user is configured,
+/// and qualifies a bare name with the domain (`DOMAIN\user`) because gateways
+/// backed by Active Directory reject an unqualified account. Names that already
+/// carry a domain prefix or a UPN suffix (`user@domain`) are passed through
+/// unchanged. Returns an empty string when no user is known at all.
+#[must_use]
+pub fn resolve_gateway_user(
+    gateway_username: Option<&str>,
+    session_username: Option<&str>,
+    domain: Option<&str>,
+) -> String {
+    fn non_empty(value: Option<&str>) -> Option<&str> {
+        value.map(str::trim).filter(|v| !v.is_empty())
+    }
+
+    let Some(user) = non_empty(gateway_username).or_else(|| non_empty(session_username)) else {
+        return String::new();
+    };
+
+    if user.contains('\\') || user.contains('@') {
+        return user.to_string();
+    }
+
+    non_empty(domain).map_or_else(|| user.to_string(), |domain| format!("{domain}\\{user}"))
+}
+
 /// Checks if an address is a local/private address
 #[expect(
     clippy::case_sensitive_file_extension_comparisons,
@@ -297,6 +355,79 @@ mod tests {
     fn test_gateway_config_disabled() {
         let config = GatewayConfig::disabled();
         assert!(!config.enabled);
+    }
+
+    #[test]
+    fn always_for_target_never_bypasses_internal_hosts() {
+        let config = GatewayConfig::always_for_target("gw.example.com", 443, None);
+        assert!(config.enabled);
+        assert!(!config.bypass_local);
+        // Exactly the hosts an RD Gateway exists for (issue #246): private
+        // addresses and internal names must still go through the tunnel.
+        for target in [
+            "10.10.0.5",
+            "192.168.1.20",
+            "172.16.4.9",
+            "server.internal",
+            "server.local",
+        ] {
+            assert!(
+                !config.should_bypass(target),
+                "target must not bypass the gateway: {target}"
+            );
+        }
+    }
+
+    #[test]
+    fn always_for_target_falls_back_to_default_port() {
+        let config = GatewayConfig::always_for_target("gw.example.com", 0, None);
+        assert_eq!(config.port, GatewayConfig::DEFAULT_PORT);
+
+        let custom = GatewayConfig::always_for_target("gw.example.com", 444, None);
+        assert_eq!(custom.port, 444);
+    }
+
+    #[test]
+    fn gateway_user_prefers_dedicated_account() {
+        assert_eq!(
+            resolve_gateway_user(Some("gwadmin"), Some("alice"), None),
+            "gwadmin"
+        );
+    }
+
+    #[test]
+    fn gateway_user_falls_back_to_session_account() {
+        assert_eq!(resolve_gateway_user(None, Some("alice"), None), "alice");
+        assert_eq!(
+            resolve_gateway_user(Some("  "), Some("alice"), None),
+            "alice"
+        );
+    }
+
+    #[test]
+    fn gateway_user_is_domain_qualified() {
+        assert_eq!(
+            resolve_gateway_user(None, Some("alice"), Some("CORP")),
+            "CORP\\alice"
+        );
+    }
+
+    #[test]
+    fn gateway_user_keeps_existing_qualification() {
+        assert_eq!(
+            resolve_gateway_user(None, Some("CORP\\alice"), Some("OTHER")),
+            "CORP\\alice"
+        );
+        assert_eq!(
+            resolve_gateway_user(None, Some("alice@corp.example"), Some("CORP")),
+            "alice@corp.example"
+        );
+    }
+
+    #[test]
+    fn gateway_user_is_empty_without_any_account() {
+        assert!(resolve_gateway_user(None, None, Some("CORP")).is_empty());
+        assert!(resolve_gateway_user(Some(""), Some(" "), None).is_empty());
     }
 
     #[test]

@@ -68,6 +68,32 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  i18n:
+    name: i18n
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Guards against Rust-only `\u{...}` escapes in translatable literals.
+      # xgettext runs with --language=C and cannot decode them, so the msgid
+      # would never match the runtime lookup and the string would silently
+      # render untranslated in every locale. No toolchain needed — pure text
+      # scan, so this stays a fast job independent of the cargo matrix.
+      - name: Check i18n string escapes
+        run: ./scripts/check-i18n-escapes.sh
+
+      - name: Install gettext
+        run: sudo apt-get update && sudo apt-get install -y gettext
+
+      # Catches malformed catalogues and format-placeholder mismatches between
+      # msgid and msgstr (e.g. a translation that drops a {} argument).
+      - name: Validate translation catalogues
+        run: |
+          for po in po/*.po; do
+            echo "== $po"
+            msgfmt --check --check-format --statistics -o /dev/null "$po"
+          done
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

@@ -2108,26 +2108,26 @@ msgid "Quality/speed tradeoff for image rendering"
 msgstr "Kvalitets-/hastighetsavvägning för bildrendering"
 
 #: rustconn/src/dialogs/connection/rdp.rs:132
-#, fuzzy
 msgid "Automatic"
-msgstr "Automatisering"
+msgstr "Automatisk"
 
 #: rustconn/src/dialogs/connection/rdp.rs:133
 msgid "Legacy (Compatible)"
-msgstr ""
+msgstr "Äldre (kompatibel)"
 
 #: rustconn/src/dialogs/connection/rdp.rs:134
-#, fuzzy
 msgid "RemoteFX"
-msgstr "Ta bort"
+msgstr "RemoteFX"
 
 #: rustconn/src/dialogs/connection/rdp.rs:144
 msgid "Graphics Pipeline"
-msgstr ""
+msgstr "Grafikpipeline"
 
 #: rustconn/src/dialogs/connection/rdp.rs:146
 msgid "Automatic uses GFX/H.264 when available. Legacy for older servers."
 msgstr ""
+"Automatisk använder GFX/H.264 när det är tillgängligt. Äldre för äldre "
+"servrar."
 
 #: rustconn/src/dialogs/connection/rdp.rs:173
 #: rustconn/src/dialogs/template.rs:855
@@ -2293,6 +2293,8 @@ msgid ""
 "Use multiple network paths for seamless mobility (Linux 5.6+, embedded mode "
 "only)"
 msgstr ""
+"Använd flera nätverksvägar för sömlös mobilitet (Linux 5.6+, endast inbäddat "
+"läge)"
 
 #: rustconn/src/dialogs/connection/rdp.rs:360
 #: rustconn/src/dialogs/connection/vnc.rs:261
@@ -3362,13 +3364,12 @@ msgid "Tunnel VNC through an SSH connection"
 msgstr "Tunnla VNC genom en SSH-anslutning"
 
 #: rustconn/src/dialogs/connection/web.rs:46
-#, fuzzy
 msgid "Browser Mode"
-msgstr "Webbläsare"
+msgstr "Webbläsarläge"
 
 #: rustconn/src/dialogs/connection/web.rs:47
 msgid "Choose how the URL is opened"
-msgstr ""
+msgstr "Välj hur URL:en öppnas"
 
 #: rustconn/src/dialogs/connection/web.rs:57
 msgid "Custom Browser"
@@ -3376,12 +3377,11 @@ msgstr "Anpassad webbläsare"
 
 #: rustconn/src/dialogs/connection/web.rs:59
 msgid "Specify a browser command when Custom mode is selected."
-msgstr ""
+msgstr "Ange ett webbläsarkommando när anpassat läge är valt."
 
 #: rustconn/src/dialogs/connection/web.rs:63
-#, fuzzy
 msgid "Browser Command"
-msgstr "Anpassat kommando"
+msgstr "Webbläsarkommando"
 
 #: rustconn/src/dialogs/connection/web.rs:65
 msgid "Command or path to browser binary (e.g. firefox, chromium)"
@@ -3390,20 +3390,19 @@ msgstr ""
 
 #: rustconn/src/dialogs/connection/web.rs:67
 msgid "Required for Custom mode"
-msgstr ""
+msgstr "Krävs för anpassat läge"
 
 #: rustconn/src/dialogs/connection/web.rs:75
 msgid "Embedded Browser Settings"
-msgstr ""
+msgstr "Inställningar för inbäddad webbläsare"
 
 #: rustconn/src/dialogs/connection/web.rs:76
 msgid "Settings applied when using the embedded browser"
-msgstr ""
+msgstr "Inställningar som tillämpas när den inbäddade webbläsaren används"
 
 #: rustconn/src/dialogs/connection/web.rs:85
-#, fuzzy
 msgid "User Agent"
-msgstr "Användarinmatning"
+msgstr "User Agent"
 
 #: rustconn/src/dialogs/connection/web.rs:93
 #: rustconn/src/dialogs/settings/monitoring_tab.rs:52
@@ -3413,7 +3412,7 @@ msgstr "Allmänt"
 
 #: rustconn/src/dialogs/connection/web.rs:156
 msgid "How the URL is opened"
-msgstr ""
+msgstr "Hur URL:en öppnas"
 
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:68
 #: rustconn/src/dialogs/export.rs:771
@@ -3532,6 +3531,8 @@ msgid ""
 "tab; ${host}, ${port}, ${username} and ${name} come from the connection "
 "itself"
 msgstr ""
+"Platshållare som ${id} hämtas från de lokala variablerna på fliken Data; $"
+"{host}, ${port}, ${username} och ${name} kommer från själva anslutningen"
 
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:240
 msgid "Web Bookmark"
@@ -4620,9 +4621,8 @@ msgid "Import from Remmina connection files"
 msgstr "Importera från Remmina-anslutningsfiler"
 
 #: rustconn/src/dialogs/import/sources.rs:130
-#, fuzzy
 msgid "Royal TS (.rtsz, .rtsx)"
-msgstr "Royal TS (.rtsz)"
+msgstr "Royal TS (.rtsz, .rtsx)"
 
 #: rustconn/src/dialogs/import/sources.rs:131
 msgid "Import from a Royal TS export file"
@@ -4792,9 +4792,8 @@ msgid "Select Royal TS File"
 msgstr "Välj Royal TS-fil"
 
 #: rustconn/src/dialogs/import/sources.rs:736
-#, fuzzy
 msgid "Royal TS files (*.rtsz, *.rtsx)"
-msgstr "Royal TS-filer (*.rtsz, *.json)"
+msgstr "Royal TS-filer (*.rtsz, *.rtsx)"
 
 #: rustconn/src/dialogs/import/sources.rs:819
 msgid "Select RDM JSON File"
@@ -6743,11 +6742,11 @@ msgstr "Öppna session automatiskt"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:295
 msgid "Show Welcome tab"
-msgstr ""
+msgstr "Visa Välkommen-fliken"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:296
 msgid "Display Welcome tab when no session opens at startup"
-msgstr ""
+msgstr "Visa Välkommen-fliken när ingen session öppnas vid uppstart"
 
 #: rustconn/src/dialogs/settings/ui_tab.rs:306
 msgid "System Tray"
@@ -8192,7 +8191,7 @@ msgstr ""
 
 #: rustconn/src/embedded_rdp/connection.rs:91
 msgid "Server certificate has changed since the last connection."
-msgstr ""
+msgstr "Servercertifikatet har ändrats sedan den senaste anslutningen."
 
 #: rustconn/src/embedded_rdp/connection.rs:95
 msgid "RDP connection failed ({}). Run with RUST_LOG=debug for details."
@@ -8606,16 +8605,15 @@ msgstr "Använder extern visare (kryptering stöds inte)"
 #: rustconn/src/embedded_web/navigation.rs:97
 #: rustconn/src/embedded_web/navigation.rs:98
 msgid "Reload"
-msgstr ""
+msgstr "Läs in igen"
 
 #: rustconn/src/embedded_web/mod.rs:333
-#, fuzzy
 msgid "No credentials configured for this connection"
-msgstr "Inget lösenord konfigurerat för denna anslutning"
+msgstr "Inga inloggningsuppgifter konfigurerade för denna anslutning"
 
 #: rustconn/src/embedded_web/mod.rs:562
 msgid "TLS certificate accepted (self-signed or untrusted)"
-msgstr ""
+msgstr "TLS-certifikat godkänt (självsignerat eller ej betrott)"
 
 #: rustconn/src/embedded_web/mod.rs:666
 msgid "Downloaded: {}"
@@ -8627,20 +8625,18 @@ msgstr "Inga inloggningsfält hittades på denna sida"
 
 #: rustconn/src/embedded_web/navigation.rs:83
 #: rustconn/src/embedded_web/navigation.rs:84
-#, fuzzy
 msgid "Back"
-msgstr "Backend"
+msgstr "Bakåt"
 
 #: rustconn/src/embedded_web/navigation.rs:90
 #: rustconn/src/embedded_web/navigation.rs:91
-#, fuzzy
 msgid "Forward"
-msgstr "Vidarebefordringar"
+msgstr "Framåt"
 
 #: rustconn/src/embedded_web/navigation.rs:103
 #: rustconn/src/embedded_web/navigation.rs:104
 msgid "Home"
-msgstr ""
+msgstr "Hem"
 
 #: rustconn/src/embedded_web/navigation.rs:112
 msgid "Enter URL"
@@ -8648,25 +8644,24 @@ msgstr "Ange URL"
 
 #: rustconn/src/embedded_web/navigation.rs:113
 msgid "URL address bar"
-msgstr ""
+msgstr "URL-adressfält"
 
 #: rustconn/src/embedded_web/navigation.rs:128
 #: rustconn/src/embedded_web/navigation.rs:130
-#, fuzzy
 msgid "Autofill credentials"
-msgstr "Standardinloggningsuppgifter"
+msgstr "Fyll i inloggningsuppgifter automatiskt"
 
 #: rustconn/src/embedded_web/navigation.rs:136
 #: rustconn/src/embedded_web/navigation.rs:137
 #: rustconn/src/embedded_web/navigation.rs:333
 msgid "Zoom in"
-msgstr ""
+msgstr "Zooma in"
 
 #: rustconn/src/embedded_web/navigation.rs:142
 #: rustconn/src/embedded_web/navigation.rs:143
 #: rustconn/src/embedded_web/navigation.rs:334
 msgid "Zoom out"
-msgstr ""
+msgstr "Zooma ut"
 
 #: rustconn/src/embedded_web/navigation.rs:151
 #: rustconn/src/embedded_web/navigation.rs:152 rustconn/src/window/ui.rs:100
@@ -8683,16 +8678,15 @@ msgstr "Öppna i systemwebbläsare"
 
 #: rustconn/src/embedded_web/navigation.rs:427
 msgid "Zoom Reset (100%)"
-msgstr ""
+msgstr "Återställ zoom (100 %)"
 
 #: rustconn/src/embedded_web/navigation.rs:431
 msgid "Clear Session Data"
 msgstr "Rensa sessionsdata"
 
 #: rustconn/src/embedded_web/navigation.rs:447
-#, fuzzy
 msgid "URL copied to clipboard"
-msgstr "Lösenord kopierat till urklipp"
+msgstr "URL kopierad till urklipp"
 
 #: rustconn/src/embedded_web/navigation.rs:496
 msgid "Session data cleared"
@@ -9193,8 +9187,8 @@ msgid "Double-click a connection in the sidebar to get started"
 msgstr "Dubbelklicka på en anslutning i sidopanelen för att komma igång"
 
 #: rustconn/src/split_view/bridge.rs:1735
-msgid "Don\\u{2019}t show this page at startup"
-msgstr ""
+msgid "Don't show this page at startup"
+msgstr "Visa inte denna sida vid uppstart"
 
 #: rustconn/src/split_view/bridge.rs:1760
 msgid "Embedded SSH, RDP, VNC, SPICE"
@@ -10539,9 +10533,8 @@ msgid "No SPICE viewer found. Install virt-viewer."
 msgstr "Ingen SPICE-visare hittades. Installera virt-viewer."
 
 #: rustconn/src/window/protocols.rs:1293 rustconn/src/window/protocols.rs:1767
-#, fuzzy
 msgid "Invalid variable: {}"
-msgstr "Ogiltig konfiguration: {}"
+msgstr "Ogiltig variabel: {}"
 
 #: rustconn/src/window/protocols.rs:1684
 msgid "Invalid config: {}"
@@ -10586,11 +10579,11 @@ msgstr "Anslut ändå"
 
 #: rustconn/src/window/rdp_vnc.rs:743
 msgid "Certificate changed"
-msgstr ""
+msgstr "Certifikatet har ändrats"
 
 #: rustconn/src/window/rdp_vnc.rs:745
 msgid "Accept new certificate"
-msgstr ""
+msgstr "Godkänn nytt certifikat"
 
 #: rustconn/src/window/session_lifecycle.rs:299
 msgid "Activity detected: {}"
@@ -10602,19 +10595,19 @@ msgstr "Tystnad upptäckt: {}"
 
 #: rustconn/src/window/session_restore.rs:179
 msgid "Restore previous session?"
-msgstr ""
+msgstr "Återställ föregående session?"
 
 #: rustconn/src/window/session_restore.rs:181
 msgid "Reopen the {} connections that were open when RustConn last closed."
-msgstr ""
+msgstr "Öppna de {} anslutningar som var öppna när RustConn senast stängdes."
 
 #: rustconn/src/window/session_restore.rs:185
 msgid "Not Now"
-msgstr ""
+msgstr "Inte nu"
 
 #: rustconn/src/window/session_restore.rs:245
 msgid "{} restored connections no longer exist"
-msgstr ""
+msgstr "{} återställda anslutningar finns inte längre"
 
 #: rustconn/src/window/sessions.rs:38
 msgid "Active Sessions"

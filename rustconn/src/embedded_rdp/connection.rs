@@ -35,6 +35,14 @@ pub(super) enum FreerdpFailure {
 // busy-looping on the GTK main thread.
 const EXTERNAL_LAUNCH_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 
+/// The only target port the embedded RD Gateway tunnel can reach.
+///
+/// `ironrdp-mstsgu` hard-codes 3389 in the MS-TSGU channel-create request, so
+/// gateway connections to any other port have to use the external FreeRDP
+/// client, which forwards the real port.
+#[cfg(all(feature = "rdp-embedded", feature = "rd-gateway"))]
+const MSTSGU_TUNNEL_PORT: u16 = 3389;
+
 /// Terminates a process that finished launching after its connection attempt became stale.
 fn discard_stale_external_launch(result: FreeRdpLaunchResult) {
     if let Ok((mut child, _)) = result {
@@ -378,22 +386,49 @@ impl super::EmbeddedRdpWidget {
         if Self::is_ironrdp_available() {
             // Skip IronRDP if security settings require FreeRDP
             // (RDP Security Layer, TLS-only, low TLS security level, or RemoteApp)
+            // "Play on the remote computer" needs INFO_REMOTECONSOLEAUDIO,
+            // which ironrdp-connector never sets, so it goes through FreeRDP
+            // like the other capabilities IronRDP cannot express (issue #245).
+            let audio_needs_freerdp = config.audio_mode.requires_freerdp();
             let force_freerdp = config.security_layer.requires_freerdp()
                 || config.tls_security_level.is_some_and(|l| l < 2)
+                || audio_needs_freerdp
                 || config
                     .remote_app_program
                     .as_ref()
                     .is_some_and(|p| !p.is_empty());
 
             if force_freerdp {
-                let reason = format!(
-                    "Security layer {:?} / TLS level {:?} requires FreeRDP \
-                     (IronRDP only supports TLS 1.2+)",
-                    config.security_layer, config.tls_security_level
-                );
+                let reason = if audio_needs_freerdp {
+                    "Playing audio on the remote computer requires FreeRDP \
+                     (IronRDP cannot request remote console audio)"
+                        .to_string()
+                } else {
+                    format!(
+                        "Security layer {:?} / TLS level {:?} requires FreeRDP \
+                         (IronRDP only supports TLS 1.2+)",
+                        config.security_layer, config.tls_security_level
+                    )
+                };
                 tracing::info!(protocol = "rdp", %reason, "Skipping IronRDP for legacy security");
                 self.report_fallback(&reason);
             } else {
+                // extra_args are FreeRDP command-line options; the embedded
+                // IronRDP client has no command line to put them on, so they
+                // are dropped here. Say so instead of letting the user think
+                // their /sound or /audio-mode override took effect (issue #245).
+                if !config.extra_args.is_empty() {
+                    tracing::warn!(
+                        protocol = "rdp",
+                        arg_count = config.extra_args.len(),
+                        "Custom FreeRDP arguments ignored — the embedded client takes no command line"
+                    );
+                    crate::toast::show_warning_toast_on_active_window(&i18n(
+                        "Custom FreeRDP arguments are ignored by the embedded client. \
+                         Set the RDP client mode to External to apply them.",
+                    ));
+                }
+
                 // Try IronRDP embedded mode first
                 match self.connect_ironrdp(config) {
                     Ok(()) => {
@@ -421,10 +456,10 @@ impl super::EmbeddedRdpWidget {
             .is_some_and(|p| !p.is_empty());
 
         // Skip embedded wlfreerdp when an RD Gateway is configured. The embedded
-        // thread (see `thread.rs`) does not emit `/g:` gateway arguments, so it
-        // would connect straight to the gateway host on 3389 without tunnelling
-        // and render a broken session. Only the external launcher's argument
-        // builder wires up gateway routing.
+        // thread (see `thread.rs`) does not emit gateway arguments, so it would
+        // connect straight to the gateway host on 3389 without tunnelling and
+        // render a broken session. Gateway routing exists only in the IronRDP
+        // path (MS-TSGU) and in the external launcher's argument builder.
         let has_gateway = config
             .gateway_hostname
             .as_ref()
@@ -487,6 +522,25 @@ impl super::EmbeddedRdpWidget {
                 gateway = ?config.gateway_hostname,
                 "RD Gateway configured but rd-gateway feature disabled — \
                  falling back to external client"
+            );
+            return Err(EmbeddedRdpError::GatewayNotSupported);
+        }
+
+        // A gateway target on a non-standard port cannot be tunnelled by
+        // `ironrdp-mstsgu` (see MSTSGU_TUNNEL_PORT) — hand it to the external
+        // client instead of silently connecting to the wrong port.
+        #[cfg(feature = "rd-gateway")]
+        if config.port != MSTSGU_TUNNEL_PORT
+            && config
+                .gateway_hostname
+                .as_ref()
+                .is_some_and(|h| !h.is_empty())
+        {
+            tracing::info!(
+                protocol = "rdp",
+                host = %config.host,
+                port = config.port,
+                "RD Gateway target port is not 3389 — using the external client"
             );
             return Err(EmbeddedRdpError::GatewayNotSupported);
         }
@@ -611,6 +665,10 @@ impl super::EmbeddedRdpWidget {
             .with_clipboard(config.clipboard_enabled)
             .with_shared_folders(shared_folders)
             .with_printer(config.printer_enabled)
+            // Only `Local` means "this client plays the stream". `Remote` never
+            // reaches here — it forces the FreeRDP path, because IronRDP cannot
+            // signal INFO_REMOTECONSOLEAUDIO (issue #245).
+            .with_audio(config.audio_mode.is_local_playback())
             .with_performance_mode(config.performance_mode)
             .with_color_depth(config.performance_mode.color_depth())
             .with_scale_factor(rdp_scale_percent);
@@ -642,6 +700,30 @@ impl super::EmbeddedRdpWidget {
 
         if let Some(klid) = config.keyboard_layout {
             client_config = client_config.with_keyboard_layout(klid);
+        }
+
+        // Route the session through the RD Gateway (MS-TSGU) when one is
+        // configured. Without this the embedded client resolved and dialled the
+        // target host directly, which cannot work for hosts that only exist
+        // behind the gateway (issue #246).
+        #[cfg(feature = "rd-gateway")]
+        if let Some(ref gw_host) = config.gateway_hostname
+            && !gw_host.is_empty()
+        {
+            tracing::info!(
+                protocol = "rdp",
+                gateway = %gw_host,
+                gateway_port = config.gateway_port,
+                target = %config.host,
+                "Routing embedded RDP session through RD Gateway"
+            );
+            client_config = client_config.with_gateway(
+                rustconn_core::rdp_client::GatewayConfig::always_for_target(
+                    gw_host.as_str(),
+                    config.gateway_port,
+                    config.gateway_username.clone(),
+                ),
+            );
         }
 
         // Apply user-selected graphics mode for the embedded IronRDP client.
@@ -1750,6 +1832,9 @@ impl super::EmbeddedRdpWidget {
         //   Security, which IronRDP does not implement at all (issue #235).
         // * `ProtocolIncompatible` — connector/server mismatch, e.g. GNOME
         //   Remote Desktop's `invalid state (this is a bug)` (issue #199).
+        // * `GatewayFailure` — the MS-TSGU tunnel failed; the external client
+        //   implements the same tunnel with more authentication methods than
+        //   `ironrdp-mstsgu`'s HTTP Basic, so it is worth a try (issue #246).
         let class = rustconn_core::rdp_client::classify_rdp_failure(msg);
         tracing::debug!(
             protocol = "rdp",

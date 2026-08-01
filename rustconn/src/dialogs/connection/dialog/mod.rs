@@ -161,7 +161,7 @@ pub struct ConnectionDialog {
     rdp_height_spin: SpinButton,
     rdp_color_dropdown: DropDown,
     rdp_scale_override_dropdown: DropDown,
-    rdp_audio_check: adw::SwitchRow,
+    rdp_audio_mode_dropdown: DropDown,
     rdp_printer_check: adw::SwitchRow,
     rdp_gateway_entry: Entry,
     rdp_gateway_port_spin: SpinButton,
