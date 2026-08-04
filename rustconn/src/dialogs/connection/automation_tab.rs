@@ -88,6 +88,11 @@ pub(super) fn create_automation_combined_tab() -> AutomationTabWidgets {
     // Info banner about variable substitution (consistent with group dialog)
     let variables_info = Label::builder()
         .label(i18n(
+            // Accurate again as of issue #257: the four built-ins really are
+            // resolved at connection time now. Deliberately left byte-identical
+            // to the string all 14 catalogues already translate — the extra
+            // detail (${host}, ${port}, and that ${password} needs a Password
+            // Source) lives in the user guide rather than costing a new msgid.
             "Responses support ${password}, ${username}, and ${VARIABLE_NAME} placeholders resolved at connection time",
         ))
         .wrap(true)

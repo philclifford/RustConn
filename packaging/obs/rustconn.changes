@@ -1,5 +1,5 @@
 -------------------------------------------------------------------
-Mon Aug 03 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.12
+Tue Aug 04 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.12
 
 - Version bump to 0.19.12
 - Added preservation of terminal history across a reconnect, with a dim rule separating the old output from the new session (#253)
@@ -14,7 +14,9 @@ Mon Aug 03 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.12
 - Fixed a jump host picked from the connection list being invisible to every SFTP path; chain resolution moved into rustconn-core::connection::jump_chain
 - Fixed rustconn-cli sftp refusing connections whose protocol is SFTP
 - Fixed a pre-connect port check running against hosts reachable only through a hand-typed ProxyJump
-- Changed the documentation of ${password} and ${username} in an expect-rule response to say they resolve from global variables only
+- Fixed ${password} in an expect-rule response resolving to an empty string: the four built-in placeholders are now supplied from the connection at connection time, and substitution validates for a terminal instead of for a shell, so a password containing shell metacharacters survives (#257)
+- Fixed a backslash inside a resolved expect-rule value being reinterpreted as an escape sequence
+- Fixed a failed expect-rule substitution typing the literal placeholder into the session; the rule is now skipped with a warning
 - Improved prompt watching by replacing three duplicated implementations with window::prompt_autofill::install_login_autofill
 - Improved testability by moving prompt matching into rustconn-core::connection::login_prompt
 - Improved the file-manager SFTP path, which now warns that it cannot route through a jump host instead of failing silently

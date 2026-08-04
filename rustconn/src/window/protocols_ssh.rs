@@ -946,7 +946,13 @@ fn start_ssh_connection_internal(
         Some(&resolved_automation),
         &terminal_settings,
         conn.theme_override.as_ref(),
-        &global_variables,
+        &super::protocols::automation_variables(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+        ),
     );
     if let Some(observer) = observer {
         observer.complete(session_id);

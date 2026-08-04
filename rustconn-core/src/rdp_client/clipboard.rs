@@ -173,11 +173,16 @@ impl RustConnClipboardBackend {
         self.server_capabilities
     }
 
-    /// Returns true if the server supports file clipboard
+    /// Returns true if the peer negotiated stream-based file copy.
+    ///
+    /// Checks `STREAM_FILECLIP_ENABLED`, the flag MS-RDPECLIP 2.2.2.1 actually
+    /// gates File Contents Request/Response on. This used to test
+    /// `USE_LONG_FORMAT_NAMES`, which says nothing about file transfer and so
+    /// reported support on servers that had none.
     #[must_use]
     pub const fn supports_file_clipboard(&self) -> bool {
         self.server_capabilities
-            .contains(ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES)
+            .contains(ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED)
     }
 }
 
@@ -203,11 +208,22 @@ impl CliprdrBackend for RustConnClipboardBackend {
     }
 
     fn client_capabilities(&self) -> ClipboardGeneralCapabilityFlags {
-        // Advertise USE_LONG_FORMAT_NAMES so the server sends full format
-        // names (required for file clipboard and proper text exchange with
-        // Windows Server 2016+). Without this flag some servers skip the
-        // CLIPRDR format list announcement entirely.
+        // USE_LONG_FORMAT_NAMES: the server sends full format names, which the
+        // file clipboard needs (`FileGroupDescriptorW` is a registered format,
+        // reachable only by name) and which some Windows Server 2016+ builds
+        // require before they announce a format list at all.
+        //
+        // STREAM_FILECLIP_ENABLED: without it the peer never issues a File
+        // Contents Request, so copying or dragging a file into the session
+        // silently produced nothing (issue #256). MS-RDPECLIP 2.2.2.1 gates
+        // stream-based file copy on this flag.
+        //
+        // FILECLIP_NO_FILE_PATHS: we describe files by name only and never
+        // hand out local paths, which is what this flag promises the peer.
+        // FreeRDP advertises the same trio.
         ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES
+            | ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED
+            | ClipboardGeneralCapabilityFlags::FILECLIP_NO_FILE_PATHS
     }
 
     fn on_process_negotiated_capabilities(

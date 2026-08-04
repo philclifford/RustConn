@@ -45,7 +45,11 @@ pub(super) fn resolve_automation_for_connection(
 /// Substitutes variables in a string using global variables from settings
 ///
 /// Converts `${VAR_NAME}` references to their values from global variables.
-/// If a variable is not found, the reference is left unchanged.
+/// A reference nothing defines is replaced with the empty string, and a value
+/// containing a shell metacharacter makes the whole substitution fail, in which
+/// case the input is returned unchanged — both are `substitute_for_command`
+/// semantics, which is what a host name or a login name being built into an
+/// argument list needs.
 pub(super) fn substitute_variables(input: &str, global_variables: &[Variable]) -> String {
     if !input.contains("${") {
         return input.to_string();
@@ -77,6 +81,64 @@ fn cached_connection_password(
         .get_cached_credentials(connection_id)
         .map(|c| c.password.clone())
         .filter(|p| !p.expose_secret().is_empty())
+}
+
+/// Variables an expect-rule response resolves against, built-ins included.
+///
+/// Returns the global variables plus the four placeholders the Automation tab
+/// offers under "Built-in" — `${password}`, `${username}`, `${host}` and
+/// `${port}` — taken from the connection itself. Without them those four
+/// resolved against nothing and were replaced with the empty string, so the
+/// stock "Sudo Password" template answered the prompt with a bare newline
+/// (issue #257).
+///
+/// The built-ins are appended after the globals, so for this session they shadow
+/// a global variable that happens to share a name — which is what the labels in
+/// the insert-variable menu promise. The list is built fresh per connection, so
+/// the shadowing never reaches another one.
+///
+/// The password is copied out of the credential cache only when an enabled rule
+/// actually references `${password}`, and it lands in a variable marked secret so
+/// [`rustconn_core::Variable`]'s `Drop` scrubs it. The substituted response
+/// itself is a plain `String` for the life of the session; that is pre-existing
+/// behaviour for any secret global variable used in a response.
+pub(super) fn automation_variables(
+    state: &SharedAppState,
+    connection_id: Uuid,
+    conn: &rustconn_core::Connection,
+    automation: &AutomationConfig,
+    global_variables: &[Variable],
+) -> Vec<Variable> {
+    use secrecy::ExposeSecret;
+
+    let mut vars = global_variables.to_vec();
+
+    if let Some(username) = conn.username.as_deref().filter(|u| !u.trim().is_empty()) {
+        vars.push(Variable::new("username", username));
+    }
+    vars.push(Variable::new("host", &conn.host));
+    vars.push(Variable::new("port", conn.port.to_string()));
+
+    // Materialize the secret only for a rule that asks for it, so an ordinary
+    // connection never puts its password into a `Variable`.
+    let wants_password = automation
+        .expect_rules
+        .iter()
+        .any(|r| r.enabled && r.response.contains("${password}"));
+    if wants_password {
+        if let Some(password) = cached_connection_password(state, connection_id) {
+            vars.push(Variable::new_secret("password", password.expose_secret()));
+        } else {
+            tracing::warn!(
+                %connection_id,
+                placeholder = "password",
+                "An expect rule asks for the password placeholder but no password was \
+                 resolved for this connection; check its Password Source"
+            );
+        }
+    }
+
+    vars
 }
 
 /// Builds the login auto-fill spec for a terminal-login protocol.
@@ -1565,7 +1627,13 @@ fn start_telnet_connection_internal(
         Some(&resolved_automation),
         &terminal_settings,
         conn.theme_override.as_ref(),
-        &global_variables,
+        &automation_variables(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+        ),
     );
     if let Some(observer) = observer {
         observer.complete(session_id);
@@ -1835,7 +1903,13 @@ pub fn start_zerotrust_connection(
         Some(&automation_config),
         &terminal_settings,
         conn.theme_override.as_ref(),
-        &global_variables,
+        &automation_variables(
+            state,
+            connection_id,
+            conn,
+            &automation_config,
+            &global_variables,
+        ),
     );
 
     // Record connection start in history
@@ -1956,7 +2030,13 @@ pub fn start_serial_connection(
         Some(&resolved_automation),
         &terminal_settings,
         conn.theme_override.as_ref(),
-        &global_variables,
+        &automation_variables(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+        ),
     );
 
     // Apply highlight rules (built-in defaults + global + per-connection)
@@ -2140,7 +2220,13 @@ pub fn start_kubernetes_connection(
         Some(&resolved_automation),
         &terminal_settings,
         conn.theme_override.as_ref(),
-        &global_variables,
+        &automation_variables(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+        ),
     );
 
     // Apply highlight rules (built-in defaults + global + per-connection)
@@ -2388,7 +2474,13 @@ fn start_mosh_connection_internal(
         Some(&resolved_automation),
         &terminal_settings,
         conn.theme_override.as_ref(),
-        &global_variables,
+        &automation_variables(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+        ),
     );
     if let Some(observer) = observer {
         observer.complete(session_id);

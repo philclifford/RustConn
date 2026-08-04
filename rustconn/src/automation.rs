@@ -247,7 +247,10 @@ impl AutomationSession {
                     line.trim()
                 );
 
-                let response = Self::process_escapes(&rule.response);
+                // Escapes were already expanded by `prepare_rules_from_config`,
+                // before substitution — doing it here as well would reinterpret
+                // backslashes that came out of a resolved variable.
+                let response = rule.response.clone();
                 // Length only — see the note in `new()`: a response may carry a
                 // password, and tracing output is not redacted.
                 tracing::info!(
@@ -278,10 +281,16 @@ impl AutomationSession {
     }
 }
 
-/// Helper to convert `ExpectRule` list with variable substitution into ready-to-use rules
+/// Resolves an `ExpectRule` list into rules ready to hand to [`AutomationSession`].
 ///
-/// This performs variable substitution on response strings and filters out
-/// disabled rules and rules with invalid patterns.
+/// Escape sequences are expanded and `${VAR}` references substituted, in that
+/// order; disabled rules, rules with an invalid regex, and rules whose response
+/// could not be substituted are dropped.
+///
+/// `var_manager` is expected to carry the connection's built-in `${password}`,
+/// `${username}`, `${host}` and `${port}` alongside the global variables — see
+/// `window::protocols::automation_variables`, which assembles it. Without them
+/// those four resolve against nothing (issue #257).
 pub fn prepare_rules_from_config(
     rules: &[ExpectRule],
     var_manager: &rustconn_core::variables::VariableManager,
@@ -302,20 +311,45 @@ pub fn prepare_rules_from_config(
             continue;
         }
 
-        // Substitute ${VAR} references in the response text
-        let resolved_response = var_manager
-            .substitute_for_command(
-                &rule.response,
-                rustconn_core::variables::VariableScope::Global,
-            )
-            .unwrap_or_else(|e| {
+        // Escapes first, substitution second. The other order would run the
+        // resolved values through `process_escapes` as well, so a password
+        // containing a backslash (`pa\ss` → `pa` + an unknown escape, `a\nb` →
+        // an embedded newline) would be silently rewritten before it was sent.
+        let template = AutomationSession::process_escapes(&rule.response);
+
+        // Substitute ${VAR} references in the response text.
+        let resolved_response = match var_manager.substitute_for_terminal_input(
+            &template,
+            rustconn_core::variables::VariableScope::Global,
+        ) {
+            Ok(substitution) => {
+                if !substitution.unresolved.is_empty() {
+                    // The names, never the values: a resolved response may be a
+                    // credential and `tracing` output is not redacted.
+                    tracing::warn!(
+                        rule_id = %rule.id,
+                        pattern = %rule.pattern,
+                        unresolved = %substitution.unresolved.join(", "),
+                        "Expect response references undefined variables; they are sent \
+                         verbatim. The password and username placeholders need the \
+                         connection to have a password source and a username configured"
+                    );
+                }
+                substitution.text
+            }
+            Err(e) => {
+                // Previously this fell back to the raw template, which typed the
+                // literal `${password}` into the session. Sending nothing leaves
+                // the prompt to the user, who can still answer it by hand.
                 tracing::warn!(
-                    response = %rule.response,
+                    rule_id = %rule.id,
+                    pattern = %rule.pattern,
                     error = %e,
-                    "Variable substitution failed in expect response, using raw text"
+                    "Variable substitution failed in expect response; skipping rule"
                 );
-                rule.response.clone()
-            });
+                continue;
+            }
+        };
 
         prepared.push(ExpectRule {
             id: rule.id,
@@ -329,4 +363,127 @@ pub fn prepare_rules_from_config(
     }
 
     prepared
+}
+
+#[cfg(test)]
+mod tests {
+    use rustconn_core::variables::{Variable, VariableManager};
+
+    use super::*;
+
+    /// The pattern the built-in "Sudo Password" template ships with.
+    const SUDO_PATTERN: &str = r"\[sudo\] password for \w+:";
+
+    fn manager_with(name: &str, value: &str) -> VariableManager {
+        let mut manager = VariableManager::new();
+        manager.set_global(Variable::new(name, value));
+        manager
+    }
+
+    fn sudo_rule(response: &str) -> ExpectRule {
+        ExpectRule::new(SUDO_PATTERN, response)
+            .with_priority(10)
+            .with_timeout(30_000)
+    }
+
+    /// Issue #257: the stock template used to answer the prompt with a bare
+    /// newline because nothing defined `${password}`.
+    #[test]
+    fn sudo_template_resolves_the_connection_password() {
+        let manager = manager_with("password", "hunter2");
+        let prepared = prepare_rules_from_config(&[sudo_rule("${password}\n")], &manager);
+
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].response, "hunter2\n");
+    }
+
+    /// A password made entirely of the characters `substitute_for_command`
+    /// rejects has to reach the prompt unchanged — nothing here goes to a shell.
+    #[test]
+    fn a_password_full_of_shell_metacharacters_survives() {
+        let manager = manager_with("password", "a;b|c&d`e$f(g)h<i>j!k");
+        let prepared = prepare_rules_from_config(&[sudo_rule("${password}\n")], &manager);
+
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].response, "a;b|c&d`e$f(g)h<i>j!k\n");
+    }
+
+    /// Escapes are expanded on the template before substitution, so a backslash
+    /// inside the resolved value is not reinterpreted.
+    #[test]
+    fn a_backslash_in_the_password_is_not_treated_as_an_escape() {
+        let manager = manager_with("password", r"pa\nss");
+        // The literal two characters `\` and `n` as they arrive from config.toml.
+        let prepared = prepare_rules_from_config(&[sudo_rule(r"${password}\n")], &manager);
+
+        assert_eq!(prepared.len(), 1);
+        // The template's trailing `\n` became a real newline; the one inside the
+        // password did not.
+        assert_eq!(prepared[0].response, "pa\\nss\n");
+    }
+
+    /// The template's own escape sequence still has to be expanded.
+    #[test]
+    fn the_template_escape_sequence_becomes_a_real_newline() {
+        let manager = VariableManager::new();
+        let prepared = prepare_rules_from_config(&[sudo_rule(r"yes\n")], &manager);
+
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].response, "yes\n");
+    }
+
+    /// An undefined reference is kept verbatim rather than blanked, so the
+    /// warning and the session agree about what happened.
+    #[test]
+    fn an_undefined_reference_is_left_in_place() {
+        let manager = VariableManager::new();
+        let prepared = prepare_rules_from_config(&[sudo_rule("${password}\n")], &manager);
+
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].response, "${password}\n");
+    }
+
+    /// A value carrying a line break would submit the answer early, so the rule
+    /// is dropped instead of sending the raw template (which used to type the
+    /// literal `${password}` at the prompt).
+    #[test]
+    fn a_rule_whose_value_contains_a_newline_is_dropped() {
+        let manager = manager_with("password", "first\nsecond");
+        let prepared = prepare_rules_from_config(&[sudo_rule("${password}\n")], &manager);
+
+        assert!(prepared.is_empty());
+    }
+
+    #[test]
+    fn disabled_rules_and_invalid_patterns_are_dropped() {
+        let manager = VariableManager::new();
+        let rules = vec![
+            sudo_rule("ok\n").with_enabled(false),
+            ExpectRule::new("[unclosed", "ok\n"),
+            sudo_rule("kept\n"),
+        ];
+
+        let prepared = prepare_rules_from_config(&rules, &manager);
+
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].response, "kept\n");
+    }
+
+    /// Priority, timeout, id and the one-shot flag are carried through, since
+    /// `AutomationSession` keys its expiry bookkeeping on them.
+    #[test]
+    fn rule_metadata_is_preserved() {
+        let manager = manager_with("password", "hunter2");
+        let original = sudo_rule("${password}\n");
+        let id = original.id;
+
+        let prepared = prepare_rules_from_config(&[original], &manager);
+
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].id, id);
+        assert_eq!(prepared[0].pattern, SUDO_PATTERN);
+        assert_eq!(prepared[0].priority, 10);
+        assert_eq!(prepared[0].timeout_ms, Some(30_000));
+        assert!(prepared[0].one_shot);
+    }
 }

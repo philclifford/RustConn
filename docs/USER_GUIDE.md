@@ -292,12 +292,24 @@ Rules execute in priority order. After matching, the response is sent followed b
 
 **Variable Substitution in Responses:**
 
-Expect rule responses support `${VARIABLE_NAME}` placeholders that are resolved at connection time using Global Variables. This lets you use dynamic values (passwords, tokens, environment-specific strings) without hardcoding them into rules.
+Expect rule responses support `${VARIABLE_NAME}` placeholders that are resolved at connection time. This lets you use dynamic values (passwords, tokens, environment-specific strings) without hardcoding them into rules.
 
-- `${password}` — resolves to the connection's password from the configured secret backend
-- `${MY_VARIABLE}` — resolves to the value of the global variable `MY_VARIABLE` (defined in Menu → Tools → Variables)
-- Undefined variables remain as literal text (e.g., `${UNKNOWN}` is sent as-is)
-- If substitution fails, the raw response text is used as a fallback (with a warning in the log)
+Four placeholders are built in and come from the connection you are opening:
+
+- `${password}` — the connection's password, read from the configured **Password Source** at connection time. Nothing is written into the rule, so the response stays safe to export or sync.
+- `${username}` — the connection's Username, when it is set
+- `${host}` — the connection's Host
+- `${port}` — the connection's Port
+
+Everything else resolves by name against your global variables (Menu → Tools → Variables), so `${MY_VARIABLE}` picks up the value of `MY_VARIABLE`. For the connection being opened a built-in wins over a global of the same name.
+
+Behaviour worth knowing:
+
+- Undefined variables remain as literal text (e.g. `${UNKNOWN}` is sent as-is), and a warning naming them goes to the log. A `${password}` that stays literal means the connection has no Password Source configured.
+- Unlike a Custom Command, the response is typed straight into the session rather than passed to a shell, so a password containing `$`, `!`, `;` or any other shell metacharacter is sent unchanged.
+- A value containing a line break is rejected and the rule is skipped, because the newline would submit the answer before the rest of it was typed.
+- Escape sequences in the rule (`\n`, `\t`, `\\`) are expanded before substitution, so a backslash inside a resolved password is left alone.
+- A rule with **One-shot** enabled is discarded once it fires. A prompt that repeats — which is what a rejected password looks like — is handed back to you rather than answered again, since automatic retries are how an account gets locked out.
 
 **Example — multi-step login with variables:**
 
@@ -1726,7 +1738,9 @@ Groups can define Expect Rules and Post-login Scripts that are automatically inh
 
 > **Note:** Disabling the Automation switch shows a confirmation dialog — all rules and scripts will be cleared.
 
-> **Tip:** Responses support `${VARIABLE_NAME}` placeholders, resolved from your **global variables** at connection time. They are *not* resolved from the connection's own username or stored password — for credentials at a login prompt use [Automatic Login](#automatic-login-telnet--serial) instead, which reads the password straight from the configured secret backend and never puts it in a config file. Use the ➕ button next to the Response field to insert a placeholder without typing.
+> **Tip:** Responses support two kinds of placeholder, both resolved at connection time. Four come from the connection itself — `${password}` (read from the configured **Password Source**, never stored in the response), `${username}`, `${host}` and `${port}` — and the rest are your own **global variables** by name. For this connection a built-in wins over a global of the same name. Use the ➕ button next to the Response field to insert a placeholder without typing.
+>
+> `${password}` resolves only when the connection actually has a Password Source configured; when it does not, the rule is left untouched and a warning naming the variable goes to the log. A value containing a line break is rejected, because a newline would submit the answer early. At a *login* prompt on Telnet or Serial prefer [Automatic Login](#automatic-login-telnet--serial), which types the credentials without a rule at all; expect rules are the right tool for a later prompt such as `sudo`.
 
 **Configure Group Automation (CLI):**
 
@@ -1770,7 +1784,7 @@ rustconn-cli group show "Production"
 2. Enable Automation → click **From Template** → select **Sudo Password (SSH)**
 3. The template adds a rule: pattern `\[sudo\] password for \w+:` → response `${password}\n`
 4. Save the group
-5. All SSH connections in "Production Servers" now auto-respond to sudo prompts using their vault password
+5. All SSH connections in "Production Servers" now auto-respond to sudo prompts, each with its own password — `${password}` resolves per connection from that connection's Password Source, so one group rule covers the whole folder
 
 #### Sorting
 

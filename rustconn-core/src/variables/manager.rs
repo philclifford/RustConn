@@ -16,6 +16,20 @@ pub static VARIABLE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}").expect("VARIABLE_REGEX is a valid regex pattern")
 });
 
+/// Outcome of [`VariableManager::substitute_for_terminal_input`].
+///
+/// Carries the names that could not be resolved alongside the text, because a
+/// terminal answer that silently lost a reference is indistinguishable from a
+/// wrong one at the far end — the caller needs to be able to say which variable
+/// is missing (issue #257).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminalSubstitution {
+    /// The input with every *defined* `${...}` reference replaced by its value.
+    pub text: String,
+    /// Names nothing defined; still present as `${name}` in `text`.
+    pub unresolved: Vec<String>,
+}
+
 /// Variable manager for resolution and substitution
 ///
 /// Manages variables at different scopes and provides methods for:
@@ -412,6 +426,90 @@ impl VariableManager {
         Ok(result)
     }
 
+    // ========== Terminal-Input Substitution ==========
+
+    /// Substitutes variables in text that will be typed into a terminal.
+    ///
+    /// The result is written straight to a PTY rather than handed to a shell,
+    /// so a shell metacharacter is an ordinary character here and a password
+    /// containing `$`, `!` or `;` has to survive intact — which is why this
+    /// exists next to [`Self::substitute_for_command`] instead of reusing it
+    /// (issue #257). Only what would corrupt the exchange is rejected; see
+    /// [`Self::validate_terminal_value`].
+    ///
+    /// Undefined references are left verbatim and reported in
+    /// [`TerminalSubstitution::unresolved`], so a caller can name the missing
+    /// variable in a log line instead of silently sending an empty answer.
+    ///
+    /// # Errors
+    ///
+    /// Returns `VariableError::UnsafeValue` if a resolved value contains a null
+    /// byte, a line break or another control character, plus whatever
+    /// [`Self::resolve`] reports for a circular or too deeply nested reference.
+    pub fn substitute_for_terminal_input(
+        &self,
+        input: &str,
+        scope: VariableScope,
+    ) -> VariableResult<TerminalSubstitution> {
+        let refs = Self::parse_references(input)?;
+        let mut text = input.to_string();
+        let mut unresolved = Vec::new();
+
+        for var_name in &refs {
+            match self.resolve(var_name, scope) {
+                Ok(value) => {
+                    Self::validate_terminal_value(var_name, &value)?;
+                    let pattern = format!("${{{var_name}}}");
+                    text = text.replace(&pattern, &value);
+                }
+                // Undefined: keep the placeholder so the caller can report it.
+                Err(VariableError::Undefined(_)) => unresolved.push(var_name.clone()),
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(TerminalSubstitution { text, unresolved })
+    }
+
+    /// Validates that a resolved value can be typed into a terminal.
+    ///
+    /// Deliberately narrower than [`Self::validate_command_value`]: nothing is
+    /// being passed to a shell, so metacharacters are allowed. A line break is
+    /// not, because the caller sends the text to a PTY as a single answer and an
+    /// embedded newline would submit input the user never wrote — for a
+    /// credential prompt that means submitting a truncated secret and then
+    /// feeding the remainder to whatever asks next. Tab is kept: it is what a
+    /// field-by-field login sequence uses.
+    ///
+    /// # Errors
+    ///
+    /// Returns `VariableError::UnsafeValue` if the value contains a null byte,
+    /// `\n`, `\r`, or another control character.
+    fn validate_terminal_value(name: &str, value: &str) -> VariableResult<()> {
+        if value.contains('\0') {
+            return Err(VariableError::UnsafeValue {
+                name: name.to_string(),
+                reason: "contains null byte".to_string(),
+            });
+        }
+
+        if value.contains('\n') || value.contains('\r') {
+            return Err(VariableError::UnsafeValue {
+                name: name.to_string(),
+                reason: "contains newline characters".to_string(),
+            });
+        }
+
+        if value.chars().any(|c| c.is_control() && c != '\t') {
+            return Err(VariableError::UnsafeValue {
+                name: name.to_string(),
+                reason: "contains control characters".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
     /// Validates that a resolved variable value is safe for command arguments.
     ///
     /// Rejects values containing null bytes, newlines, carriage returns, and
@@ -541,6 +639,99 @@ mod tests {
             .substitute("plain text", VariableScope::Global)
             .unwrap();
         assert_eq!(result, "plain text");
+    }
+
+    // ===== Terminal-input substitution (issue #257) =====
+
+    #[test]
+    fn terminal_input_keeps_shell_metacharacters_in_a_password() {
+        // The value goes to a PTY, not to `sh -c`, so every one of the
+        // characters `validate_command_value` rejects must survive.
+        let mut manager = VariableManager::new();
+        manager.set_global(Variable::new("password", r"a;b|c&d`e$f(g)h<i>j!k"));
+
+        let out = manager
+            .substitute_for_terminal_input("${password}\n", VariableScope::Global)
+            .unwrap();
+
+        assert_eq!(out.text, "a;b|c&d`e$f(g)h<i>j!k\n");
+        assert!(out.unresolved.is_empty());
+    }
+
+    #[test]
+    fn terminal_input_rejects_a_value_with_a_line_break() {
+        // A newline inside the value would submit the answer early.
+        let mut manager = VariableManager::new();
+        manager.set_global(Variable::new("password", "first\nsecond"));
+
+        let err = manager
+            .substitute_for_terminal_input("${password}\n", VariableScope::Global)
+            .unwrap_err();
+
+        assert!(matches!(err, VariableError::UnsafeValue { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn terminal_input_reports_undefined_names_and_keeps_the_placeholder() {
+        let manager = create_test_manager();
+
+        let out = manager
+            .substitute_for_terminal_input("${password}\n", VariableScope::Global)
+            .unwrap();
+
+        // Not blanked: the caller has to be able to say what is missing.
+        assert_eq!(out.text, "${password}\n");
+        assert_eq!(out.unresolved, vec!["password".to_string()]);
+    }
+
+    #[test]
+    fn terminal_input_resolves_a_builtin_from_the_connection_scope() {
+        // How the automation path supplies ${password}: a connection-scoped
+        // built-in shadows a same-named global for that connection only.
+        let conn_id = Uuid::new_v4();
+        let mut manager = VariableManager::new();
+        manager.set_global(Variable::new("password", "global-value"));
+        manager.set_connection(conn_id, Variable::new_secret("password", "conn-value"));
+
+        let out = manager
+            .substitute_for_terminal_input("${password}\n", VariableScope::Connection(conn_id))
+            .unwrap();
+        assert_eq!(out.text, "conn-value\n");
+
+        let out = manager
+            .substitute_for_terminal_input("${password}\n", VariableScope::Global)
+            .unwrap();
+        assert_eq!(out.text, "global-value\n");
+    }
+
+    #[test]
+    fn terminal_input_leaves_text_without_references_alone() {
+        let manager = create_test_manager();
+
+        let out = manager
+            .substitute_for_terminal_input("yes\n", VariableScope::Global)
+            .unwrap();
+
+        assert_eq!(out.text, "yes\n");
+        assert!(out.unresolved.is_empty());
+    }
+
+    #[test]
+    fn terminal_input_allows_tab_but_not_other_control_characters() {
+        let mut manager = VariableManager::new();
+        manager.set_global(Variable::new("user", "ad\tmin"));
+        assert!(
+            manager
+                .substitute_for_terminal_input("${user}", VariableScope::Global)
+                .is_ok()
+        );
+
+        manager.set_global(Variable::new("user", "ad\u{7}min"));
+        assert!(
+            manager
+                .substitute_for_terminal_input("${user}", VariableScope::Global)
+                .is_err()
+        );
     }
 
     #[test]

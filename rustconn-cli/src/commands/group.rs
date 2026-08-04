@@ -511,16 +511,12 @@ fn cmd_group_remove_connection(
     Ok(())
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    reason = "edit accepts every editable group field via individual CLI flags; bundling \
-              into a struct would just duplicate the flag list and complicate Clap parsing"
-)]
 /// Fields a `group edit` invocation may change.
 ///
 /// Bundled into a struct because the command grew past the argument count that
-/// reads sensibly positionally — every field maps 1:1 to a `--flag`.
+/// reads sensibly positionally — every field maps 1:1 to a `--flag`. Every field
+/// is itself `Copy`, so the struct is passed by value rather than by reference.
+#[derive(Clone, Copy)]
 struct GroupEditFields<'a> {
     new_name: Option<&'a str>,
     parent: Option<&'a str>,
@@ -560,6 +556,11 @@ impl GroupEditFields<'_> {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one straight-line pass over every editable group field; splitting it would \
+              only move the same sequence of assignments behind extra call boundaries"
+)]
 fn cmd_group_edit(
     config_path: Option<&Path>,
     name: &str,

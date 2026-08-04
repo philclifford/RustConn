@@ -8,7 +8,7 @@
 
 mod manager;
 
-pub use manager::{VARIABLE_REGEX, VariableManager};
+pub use manager::{TerminalSubstitution, VARIABLE_REGEX, VariableManager};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;

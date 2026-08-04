@@ -170,6 +170,20 @@ impl ClipboardFormatInfo {
     /// File list format (`CF_HDROP`)
     pub const FILE_LIST: u32 = 15;
 
+    /// `FileGroupDescriptorW`, the registered format that carries the
+    /// `FILEGROUPDESCRIPTORW` blob for clipboard file transfer.
+    ///
+    /// Registered formats live in the 0xC000–0xFFFF range and are matched by
+    /// name, not by id — the id is ours to choose (MS-RDPECLIP 2.2.3.1 shows
+    /// 0xC079 in its own example). Announcing this blob under `CF_HDROP` (15)
+    /// instead, as we did before 0.19.12, made Windows read it as a `DROPFILES`
+    /// structure and fail the paste (issue #256).
+    pub const FILE_GROUP_DESCRIPTOR_W: u32 = 0xC0C4;
+    /// `FileContents`, the registered format the peer uses to stream file data
+    /// via File Contents Request/Response. Must be advertised alongside
+    /// `FileGroupDescriptorW` or the peer never asks for the bytes.
+    pub const FILE_CONTENTS: u32 = 0xC0C5;
+
     /// Creates a new clipboard format info
     #[must_use]
     pub const fn new(id: u32, name: Option<String>) -> Self {
@@ -821,6 +835,11 @@ pub enum RdpClientCommand {
     StoreLocalFiles {
         /// Local file paths in the same order as announced in FileGroupDescriptorW
         paths: Vec<std::path::PathBuf>,
+        /// The encoded `FILEGROUPDESCRIPTORW` blob, parked so that
+        /// `on_format_data_request` can answer the peer when it asks for the
+        /// listing. Sending it unprompted (as we did before 0.19.12) is not a
+        /// legal Format Data Response — the peer has to request it first.
+        descriptor: Vec<u8>,
     },
 }
 

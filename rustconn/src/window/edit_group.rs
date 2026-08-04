@@ -1041,6 +1041,9 @@ pub fn show_edit_group_dialog(
     // Info banner about variable substitution
     let variables_info = Label::builder()
         .label(i18n(
+            // See the note on the same string in dialogs::connection::automation_tab:
+            // accurate again as of issue #257, and kept byte-identical so the
+            // existing translations keep applying.
             "Responses support ${password}, ${username}, and ${VARIABLE_NAME} placeholders resolved at connection time",
         ))
         .wrap(true)

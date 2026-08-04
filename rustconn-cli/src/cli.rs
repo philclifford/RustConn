@@ -1319,6 +1319,11 @@ pub enum SnippetCommands {
 
 /// Group subcommands
 #[derive(Subcommand)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Clap derives the parser from the fields themselves, so `Edit`'s one-per-flag \
+              layout cannot be boxed away; the value is built once per process"
+)]
 pub enum GroupCommands {
     /// List all groups
     #[command(about = "List all connection groups")]
