@@ -799,33 +799,30 @@ msgid "Post-Disconnect Task"
 msgstr "Tarefa pós-desligação"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:251
-#, fuzzy
 msgid "Automatic Login"
-msgstr "Automatização"
+msgstr "Início de sessão automático"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:257
 msgid ""
 "Telnet and serial sessions log in by typing at the device's own prompts. SSH "
 "types only the password."
-msgstr ""
+msgstr "As sessões Telnet e série iniciam sessão escrevendo nas solicitações do dispositivo. O SSH escreve apenas a palavra-passe."
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:261
-#, fuzzy
 msgid "Username Prompt"
-msgstr "Nome de utilizador copiado"
+msgstr "Solicitação de nome de utilizador"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:263
 msgid "Expected text; empty detects login:, Username: and >>User name:"
-msgstr ""
+msgstr "Texto esperado; vazio deteta login:, Username: e >>User name:"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:269
-#, fuzzy
 msgid "Password Prompt"
-msgstr "A palavra-passe está vazia"
+msgstr "Solicitação de palavra-passe"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:271
 msgid "Expected text; empty detects Password: in every supported language"
-msgstr ""
+msgstr "Texto esperado; vazio deteta Password: em todos os idiomas suportados"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:295
 msgid "Run command before connecting"
@@ -6396,13 +6393,12 @@ msgid "Number of lines to keep in scrollback"
 msgstr "Número de linhas a manter no histórico de deslocação"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:356
-#, fuzzy
 msgid "Keep on reconnect"
-msgstr "Manter ligações"
+msgstr "Manter ao reconectar"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:357
 msgid "Preserve terminal output when a session reconnects"
-msgstr ""
+msgstr "Preservar a saída do terminal ao reconectar"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:363
 msgid "On output"
@@ -9370,9 +9366,8 @@ msgid "Failed to start '{}': {}"
 msgstr "Não foi possível iniciar “{}”: {}"
 
 #: rustconn/src/terminal/mod.rs:1947
-#, fuzzy
 msgid "Reconnected at {}"
-msgstr "Ligado a {}"
+msgstr "Reconectado às {}"
 
 #: rustconn/src/terminal/mod.rs:2128 rustconn/src/terminal/mod.rs:2183
 msgid "Auto-reconnecting…"
@@ -10036,7 +10031,7 @@ msgstr "Aberto no navegador"
 #: rustconn/src/window/edit_actions.rs:1183
 msgid ""
 "File managers cannot use a jump host. Enable \"SFTP via mc\" in Settings."
-msgstr ""
+msgstr "Os gestores de ficheiros não podem usar um jump host. Ative \"SFTP via mc\" nas Definições."
 
 #: rustconn/src/window/edit_dialogs.rs:200
 msgid "Error Updating Connection"

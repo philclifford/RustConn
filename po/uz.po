@@ -802,33 +802,30 @@ msgid "Post-Disconnect Task"
 msgstr "Uzilgandan keyingi vazifa"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:251
-#, fuzzy
 msgid "Automatic Login"
-msgstr "Avtomatlashtirish"
+msgstr "Avtomatik kirish"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:257
 msgid ""
 "Telnet and serial sessions log in by typing at the device's own prompts. SSH "
 "types only the password."
-msgstr ""
+msgstr "Telnet va ketma-ket seanslar qurilmaning o'z so'rovlariga yozib kiradi. SSH faqat parolni yozadi."
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:261
-#, fuzzy
 msgid "Username Prompt"
-msgstr "Foydalanuvchi nomi nusxalandi"
+msgstr "Foydalanuvchi nomi so'rovi"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:263
 msgid "Expected text; empty detects login:, Username: and >>User name:"
-msgstr ""
+msgstr "Kutilgan matn; bo'sh login:, Username: va >>User name: aniqlaydi"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:269
-#, fuzzy
 msgid "Password Prompt"
-msgstr "Parol bosh"
+msgstr "Parol so'rovi"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:271
 msgid "Expected text; empty detects Password: in every supported language"
-msgstr ""
+msgstr "Kutilgan matn; bo'sh barcha qo'llab-quvvatlanadigan tillarda Password: aniqlaydi"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:295
 msgid "Run command before connecting"
@@ -6412,13 +6409,12 @@ msgid "Number of lines to keep in scrollback"
 msgstr "Orqaga aylantirish buferida saqlanadigan qatorlar soni"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:356
-#, fuzzy
 msgid "Keep on reconnect"
-msgstr "Ulanishlarni saqlash"
+msgstr "Qayta ulanishda saqlash"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:357
 msgid "Preserve terminal output when a session reconnects"
-msgstr ""
+msgstr "Qayta ulanishda terminal chiqishini saqlash"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:363
 msgid "On output"
@@ -9400,9 +9396,8 @@ msgid "Failed to start '{}': {}"
 msgstr "«{}» ishga tushirib boʻlmadi: {}"
 
 #: rustconn/src/terminal/mod.rs:1947
-#, fuzzy
 msgid "Reconnected at {}"
-msgstr "{} ga ulandi"
+msgstr "{} da qayta ulandi"
 
 #: rustconn/src/terminal/mod.rs:2128 rustconn/src/terminal/mod.rs:2183
 msgid "Auto-reconnecting…"
@@ -10067,7 +10062,7 @@ msgstr "Brauzerda ochildi"
 #: rustconn/src/window/edit_actions.rs:1183
 msgid ""
 "File managers cannot use a jump host. Enable \"SFTP via mc\" in Settings."
-msgstr ""
+msgstr "Fayl menejerlari jump host ishlatib bo'lmaydi. Sozlamalarda \"SFTP mc orqali\" yoqing."
 
 #: rustconn/src/window/edit_dialogs.rs:200
 msgid "Error Updating Connection"

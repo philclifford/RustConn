@@ -788,33 +788,30 @@ msgid "Post-Disconnect Task"
 msgstr "断开后任务"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:251
-#, fuzzy
 msgid "Automatic Login"
-msgstr "自动化"
+msgstr "自动登录"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:257
 msgid ""
 "Telnet and serial sessions log in by typing at the device's own prompts. SSH "
 "types only the password."
-msgstr ""
+msgstr "Telnet 和串行会话通过在设备提示符处输入来登录。SSH 仅输入密码。"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:261
-#, fuzzy
 msgid "Username Prompt"
-msgstr "用户名已复制"
+msgstr "用户名提示"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:263
 msgid "Expected text; empty detects login:, Username: and >>User name:"
-msgstr ""
+msgstr "预期文本；留空则检测 login:、Username: 和 >>User name:"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:269
-#, fuzzy
 msgid "Password Prompt"
-msgstr "密码为空"
+msgstr "密码提示"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:271
 msgid "Expected text; empty detects Password: in every supported language"
-msgstr ""
+msgstr "预期文本；留空则检测所有支持语言的 Password:"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:295
 msgid "Run command before connecting"
@@ -6299,13 +6296,12 @@ msgid "Number of lines to keep in scrollback"
 msgstr "滚动缓冲区保留的行数"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:356
-#, fuzzy
 msgid "Keep on reconnect"
-msgstr "保留连接"
+msgstr "重新连接时保留"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:357
 msgid "Preserve terminal output when a session reconnects"
-msgstr ""
+msgstr "会话重新连接时保留终端输出"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:363
 msgid "On output"
@@ -9225,9 +9221,8 @@ msgid "Failed to start '{}': {}"
 msgstr "无法启动 '{}': {}"
 
 #: rustconn/src/terminal/mod.rs:1947
-#, fuzzy
 msgid "Reconnected at {}"
-msgstr "已连接到 {}"
+msgstr "已于 {} 重新连接"
 
 #: rustconn/src/terminal/mod.rs:2128 rustconn/src/terminal/mod.rs:2183
 msgid "Auto-reconnecting…"
@@ -9869,7 +9864,7 @@ msgstr "已在浏览器中打开"
 #: rustconn/src/window/edit_actions.rs:1183
 msgid ""
 "File managers cannot use a jump host. Enable \"SFTP via mc\" in Settings."
-msgstr ""
+msgstr "文件管理器无法使用跳板机。请在设置中启用\"通过 mc 的 SFTP\"。"
 
 #: rustconn/src/window/edit_dialogs.rs:200
 msgid "Error Updating Connection"

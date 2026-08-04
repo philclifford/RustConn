@@ -799,33 +799,30 @@ msgid "Post-Disconnect Task"
 msgstr "Úloha po odpojení"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:251
-#, fuzzy
 msgid "Automatic Login"
-msgstr "Automatizácia"
+msgstr "Automatické prihlásenie"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:257
 msgid ""
 "Telnet and serial sessions log in by typing at the device's own prompts. SSH "
 "types only the password."
-msgstr ""
+msgstr "Relácie Telnet a sériové sa prihlasujú zadaním do výziev zariadenia. SSH zadáva iba heslo."
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:261
-#, fuzzy
 msgid "Username Prompt"
-msgstr "Používateľské meno skopírované"
+msgstr "Výzva na meno používateľa"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:263
 msgid "Expected text; empty detects login:, Username: and >>User name:"
-msgstr ""
+msgstr "Očakávaný text; prázdne deteguje login:, Username: a >>User name:"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:269
-#, fuzzy
 msgid "Password Prompt"
-msgstr "Heslo je prázdne"
+msgstr "Výzva na heslo"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:271
 msgid "Expected text; empty detects Password: in every supported language"
-msgstr ""
+msgstr "Očakávaný text; prázdne deteguje Password: vo všetkých podporovaných jazykoch"
 
 #: rustconn/src/dialogs/connection/automation_tab.rs:295
 msgid "Run command before connecting"
@@ -6386,13 +6383,12 @@ msgid "Number of lines to keep in scrollback"
 msgstr "Počet riadkov v zásobníku posúvania"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:356
-#, fuzzy
 msgid "Keep on reconnect"
-msgstr "Ponechať pripojenia"
+msgstr "Zachovať pri opätovnom pripojení"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:357
 msgid "Preserve terminal output when a session reconnects"
-msgstr ""
+msgstr "Zachovať výstup terminálu pri opätovnom pripojení"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:363
 msgid "On output"
@@ -9353,9 +9349,8 @@ msgid "Failed to start '{}': {}"
 msgstr "Nepodarilo sa spustiť „{}“: {}"
 
 #: rustconn/src/terminal/mod.rs:1947
-#, fuzzy
 msgid "Reconnected at {}"
-msgstr "Pripojené k {}"
+msgstr "Znovu pripojené o {}"
 
 #: rustconn/src/terminal/mod.rs:2128 rustconn/src/terminal/mod.rs:2183
 msgid "Auto-reconnecting…"
@@ -10014,7 +10009,7 @@ msgstr "Otvorené v prehliadači"
 #: rustconn/src/window/edit_actions.rs:1183
 msgid ""
 "File managers cannot use a jump host. Enable \"SFTP via mc\" in Settings."
-msgstr ""
+msgstr "Správcovia súborov nemôžu použiť jump host. Povoľte \"SFTP cez mc\" v Nastaveniach."
 
 #: rustconn/src/window/edit_dialogs.rs:200
 msgid "Error Updating Connection"
