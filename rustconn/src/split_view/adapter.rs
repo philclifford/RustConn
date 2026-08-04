@@ -69,6 +69,12 @@ pub struct SplitViewAdapter {
     /// This allows the bridge to focus the panel and trigger the close action
     /// when the user clicks the close button on an empty panel.
     close_panel_callback: Rc<RefCell<Option<SelectTabCallback>>>,
+    /// Callback for "Remove from Split" clicks on an occupied panel.
+    ///
+    /// Symmetric to `close_panel_callback`: the bridge focuses the panel and
+    /// then activates the window action that returns the panel's session to its
+    /// own tab, keeping the connection alive (issue #252).
+    pop_panel_callback: Rc<RefCell<Option<SelectTabCallback>>>,
 }
 
 impl std::fmt::Debug for SplitViewAdapter {
@@ -82,6 +88,7 @@ impl std::fmt::Debug for SplitViewAdapter {
             .field("last_drop_outcome", &self.last_drop_outcome)
             .field("select_tab_callback", &"<callback>")
             .field("close_panel_callback", &"<callback>")
+            .field("pop_panel_callback", &"<callback>")
             .finish()
     }
 }
@@ -104,6 +111,7 @@ impl SplitViewAdapter {
             last_drop_outcome: Rc::new(RefCell::new(None)),
             select_tab_callback: Rc::new(RefCell::new(None)),
             close_panel_callback: Rc::new(RefCell::new(None)),
+            pop_panel_callback: Rc::new(RefCell::new(None)),
         };
 
         adapter.rebuild_widgets();
@@ -127,6 +135,7 @@ impl SplitViewAdapter {
             last_drop_outcome: Rc::new(RefCell::new(None)),
             select_tab_callback: Rc::new(RefCell::new(None)),
             close_panel_callback: Rc::new(RefCell::new(None)),
+            pop_panel_callback: Rc::new(RefCell::new(None)),
         };
 
         adapter.rebuild_widgets();
@@ -212,6 +221,22 @@ impl SplitViewAdapter {
         F: Fn(PanelId) + 'static,
     {
         *self.close_panel_callback.borrow_mut() = Some(Rc::new(callback));
+    }
+
+    /// Sets a callback for "Remove from Split" clicks on an occupied panel.
+    ///
+    /// Invoked with the panel ID when the user asks for the panel's session to
+    /// leave the split without being closed. The callback should focus the panel
+    /// and trigger the corresponding window action (issue #252).
+    ///
+    /// # Arguments
+    ///
+    /// * `callback` - A closure that receives the `PanelId` when the button is clicked
+    pub fn set_pop_panel_callback<F>(&self, callback: F)
+    where
+        F: Fn(PanelId) + 'static,
+    {
+        *self.pop_panel_callback.borrow_mut() = Some(Rc::new(callback));
     }
 
     /// Returns a reference to the underlying model.
@@ -655,34 +680,14 @@ impl SplitViewAdapter {
             widget.set_hexpand(true);
             widget.set_vexpand(true);
 
-            // Overlay a close (×) button in the top-right corner so a session
-            // shown in a split pane can be closed directly — a split guest has no
-            // standalone tab. The button reuses the empty-panel close callback,
-            // which focuses this panel and triggers `win.close-pane` (which now
-            // terminates the focused pane's session).
+            // Overlay the panel's corner buttons so a session shown in a split
+            // pane can be acted on directly — a split guest has no standalone
+            // tab to right-click.
             let overlay = Overlay::new();
             overlay.set_hexpand(true);
             overlay.set_vexpand(true);
             overlay.set_child(Some(widget));
-
-            let close_button = Button::builder()
-                .icon_name("window-close-symbolic")
-                .halign(Align::End)
-                .valign(Align::Start)
-                .tooltip_text(i18n("Close session"))
-                .build();
-            close_button.add_css_class("flat");
-            close_button.add_css_class("circular");
-            close_button.add_css_class("panel-close-button");
-            close_button
-                .update_property(&[gtk4::accessible::Property::Label(&i18n("Close session"))]);
-            let close_callback_ref = Rc::clone(&self.close_panel_callback);
-            close_button.connect_clicked(move |_| {
-                if let Some(ref callback) = *close_callback_ref.borrow() {
-                    callback(panel_id);
-                }
-            });
-            overlay.add_overlay(&close_button);
+            overlay.add_overlay(&self.panel_corner_buttons(panel_id));
 
             panel_widget.append(&overlay);
         } else {
@@ -692,6 +697,59 @@ impl SplitViewAdapter {
                 self.panel_widgets.borrow().keys().collect::<Vec<_>>()
             );
         }
+    }
+
+    /// Builds the corner button strip overlaid on an occupied panel.
+    ///
+    /// Two actions, ordered least destructive first per the GNOME HIG:
+    /// "Remove from Split" hands the session back to its own tab with the
+    /// connection intact (issue #252), and the close (×) button terminates it.
+    /// Both go through the bridge callbacks, which focus this panel before
+    /// activating the matching window action — the actions operate on the
+    /// focused pane, and a click on a button never reaches the panel's own
+    /// focus gesture.
+    fn panel_corner_buttons(&self, panel_id: PanelId) -> GtkBox {
+        let buttons = GtkBox::new(Orientation::Horizontal, 0);
+        buttons.set_halign(Align::End);
+        buttons.set_valign(Align::Start);
+
+        let pop_button = Button::builder()
+            .icon_name("tab-new-symbolic")
+            .tooltip_text(i18n(
+                "Remove this session from the split and show it in its own tab",
+            ))
+            .build();
+        pop_button.add_css_class("flat");
+        pop_button.add_css_class("circular");
+        pop_button.add_css_class("panel-close-button");
+        pop_button.update_property(&[gtk4::accessible::Property::Label(&i18n(
+            "Remove from Split",
+        ))]);
+        let pop_callback_ref = Rc::clone(&self.pop_panel_callback);
+        pop_button.connect_clicked(move |_| {
+            if let Some(ref callback) = *pop_callback_ref.borrow() {
+                callback(panel_id);
+            }
+        });
+        buttons.append(&pop_button);
+
+        let close_button = Button::builder()
+            .icon_name("window-close-symbolic")
+            .tooltip_text(i18n("Close session"))
+            .build();
+        close_button.add_css_class("flat");
+        close_button.add_css_class("circular");
+        close_button.add_css_class("panel-close-button");
+        close_button.update_property(&[gtk4::accessible::Property::Label(&i18n("Close session"))]);
+        let close_callback_ref = Rc::clone(&self.close_panel_callback);
+        close_button.connect_clicked(move |_| {
+            if let Some(ref callback) = *close_callback_ref.borrow() {
+                callback(panel_id);
+            }
+        });
+        buttons.append(&close_button);
+
+        buttons
     }
 
     /// Clears the content of a panel and shows the empty placeholder.
@@ -999,67 +1057,38 @@ impl SplitViewAdapter {
         // Create action group for the panel
         let action_group = gio::SimpleActionGroup::new();
 
-        // Create "close" action
+        // Both items delegate to the bridge callbacks, exactly like the panel's
+        // corner buttons: the callback focuses this panel and then activates the
+        // window action, which owns the full teardown (colour release, UUID maps,
+        // widget reparenting, `session_split_bridges` bookkeeping).
+        //
+        // They used to mutate `SplitLayoutModel` directly and set
+        // `needs_rebuild`, but nothing outside this file ever polled that flag
+        // (`check_and_rebuild` had no callers), so the model desynchronised from
+        // both the widget tree and the bridge's maps and neither item did
+        // anything visible — the cause of issue #252's "Move to New Tab" doing
+        // nothing.
+        let pop_action = gio::SimpleAction::new("move-to-tab", None);
+        let pop_callback_ref = Rc::clone(&self.pop_panel_callback);
+        pop_action.connect_activate(move |_, _| {
+            tracing::debug!(
+                "Context menu: Remove from Split for panel {panel_id} with session {session_id}"
+            );
+            if let Some(ref callback) = *pop_callback_ref.borrow() {
+                callback(panel_id);
+            }
+        });
+        action_group.add_action(&pop_action);
+
         let close_action = gio::SimpleAction::new("close", None);
-        let model_for_close = Rc::clone(&self.model);
-        let needs_rebuild_for_close = Rc::clone(&self.needs_rebuild);
+        let close_callback_ref = Rc::clone(&self.close_panel_callback);
         close_action.connect_activate(move |_, _| {
             tracing::debug!("Context menu: Close Connection for panel {panel_id}");
-            match model_for_close.borrow_mut().remove_panel(panel_id) {
-                Ok(session) => {
-                    if let Some(session) = session {
-                        tracing::debug!("Removed panel {panel_id} with session {session}");
-                    } else {
-                        tracing::debug!("Removed empty panel {panel_id}");
-                    }
-                    *needs_rebuild_for_close.borrow_mut() = true;
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to close panel {panel_id}: {e}");
-                }
+            if let Some(ref callback) = *close_callback_ref.borrow() {
+                callback(panel_id);
             }
         });
         action_group.add_action(&close_action);
-
-        // Create "move-to-tab" action
-        let move_action = gio::SimpleAction::new("move-to-tab", None);
-        let model_for_move = Rc::clone(&self.model);
-        let needs_rebuild_for_move = Rc::clone(&self.needs_rebuild);
-        let last_drop_outcome_for_move = Rc::clone(&self.last_drop_outcome);
-        move_action.connect_activate(move |_, _| {
-            tracing::debug!(
-                "Context menu: Move to New Tab for panel {panel_id} with session {session_id}"
-            );
-
-            // Remove the panel and get the session
-            match model_for_move.borrow_mut().remove_panel(panel_id) {
-                Ok(Some(removed_session)) => {
-                    tracing::debug!(
-                        "Extracted session {removed_session} from panel {panel_id} for new tab"
-                    );
-
-                    // Create a drop outcome to signal that a new tab should be created
-                    // The UI layer will handle this via take_last_drop_outcome()
-                    let outcome = super::types::DropOutcome::new(
-                        rustconn_core::split::DropResult::Placed,
-                        super::types::SourceCleanup::None,
-                        super::types::EvictionAction::CreateTab {
-                            evicted_session: removed_session,
-                        },
-                        removed_session,
-                    );
-                    *last_drop_outcome_for_move.borrow_mut() = Some(outcome);
-                    *needs_rebuild_for_move.borrow_mut() = true;
-                }
-                Ok(None) => {
-                    tracing::warn!("Panel {panel_id} was empty, nothing to move");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to extract session from panel {panel_id}: {e}");
-                }
-            }
-        });
-        action_group.add_action(&move_action);
 
         // Insert the action group into the widget
         widget.insert_action_group("panel", Some(&action_group));
@@ -1074,10 +1103,12 @@ impl SplitViewAdapter {
             // Close any previously open context menu (sidebar or split view)
             crate::sidebar_ui::close_active_popover();
 
-            // Create the context menu model
+            // Create the context menu model. HIG order: the non-destructive
+            // action first, the destructive one last.
             let menu = gio::Menu::new();
+            menu.append(Some(&i18n("Remove from Split")), Some("panel.move-to-tab"));
+            menu.append(Some(&i18n("Remove Split")), Some("win.unsplit"));
             menu.append(Some(&i18n("Close Connection")), Some("panel.close"));
-            menu.append(Some(&i18n("Move to New Tab")), Some("panel.move-to-tab"));
 
             // Create popover dynamically for this click
             let popover = gtk4::PopoverMenu::from_model(Some(&menu));

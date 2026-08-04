@@ -315,6 +315,21 @@ pub fn default_keybindings() -> Vec<KeybindingDef> {
             "Close Pane",
             SplitView,
         ),
+        // Counterpart of Close Pane that keeps the session alive (issue #252):
+        // the pane's session goes back to its own tab instead of being closed.
+        KeybindingDef::new(
+            "win.pop-pane-to-tab",
+            "<Control><Shift>r",
+            "Remove from Split",
+            SplitView,
+        ),
+        // Removes the whole layout, returning every session to its own tab.
+        KeybindingDef::new(
+            "win.unsplit",
+            "<Control><Shift>j",
+            "Remove Split",
+            SplitView,
+        ),
         KeybindingDef::new(
             "win.focus-next-pane",
             "<Control>grave",

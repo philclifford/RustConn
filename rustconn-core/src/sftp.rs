@@ -254,7 +254,7 @@ fn home_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, O
 /// URI that opens where the user actually has access, matching `ssh` (a login
 /// shell starts in `$HOME`).
 ///
-/// Reuses the connection's proxy-jump, port and identity file. Runs a
+/// Reuses the connection's jump-host chain, port and identity file. Runs a
 /// non-interactive `pwd` with `BatchMode=yes` (so it never prompts and cannot
 /// hang waiting for a password), a short `ConnectTimeout`, and keepalives to
 /// bound a stall after connect. The outcome — success *or* failure — is
@@ -267,7 +267,11 @@ fn home_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, O
 /// Returns `None` if the connection is not SSH, `ssh` is unavailable,
 /// non-interactive auth is not possible, or the output is not an absolute path.
 #[must_use]
-pub fn resolve_remote_home(connection: &Connection, groups: &[ConnectionGroup]) -> Option<String> {
+pub fn resolve_remote_home(
+    connection: &Connection,
+    connections: &[Connection],
+    groups: &[ConnectionGroup],
+) -> Option<String> {
     if !matches!(
         connection.protocol_config,
         crate::models::ProtocolConfig::Ssh(_) | crate::models::ProtocolConfig::Sftp(_)
@@ -299,8 +303,12 @@ pub fn resolve_remote_home(connection: &Connection, groups: &[ConnectionGroup]) 
         .arg("-o")
         .arg("ServerAliveCountMax=2");
 
+    // Covers both bastion forms: the free-text `proxy_jump` and a jump host
+    // picked from the connection list (`jump_host_id`). Only the former used to
+    // be honoured here, so the probe could not reach a host behind a
+    // picker-selected bastion and the browser fell back to the server root.
     if let Some(proxy_jump) =
-        crate::connection::ssh_inheritance::resolve_ssh_proxy_jump(connection, groups)
+        crate::connection::resolve_proxy_jump_value(connection, connections, groups)
     {
         cmd.arg("-J").arg(proxy_jump);
     }
@@ -406,6 +414,7 @@ pub fn resolve_remote_home(connection: &Connection, groups: &[ConnectionGroup]) 
 #[must_use]
 pub fn build_sftp_browser_uri(
     connection: &Connection,
+    connections: &[Connection],
     groups: &[ConnectionGroup],
 ) -> Option<String> {
     if !matches!(
@@ -421,7 +430,7 @@ pub fn build_sftp_browser_uri(
     {
         Some(explicit.to_string())
     } else {
-        resolve_remote_home(connection, groups)
+        resolve_remote_home(connection, connections, groups)
     };
 
     Some(build_sftp_uri(
@@ -436,13 +445,15 @@ pub fn build_sftp_browser_uri(
 ///
 /// Returns `None` if the connection is not SSH.
 ///
-/// Uses SSH inheritance resolution for proxy jump settings.
+/// Resolves the full jump-host chain — a free-text `proxy_jump`, one inherited
+/// from a group, and a jump host referenced by `jump_host_id` — into `-J`.
 ///
 /// The returned `Vec` has the program name as the first element,
 /// followed by arguments: `["sftp", "-P", "port", "user@host"]`.
 #[must_use]
 pub fn build_sftp_command(
     connection: &Connection,
+    connections: &[Connection],
     groups: &[ConnectionGroup],
 ) -> Option<Vec<String>> {
     if !matches!(
@@ -454,9 +465,10 @@ pub fn build_sftp_command(
 
     let mut cmd = vec!["sftp".to_string()];
 
-    // Add proxy jump from inheritance chain if available
+    // Full bastion chain: the free-text `proxy_jump`, a group-inherited one, and
+    // a jump host picked from the connection list.
     if let Some(proxy_jump) =
-        crate::connection::ssh_inheritance::resolve_ssh_proxy_jump(connection, groups)
+        crate::connection::resolve_proxy_jump_value(connection, connections, groups)
     {
         cmd.push("-J".to_string());
         cmd.push(proxy_jump);
@@ -749,15 +761,17 @@ pub fn get_downloads_dir() -> String {
 ///
 /// Returns `None` if the connection is not SSH.
 ///
-/// Uses mc's FISH VFS: `["mc", "<downloads>", "sh://user@host:port"]`.
-/// Left panel shows XDG Downloads directory, right panel shows
-/// remote via FISH. Requires the SSH key to be loaded in
-/// ssh-agent beforehand.
+/// Uses mc's shell VFS: `["mc", "-g", "<downloads>", "sh://user@host:port/~"]`.
+/// Left panel shows the XDG Downloads directory, right panel the remote host.
+/// Requires the SSH key to be loaded in ssh-agent beforehand.
+///
+/// The URI carries only user, host and port because that is all mc's `sh://`
+/// syntax accepts. Everything else the connection configures — jump host,
+/// identity file, `HostKeyAlias`, custom options — reaches the `ssh` that mc
+/// spawns through [`crate::mc_ssh::prepare_mc_ssh_env`], which the caller must
+/// apply to the mc process environment.
 #[must_use]
-pub fn build_mc_sftp_command(
-    connection: &Connection,
-    _groups: &[ConnectionGroup],
-) -> Option<Vec<String>> {
+pub fn build_mc_sftp_command(connection: &Connection) -> Option<Vec<String>> {
     if !matches!(
         connection.protocol_config,
         crate::models::ProtocolConfig::Ssh(_) | crate::models::ProtocolConfig::Sftp(_)
@@ -804,64 +818,11 @@ pub fn build_mc_sftp_command(
     Some(vec![mc_binary, "-g".to_string(), local_dir, target])
 }
 
-/// Ensures an SSH wrapper exists for mc FISH connections in Flatpak.
-///
-/// mc's FISH protocol spawns SSH internally. In Flatpak, `~/.ssh` is
-/// read-only (host mount), so SSH cannot write to `known_hosts` and
-/// prompts for host key confirmation every time.
-///
-/// This function creates a thin `ssh` wrapper script that injects
-/// `-o StrictHostKeyChecking=accept-new` and the writable
-/// `UserKnownHostsFile` before delegating to `/usr/bin/ssh`.
-/// The wrapper directory is returned so callers can prepend it to
-/// `$PATH` for the mc process.
-///
-/// Returns `None` outside Flatpak or if the wrapper cannot be written.
-///
-/// # Errors
-///
-/// Returns `None` if the wrapper script cannot be created.
-#[must_use]
-pub fn ensure_flatpak_mc_ssh_wrapper() -> Option<String> {
-    let ssh_dir = crate::flatpak::get_flatpak_ssh_dir()?;
-    let known_hosts = crate::flatpak::get_flatpak_known_hosts_path()?;
-
-    // Place the wrapper in a dedicated directory so it doesn't collide
-    // with other CLI tools. This dir will be prepended to PATH for mc.
-    let wrapper_dir = ssh_dir.join("bin");
-    if !wrapper_dir.exists() {
-        let _ = std::fs::create_dir_all(&wrapper_dir);
-    }
-
-    let wrapper_path = wrapper_dir.join("ssh");
-    let wrapper_content = format!(
-        "#!/bin/sh\n\
-         # Auto-generated by RustConn for Flatpak mc FISH connections.\n\
-         # Injects writable known_hosts so mc doesn't prompt for host keys.\n\
-         exec /usr/bin/ssh \\\n  \
-         -o StrictHostKeyChecking=accept-new \\\n  \
-         -o \"UserKnownHostsFile={}\" \\\n  \
-         \"$@\"\n",
-        known_hosts.display()
-    );
-
-    if std::fs::write(&wrapper_path, &wrapper_content).is_err() {
-        tracing::warn!(
-            path = %wrapper_path.display(),
-            "Failed to write SSH wrapper for mc"
-        );
-        return None;
-    }
-
-    // Make executable (0755)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&wrapper_path, std::fs::Permissions::from_mode(0o755));
-    }
-
-    Some(wrapper_dir.to_string_lossy().into_owned())
-}
+// The Flatpak-only `ensure_flatpak_mc_ssh_wrapper` used to live here. It wrote a
+// PATH-shadowing `ssh` wrapper that injected nothing but a writable
+// `known_hosts`, which left every other SSH option — a jump host above all
+// (issue #255) — unreachable from mc. `crate::mc_ssh` generalises the same trick:
+// it generates a full `ssh_config` per session and applies on every platform.
 
 /// Wraps a string in single quotes for safe use in `sh -c` commands.
 ///
@@ -946,7 +907,7 @@ mod tests {
             Connection::new_ssh("Test".to_string(), "server.example.com".to_string(), 22);
         conn.username = Some("admin".to_string());
 
-        let cmd = build_sftp_command(&conn, &[]).unwrap();
+        let cmd = build_sftp_command(&conn, &[], &[]).unwrap();
         assert_eq!(cmd, vec!["sftp", "admin@server.example.com"]);
     }
 
@@ -955,14 +916,41 @@ mod tests {
         let mut conn = Connection::new_ssh("Test".to_string(), "host.local".to_string(), 2222);
         conn.username = Some("root".to_string());
 
-        let cmd = build_sftp_command(&conn, &[]).unwrap();
+        let cmd = build_sftp_command(&conn, &[], &[]).unwrap();
         assert_eq!(cmd, vec!["sftp", "-P", "2222", "root@host.local"]);
     }
 
     #[test]
     fn test_build_sftp_command_non_ssh() {
         let conn = Connection::new_rdp("Test".to_string(), "server.example.com".to_string(), 3389);
-        assert!(build_sftp_command(&conn, &[]).is_none());
+        assert!(build_sftp_command(&conn, &[], &[]).is_none());
+    }
+
+    #[test]
+    fn test_build_sftp_command_includes_referenced_jump_host() {
+        // A jump host chosen in the connection editor is stored as a reference,
+        // not as a `proxy_jump` string; `sftp` used to miss it entirely.
+        let mut bastion =
+            Connection::new_ssh("Bastion".to_string(), "jump.example.com".to_string(), 22);
+        bastion.username = Some("ops".to_string());
+
+        let mut conn =
+            Connection::new_ssh("Test".to_string(), "target.example.com".to_string(), 22);
+        conn.username = Some("me".to_string());
+        if let crate::models::ProtocolConfig::Ssh(ref mut cfg) = conn.protocol_config {
+            cfg.jump_host_id = Some(bastion.id);
+        }
+
+        let cmd = build_sftp_command(&conn, std::slice::from_ref(&bastion), &[]).unwrap();
+        assert_eq!(
+            cmd,
+            vec![
+                "sftp",
+                "-J",
+                "ops@jump.example.com",
+                "me@target.example.com"
+            ]
+        );
     }
 
     #[test]
@@ -987,7 +975,7 @@ mod tests {
             Connection::new_ssh("Test".to_string(), "server.example.com".to_string(), 22);
         conn.username = Some("admin".to_string());
 
-        let cmd = build_mc_sftp_command(&conn, &[]).unwrap();
+        let cmd = build_mc_sftp_command(&conn).unwrap();
         // Direct argv: ["mc", "-g", <downloads>, "sh://user@host/~"]
         assert_eq!(cmd.len(), 4);
         assert_eq!(cmd[0], "mc");
@@ -1000,7 +988,7 @@ mod tests {
         let mut conn = Connection::new_ssh("Test".to_string(), "host.local".to_string(), 2222);
         conn.username = Some("root".to_string());
 
-        let cmd = build_mc_sftp_command(&conn, &[]).unwrap();
+        let cmd = build_mc_sftp_command(&conn).unwrap();
         assert_eq!(cmd.len(), 4);
         assert_eq!(cmd[0], "mc");
         assert_eq!(cmd[1], "-g");
@@ -1010,7 +998,7 @@ mod tests {
     #[test]
     fn test_build_mc_sftp_command_non_ssh() {
         let conn = Connection::new_rdp("Test".to_string(), "server.example.com".to_string(), 3389);
-        assert!(build_mc_sftp_command(&conn, &[]).is_none());
+        assert!(build_mc_sftp_command(&conn).is_none());
     }
 
     #[test]

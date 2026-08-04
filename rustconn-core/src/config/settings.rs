@@ -131,6 +131,15 @@ pub struct TerminalSettings {
     /// Empty string means use the default shell.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub local_shell_command: String,
+    /// Keep the terminal scrollback when a session reconnects in place.
+    ///
+    /// When `true` (default), the output of the previous session stays readable
+    /// after a reconnect — the common case being a session dropped by an idle
+    /// timeout, where the user still wants to consult what was on screen
+    /// (issue #253). A dim separator marks where the new session begins.
+    /// When `false`, the terminal is cleared on reconnect.
+    #[serde(default = "default_keep_history_on_reconnect")]
+    pub keep_history_on_reconnect: bool,
     /// Automatically close the tab when the session exits cleanly (exit code 0).
     ///
     /// When `true`, SSH/Telnet/Serial sessions that terminate with exit code 0
@@ -208,6 +217,10 @@ const fn default_show_scrollbar() -> bool {
     true
 }
 
+const fn default_keep_history_on_reconnect() -> bool {
+    true
+}
+
 impl Default for TerminalSettings {
     fn default() -> Self {
         Self {
@@ -227,6 +240,7 @@ impl Default for TerminalSettings {
             copy_on_select: false,
             show_scrollbar: default_show_scrollbar(),
             local_shell_command: String::new(),
+            keep_history_on_reconnect: default_keep_history_on_reconnect(),
             close_on_clean_exit: false,
             option_is_meta: false,
         }

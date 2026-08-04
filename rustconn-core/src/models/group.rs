@@ -91,6 +91,14 @@ pub struct ConnectionGroup {
     /// Connections with empty `automation.post_login_scripts` inherit from their group chain.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub post_login_scripts: Vec<String>,
+    /// Expected text of the username prompt, for inheritance by child connections.
+    /// Connections without their own `automation.username_prompt` inherit from
+    /// their group chain (issue #254).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username_prompt: Option<String>,
+    /// Expected text of the password prompt, for inheritance by child connections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_prompt: Option<String>,
 }
 
 /// Default `updated_at` for groups written before edit-tracking existed.
@@ -132,6 +140,8 @@ impl ConnectionGroup {
             last_synced_at: None,
             expect_rules: Vec::new(),
             post_login_scripts: Vec::new(),
+            username_prompt: None,
+            password_prompt: None,
         }
     }
 
@@ -163,6 +173,8 @@ impl ConnectionGroup {
             last_synced_at: None,
             expect_rules: Vec::new(),
             post_login_scripts: Vec::new(),
+            username_prompt: None,
+            password_prompt: None,
         }
     }
 

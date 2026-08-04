@@ -73,6 +73,8 @@ fn create_test_groups(count: usize) -> Vec<ConnectionGroup> {
             last_synced_at: None,
             expect_rules: Vec::new(),
             post_login_scripts: Vec::new(),
+            username_prompt: None,
+            password_prompt: None,
         })
         .collect()
 }

@@ -21,7 +21,7 @@ mod adw_dialogs;
 mod backend_missing;
 mod cluster;
 mod command_palette;
-mod connection;
+pub(crate) mod connection;
 pub mod connection_wizard;
 mod export;
 mod flatpak_components;

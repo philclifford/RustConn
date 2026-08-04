@@ -58,11 +58,14 @@ impl AutomationSession {
     pub fn new(terminal: Terminal, rules: Vec<ExpectRule>) -> Self {
         tracing::info!("AutomationSession: Created with {} rules", rules.len());
         for rule in &rules {
+            // The response is deliberately NOT logged, only its length: a rule
+            // may answer a credential prompt, and `tracing` output is not run
+            // through the redaction that session logs get (`sanitize_output`).
             tracing::info!(
-                "AutomationSession: Rule id={}, pattern='{}', response='{}', priority={}, one_shot={}",
+                "AutomationSession: Rule id={}, pattern='{}', response_len={}, priority={}, one_shot={}",
                 rule.id,
                 rule.pattern,
-                rule.response.escape_debug(),
+                rule.response.len(),
                 rule.priority,
                 rule.one_shot,
             );
@@ -245,9 +248,12 @@ impl AutomationSession {
                 );
 
                 let response = Self::process_escapes(&rule.response);
+                // Length only — see the note in `new()`: a response may carry a
+                // password, and tracing output is not redacted.
                 tracing::info!(
-                    "AutomationSession: Sending response: '{}'",
-                    response.escape_debug()
+                    "AutomationSession: Sending response for rule id={} ({} bytes)",
+                    rule.id,
+                    response.len()
                 );
 
                 matches.push((rule.id, response, rule.one_shot));

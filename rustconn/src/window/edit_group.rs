@@ -962,7 +962,10 @@ pub fn show_edit_group_dialog(
 
     // === Automation Section (Expect Rules + Post-login Scripts) ===
     let automation_content = make_page_content();
-    let has_automation = !group.expect_rules.is_empty() || !group.post_login_scripts.is_empty();
+    let has_automation = !group.expect_rules.is_empty()
+        || !group.post_login_scripts.is_empty()
+        || group.username_prompt.is_some()
+        || group.password_prompt.is_some();
 
     let automation_expander = adw::ExpanderRow::builder()
         .title(i18n("Automation"))
@@ -1017,6 +1020,17 @@ pub fn show_edit_group_dialog(
             confirm.present(Some(&window_for_confirm));
         });
     }
+
+    // --- Automatic Login section (issue #254) ---
+    // Same two fields as the connection editor; set here they cover every
+    // connection in the group, which is the point for a folder of identical
+    // devices from one vendor.
+    let (login_prompts_group, group_login_username_entry, group_login_password_entry) =
+        crate::dialogs::connection::automation_tab::create_automatic_login_section();
+    group_login_username_entry.set_text(group.username_prompt.as_deref().unwrap_or(""));
+    group_login_password_entry.set_text(group.password_prompt.as_deref().unwrap_or(""));
+    login_prompts_group.set_visible(has_automation);
+    automation_content.append(&login_prompts_group);
 
     // --- Expect Rules section (outside ExpanderRow to avoid click-swallowing) ---
     let expect_rules_group = adw::PreferencesGroup::builder()
@@ -1296,8 +1310,10 @@ pub fn show_edit_group_dialog(
         let tester = tester_group.clone();
         let scripts = scripts_group.clone();
         let scripts_buttons = scripts_button_box.clone();
+        let login_prompts = login_prompts_group.clone();
         automation_expander.connect_enable_expansion_notify(move |row| {
             let visible = row.enables_expansion();
+            login_prompts.set_visible(visible);
             expect_group.set_visible(visible);
             expect_buttons.set_visible(visible);
             tester.set_visible(visible);
@@ -1417,6 +1433,8 @@ pub fn show_edit_group_dialog(
     let dynamic_refresh_row_clone = dynamic_refresh_row;
     let automation_expander_clone = automation_expander;
     let group_expect_rules_clone = group_expect_rules;
+    let group_login_username_entry_clone = group_login_username_entry;
+    let group_login_password_entry_clone = group_login_password_entry;
     let group_post_login_scripts_clone = group_post_login_scripts;
     let old_name = group.name;
 
@@ -1629,8 +1647,18 @@ pub fn show_edit_group_dialog(
                     updated.dynamic_folder = None;
                 }
 
-                // Update Automation (Expect Rules + Post-login Scripts)
+                // Update Automation (Expect Rules + Post-login Scripts + login prompts)
                 if automation_expander_clone.enables_expansion() {
+                    // Blank stays None so a parent group can still supply the
+                    // wording (issue #254).
+                    updated.username_prompt = {
+                        let text = group_login_username_entry_clone.text().trim().to_string();
+                        (!text.is_empty()).then_some(text)
+                    };
+                    updated.password_prompt = {
+                        let text = group_login_password_entry_clone.text().trim().to_string();
+                        (!text.is_empty()).then_some(text)
+                    };
                     // Collect expect rules, filtering out empty patterns
                     updated.expect_rules = group_expect_rules_clone
                         .borrow()
@@ -1649,6 +1677,8 @@ pub fn show_edit_group_dialog(
                 } else {
                     updated.expect_rules = Vec::new();
                     updated.post_login_scripts = Vec::new();
+                    updated.username_prompt = None;
+                    updated.password_prompt = None;
                 }
 
                 // Capture old groups snapshot before update for vault migration

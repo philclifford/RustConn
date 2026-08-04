@@ -549,6 +549,14 @@ pub(super) fn wire_broadcast_for_session(
         if !bridge_for_cb.broadcast_active.get() {
             return;
         }
+        // The handler stays connected to the terminal for the rest of the
+        // session's life — there is no unwire step — so a session that has left
+        // this split (pane closed, popped back to its own tab, moved into
+        // another split) would otherwise keep mirroring its keystrokes into a
+        // layout it no longer belongs to.
+        if !bridge_for_cb.is_session_displayed(sid) {
+            return;
+        }
         if bridge_for_cb.broadcast_busy.get() {
             return;
         }

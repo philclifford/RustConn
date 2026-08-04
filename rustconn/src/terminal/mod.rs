@@ -44,6 +44,17 @@ use vte4::prelude::*;
 /// `_vte_regex_has_multiline_compile_flag(regex)` check failed.
 const PCRE2_MULTILINE: u32 = 0x0000_0400;
 
+/// `DECRST 1049` — leave the alternate screen, restoring the normal cursor.
+///
+/// `Terminal::reset` switches back to the normal screen only in its
+/// `clear_history` branch, so every reset that keeps the scrollback has to do
+/// the switch itself. Otherwise a session that died inside a full-screen app
+/// (vim, htop, less) keeps showing that app's frozen screen and hides the very
+/// scrollback the tab was kept open for (issue #253). VTE applies the mode's
+/// side effect unconditionally, so feeding this is a no-op on the normal
+/// screen. Feed it *after* `reset`, which discards unprocessed input.
+const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
+
 use rustconn_core::automation::{KeyElement, KeySequence};
 use rustconn_core::highlight::CompiledHighlightRules;
 use rustconn_core::models::HighlightRule;
@@ -190,6 +201,20 @@ pub struct TerminalNotebook {
     /// must consult; it is broader than `reconnect_shown`, which only tracks
     /// tabs that actually got a banner.
     disconnected_sessions: Rc<RefCell<HashSet<Uuid>>>,
+    /// Whether an in-place reconnect keeps the previous session's scrollback
+    /// (`TerminalSettings::keep_history_on_reconnect`, issue #253).
+    keep_history_on_reconnect: Rc<std::cell::Cell<bool>>,
+    /// Absolute VTE row at which a session's current connection started.
+    ///
+    /// VTE cursor rows are absolute buffer coordinates — they include the
+    /// scrollback — so every "the cursor advanced past the connect banner"
+    /// check needs a baseline once a reconnect keeps the previous session's
+    /// output (issue #253). `None` means "capture the baseline on the next
+    /// read": `prepare_for_reconnect` feeds its separator through VTE, which
+    /// processes input asynchronously, so the row is only meaningful once
+    /// that output has actually landed. A session with no entry started on an
+    /// empty buffer and needs no baseline.
+    cursor_row_base: Rc<RefCell<HashMap<Uuid, Option<i64>>>>,
     /// Cluster terminal tracking: cluster_id → Vec<session_id>
     cluster_sessions: Rc<RefCell<HashMap<Uuid, Vec<Uuid>>>>,
     /// Reverse lookup: session_id → cluster_id
@@ -342,6 +367,8 @@ impl TerminalNotebook {
             on_terminal_focus: Rc::new(RefCell::new(None)),
             reconnect_shown: Rc::new(RefCell::new(HashSet::new())),
             disconnected_sessions: Rc::new(RefCell::new(HashSet::new())),
+            keep_history_on_reconnect: Rc::new(std::cell::Cell::new(true)),
+            cursor_row_base: Rc::new(RefCell::new(HashMap::new())),
             cluster_sessions: Rc::new(RefCell::new(HashMap::new())),
             session_to_cluster: Rc::new(RefCell::new(HashMap::new())),
             cluster_pending: Rc::new(RefCell::new(HashMap::new())),
@@ -395,6 +422,7 @@ impl TerminalNotebook {
         let vte_child_pids = self.vte_child_pids.clone();
         let show_welcome_on_close = self.show_welcome.clone();
         let disconnected_on_close = Rc::clone(&self.disconnected_sessions);
+        let cursor_row_base_on_close = Rc::clone(&self.cursor_row_base);
 
         // Handle create-window signal - we must connect this to prevent the default
         // behavior which causes CRITICAL warnings. Returning None cancels the tearoff.
@@ -513,6 +541,7 @@ impl TerminalNotebook {
 
                 session_info.borrow_mut().remove(&session_id);
                 disconnected_on_close.borrow_mut().remove(&session_id);
+                cursor_row_base_on_close.borrow_mut().remove(&session_id);
 
                 // Kill VTE child process group explicitly (#172).
                 // Some CLI clients (notably telnet) do not exit on SIGHUP
@@ -1857,7 +1886,13 @@ impl TerminalNotebook {
 
         // Reset the VTE terminal (clear screen, reset state machine)
         if let Some(terminal) = self.terminals.borrow().get(&session_id) {
-            terminal.reset(true, true);
+            if self.keep_history_on_reconnect.get() {
+                self.reset_keeping_history(session_id, terminal);
+            } else {
+                terminal.reset(true, true);
+                // A cleared buffer restarts at row 0, so no baseline is needed.
+                self.cursor_row_base.borrow_mut().remove(&session_id);
+            }
         }
 
         // Clear disconnected indicator (a detached session has no tab to clear)
@@ -1889,6 +1924,36 @@ impl TerminalNotebook {
         self.vte_child_pids.borrow_mut().remove(&session_id);
 
         true
+    }
+
+    /// Resets a terminal for reconnect while keeping its scrollback (issue #253).
+    ///
+    /// VTE only drops the scrollback when `reset()` is called with
+    /// `clear_history`, so the preserved output is simply what the terminal
+    /// already holds — nothing is copied. Three details have to be handled:
+    ///
+    /// - The alternate screen has to be left explicitly — see
+    ///   [`LEAVE_ALTERNATE_SCREEN`].
+    /// - The dead session's output may end mid-line, so a separator opens a
+    ///   fresh line and marks where the new session begins.
+    /// - The user may have scrolled up while reading the dead session; the
+    ///   viewport goes back to the bottom so the new output is visible without
+    ///   a manual scroll.
+    fn reset_keeping_history(&self, session_id: Uuid, terminal: &Terminal) {
+        terminal.reset(true, false);
+        terminal.feed(LEAVE_ALTERNATE_SCREEN);
+
+        let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        terminal.feed(reconnect_separator(&i18n_f("Reconnected at {}", &[&stamp])).as_bytes());
+
+        // Everything fed above is processed asynchronously by VTE, so the
+        // cursor row is not final yet — mark the baseline as pending and let
+        // `get_terminal_cursor_row` capture it once the output has landed.
+        self.cursor_row_base.borrow_mut().insert(session_id, None);
+
+        if let Some(adjustment) = terminal.vadjustment() {
+            adjustment.set_value(adjustment.upper() - adjustment.page_size());
+        }
     }
 
     /// Registers a cancel token for a background polling task
@@ -1929,9 +1994,11 @@ impl TerminalNotebook {
         // invalidated (e.g. on screen lock/unlock or GPU context loss).
         // Calling reset(true, false) forces VTE to release internal state
         // (including Pango layout caches) while preserving scrollback history
-        // for reconnect (#171).
+        // for reconnect (#171). The preserved history is only readable on the
+        // normal screen, hence the explicit switch (#253).
         if let Some(terminal) = self.terminals.borrow().get(&session_id) {
             terminal.reset(true, false);
+            terminal.feed(LEAVE_ALTERNATE_SCREEN);
         }
     }
 
@@ -2299,6 +2366,11 @@ impl TerminalNotebook {
         self.notify_split_colors_changed();
     }
 
+    /// Sets whether an in-place reconnect keeps the previous scrollback (#253).
+    pub fn set_keep_history_on_reconnect(&self, enabled: bool) {
+        self.keep_history_on_reconnect.set(enabled);
+    }
+
     /// Sets whether tabs should be colored by protocol type
     pub fn set_color_tabs_by_protocol(&self, enabled: bool) {
         *self.color_tabs_by_protocol.borrow_mut() = enabled;
@@ -2463,11 +2535,21 @@ impl TerminalNotebook {
         }
     }
 
-    /// Gets the cursor row of a terminal session
+    /// Gets the cursor row of a terminal session, relative to its connect.
     ///
-    /// VTE's `cursor_position()` returns `(column, row)`.
+    /// VTE's `cursor_position()` returns `(column, row)` with the row in
+    /// absolute buffer coordinates — scrollback included. Callers use the row
+    /// to tell whether the session produced output past its connect banner, so
+    /// the value is reported relative to the row the current connection started
+    /// on. That is 0 for a fresh session and, when a reconnect keeps the
+    /// previous scrollback, the row the preserved history ended on (issue #253).
     pub fn get_terminal_cursor_row(&self, session_id: Uuid) -> Option<i64> {
-        self.get_terminal(session_id).map(|t| t.cursor_position().1)
+        let row = self.get_terminal(session_id)?.cursor_position().1;
+        let mut bases = self.cursor_row_base.borrow_mut();
+        let Some(base) = bases.get_mut(&session_id) else {
+            return Some(row);
+        };
+        Some((row - *base.get_or_insert(row)).max(0))
     }
 
     /// Gets session info for a session
@@ -2993,13 +3075,27 @@ impl TerminalNotebook {
     }
 
     /// Gets the current terminal text content for transcript logging
+    ///
+    /// Reads the visible viewport. VTE addresses the whole scrollback and the
+    /// visible area in one coordinate system, so rows `0..row_count` are the
+    /// *oldest* scrollback lines as soon as anything has scrolled off — the
+    /// same trap the highlight overlay had to fix (issue #154). Anchoring to
+    /// the viewport keeps this correct now that a reconnect can start on a
+    /// non-empty buffer (issue #253).
     #[must_use]
     pub fn get_terminal_text(&self, session_id: Uuid) -> Option<String> {
         self.get_terminal(session_id).map(|terminal| {
             let row_count = terminal.row_count();
             let col_count = terminal.column_count();
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "adjustment value is a row index bounded by the scrollback size"
+            )]
+            let top = terminal
+                .vadjustment()
+                .map_or(0_i64, |adjustment| adjustment.value() as i64);
             let (text, _len) =
-                terminal.text_range_format(vte4::Format::Text, 0, 0, row_count, col_count);
+                terminal.text_range_format(vte4::Format::Text, top, 0, top + row_count, col_count);
             text.map_or_else(String::new, |g| g.to_string())
         })
     }
@@ -3653,17 +3749,28 @@ impl Default for TerminalNotebook {
     }
 }
 
+/// Builds the separator fed into a terminal that reconnects with its history.
+///
+/// Opens a fresh line (the dead session's output may end mid-line), then a dim
+/// rule carrying `label`, so the preserved scrollback and the new session's
+/// output stay visually apart (issue #253). The returned string contains VTE
+/// escape sequences and is meant for `Terminal::feed`, not for display.
+fn reconnect_separator(label: &str) -> String {
+    format!("\r\n\x1b[2m── {label} ──\x1b[0m\r\n")
+}
+
 /// Extracts the text of the line under the cursor of a VTE terminal.
 ///
 /// Returns the cursor's row via `text_range_format`. When that row is empty
 /// (prompt glyphs not yet committed to the grid), falls back to the last
-/// non-empty line of the visible grid. Returns `None` when no non-empty text
-/// can be extracted. Never panics. Backs `TerminalNotebook::get_cursor_line_text`
-/// for cursor-position-based prompt detection (issue #194).
+/// non-empty line of the screen ending at the cursor. Returns `None` when no
+/// non-empty text can be extracted. Never panics. Backs
+/// `TerminalNotebook::get_cursor_line_text` for cursor-position-based prompt
+/// detection (issue #194).
 fn cursor_line_text(terminal: &Terminal) -> Option<String> {
     let col_count = terminal.column_count();
-    // `cursor_position()` returns `(column, row)` in visible-grid coordinates,
-    // matching the rows used by `text_range_format` in `get_terminal_text`.
+    // `cursor_position()` returns `(column, row)` with the row in absolute
+    // buffer coordinates — the same coordinates `text_range_format` takes.
     let (_col, row) = terminal.cursor_position();
     let (cursor_text, _len) =
         terminal.text_range_format(vte4::Format::Text, row, 0, row, col_count);
@@ -3674,10 +3781,14 @@ fn cursor_line_text(terminal: &Terminal) -> Option<String> {
         }
     }
 
-    // Fallback: last non-empty line of the visible grid.
+    // Fallback: last non-empty line of the screen ending at the cursor.
+    // Rows are absolute buffer coordinates, so reading from 0 would return the
+    // oldest scrollback lines whenever the buffer is not empty — which is the
+    // normal case once a reconnect keeps the previous history (issue #253).
     let row_count = terminal.row_count();
+    let start = (row - row_count + 1).max(0);
     let (grid_text, _len) =
-        terminal.text_range_format(vte4::Format::Text, 0, 0, row_count, col_count);
+        terminal.text_range_format(vte4::Format::Text, start, 0, row, col_count);
     grid_text.and_then(|g| {
         g.to_string()
             .lines()
@@ -3685,6 +3796,33 @@ fn cursor_line_text(terminal: &Terminal) -> Option<String> {
             .find(|l| !l.trim().is_empty())
             .map(str::to_owned)
     })
+}
+
+#[cfg(test)]
+mod reconnect_separator_tests {
+    use super::reconnect_separator;
+
+    #[test]
+    fn separator_opens_and_closes_its_own_line() {
+        let separator = reconnect_separator("Reconnected at 2026-08-02 14:33:07");
+        // A fresh line on both sides: the dead session's output may end
+        // mid-line, and the new session must not start on the rule itself.
+        assert!(separator.starts_with("\r\n"));
+        assert!(separator.ends_with("\r\n"));
+    }
+
+    #[test]
+    fn separator_carries_the_label_and_resets_the_attributes() {
+        let separator = reconnect_separator("Reconnected at 2026-08-02 14:33:07");
+        assert!(separator.contains("Reconnected at 2026-08-02 14:33:07"));
+        // Dim only the rule — leaving SGR set would tint the new session.
+        assert!(separator.contains("\x1b[2m"));
+        assert!(separator.contains("\x1b[0m"));
+        assert!(
+            separator.rfind("\x1b[0m") > separator.rfind("\x1b[2m"),
+            "the reset has to come after the dim attribute"
+        );
+    }
 }
 
 #[cfg(test)]

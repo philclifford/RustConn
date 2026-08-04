@@ -63,6 +63,7 @@ pub mod flatpak;
 pub mod highlight;
 pub mod host_check;
 pub mod import;
+pub mod mc_ssh;
 pub mod models;
 pub mod monitoring;
 pub mod password_generator;
@@ -135,10 +136,11 @@ pub use config::{
     default_passthrough_exceptions, is_valid_accelerator,
 };
 pub use connection::{
-    ConnectionManager, LazyGroupLoader, PortCheckError, PortCheckResult, RetryConfig, RetryState,
-    SelectionState, check_interning_stats, check_port, check_port_async, get_interning_stats,
-    intern_connection_strings, intern_hostname, intern_protocol_name, intern_username,
-    log_interning_stats, log_interning_stats_with_warning, looks_like_password_prompt,
+    ConnectionManager, LazyGroupLoader, LoginPrompt, LoginPromptMatcher, PortCheckError,
+    PortCheckResult, RetryConfig, RetryState, SelectionState, check_interning_stats, check_port,
+    check_port_async, get_interning_stats, intern_connection_strings, intern_hostname,
+    intern_protocol_name, intern_username, log_interning_stats, log_interning_stats_with_warning,
+    looks_like_password_prompt, looks_like_username_prompt,
 };
 pub use display_geometry::{DesktopRequest, desktop_request_for_area};
 pub use drag_drop::{
@@ -170,6 +172,7 @@ pub use import::{
     LibvirtXmlImporter, RdpFileImporter, RemminaImporter, RoyalTsImporter, SkippedEntry,
     SshConfigImporter, VirtViewerImporter,
 };
+pub use mc_ssh::{McSshEnv, cleanup_mc_ssh_env, prepare_mc_ssh_env};
 pub use models::{
     Connection, ConnectionGroup, ConnectionHistoryEntry, ConnectionStatistics, ConnectionTemplate,
     Credentials, CustomProperty, DynamicConnectionEntry, DynamicFolderConfig, DynamicFolderResult,
@@ -276,6 +279,8 @@ pub use sftp::{
     build_sftp_uri_from_connection, ensure_key_in_agent, get_downloads_dir, get_ssh_key_path,
     resolve_remote_home,
 };
+// `ensure_flatpak_mc_ssh_wrapper` was replaced by `mc_ssh::prepare_mc_ssh_env`,
+// which generates a full ssh_config instead of only a known_hosts override.
 pub use snap::{
     get_config_dir, get_confinement_message, get_data_dir, get_known_hosts_path, get_ssh_dir,
     is_interface_connected, is_sandboxed, is_snap,

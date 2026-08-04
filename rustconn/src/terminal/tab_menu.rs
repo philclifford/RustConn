@@ -15,7 +15,7 @@ use super::*;
 #[derive(Debug, Clone, Copy, Default)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "four independent per-tab facts, each gating one menu section"
+    reason = "five independent per-tab facts, each gating one menu section"
 )]
 pub struct TabMenuState {
     /// Activity or silence monitoring mode of the tab's session, if any.
@@ -28,6 +28,8 @@ pub struct TabMenuState {
     pub any_groups_exist: bool,
     /// The tab's session may be offered a move to its own window.
     pub can_detach: bool,
+    /// The tab hosts a split layout, so it can be offered "Remove Split".
+    pub hosts_split: bool,
 }
 
 /// Reports whether the detach section is offered for a verdict.
@@ -81,8 +83,12 @@ impl TerminalNotebook {
                     });
                     // A page with no session (the Welcome tab) is never
                     // detachable, so the verdict is only asked for real sessions.
-                    let can_detach = session_id
-                        .is_some_and(|sid| offers_detach(detach_hooks_for_menu.verdict(sid)));
+                    // The same verdict already distinguishes a tab that hosts a
+                    // split layout, so "Remove Split" reuses it rather than
+                    // re-deriving split membership from the colour map.
+                    let verdict = session_id.map(|sid| detach_hooks_for_menu.verdict(sid));
+                    let can_detach = verdict.is_some_and(offers_detach);
+                    let hosts_split = verdict == Some(DetachVerdict::SplitOwner);
                     let info_ref = session_info_for_menu.borrow();
                     let has_group = session_id
                         .and_then(|sid| info_ref.get(&sid).and_then(|i| i.tab_group.clone()))
@@ -95,6 +101,7 @@ impl TerminalNotebook {
                         // group-related actions)
                         any_groups_exist: info_ref.values().any(|i| i.tab_group.is_some()),
                         can_detach,
+                        hosts_split,
                     }
                 })
                 .unwrap_or_default();
@@ -551,6 +558,31 @@ impl TerminalNotebook {
 
         // "Move to New Window" action — hands the session to the window layer,
         // which re-checks the verdict and explains a rejection with a toast.
+        // "Remove Split" — returns every session in this tab's split layout to
+        // its own tab, closing none of them (issue #252). The page is selected
+        // first because `win.unsplit` acts on the active tab; without it a
+        // right-click on a background split tab would dismantle the wrong
+        // layout. Selecting is the expected side effect anyway — the user is
+        // about to change that tab's contents.
+        let unsplit_action = gio::SimpleAction::new("unsplit", None);
+        let context_page_unsplit = context_page.clone();
+        let tab_view_for_unsplit = self.tab_view.clone();
+        unsplit_action.connect_activate(move |_, _| {
+            let Some(page) = context_page_unsplit.borrow().clone() else {
+                return;
+            };
+            tab_view_for_unsplit.set_selected_page(&page);
+            if let Some(window) = tab_view_for_unsplit
+                .root()
+                .and_then(|root| root.downcast::<gtk4::ApplicationWindow>().ok())
+            {
+                gtk4::prelude::ActionGroupExt::activate_action(&window, "unsplit", None);
+            } else {
+                tracing::warn!("tab.unsplit: could not find ApplicationWindow");
+            }
+        });
+        action_group.add_action(&unsplit_action);
+
         let detach_action = gio::SimpleAction::new("detach", None);
         let context_page_detach = context_page.clone();
         let sessions_for_detach = self.sessions.clone();
@@ -732,6 +764,14 @@ impl TerminalNotebook {
         monitor_section.append(Some(&label), Some("tab.cycle-monitor"));
         menu.append_section(None, &monitor_section);
 
+        // Split section — only for the tab that hosts a split layout, and the
+        // reason the detach item directly below it is currently refused
+        // (issue #252).
+        if state.hosts_split {
+            let split_section = gio::Menu::new();
+            split_section.append(Some(&i18n("Remove Split")), Some("tab.unsplit"));
+            menu.append_section(None, &split_section);
+        }
         // Detach section — sits directly above the close section, and is
         // omitted entirely for a session that cannot be moved to its own window.
         if state.can_detach {

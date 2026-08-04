@@ -140,6 +140,23 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.12" date="2026-08-03">
+      <description>
+        <p>Version 0.19.12 - terminal history survives a reconnect, automatic login for Telnet and serial, SFTP through a jump host:</p>
+        <ul>
+          <li>Added preservation of terminal history across a reconnect</li>
+          <li>Added automatic login for Telnet and serial sessions, with configurable prompt text</li>
+          <li>Added Remove from Split and Remove Split, so a session can leave a split view without being closed</li>
+          <li>Fixed SFTP being unable to reach a host behind a jump host</li>
+          <li>Fixed a jump host picked from the connection list being ignored by every SFTP path</li>
+          <li>Fixed connect and prompt detection reading the oldest scrollback instead of the visible screen</li>
+          <li>Fixed an expect-rule response being written to the application log in clear text</li>
+          <li>Fixed Move to New Tab and Close Connection in a split pane's context menu doing nothing</li>
+          <li>Fixed broadcast mirroring keystrokes out of a session that had left the split</li>
+          <li>Improved the file-manager SFTP path, which now warns instead of failing silently</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.11" date="2026-08-02">
       <description>
         <p>Version 0.19.11 - vault and packaging fixes, lighter background sessions:</p>

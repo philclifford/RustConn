@@ -28,7 +28,168 @@ fn refuses_split_placement(
     true
 }
 
+/// Wires the callbacks behind a split layout's panel buttons and context menu.
+///
+/// Both entry points need the same "focus this pane first, then let the window
+/// action work on it" behaviour, so they are wired together: `win.close-pane`
+/// for the × button and "Close Connection", `win.pop-pane-to-tab` for the
+/// "Remove from Split" button and menu item (issue #252). Focusing is what makes
+/// an action target the panel the user pointed at — the panel's own focus
+/// gesture declines clicks that land on a button.
+pub(super) fn wire_panel_action_callbacks(bridge: &Rc<SplitViewBridge>) {
+    let focus_pane = {
+        let bridge = Rc::clone(bridge);
+        move |pane_uuid: Uuid| {
+            bridge.set_focused_pane(Some(pane_uuid));
+
+            // Update focus styling via the adapter
+            if let Some(panel_id) = bridge.get_panel_id_for_uuid(pane_uuid)
+                && let Err(e) = bridge.adapter_set_focus(panel_id)
+            {
+                tracing::warn!("Failed to set focus on panel: {}", e);
+            }
+        }
+    };
+    bridge.setup_close_panel_callback(focus_pane.clone());
+    bridge.setup_pop_panel_callback(focus_pane);
+}
+
+/// The window handles needed to take a split layout apart.
+///
+/// Grouped into one struct because three actions dismantle splits —
+/// `win.unsplit`, `win.pop-pane-to-tab` and `win.close-pane` — and each would
+/// otherwise capture the same five clones individually in its `'static` closure.
+struct SplitTeardown {
+    notebook: SharedNotebook,
+    bridges: SessionSplitBridges,
+    monitoring: Rc<MonitoringCoordinator>,
+    /// The window-global split view, hidden whenever a per-tab split collapses.
+    global_split_view: SharedSplitView,
+    /// The window-global split container, hidden alongside `global_split_view`.
+    split_container: gtk4::Box,
+}
+
+impl SplitTeardown {
+    /// Looks up the split layout of the active tab, if it has one.
+    ///
+    /// Returns the owning session id together with a *cloned* `Rc` so no borrow
+    /// on `bridges` is held: [`Self::collapse`] takes `borrow_mut` on the same
+    /// map, and returning a session to its tab re-enters the notebook, whose
+    /// `close-page` handler borrows it too.
+    fn active_split(&self) -> Option<(Uuid, Rc<SplitViewBridge>)> {
+        let owner = self.notebook.get_active_session_id()?;
+        let bridge = self.bridges.borrow().get(&owner).cloned()?;
+        Some((owner, bridge))
+    }
+
+    /// Returns the sessions currently shown in the layout's panes.
+    fn displayed(bridge: &SplitViewBridge) -> Vec<Uuid> {
+        bridge
+            .pane_ids()
+            .iter()
+            .filter_map(|&pane_id| bridge.get_pane_session(pane_id))
+            .collect()
+    }
+
+    /// Returns a session that was living in a split panel to its own tab.
+    ///
+    /// The live widget is moved, never rebuilt: `reparent_terminal_to_tab`
+    /// recreates the standalone tab a split guest gave up when it was parked and
+    /// re-parents the same instance into it, so the PTY, the child process and an
+    /// embedded viewer's protocol connection all survive. The split colour
+    /// indicator is dropped and monitoring, suspended when the session entered
+    /// the split, resumes against the *new* container.
+    fn return_to_tab(&self, session_id: Uuid) {
+        self.notebook.clear_tab_split_color(session_id);
+        self.notebook.reparent_terminal_to_tab(session_id);
+        if self.monitoring.is_suspended(session_id)
+            && let Some(container) = self.notebook.get_session_container(session_id)
+        {
+            self.monitoring.resume_monitoring(session_id, &container);
+        }
+    }
+
+    /// Dismantles a split layout, returning every session in it to its own tab.
+    ///
+    /// `departing` names a session the caller handles itself — the pane being
+    /// popped out, or the one `win.close-pane` is about to terminate — so it is
+    /// skipped here instead of being processed twice.
+    ///
+    /// The owner goes last: its `switch_to_single` clears the tab container that
+    /// holds the bridge widget, so the guests come out of a tree that is still
+    /// attached.
+    fn collapse(&self, owner: Uuid, bridge: &Rc<SplitViewBridge>, departing: Option<Uuid>) {
+        let mut returning: Vec<Uuid> = Self::displayed(bridge)
+            .into_iter()
+            .filter(|&sid| sid != owner && Some(sid) != departing)
+            .collect();
+        // The owner is normally in a pane, but its pane may already have been
+        // cleared; it always needs its content rebuilt regardless, because the
+        // bridge widget is what its tab currently shows.
+        if Some(owner) != departing {
+            returning.push(owner);
+        }
+
+        tracing::debug!(
+            owner = %owner,
+            ?departing,
+            ?returning,
+            "collapsing split layout"
+        );
+
+        // Broadcast dies with the layout: the per-terminal `commit` handlers stay
+        // connected for the life of each session and read this flag, so leaving
+        // it set would keep mirroring into a split that no longer exists.
+        bridge.broadcast_active.set(false);
+
+        for session_id in &returning {
+            self.return_to_tab(*session_id);
+        }
+
+        bridge.widget().set_visible(false);
+        self.global_split_view.widget().set_visible(false);
+        self.split_container.set_visible(false);
+        self.notebook.show_tab_view_content();
+
+        // Drop the bridge entry of every participant. `get_or_create_session_bridge`
+        // reuses whatever it finds, so a stale entry would make the next split on
+        // any of these sessions reuse this hidden, half-wired layout.
+        let mut bridges = self.bridges.borrow_mut();
+        bridges.remove(&owner);
+        for session_id in &returning {
+            bridges.remove(session_id);
+        }
+        if let Some(departing) = departing {
+            bridges.remove(&departing);
+        }
+    }
+
+    /// Reports whether a layout has stopped being a split after a pane removal.
+    ///
+    /// One pane holding one session is an ordinary tab, so it collapses rather
+    /// than leaving the user with a single-pane "split".
+    fn is_spent(bridge: &SplitViewBridge, removed_last_panel: bool) -> bool {
+        let remaining = Self::displayed(bridge);
+        removed_last_panel
+            || bridge.is_empty()
+            || (bridge.pane_count() == 1 && remaining.len() == 1)
+    }
+}
+
 impl MainWindow {
+    /// Clones the handles the split-teardown actions need.
+    ///
+    /// Called once per action so each `'static` closure owns its own set.
+    fn split_teardown(&self) -> SplitTeardown {
+        SplitTeardown {
+            notebook: self.terminal_notebook.clone(),
+            bridges: self.session_split_bridges.clone(),
+            monitoring: Rc::clone(&self.monitoring),
+            global_split_view: self.split_view.clone(),
+            split_container: self.split_container.clone(),
+        }
+    }
+
     pub(crate) fn setup_split_view_actions(&self, window: &adw::ApplicationWindow) {
         // Helper function to get or create a split bridge for a session
         // Each tab maintains its own independent split layout
@@ -404,18 +565,8 @@ impl MainWindow {
                     split_colors_h,
                 );
 
-                // Setup close panel callback for empty panel close buttons
-                let split_view_for_close = split_view.clone();
-                split_view.setup_close_panel_callback(move |pane_uuid| {
-                    // Focus the pane first so close_pane() closes the correct one
-                    split_view_for_close.set_focused_pane(Some(pane_uuid));
-
-                    // Update focus styling via the adapter
-                    if let Some(panel_id) = split_view_for_close.get_panel_id_for_uuid(pane_uuid)
-                        && let Err(e) = split_view_for_close.adapter_set_focus(panel_id) {
-                            tracing::warn!("Failed to set focus on panel: {}", e);
-                        }
-                });
+                // Wire the panel buttons and panel context menu
+                wire_panel_action_callbacks(&split_view);
             }
 
             // Layout changed — refresh the broadcast toggle so it reflects the
@@ -721,18 +872,8 @@ impl MainWindow {
                     split_colors_v,
                 );
 
-                // Setup close panel callback for empty panel close buttons
-                let split_view_for_close = split_view.clone();
-                split_view.setup_close_panel_callback(move |pane_uuid| {
-                    // Focus the pane first so close_pane() closes the correct one
-                    split_view_for_close.set_focused_pane(Some(pane_uuid));
-
-                    // Update focus styling via the adapter
-                    if let Some(panel_id) = split_view_for_close.get_panel_id_for_uuid(pane_uuid)
-                        && let Err(e) = split_view_for_close.adapter_set_focus(panel_id) {
-                            tracing::warn!("Failed to set focus on panel: {}", e);
-                        }
-                });
+                // Wire the panel buttons and panel context menu
+                wire_panel_action_callbacks(&split_view);
             }
 
             // Layout changed — refresh broadcast toggle.
@@ -742,118 +883,44 @@ impl MainWindow {
 
         // Close pane action
         let close_pane_action = gio::SimpleAction::new("close-pane", None);
-        let session_bridges_close = self.session_split_bridges.clone();
-        let notebook_for_close = self.terminal_notebook.clone();
-        let split_view_for_close = self.split_view.clone();
-        let split_container_close = self.split_container.clone();
-        let monitoring_close = self.monitoring.clone();
+        let teardown_close = self.split_teardown();
         let refresh_broadcast_close = refresh_broadcast.clone();
         close_pane_action.connect_activate(move |_, _| {
-            // Find the bridge for the current session and close its focused pane
-            if let Some(session_id) = notebook_for_close.get_active_session_id() {
-                let bridges = session_bridges_close.borrow();
-                if let Some(bridge) = bridges.get(&session_id) {
-                    // Get the session in the focused pane before closing
-                    let focused_session = bridge.get_focused_session();
+            if let Some((owner, bridge)) = teardown_close.active_split() {
+                // The session in the focused pane — the one about to be closed.
+                let departing = bridge.get_focused_session();
 
-                    tracing::debug!(
-                        "close-pane: closing focused pane, focused_session={:?}, \
-                         pane_count_before={}",
-                        focused_session,
-                        bridge.pane_count()
-                    );
+                tracing::debug!(
+                    owner = %owner,
+                    ?departing,
+                    pane_count_before = bridge.pane_count(),
+                    "close-pane: closing focused pane"
+                );
 
-                    match bridge.close_pane() {
-                        Ok(should_close_split) => {
-                            // Clear tab color for the session that was in the closed pane
-                            if let Some(sess_id) = focused_session {
-                                notebook_for_close.clear_tab_split_color(sess_id);
-                            }
-
-                            // Check if we should close the split view
-                            // This happens when: no panels remain, no sessions remain,
-                            // or only one panel with one session remains
-                            let remaining_sessions: Vec<Uuid> = bridge
-                                .pane_ids()
-                                .iter()
-                                .filter_map(|&pane_id| bridge.get_pane_session(pane_id))
-                                .collect();
-
-                            let pane_count = bridge.pane_count();
-                            let is_empty = bridge.is_empty();
-
-                            tracing::debug!(
-                                "close-pane: after close - should_close_split={}, pane_count={}, \
-                                 is_empty={}, remaining_sessions={:?}",
-                                should_close_split,
-                                pane_count,
-                                is_empty,
-                                remaining_sessions
-                            );
-
-                            let should_unsplit = should_close_split
-                                || is_empty
-                                || (pane_count == 1 && remaining_sessions.len() == 1);
-
-                            tracing::debug!(
-                                "close-pane: should_unsplit={} (should_close_split={} || \
-                                 is_empty={} || (pane_count==1 && remaining==1)={})",
-                                should_unsplit,
-                                should_close_split,
-                                is_empty,
-                                pane_count == 1 && remaining_sessions.len() == 1
-                            );
-
-                            if should_unsplit {
-                                // Close split view and show remaining session as regular tab
-                                tracing::debug!(
-                                    "close-pane: closing split view for session {}, \
-                                     remaining_sessions={:?}",
-                                    session_id,
-                                    remaining_sessions
-                                );
-
-                                // Clear tab colors for all remaining sessions
-                                for sess_id in &remaining_sessions {
-                                    notebook_for_close.clear_tab_split_color(*sess_id);
-                                    // Reparent terminal back to TabView
-                                    notebook_for_close.reparent_terminal_to_tab(*sess_id);
-                                    // Resume monitoring if it was suspended
-                                    if monitoring_close.is_suspended(*sess_id)
-                                        && let Some(container) =
-                                            notebook_for_close.get_session_container(*sess_id)
-                                    {
-                                        monitoring_close.resume_monitoring(*sess_id, &container);
-                                    }
-                                }
-
-                                // Hide split view and show TabView
-                                bridge.widget().set_visible(false);
-                                split_view_for_close.widget().set_visible(false);
-                                split_container_close.set_visible(false);
-                                notebook_for_close.show_tab_view_content();
-
-                                // Clear tab color for the main session too
-                                notebook_for_close.clear_tab_split_color(session_id);
-                            } else {
-                                // Multiple panels remain - restore terminal content
-                                bridge.restore_panel_contents();
-                            }
-
-                            // Terminate the session whose pane was just closed —
-                            // with Option B it has no standalone tab to fall back
-                            // to, so closing the pane closes the session. Drop the
-                            // `bridges` borrow first: `close_session` → close-page
-                            // → `on_split_cleanup` takes a mutable borrow of the
-                            // same map and would otherwise panic (BorrowMutError).
-                            drop(bridges);
-                            if let Some(sess_id) = focused_session {
-                                notebook_for_close.close_session(sess_id);
-                            }
+                match bridge.close_pane() {
+                    Ok(removed_last_panel) => {
+                        if let Some(session_id) = departing {
+                            teardown_close.notebook.clear_tab_split_color(session_id);
                         }
-                        Err(e) => {
-                            tracing::warn!("Failed to close pane: {}", e);
+
+                        if SplitTeardown::is_spent(&bridge, removed_last_panel) {
+                            teardown_close.collapse(owner, &bridge, departing);
+                        } else {
+                            // Panels remain — the rebuild emptied them, so put the
+                            // surviving sessions' widgets back.
+                            bridge.restore_panel_contents();
                         }
+
+                        // Terminate the session whose pane was just closed: a split
+                        // guest has no standalone tab to fall back to, so closing its
+                        // pane closes the session. `win.pop-pane-to-tab` is the
+                        // variant that keeps it alive (issue #252).
+                        if let Some(session_id) = departing {
+                            teardown_close.notebook.close_session(session_id);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to close pane: {}", e);
                     }
                 }
             }
@@ -862,6 +929,81 @@ impl MainWindow {
             refresh_broadcast_close();
         });
         window.add_action(&close_pane_action);
+
+        // Remove the focused pane's session from the split without closing it:
+        // the session goes back to its own tab with the connection intact
+        // (issue #252).
+        let pop_pane_action = gio::SimpleAction::new("pop-pane-to-tab", None);
+        let teardown_pop = self.split_teardown();
+        let refresh_broadcast_pop = refresh_broadcast.clone();
+        pop_pane_action.connect_activate(move |_, _| {
+            let Some((owner, bridge)) = teardown_pop.active_split() else {
+                tracing::debug!("pop-pane-to-tab: the active tab has no split layout");
+                return;
+            };
+            let Some(departing) = bridge.get_focused_session() else {
+                tracing::debug!("pop-pane-to-tab: the focused pane holds no session");
+                return;
+            };
+
+            // The bridge widget lives in the owner's tab container, so the owner
+            // cannot leave on its own — the layout would have no host left. The
+            // last remaining pane is the same situation. Either way the whole
+            // split comes down, which is what "back to a single tab" means.
+            if departing == owner || bridge.pane_count() <= 1 {
+                teardown_pop.collapse(owner, &bridge, None);
+                refresh_broadcast_pop();
+                return;
+            }
+
+            // `close_pane` only removes the focused panel and its bookkeeping.
+            // The session teardown that `win.close-pane` runs afterwards is
+            // precisely what this action must skip.
+            if let Err(e) = bridge.close_pane() {
+                tracing::warn!(error = %e, "pop-pane-to-tab: could not remove the focused pane");
+                return;
+            }
+
+            teardown_pop.return_to_tab(departing);
+            teardown_pop.bridges.borrow_mut().remove(&departing);
+
+            if SplitTeardown::is_spent(&bridge, false) {
+                teardown_pop.collapse(owner, &bridge, Some(departing));
+            } else {
+                bridge.restore_panel_contents();
+            }
+
+            // Show the session where it now lives, so the move is visible rather
+            // than the pane just vanishing.
+            teardown_pop.notebook.switch_to_tab(departing);
+            tracing::info!(
+                session = %departing,
+                owner = %owner,
+                "session removed from split and returned to its own tab"
+            );
+            refresh_broadcast_pop();
+        });
+        window.add_action(&pop_pane_action);
+
+        // Remove the whole split layout, returning every session in it to its own
+        // tab. None of them are closed (issue #252).
+        let unsplit_action = gio::SimpleAction::new("unsplit", None);
+        let teardown_unsplit = self.split_teardown();
+        let refresh_broadcast_unsplit = refresh_broadcast.clone();
+        unsplit_action.connect_activate(move |_, _| {
+            let Some((owner, bridge)) = teardown_unsplit.active_split() else {
+                tracing::debug!("unsplit: the active tab has no split layout");
+                return;
+            };
+            if bridge.pane_count() <= 1 {
+                tracing::debug!(session = %owner, "unsplit: layout has a single pane");
+                return;
+            }
+            teardown_unsplit.collapse(owner, &bridge, None);
+            tracing::info!(owner = %owner, "split layout removed, sessions returned to tabs");
+            refresh_broadcast_unsplit();
+        });
+        window.add_action(&unsplit_action);
 
         // Focus next pane action
         let focus_next_pane_action = gio::SimpleAction::new("focus-next-pane", None);

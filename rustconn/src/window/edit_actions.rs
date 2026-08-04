@@ -650,8 +650,10 @@ impl MainWindow {
             };
             let use_mc = state_ref.settings().terminal.sftp_use_mc;
 
-            // Collect groups for SSH inheritance resolution
+            // Collect groups for SSH inheritance resolution, and connections so a
+            // jump host stored as a reference (`jump_host_id`) can be resolved.
             let groups: Vec<rustconn_core::models::ConnectionGroup> = state_ref.list_groups_owned();
+            let connections: Vec<rustconn_core::Connection> = state_ref.list_connections_owned();
 
             // Ensure SSH key is in agent before SFTP (mc and
             // file managers cannot pass identity files directly).
@@ -672,8 +674,9 @@ impl MainWindow {
 
             if use_mc {
                 // Open mc in a local shell tab with SFTP panel
-                let mc_cmd = rustconn_core::sftp::build_mc_sftp_command(conn, &groups);
+                let mc_cmd = rustconn_core::sftp::build_mc_sftp_command(conn);
                 let conn_name = conn.name.clone();
+                let conn_for_ssh_env = conn.clone();
                 let terminal_settings = state_ref.settings().terminal.clone();
                 drop(state_ref);
 
@@ -771,11 +774,17 @@ impl MainWindow {
                 let nb = notebook_clone.clone();
                 let mc_clone = mc_args.clone();
                 let dl = downloads.clone();
-                // In Flatpak, create an SSH wrapper that injects the writable
-                // known_hosts path, and prepend its directory to PATH so mc's
-                // FISH protocol picks it up instead of /usr/bin/ssh.
-                let mc_home_env = rustconn_core::sftp::ensure_flatpak_mc_ssh_wrapper()
-                    .map(|dir| format!("PATH={dir}:{}", std::env::var("PATH").unwrap_or_default()));
+                // mc's `sh://` URI carries only user, host and port; the jump
+                // host, identity file, HostKeyAlias and custom options reach the
+                // `ssh` it spawns through a generated ssh_config behind a PATH
+                // wrapper keyed on this session (issue #255).
+                let mc_home_env = rustconn_core::prepare_mc_ssh_env(
+                    session_id,
+                    &conn_for_ssh_env,
+                    &connections,
+                    &groups,
+                )
+                .map(|env| env.path_env());
                 glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
                     let argv: Vec<&str> = mc_clone.iter().map(String::as_str).collect();
                     let envv: Option<Vec<&str>> = mc_home_env.as_ref().map(|e| vec![e.as_str()]);
@@ -803,6 +812,10 @@ impl MainWindow {
                 };
                 let conn_for_uri = conn.clone();
                 let groups_for_uri = groups.clone();
+                let connections_for_uri = connections.clone();
+                let has_jump_host =
+                    !rustconn_core::connection::resolve_jump_chain(conn, &connections, &groups)
+                        .is_empty();
                 drop(state_ref);
 
                 // Warn in Flatpak: external file managers cannot access
@@ -816,6 +829,17 @@ impl MainWindow {
                         "External file managers cannot access SSH agent in Flatpak. \
                          Enable \"SFTP via mc\" in Settings for reliable access.",
                     ));
+                }
+
+                // The GVFS sftp backend spawns its own ssh with a fixed argument
+                // list and reads no configuration we can point it at, so a
+                // bastion cannot be applied on this path at all (issue #255).
+                if has_jump_host {
+                    tracing::warn!(
+                        "Jump host configured, but the file manager's SFTP backend \
+                         cannot route through it"
+                    );
+                    toast_clone.show_warning(&Self::sftp_jump_host_warning());
                 }
 
                 tracing::info!(%base_uri, "Opening SFTP file browser");
@@ -871,6 +895,7 @@ impl MainWindow {
                         // server-root URI if resolution fails.
                         let uri = rustconn_core::sftp::build_sftp_browser_uri(
                             &conn_for_uri,
+                            &connections_for_uri,
                             &groups_for_uri,
                         )
                         .unwrap_or(base_uri);
@@ -1145,6 +1170,33 @@ impl MainWindow {
         }
     }
 
+    /// Warning shown when the external file-manager path is asked to reach a
+    /// host behind a jump host, which its SFTP backend cannot do.
+    ///
+    /// The literal is deliberately on one line. `po/update-pot.sh` runs xgettext
+    /// with its C scanner, which splices a `\`-continued string without dropping
+    /// the next line's indentation — so a wrapped literal yields a msgid carrying
+    /// spaces the runtime value does not have, and the translation is silently
+    /// dead for every language.
+    fn sftp_jump_host_warning() -> String {
+        crate::i18n::i18n(
+            "File managers cannot use a jump host. Enable \"SFTP via mc\" in Settings.",
+        )
+    }
+
+    /// Shows a warning toast on the window hosting `notebook`.
+    ///
+    /// `handle_sftp_connect_internal` has no `ToastOverlay` of its own — it is
+    /// reached from a double-click as well as from the sidebar action — so it
+    /// reaches the toast through the notebook's root window.
+    fn sftp_warn_on_window(notebook: &SharedNotebook, message: &str) {
+        if let Some(root) = notebook.widget().root()
+            && let Some(window) = root.downcast_ref::<gtk4::Window>()
+        {
+            crate::toast::show_toast_on_window(window, message, crate::toast::ToastType::Warning);
+        }
+    }
+
     /// Handles SFTP connection — opens file manager or mc
     ///
     /// Called when user clicks "Connect" on an SFTP-type connection.
@@ -1237,12 +1289,15 @@ impl MainWindow {
         };
         let use_mc = state_ref.settings().terminal.sftp_use_mc;
         let groups: Vec<rustconn_core::models::ConnectionGroup> = state_ref.list_groups_owned();
+        // Needed to resolve a jump host stored as a connection reference.
+        let connections: Vec<rustconn_core::Connection> = state_ref.list_connections_owned();
         let key_path = rustconn_core::sftp::get_ssh_key_path(conn, &groups)
             .and_then(|p| rustconn_core::resolve_key_path(&p));
 
         if use_mc {
-            let mc_cmd = rustconn_core::sftp::build_mc_sftp_command(conn, &groups);
+            let mc_cmd = rustconn_core::sftp::build_mc_sftp_command(conn);
             let conn_name = conn.name.clone();
+            let conn_for_ssh_env = conn.clone();
             let terminal_settings = state_ref.settings().terminal.clone();
             drop(state_ref);
 
@@ -1308,11 +1363,17 @@ impl MainWindow {
             let notebook_clone = notebook.clone();
             let mc_args_clone = mc_args.clone();
             let downloads_clone = downloads.clone();
-            // In Flatpak, create an SSH wrapper that injects the writable
-            // known_hosts path, and prepend its directory to PATH so mc's
-            // FISH protocol picks it up instead of /usr/bin/ssh.
-            let mc_home_env = rustconn_core::sftp::ensure_flatpak_mc_ssh_wrapper()
-                .map(|dir| format!("PATH={dir}:{}", std::env::var("PATH").unwrap_or_default()));
+            // mc's `sh://` URI carries only user, host and port; the jump host,
+            // identity file, HostKeyAlias and custom options reach the `ssh` it
+            // spawns through a generated ssh_config behind a PATH wrapper keyed
+            // on this session (issue #255).
+            let mc_home_env = rustconn_core::prepare_mc_ssh_env(
+                session_id,
+                &conn_for_ssh_env,
+                &connections,
+                &groups,
+            )
+            .map(|env| env.path_env());
             glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
                 let argv: Vec<&str> = mc_args_clone.iter().map(String::as_str).collect();
                 let envv: Option<Vec<&str>> = mc_home_env.as_ref().map(|e| vec![e.as_str()]);
@@ -1349,6 +1410,10 @@ impl MainWindow {
             // base_uri (server root) stays as the fallback.
             let conn_for_uri = conn.clone();
             let groups_for_uri = groups.clone();
+            let connections_for_uri = connections.clone();
+            let has_jump_host =
+                !rustconn_core::connection::resolve_jump_chain(conn, &connections, &groups)
+                    .is_empty();
             drop(state_ref);
 
             // Warn in Flatpak: external file managers cannot access
@@ -1358,18 +1423,24 @@ impl MainWindow {
                     "Flatpak: external file manager may not authenticate \
                      (no access to sandbox SSH_AUTH_SOCK)"
                 );
-                if let Some(root) = notebook.widget().root()
-                    && let Some(window) = root.downcast_ref::<gtk4::Window>()
-                {
-                    crate::toast::show_toast_on_window(
-                        window,
-                        &crate::i18n::i18n(
-                            "External file managers cannot access SSH agent in Flatpak. \
-                             Enable \"SFTP via mc\" in Settings for reliable access.",
-                        ),
-                        crate::toast::ToastType::Warning,
-                    );
-                }
+                Self::sftp_warn_on_window(
+                    notebook,
+                    &crate::i18n::i18n(
+                        "External file managers cannot access SSH agent in Flatpak. \
+                         Enable \"SFTP via mc\" in Settings for reliable access.",
+                    ),
+                );
+            }
+
+            // The GVFS sftp backend spawns its own ssh with a fixed argument list
+            // and reads no configuration we can point it at, so a bastion cannot
+            // be applied on this path at all (issue #255).
+            if has_jump_host {
+                tracing::warn!(
+                    "Jump host configured, but the file manager's SFTP backend \
+                     cannot route through it"
+                );
+                Self::sftp_warn_on_window(notebook, &Self::sftp_jump_host_warning());
             }
 
             tracing::info!(%base_uri, "SFTP connect: opening file browser");
@@ -1405,8 +1476,12 @@ impl MainWindow {
                     }
                     // Resolve the home-directory URI after the key is in the
                     // agent, off the GTK main thread; fall back to server root.
-                    rustconn_core::sftp::build_sftp_browser_uri(&conn_for_uri, &groups_for_uri)
-                        .unwrap_or(base_uri)
+                    rustconn_core::sftp::build_sftp_browser_uri(
+                        &conn_for_uri,
+                        &connections_for_uri,
+                        &groups_for_uri,
+                    )
+                    .unwrap_or(base_uri)
                 },
                 move |uri: String| {
                     // Launch file manager as a direct subprocess

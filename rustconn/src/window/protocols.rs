@@ -12,8 +12,8 @@ use rustconn_core::models::AutomationConfig;
 use rustconn_core::variables::{Variable, VariableManager, VariableScope};
 use uuid::Uuid;
 
-use super::MainWindow;
 pub use super::protocols_ssh::{reconnect_ssh_in_place, start_ssh_connection_observed};
+use super::{MainWindow, prompt_autofill};
 use crate::i18n::{i18n, i18n_f};
 use crate::sidebar::ConnectionSidebar;
 use crate::state::SharedAppState;
@@ -77,6 +77,43 @@ fn cached_connection_password(
         .get_cached_credentials(connection_id)
         .map(|c| c.password.clone())
         .filter(|p| !p.expose_secret().is_empty())
+}
+
+/// Builds the login auto-fill spec for a terminal-login protocol.
+///
+/// Telnet and a serial console authenticate by typing into the terminal, so the
+/// account name and the password both come from here: the username from the
+/// connection (with `${VAR}` references expanded), the password from the
+/// credentials the vault resolved before launch. `automation` supplies the
+/// optional expected prompt texts, already resolved through the group chain
+/// (issue #254).
+///
+/// The returned spec may be empty — [`prompt_autofill::install_login_autofill`]
+/// then does nothing, which is the correct behaviour for a device the user
+/// logs into by hand.
+fn login_autofill_for(
+    state: &SharedAppState,
+    connection_id: Uuid,
+    conn: &rustconn_core::Connection,
+    automation: &AutomationConfig,
+    global_variables: &[Variable],
+    protocol: &'static str,
+) -> prompt_autofill::LoginAutofill {
+    let username = conn
+        .username
+        .as_ref()
+        .map(|u| substitute_variables(u, global_variables))
+        .filter(|u| !u.trim().is_empty());
+
+    prompt_autofill::LoginAutofill {
+        username,
+        password: cached_connection_password(state, connection_id),
+        matcher: rustconn_core::LoginPromptMatcher::new(
+            automation.username_prompt.as_deref(),
+            automation.password_prompt.as_deref(),
+        ),
+        protocol,
+    }
 }
 
 /// Environment variable carrying the connection password to a Custom Command.
@@ -1612,6 +1649,25 @@ fn start_telnet_connection_internal(
         delete_sends,
     );
 
+    // --- Automatic login (issue #254) ---
+    // Telnet has no authentication protocol: the device prints its own prompts
+    // and expects the account name and the password to be typed. Network gear
+    // words those prompts inconsistently (`>>User name:`, `Username:`,
+    // `login:`), so the expected text can be overridden per connection or per
+    // group; unset falls back to the built-in matchers.
+    prompt_autofill::install_login_autofill(
+        notebook,
+        session_id,
+        login_autofill_for(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+            "telnet",
+        ),
+    );
+
     // --- Auto-recording for Telnet ---
     if conn.session_recording_enabled {
         let notebook_clone = notebook.clone();
@@ -1955,6 +2011,23 @@ pub fn start_serial_connection(
 
     // Spawn picocom
     notebook.spawn_serial(session_id, &command);
+
+    // --- Automatic login (issue #254) ---
+    // A serial console is the same situation as Telnet: whatever is on the
+    // other end of the line prints its own login prompts. Nothing is typed
+    // unless the connection actually carries a username or a stored password.
+    prompt_autofill::install_login_autofill(
+        notebook,
+        session_id,
+        login_autofill_for(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+            "serial",
+        ),
+    );
 
     // --- Auto-recording for Serial ---
     if conn.session_recording_enabled {

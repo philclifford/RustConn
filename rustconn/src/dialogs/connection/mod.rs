@@ -16,7 +16,7 @@
 //! and Window instead of Dialog.
 
 mod advanced_tab;
-mod automation_tab;
+pub(crate) mod automation_tab;
 mod builders;
 mod data_tab;
 mod dialog;

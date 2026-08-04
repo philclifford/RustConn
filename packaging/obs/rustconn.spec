@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.11
+Version:        0.19.12
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,27 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Mon Aug 03 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.12-0
+- Version bump to 0.19.12
+- Added preservation of terminal history across a reconnect, with a dim rule separating the old output from the new session (#253)
+- Added automatic login for Telnet and serial sessions, with configurable Username Prompt and Password Prompt fields inherited down the group chain (#254)
+- Added Remove from Split (Ctrl+Shift+R) and Remove Split (Ctrl+Shift+J) so a session can leave a split view without being closed (#252)
+- Fixed connect detection and prompt detection reading the oldest scrollback instead of the visible screen (#253)
+- Fixed an expect-rule response being written to the application log in clear text
+- Fixed "Move to New Tab" and "Close Connection" in a split pane's context menu doing nothing (#252)
+- Fixed a collapsed split leaving its layout behind, which the next split then reused
+- Fixed broadcast mirroring keystrokes out of a session that had left the split
+- Fixed SFTP being unable to reach a host behind a jump host: mc's sh:// VFS now receives the connection's SSH options through a generated ssh_config behind a PATH wrapper (#255)
+- Fixed a jump host picked from the connection list being invisible to every SFTP path; chain resolution moved into rustconn-core::connection::jump_chain
+- Fixed rustconn-cli sftp refusing connections whose protocol is SFTP
+- Fixed a pre-connect port check running against hosts reachable only through a hand-typed ProxyJump
+- Changed the documentation of ${password} and ${username} in an expect-rule response to say they resolve from global variables only
+- Improved prompt watching by replacing three duplicated implementations with window::prompt_autofill::install_login_autofill
+- Improved testability by moving prompt matching into rustconn-core::connection::login_prompt
+- Improved the file-manager SFTP path, which now warns that it cannot route through a jump host instead of failing silently
+- Updated dependencies: ipnet 2.12.0 to 2.12.1, libredox 0.1.18 to 0.1.19
+- Documented Automatic Login for Telnet and Serial in the user guide
+
 * Sun Aug 02 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.11-0
 - Version bump to 0.19.11
 - Fixed the Homebrew release automation patching only commented-out examples, which left the tap formula pinned to v0.19.6 since that release (#251)

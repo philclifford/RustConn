@@ -7,6 +7,58 @@ use rustconn_core::models::ProtocolType;
 use crate::error::CliError;
 use crate::util::{create_config_manager, find_connection};
 
+/// Runs Midnight Commander against the connection's remote host.
+///
+/// mc's `sh://` VFS shells out to bare `ssh` with a fixed argument list, so the
+/// connection's jump host, identity file and custom options can only reach it
+/// through a generated `ssh_config` behind a `PATH` wrapper (issue #255).
+///
+/// # Errors
+///
+/// Returns [`CliError::Protocol`] if the connection is not SSH-family and
+/// [`CliError::Connection`] if mc cannot be launched or exits non-zero.
+fn run_mc(
+    connection: &rustconn_core::Connection,
+    connections: &[rustconn_core::Connection],
+    groups: &[rustconn_core::ConnectionGroup],
+) -> Result<(), CliError> {
+    let cmd = rustconn_core::sftp::build_mc_sftp_command(connection)
+        .ok_or_else(|| CliError::Protocol("Failed to build mc command".to_string()))?;
+
+    println!("Opening mc SFTP for '{}'...", connection.name);
+
+    let mut proc = std::process::Command::new(&cmd[0]);
+    proc.args(&cmd[1..]);
+    rustconn_core::sftp::apply_agent_env(&mut proc);
+
+    // A fresh id per invocation keeps two concurrent runs against the same
+    // connection from tearing down each other's wrapper directory.
+    let wrapper_id = uuid::Uuid::new_v4();
+    let mc_ssh = rustconn_core::prepare_mc_ssh_env(wrapper_id, connection, connections, groups);
+    if let Some(ref env) = mc_ssh {
+        proc.env("PATH", env.path_env().trim_start_matches("PATH="));
+    }
+
+    let status = proc.status().map_err(|e| {
+        CliError::Connection(format!(
+            "Failed to launch mc: {e}. \
+             Is midnight-commander installed?"
+        ))
+    });
+    // Runs whether mc started or not, so a failed spawn leaves nothing behind.
+    if mc_ssh.is_some() {
+        rustconn_core::cleanup_mc_ssh_env(wrapper_id);
+    }
+
+    if status?.success() {
+        Ok(())
+    } else {
+        Err(CliError::Connection(
+            "mc session ended with error".to_string(),
+        ))
+    }
+}
+
 /// Open SFTP session for an SSH connection
 ///
 /// # Errors
@@ -35,7 +87,10 @@ pub(super) fn cmd_sftp(
         .load_groups()
         .map_err(|e| CliError::Config(format!("Failed to load groups: {e}")))?;
 
-    if connection.protocol != ProtocolType::Ssh {
+    // A connection whose protocol *is* SFTP carries the same `SshConfig` and is
+    // exactly what this command is for; only rejecting non-SSH-family protocols
+    // is correct here.
+    if !matches!(connection.protocol, ProtocolType::Ssh | ProtocolType::Sftp) {
         return Err(CliError::Protocol(format!(
             "SFTP is only available for SSH connections, '{}' uses {}",
             connection.name,
@@ -54,28 +109,9 @@ pub(super) fn cmd_sftp(
     }
 
     if use_mc {
-        let cmd = rustconn_core::sftp::build_mc_sftp_command(connection, &groups)
-            .ok_or_else(|| CliError::Protocol("Failed to build mc command".to_string()))?;
-
-        println!("Opening mc SFTP for '{}'...", connection.name);
-
-        let mut proc = std::process::Command::new(&cmd[0]);
-        proc.args(&cmd[1..]);
-        rustconn_core::sftp::apply_agent_env(&mut proc);
-        let status = proc.status().map_err(|e| {
-            CliError::Connection(format!(
-                "Failed to launch mc: {e}. \
-                 Is midnight-commander installed?"
-            ))
-        })?;
-
-        if !status.success() {
-            return Err(CliError::Connection(
-                "mc session ended with error".to_string(),
-            ));
-        }
+        run_mc(connection, &connections, &groups)?;
     } else if use_cli {
-        let cmd = rustconn_core::sftp::build_sftp_command(connection, &groups)
+        let cmd = rustconn_core::sftp::build_sftp_command(connection, &connections, &groups)
             .ok_or_else(|| CliError::Protocol("Failed to build SFTP command".to_string()))?;
 
         println!("Connecting via sftp CLI to '{}'...", connection.name);
@@ -97,8 +133,22 @@ pub(super) fn cmd_sftp(
         {
             // Resolve the login home directory so the file manager opens where the
             // user has access instead of the server root (issue #212).
-            let uri = rustconn_core::sftp::build_sftp_browser_uri(connection, &groups)
-                .ok_or_else(|| CliError::Protocol("Failed to build SFTP URI".to_string()))?;
+            let uri =
+                rustconn_core::sftp::build_sftp_browser_uri(connection, &connections, &groups)
+                    .ok_or_else(|| CliError::Protocol("Failed to build SFTP URI".to_string()))?;
+
+            // GVFS spawns its own `ssh` with a hardcoded argument list and reads
+            // no configuration we can point it at, so a bastion cannot be
+            // applied on this path at all.
+            if !rustconn_core::connection::resolve_jump_chain(connection, &connections, &groups)
+                .is_empty()
+            {
+                tracing::warn!(
+                    name = %connection.name,
+                    "This connection uses a jump host, which the file-manager \
+                     path cannot route through. Use --mc or --cli instead."
+                );
+            }
 
             tracing::info!(name = %connection.name, %uri, "Opening SFTP file browser");
 

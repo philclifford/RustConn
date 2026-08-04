@@ -1446,6 +1446,14 @@ pub enum GroupCommands {
         /// Remove all existing post-login scripts before adding new ones
         #[arg(long)]
         clear_post_login_scripts: bool,
+        /// Expected text of the device's username prompt for automatic login,
+        /// inherited by connections (empty string clears it)
+        #[arg(long, value_name = "TEXT")]
+        username_prompt: Option<String>,
+        /// Expected text of the device's password prompt for automatic login,
+        /// inherited by connections (empty string clears it)
+        #[arg(long, value_name = "TEXT")]
+        password_prompt: Option<String>,
     },
 }
 

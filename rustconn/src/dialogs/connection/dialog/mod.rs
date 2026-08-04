@@ -310,6 +310,10 @@ pub struct ConnectionDialog {
     expect_pattern_test_entry: Entry,
     /// Label showing pattern test results - wired up in `wire_pattern_tester()`
     expect_test_result_label: Label,
+    /// Expected text of the device's username prompt for automatic login (issue #254).
+    login_username_prompt_entry: Entry,
+    /// Expected text of the device's password prompt for automatic login.
+    login_password_prompt_entry: Entry,
     // Connection tasks fields
     pre_connect_enabled_switch: adw::SwitchRow,
     pre_connect_command_entry: Entry,

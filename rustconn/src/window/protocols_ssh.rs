@@ -4,7 +4,6 @@
 
 use std::rc::Rc;
 
-use gtk4::glib;
 use gtk4::prelude::*;
 use rustconn_core::connection::{check_port, ssh_inheritance};
 use secrecy::SecretString;
@@ -17,28 +16,6 @@ use super::protocols::{
 };
 use crate::state::SharedAppState;
 use crate::utils::spawn_blocking_with_callback;
-
-/// Returns `true` if the session's cursor line is an SSH password prompt, in any
-/// of the supported UI languages.
-///
-/// Network gear (OLT/router) emits the prompt in no-echo mode with cursor
-/// positioning escapes and no trailing `\n`, leaving ~20 blank rows below it — so
-/// `.lines().last()` of the full grid is empty and misses the prompt (issue #194).
-/// Instead we read the line under the cursor via
-/// [`TerminalNotebook::get_cursor_line_text`] (which falls back to the last
-/// non-empty grid line) and delegate matching to the GUI-free, testable
-/// `rustconn_core::connection::looks_like_password_prompt`.
-///
-/// Returns `false` for key-passphrase prompts (the core matcher already excludes
-/// `passphrase for key`) and when the session has no cursor line / no terminal,
-/// so the caller simply skips injection. Shared by initial connect and in-place
-/// reconnect so multilingual auto-login behaves identically on both paths.
-fn detect_password_prompt(notebook: &SharedNotebook, session_id: Uuid) -> bool {
-    notebook
-        .get_cursor_line_text(session_id)
-        .as_deref()
-        .is_some_and(rustconn_core::connection::looks_like_password_prompt)
-}
 
 /// Environment variable carrying the jump host (bastion) password to the
 /// `SSH_ASKPASS` helper. Intentionally obscure to reduce exposure in
@@ -1132,16 +1109,13 @@ fn start_ssh_connection_internal(
         );
     }
 
-    // --- VTE password injection: detect "password:" prompt and feed cached password ---
-    // This replaces the previous sshpass dependency. The terminal output is
-    // monitored for SSH password prompts; when detected, the vault password
-    // is sent via feed_child() exactly once.
-    // NOTE: Passphrase prompts ("Enter passphrase for key") are explicitly
-    // excluded to avoid sending the wrong secret when SSH auth is PublicKey.
+    // --- VTE password injection: detect the password prompt and type the
+    // cached password (replaces the former sshpass dependency) ---
     //
-    // We subscribe to BOTH `contents-changed` AND `cursor-moved` because
-    // `contents-changed` alone does not fire reliably for SSH password prompts
-    // output in no-echo mode with cursor positioning escapes (issue #194).
+    // Passphrase prompts ("Enter passphrase for key") are excluded by the core
+    // matcher, so a PublicKey session never receives the account password. An
+    // expected-text override from the connection or its group is honoured for
+    // the rare device with unusual wording (issue #254).
     //
     // Guard (issue #191, Req 2.2/2.5): only ever inject the target password when
     // there is no jump host at all, or the bastion was already authenticated
@@ -1151,118 +1125,22 @@ fn start_ssh_connection_internal(
     let allow_target_autofill = !has_jump_host
         || bastion_handled_out_of_band
         || !bastion_may_prompt_for_password(conn, state);
-    if allow_target_autofill && let Some(vault_password) = cached_password.clone() {
-        let password_sent = std::rc::Rc::new(std::cell::Cell::new(false));
-        // Guards the deferred re-check so repeated signals don't pile up timers
-        // (issue #194). Scheduled at most once per session.
-        let recheck_scheduled = std::rc::Rc::new(std::cell::Cell::new(false));
-
-        tracing::info!(
-            protocol = "ssh",
-            host = %host,
-            "Vault password available; will auto-fill on prompt"
+    if allow_target_autofill {
+        crate::window::prompt_autofill::install_login_autofill(
+            notebook,
+            session_id,
+            crate::window::prompt_autofill::LoginAutofill {
+                // SSH never types the account name: it travels in the command line.
+                username: None,
+                password: cached_password.clone(),
+                matcher: rustconn_core::LoginPromptMatcher::new(
+                    None,
+                    resolved_automation.password_prompt.as_deref(),
+                ),
+                protocol: "ssh",
+            },
         );
-
-        // One detect+inject step (no scheduling), shared by the live signals and
-        // the deferred re-check. The one-shot `password_sent` guard is checked
-        // first, so it can never inject twice no matter who calls it.
-        let inject_once = {
-            let notebook_clone = notebook.clone();
-            let password_sent = password_sent.clone();
-            let vault_password = vault_password.clone();
-            std::rc::Rc::new(move || {
-                if password_sent.get() {
-                    return;
-                }
-                if detect_password_prompt(&notebook_clone, session_id) {
-                    use secrecy::ExposeSecret;
-                    // Wrap in Zeroizing so the plaintext password is wiped from memory
-                    // immediately after it is handed to VTE, instead of lingering until GC.
-                    let input =
-                        zeroize::Zeroizing::new(format!("{}\n", vault_password.expose_secret()));
-                    notebook_clone.send_text_to_session(session_id, &input);
-                    password_sent.set(true);
-                    tracing::info!(
-                        protocol = "ssh",
-                        "Password prompt detected; credentials sent via VTE"
-                    );
-                }
-            })
-        };
-
-        // Shared closure logic extracted into an Rc to avoid duplicating
-        // the detection + injection code across two signal handlers.
-        let check_and_inject = {
-            let inject_once = inject_once.clone();
-            let password_sent = password_sent.clone();
-            let recheck_scheduled = recheck_scheduled.clone();
-            let notebook_for_poll = notebook.clone();
-            std::rc::Rc::new(move || {
-                inject_once();
-                // No match yet: the cursor-moved/contents-changed signal may have
-                // fired before the no-echo prompt glyphs were committed to the
-                // grid (issue #194 race). Schedule a polling timer that retries
-                // at a fixed interval until the prompt appears or 10s pass.
-                // A single 120ms one-shot was insufficient: VTE in no-echo mode
-                // may never emit another signal after the prompt lands, leaving
-                // password injection stuck indefinitely (intermittent hang).
-                if !password_sent.get() && !recheck_scheduled.get() {
-                    recheck_scheduled.set(true);
-                    let inject_once = inject_once.clone();
-                    let password_sent_poll = password_sent.clone();
-                    let password_sent_deadline = password_sent.clone();
-                    // Poll at 150ms intervals for up to ~10s (66 attempts).
-                    // 150ms balances responsiveness against CPU wake-ups; 10s
-                    // covers slow SSH handshakes (key exchange + DNS + banner).
-                    // The timer self-cancels once password_sent flips to true
-                    // (either from this timer or from a late VTE signal).
-                    let notebook_poll = notebook_for_poll.clone();
-                    glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
-                        if password_sent_poll.get() {
-                            return glib::ControlFlow::Break;
-                        }
-                        // Early exit: stop polling if the session was closed
-                        // (tab closed, child exited) — avoids 10s of useless
-                        // wake-ups after the user closes the stuck tab.
-                        if notebook_poll.get_terminal(session_id).is_none() {
-                            return glib::ControlFlow::Break;
-                        }
-                        inject_once();
-                        // Stop polling once injected or after ~10s (implicit:
-                        // password_sent checked at next tick). The signal
-                        // handlers remain active as a secondary path.
-                        if password_sent_poll.get() {
-                            glib::ControlFlow::Break
-                        } else {
-                            glib::ControlFlow::Continue
-                        }
-                    });
-                    // Hard deadline: stop polling after 10s regardless — if the
-                    // prompt never appeared, the user can type manually.
-                    glib::timeout_add_local_once(std::time::Duration::from_secs(10), move || {
-                        if !password_sent_deadline.get() {
-                            // Force-stop the repeating timer by flipping the
-                            // flag; next tick will see it and Break.
-                            tracing::debug!(
-                                protocol = "ssh",
-                                "Password prompt polling timed out after 10s"
-                            );
-                            password_sent_deadline.set(true);
-                        }
-                    });
-                }
-            })
-        };
-
-        // contents-changed: fires for most terminal output
-        let on_contents_changed = check_and_inject.clone();
-        notebook.connect_contents_changed(session_id, move || on_contents_changed());
-
-        // cursor-moved: fires reliably for prompts using cursor positioning
-        // escapes without a trailing newline (SSH password prompt, issue #194)
-        let on_cursor_moved = check_and_inject;
-        notebook.connect_cursor_moved(session_id, move || on_cursor_moved());
-    } else if !allow_target_autofill && cached_password.is_some() {
+    } else if cached_password.is_some() {
         tracing::info!(
             protocol = "ssh",
             "Jump host not handled out-of-band; target password auto-fill suppressed to avoid leaking to bastion"
@@ -1562,6 +1440,11 @@ pub fn reconnect_ssh_in_place(
                 Some(c.password.clone())
             }
         });
+    let have_cached_password = cached_password.is_some();
+
+    // Effective automation config (group inheritance included) — read here for
+    // the optional password-prompt override used by the auto-fill watcher.
+    let resolved_automation = resolve_automation_for_connection(state, &conn);
 
     // Spawn SSH in the existing terminal
     {
@@ -1599,123 +1482,29 @@ pub fn reconnect_ssh_in_place(
         );
     }
 
-    // VTE password injection (issue #194: also subscribe to cursor-moved)
-    // NOTE: Passphrase prompts ("Enter passphrase for key") are explicitly
-    // excluded to avoid sending the wrong secret when SSH auth is PublicKey.
-    //
-    // Guard (issue #191, Req 2.2/2.5): inject the target password only when there
-    // is no jump host, the bastion was authenticated out-of-band via SSH_ASKPASS,
-    // or the bastion uses key/agent auth and never prompts in the VTE — otherwise
-    // we'd leak the target password to the bastion prompt.
+    // VTE password injection — same one-shot watcher as the initial connect
+    // (see `prompt_autofill`), including the issue #191 bastion guard: inject
+    // the target password only when there is no jump host, the bastion was
+    // authenticated out-of-band via SSH_ASKPASS, or it uses key/agent auth and
+    // never prompts in the VTE.
     let allow_target_autofill = !has_jump_host
         || bastion_handled_out_of_band
         || !bastion_may_prompt_for_password(&conn, state);
-    let have_cached_password = cached_password.is_some();
-    if allow_target_autofill && let Some(vault_password) = cached_password {
-        let password_sent = std::rc::Rc::new(std::cell::Cell::new(false));
-        // Guards the deferred re-check so repeated signals don't pile up timers
-        // (issue #194). Scheduled at most once per session.
-        let recheck_scheduled = std::rc::Rc::new(std::cell::Cell::new(false));
-
-        tracing::info!(
-            protocol = "ssh",
-            host = %host,
-            "Vault password available; will auto-fill on prompt"
+    if allow_target_autofill {
+        crate::window::prompt_autofill::install_login_autofill(
+            notebook,
+            session_id,
+            crate::window::prompt_autofill::LoginAutofill {
+                username: None,
+                password: cached_password,
+                matcher: rustconn_core::LoginPromptMatcher::new(
+                    None,
+                    resolved_automation.password_prompt.as_deref(),
+                ),
+                protocol: "ssh",
+            },
         );
-
-        // One detect+inject step (no scheduling), shared by the live signals and
-        // the deferred re-check. The one-shot `password_sent` guard is checked
-        // first, so it can never inject twice no matter who calls it.
-        let inject_once = {
-            let notebook_clone = notebook.clone();
-            let password_sent = password_sent.clone();
-            let vault_password = vault_password.clone();
-            std::rc::Rc::new(move || {
-                if password_sent.get() {
-                    return;
-                }
-                if detect_password_prompt(&notebook_clone, session_id) {
-                    use secrecy::ExposeSecret;
-                    let input =
-                        zeroize::Zeroizing::new(format!("{}\n", vault_password.expose_secret()));
-                    notebook_clone.send_text_to_session(session_id, &input);
-                    password_sent.set(true);
-                    tracing::info!(
-                        protocol = "ssh",
-                        "Password prompt detected; credentials sent via VTE"
-                    );
-                }
-            })
-        };
-
-        let check_and_inject = {
-            let inject_once = inject_once.clone();
-            let password_sent = password_sent.clone();
-            let recheck_scheduled = recheck_scheduled.clone();
-            let notebook_for_poll = notebook.clone();
-            std::rc::Rc::new(move || {
-                inject_once();
-                // No match yet: the cursor-moved/contents-changed signal may have
-                // fired before the no-echo prompt glyphs were committed to the
-                // grid (issue #194 race). Schedule a polling timer that retries
-                // at a fixed interval until the prompt appears or 10s pass.
-                // A single 120ms one-shot was insufficient: VTE in no-echo mode
-                // may never emit another signal after the prompt lands, leaving
-                // password injection stuck indefinitely (intermittent hang).
-                if !password_sent.get() && !recheck_scheduled.get() {
-                    recheck_scheduled.set(true);
-                    let inject_once = inject_once.clone();
-                    let password_sent_poll = password_sent.clone();
-                    let password_sent_deadline = password_sent.clone();
-                    // Poll at 150ms intervals for up to ~10s (66 attempts).
-                    // 150ms balances responsiveness against CPU wake-ups; 10s
-                    // covers slow SSH handshakes (key exchange + DNS + banner).
-                    // The timer self-cancels once password_sent flips to true
-                    // (either from this timer or from a late VTE signal).
-                    let notebook_poll = notebook_for_poll.clone();
-                    glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
-                        if password_sent_poll.get() {
-                            return glib::ControlFlow::Break;
-                        }
-                        // Early exit: stop polling if the session was closed
-                        // (tab closed, child exited) — avoids 10s of useless
-                        // wake-ups after the user closes the stuck tab.
-                        if notebook_poll.get_terminal(session_id).is_none() {
-                            return glib::ControlFlow::Break;
-                        }
-                        inject_once();
-                        // Stop polling once injected or after ~10s (implicit:
-                        // password_sent checked at next tick). The signal
-                        // handlers remain active as a secondary path.
-                        if password_sent_poll.get() {
-                            glib::ControlFlow::Break
-                        } else {
-                            glib::ControlFlow::Continue
-                        }
-                    });
-                    // Hard deadline: stop polling after 10s regardless — if the
-                    // prompt never appeared, the user can type manually.
-                    glib::timeout_add_local_once(std::time::Duration::from_secs(10), move || {
-                        if !password_sent_deadline.get() {
-                            // Force-stop the repeating timer by flipping the
-                            // flag; next tick will see it and Break.
-                            tracing::debug!(
-                                protocol = "ssh",
-                                "Password prompt polling timed out after 10s"
-                            );
-                            password_sent_deadline.set(true);
-                        }
-                    });
-                }
-            })
-        };
-
-        let on_contents_changed = check_and_inject.clone();
-        notebook.connect_contents_changed(session_id, move || on_contents_changed());
-
-        let on_cursor_moved = check_and_inject;
-        notebook.connect_cursor_moved(session_id, move || on_cursor_moved());
-    } else if !allow_target_autofill && have_cached_password {
+    } else if have_cached_password {
         tracing::info!(
             protocol = "ssh",
             "Jump host not handled out-of-band; target password auto-fill suppressed to avoid leaking to bastion"
