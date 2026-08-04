@@ -22,6 +22,26 @@ pub fn looks_like_password_prompt(line: &str) -> bool {
         return false;
     }
 
+    // Reject password-change prompts — these ask the user to type a *new* or
+    // *current* password as part of `passwd` or a RADIUS challenge, and answering
+    // them with the stored login password is always wrong (issue #254).
+    if l.contains("old password")
+        || l.contains("current password")
+        || l.contains("(current)")
+        || l.contains("new password")
+        || l.contains("retype password")
+        || l.contains("confirm password")
+        || l.contains("verify password")
+        || l.contains("repeat password")
+        // Ukrainian/Russian
+        || l.contains("старий пароль")
+        || l.contains("старый пароль")
+        || l.contains("новий пароль")
+        || l.contains("новый пароль")
+    {
+        return false;
+    }
+
     l.ends_with("password:")
         || l.contains("'s password:")
         // German
@@ -157,5 +177,22 @@ mod tests {
         assert!(!looks_like_password_prompt(
             "Enter passphrase for key '/home/u/.ssh/id_ed25519': Password:"
         ));
+    }
+
+    /// Password-change prompts are rejected so auto-login does not answer them
+    /// with the stored login password (which is always wrong for these).
+    #[test]
+    fn rejects_password_change_prompts() {
+        assert!(!looks_like_password_prompt("(current) UNIX password:"));
+        assert!(!looks_like_password_prompt("Old Password:"));
+        assert!(!looks_like_password_prompt("Current password:"));
+        assert!(!looks_like_password_prompt("New password:"));
+        assert!(!looks_like_password_prompt("Retype new password:"));
+        assert!(!looks_like_password_prompt("Confirm password:"));
+        assert!(!looks_like_password_prompt("Verify password:"));
+        assert!(!looks_like_password_prompt("Repeat password:"));
+        // Ukrainian
+        assert!(!looks_like_password_prompt("Старий пароль:"));
+        assert!(!looks_like_password_prompt("Новий пароль:"));
     }
 }

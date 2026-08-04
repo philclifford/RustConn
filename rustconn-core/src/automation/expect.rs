@@ -303,6 +303,17 @@ impl ExpectEngine {
         self.rules.iter().find(|r| r.rule.id == id).map(|r| &r.rule)
     }
 
+    /// Gets a mutable reference to a rule by ID.
+    ///
+    /// Used to zeroize a rule's response before removal so credentials do not
+    /// linger in freed memory.
+    pub fn get_rule_mut(&mut self, id: Uuid) -> Option<&mut ExpectRule> {
+        self.rules
+            .iter_mut()
+            .find(|r| r.rule.id == id)
+            .map(|r| &mut r.rule)
+    }
+
     /// Returns all rules
     #[must_use]
     pub fn rules(&self) -> Vec<&ExpectRule> {
@@ -456,6 +467,17 @@ impl ExpectEngine {
     /// Clears all rules from the engine
     pub fn clear(&mut self) {
         self.rules.clear();
+    }
+
+    /// Overwrites every rule's response with zeroes.
+    ///
+    /// Called when an automation session is torn down so credentials that were
+    /// substituted into responses (issue #257) do not linger in freed memory.
+    pub fn zeroize_responses(&mut self) {
+        use zeroize::Zeroize;
+        for compiled in &mut self.rules {
+            compiled.rule.response.zeroize();
+        }
     }
 }
 

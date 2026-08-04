@@ -214,6 +214,18 @@ const SHORTCUTS: &[ShortcutEntry] = &[
         category: "Split View",
     },
     ShortcutEntry {
+        accel: "<Control><Shift>r",
+        keys: "Ctrl+Shift+R",
+        description: "Remove pane from split (keep session)",
+        category: "Split View",
+    },
+    ShortcutEntry {
+        accel: "<Control><Shift>j",
+        keys: "Ctrl+Shift+J",
+        description: "Remove split (keep all sessions)",
+        category: "Split View",
+    },
+    ShortcutEntry {
         accel: "<Control>grave",
         keys: "Ctrl+`",
         description: "Focus next pane",
@@ -648,6 +660,8 @@ fn _i18n_markers() {
     i18n("Split horizontal");
     i18n("Split vertical");
     i18n("Close pane");
+    i18n("Remove pane from split (keep session)");
+    i18n("Remove split (keep all sessions)");
     i18n("Focus next pane");
     i18n("Search");
     i18n("Focus sidebar");

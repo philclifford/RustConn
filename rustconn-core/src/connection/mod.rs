@@ -16,9 +16,11 @@
 
 pub mod automation_inheritance;
 mod interning;
+pub mod jump_chain;
 pub mod keepalive;
 pub mod knock;
 mod lazy_loader;
+mod login_prompt;
 mod manager;
 pub mod mdns;
 pub mod mptcp;
@@ -33,12 +35,16 @@ pub use interning::{
     check_interning_stats, get_interning_stats, intern_connection_strings, intern_hostname,
     intern_protocol_name, intern_username, log_interning_stats, log_interning_stats_with_warning,
 };
+pub use jump_chain::{JumpChain, resolve_jump_chain, resolve_proxy_jump_value};
 pub use keepalive::{KeepaliveConfig, apply_interactive_keepalive, set_interactive_keepalive};
 pub use knock::{
     Knock, KnockError, KnockProtocol, KnockResult, KnockSequence, SpaAllowIp, SpaConfig,
     execute_knock_sequence,
 };
 pub use lazy_loader::LazyGroupLoader;
+pub use login_prompt::{
+    DEFAULT_USERNAME_PROMPTS, LoginPrompt, LoginPromptMatcher, looks_like_username_prompt,
+};
 pub use manager::ConnectionManager;
 pub use mdns::{apply_mdns_fallback, is_mdns_name, resolve_sandboxed_hostname};
 pub use mptcp::{

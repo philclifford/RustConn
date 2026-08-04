@@ -77,6 +77,33 @@ proptest! {
         prop_assert!(conn.bypasses_direct_probe());
     }
 
+    /// Property: a free-text `proxy_jump` bypasses the probe just like a
+    /// reference-based jump host — both mean the target is not reachable
+    /// directly, so a pre-connect TCP check could only time out.
+    #[test]
+    fn ssh_string_proxy_jump_bypasses_probe(
+        skip in any::<bool>(),
+        host in "[a-z][a-z0-9.-]{0,30}",
+    ) {
+        let mut conn = Connection::new_ssh("t".into(), "h".into(), 22);
+        if let ProtocolConfig::Ssh(ref mut cfg) = conn.protocol_config {
+            cfg.proxy_jump = Some(host);
+        }
+        conn.skip_port_check = skip;
+        prop_assert!(conn.bypasses_direct_probe());
+    }
+
+    /// Property: a blank `proxy_jump` configures no bastion, so it must not
+    /// suppress the probe.
+    #[test]
+    fn ssh_blank_proxy_jump_does_not_bypass(blank in "[ \t]{0,5}") {
+        let mut conn = Connection::new_ssh("t".into(), "h".into(), 22);
+        if let ProtocolConfig::Ssh(ref mut cfg) = conn.protocol_config {
+            cfg.proxy_jump = Some(blank);
+        }
+        prop_assert!(!conn.bypasses_direct_probe());
+    }
+
     /// Property: plain SSH (no jump, no proxy) does NOT bypass probe
     #[test]
     fn plain_ssh_does_not_bypass(skip in any::<bool>()) {

@@ -256,6 +256,12 @@ impl ConnectionDialog {
         // Set expect rules
         self.set_expect_rules(&conn.automation.expect_rules);
 
+        // Set the automatic-login prompt overrides (issue #254)
+        self.login_username_prompt_entry
+            .set_text(conn.automation.username_prompt.as_deref().unwrap_or(""));
+        self.login_password_prompt_entry
+            .set_text(conn.automation.password_prompt.as_deref().unwrap_or(""));
+
         // Set connection tasks
         self.set_pre_connect_task(conn.pre_connect_task.as_ref());
         self.set_post_disconnect_task(conn.post_disconnect_task.as_ref());

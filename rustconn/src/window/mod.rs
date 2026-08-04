@@ -18,6 +18,7 @@ mod history_actions;
 mod navigation_actions;
 mod network_monitor;
 mod operations;
+mod prompt_autofill;
 mod protocols;
 mod protocols_ssh;
 mod rdp_vnc;
@@ -387,6 +388,12 @@ impl MainWindow {
         if let Ok(state_ref) = state.try_borrow() {
             terminal_notebook
                 .set_color_tabs_by_protocol(state_ref.settings().ui.color_tabs_by_protocol);
+            terminal_notebook.set_keep_history_on_reconnect(
+                state_ref.settings().terminal.keep_history_on_reconnect,
+            );
+            terminal_notebook.set_max_scrollback_on_reconnect(
+                state_ref.settings().terminal.max_scrollback_on_reconnect,
+            );
             sidebar.set_filter_visible(state_ref.settings().ui.show_protocol_filters);
             sidebar.set_smart_folders_visible(state_ref.settings().ui.show_smart_folders);
         }
@@ -1290,19 +1297,8 @@ impl MainWindow {
                 Rc::clone(terminal_notebook.split_colors()),
             );
 
-            // Setup close panel callback for empty panel close buttons
-            let split_view_for_close = split_view.clone();
-            split_view.setup_close_panel_callback(move |pane_uuid| {
-                // Focus the pane first so close_pane() closes the correct one
-                split_view_for_close.set_focused_pane(Some(pane_uuid));
-
-                // Update focus styling via the adapter
-                if let Some(panel_id) = split_view_for_close.get_panel_id_for_uuid(pane_uuid)
-                    && let Err(e) = split_view_for_close.adapter_set_focus(panel_id)
-                {
-                    tracing::warn!("Failed to set focus on panel: {}", e);
-                }
-            });
+            // Wire the panel buttons and panel context menu
+            split_view_actions::wire_panel_action_callbacks(&split_view);
         }
 
         // Set up drag-and-drop for initial pane with notebook lookup
@@ -3076,6 +3072,11 @@ impl MainWindow {
 
                 // Apply protocol tab coloring setting
                 notebook.set_color_tabs_by_protocol(settings.ui.color_tabs_by_protocol);
+
+                // Apply reconnect history retention setting (#253)
+                notebook.set_keep_history_on_reconnect(settings.terminal.keep_history_on_reconnect);
+                notebook
+                    .set_max_scrollback_on_reconnect(settings.terminal.max_scrollback_on_reconnect);
 
                 // Apply protocol filter visibility setting
                 sidebar.set_filter_visible(settings.ui.show_protocol_filters);

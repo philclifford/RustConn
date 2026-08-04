@@ -26,6 +26,26 @@ pub struct AutomationConfig {
     /// Post-login scripts to execute
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub post_login_scripts: Vec<String>,
+    /// Expected text of the device's username prompt, for automatic login.
+    ///
+    /// Matched as a case-insensitive substring of the line under the cursor.
+    /// `None` (or blank) uses the built-in matcher, which already covers
+    /// `login:`, `Username:` and `>>User name:` (issue #254).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username_prompt: Option<String>,
+    /// Expected text of the device's password prompt, for automatic login.
+    ///
+    /// `None` (or blank) uses the built-in localized password matcher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_prompt: Option<String>,
+    /// How many seconds auto-login waits for a prompt before giving up.
+    ///
+    /// Defaults to 10 s, which covers a typical SSH handshake or switch banner.
+    /// Serial and Telnet connections to network equipment that boots slowly
+    /// (Cisco ASR, Huawei MA5800) may need 30–60 s. `None` means "use the
+    /// default" so existing configs are unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login_timeout_secs: Option<u32>,
 }
 
 /// Source of password/credentials for a connection
@@ -918,11 +938,18 @@ impl Connection {
     /// Connections routed through a jump host, RDP Gateway, SSH ProxyCommand,
     /// or SPICE proxy are not directly reachable, so a pre-connect port check
     /// would always time out.
+    ///
+    /// A bastion set as free text in `proxy_jump` counts as much as one picked
+    /// from the connection list: both mean the target is not reachable directly.
     #[must_use]
     pub fn bypasses_direct_probe(&self) -> bool {
         match &self.protocol_config {
             ProtocolConfig::Ssh(c) | ProtocolConfig::Sftp(c) => {
-                c.jump_host_id.is_some() || c.proxy_command.is_some()
+                c.jump_host_id.is_some()
+                    || c.proxy_command.is_some()
+                    || c.proxy_jump
+                        .as_deref()
+                        .is_some_and(|p| !p.trim().is_empty())
             }
             ProtocolConfig::Rdp(c) => c.jump_host_id.is_some() || c.gateway.is_some(),
             ProtocolConfig::Vnc(c) => c.jump_host_id.is_some(),

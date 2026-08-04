@@ -10,7 +10,7 @@
 //! of directory changes, this module sets up file system watches and sends notifications
 //! when files are created, modified, deleted, or renamed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::MetadataExt;
@@ -24,18 +24,18 @@ use ironrdp::rdpdr::pdu::RdpdrPdu;
 use ironrdp::rdpdr::pdu::efs::{
     Boolean, ClientDriveQueryDirectoryResponse, ClientDriveQueryInformationResponse,
     ClientDriveQueryVolumeInformationResponse, ClientDriveSetInformationResponse,
-    CreateDisposition, CreateOptions, DeviceCloseRequest, DeviceCloseResponse,
+    CreateDisposition, CreateOptions, DesiredAccess, DeviceCloseRequest, DeviceCloseResponse,
     DeviceControlRequest, DeviceControlResponse, DeviceCreateRequest, DeviceCreateResponse,
     DeviceIoResponse, DeviceReadRequest, DeviceReadResponse, DeviceWriteRequest,
-    DeviceWriteResponse, FileAttributes, FileBasicInformation, FileBothDirectoryInformation,
-    FileFsAttributeInformation, FileFsFullSizeInformation, FileFsSizeInformation,
-    FileFsVolumeInformation, FileInformationClass, FileInformationClassLevel,
-    FileStandardInformation, FileSystemAttributes, FileSystemInformationClass,
-    FileSystemInformationClassLevel, Information, NtStatus, PrinterIoRequest,
-    ServerDeviceAnnounceResponse, ServerDriveIoRequest, ServerDriveLockControlRequest,
-    ServerDriveNotifyChangeDirectoryRequest, ServerDriveQueryDirectoryRequest,
-    ServerDriveQueryInformationRequest, ServerDriveQueryVolumeInformationRequest,
-    ServerDriveSetInformationRequest,
+    DeviceWriteResponse, FileAttributeTagInformation, FileAttributes, FileBasicInformation,
+    FileBothDirectoryInformation, FileFsAttributeInformation, FileFsFullSizeInformation,
+    FileFsSizeInformation, FileFsVolumeInformation, FileInformationClass,
+    FileInformationClassLevel, FileRenameInformation, FileStandardInformation,
+    FileSystemAttributes, FileSystemInformationClass, FileSystemInformationClassLevel, Information,
+    NtStatus, PrinterIoRequest, ServerDeviceAnnounceResponse, ServerDriveIoRequest,
+    ServerDriveLockControlRequest, ServerDriveNotifyChangeDirectoryRequest,
+    ServerDriveQueryDirectoryRequest, ServerDriveQueryInformationRequest,
+    ServerDriveQueryVolumeInformationRequest, ServerDriveSetInformationRequest,
 };
 use ironrdp::rdpdr::pdu::esc::{ScardCall, ScardIoCtlCode};
 use ironrdp::svc::SvcMessage;
@@ -62,6 +62,9 @@ pub struct RustConnRdpdrBackend {
     dir_entries: HashMap<u32, Vec<String>>,
     /// Map of file IDs to pending directory change notifications
     pending_notifications: HashMap<u32, PendingNotification>,
+    /// File IDs the server marked for delete-on-close via
+    /// `FileDispositionInformation`; removed from disk in `handle_close`.
+    delete_pending: HashSet<u32>,
     /// Accumulated print-job bytes keyed by printer file ID (MS-RDPEPC).
     /// The server streams a PostScript document via Write IRPs; we buffer it
     /// and hand it to CUPS on Close.
@@ -131,6 +134,7 @@ impl RustConnRdpdrBackend {
             file_device_map: HashMap::new(),
             dir_entries: HashMap::new(),
             pending_notifications: HashMap::new(),
+            delete_pending: HashSet::new(),
             print_jobs: HashMap::new(),
             printer_queues,
             dir_watcher,
@@ -336,7 +340,7 @@ impl RdpdrBackend for RustConnRdpdrBackend {
                 self.handle_query_directory(dir_req)
             }
             ServerDriveIoRequest::ServerDriveSetInformationRequest(set_req) => {
-                self.handle_set_info(set_req)
+                self.handle_set_info(&set_req)
             }
             ServerDriveIoRequest::DeviceControlRequest(ctrl_req) => {
                 // Return success for device control requests
@@ -443,15 +447,22 @@ impl RustConnRdpdrBackend {
             }
         }
 
+        // Windows opens an existing file with FILE_OPEN even when it intends to
+        // write to it — `desired_access` is the only signal. Opening read-only
+        // there made every later Write or truncate on that handle fail
+        // (issue #256), so honour the requested access.
+        let wants_write = req.desired_access.intersects(
+            DesiredAccess::FILE_WRITE_DATA_OR_FILE_ADD_FILE
+                | DesiredAccess::FILE_APPEND_DATA_OR_FILE_ADD_SUBDIRECTORY
+                | DesiredAccess::FILE_WRITE_EA
+                | DesiredAccess::FILE_WRITE_ATTRIBUTES,
+        );
+
         // Handle file creation/opening
         let mut opts = OpenOptions::new();
-        #[expect(
-            clippy::match_same_arms,
-            reason = "arms differ only in attached doc comment; collapsing would lose the inline documentation"
-        )]
         match req.create_disposition {
             CreateDisposition::FILE_OPEN => {
-                opts.read(true);
+                opts.read(true).write(wants_write);
             }
             CreateDisposition::FILE_CREATE => {
                 opts.read(true).write(true).create_new(true);
@@ -473,8 +484,33 @@ impl RustConnRdpdrBackend {
             }
         }
 
-        match opts.open(&path) {
+        // A read-only file on disk, or a directory, still has to be openable for
+        // the metadata queries Explorer runs before it touches anything.
+        let opened = opts.open(&path).or_else(|e| {
+            if wants_write {
+                trace!(
+                    "RDPDR open: write-mode open failed for '{}', retrying read-only \
+                     (file may be read-only on disk): {}",
+                    path, e
+                );
+                OpenOptions::new().read(true).open(&path)
+            } else {
+                Err(e)
+            }
+        });
+
+        match opened {
             Ok(file) => {
+                // Copies into a share are otherwise invisible below TRACE: the
+                // write and timestamp paths log nothing on success, which made
+                // issue #256 far harder to narrow down than it needed to be.
+                // One line per content-changing open keeps DEBUG readable.
+                if wants_write || req.create_disposition != CreateDisposition::FILE_OPEN {
+                    debug!(
+                        "RDPDR open for write: '{path}' (disposition={:?})",
+                        req.create_disposition
+                    );
+                }
                 self.file_handles.insert(file_id, file);
                 self.file_paths.insert(file_id, path);
                 self.file_device_map.insert(file_id, device_id);
@@ -497,12 +533,21 @@ impl RustConnRdpdrBackend {
                 ))])
             }
             Err(e) => {
-                warn!("Failed to open file {}: {}", path, e);
+                // A missing path is ordinary control flow, not a fault: Explorer
+                // probes candidate names to pick "New folder (2)", and a stale
+                // listing keeps resolving names that were already renamed away.
+                // Only a real failure (permissions, not-a-directory, …) is worth
+                // a warning.
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    trace!("RDPDR create: '{path}' does not exist");
+                } else {
+                    warn!("Failed to open file {}: {}", path, e);
+                }
                 Ok(vec![SvcMessage::from(RdpdrPdu::DeviceCreateResponse(
                     DeviceCreateResponse {
                         device_io_reply: DeviceIoResponse::new(
                             req.device_io_request,
-                            NtStatus::NO_SUCH_FILE,
+                            io_error_to_status(&e),
                         ),
                         file_id,
                         information: Information::empty(),
@@ -519,8 +564,27 @@ impl RustConnRdpdrBackend {
     fn handle_close(&mut self, req: DeviceCloseRequest) -> PduResult<Vec<SvcMessage>> {
         let file_id = req.device_io_request.file_id;
         self.file_handles.remove(&file_id);
-        self.file_paths.remove(&file_id);
+        let closed_path = self.file_paths.remove(&file_id);
         self.file_device_map.remove(&file_id);
+
+        // Delete-on-close, requested earlier via FileDispositionInformation.
+        // The handle is dropped above so the unlink sees no open descriptor of
+        // ours; on Unix an unlink would succeed regardless, but ordering keeps
+        // the directory watcher from reporting a phantom modification.
+        if self.delete_pending.remove(&file_id)
+            && let Some(path) = closed_path.as_deref()
+        {
+            let removed = if std::fs::metadata(path).is_ok_and(|m| m.is_dir()) {
+                std::fs::remove_dir(path)
+            } else {
+                std::fs::remove_file(path)
+            };
+            match removed {
+                Ok(()) => debug!("RDPDR delete-on-close removed '{path}'"),
+                Err(e) => warn!("RDPDR delete-on-close failed for '{path}': {e}"),
+            }
+        }
+
         self.dir_entries.remove(&file_id);
         self.pending_notifications.remove(&file_id);
 
@@ -688,13 +752,47 @@ impl RustConnRdpdrBackend {
                     },
                 }))
             }
+            // Windows Explorer queries this on the source handle of every
+            // rename/delete/copy to detect reparse points before touching the
+            // file (issue #256). Answering SUCCESS with an empty buffer — as
+            // the `_` arm below used to — makes the redirector fail the IRP
+            // with STATUS_IO_DEVICE_ERROR, which Explorer reports as
+            // 0x8007045D and the whole operation aborts. We never expose
+            // reparse points, so the tag is always 0.
+            FileInformationClassLevel::FILE_ATTRIBUTE_TAG_INFORMATION => Some(
+                FileInformationClass::AttributeTag(FileAttributeTagInformation {
+                    file_attributes: file_attrs,
+                    reparse_tag: 0,
+                }),
+            ),
             _ => None,
+        };
+
+        // A zero-length buffer alongside STATUS_SUCCESS is malformed: the
+        // server sized the IRP for the requested class and gets nothing back.
+        // Report the class as unsupported instead so Windows can fall back.
+        let Some(buffer) = buffer else {
+            warn!(
+                "Unsupported RDPDR query information class: {}",
+                req.file_info_class_lvl
+            );
+            return Ok(vec![SvcMessage::from(
+                RdpdrPdu::ClientDriveQueryInformationResponse(
+                    ClientDriveQueryInformationResponse {
+                        device_io_response: DeviceIoResponse::new(
+                            req.device_io_request,
+                            NtStatus::NOT_SUPPORTED,
+                        ),
+                        buffer: None,
+                    },
+                ),
+            )]);
         };
 
         Ok(vec![SvcMessage::from(
             RdpdrPdu::ClientDriveQueryInformationResponse(ClientDriveQueryInformationResponse {
                 device_io_response: DeviceIoResponse::new(req.device_io_request, NtStatus::SUCCESS),
-                buffer,
+                buffer: Some(buffer),
             }),
         )])
     }
@@ -874,37 +972,156 @@ impl RustConnRdpdrBackend {
         )])
     }
 
+    /// Applies a Set Information request to the backing filesystem.
+    ///
+    /// Until 0.19.12 this only acknowledged the request with `STATUS_SUCCESS`
+    /// and discarded `set_buffer`, so renaming, truncating or deleting anything
+    /// inside a shared folder silently did nothing — Explorer then failed the
+    /// operation with "The file or folder does not exist" (issue #256).
     #[expect(
         clippy::unnecessary_wraps,
         reason = "function returns Result for trait/API uniformity even though this branch never fails"
     )]
-    #[expect(
-        clippy::needless_pass_by_ref_mut,
-        reason = "&mut required by the trait/upstream contract even when this branch does not mutate"
-    )]
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "value is consumed by trait/API contract; borrowing would force callers to clone before passing"
-    )]
-    #[expect(
-        clippy::unused_self,
-        reason = "method is part of a uniform helper API where most operations need &self; keeping &self preserves the consistent signature"
-    )]
     fn handle_set_info(
         &mut self,
-        req: ServerDriveSetInformationRequest,
+        req: &ServerDriveSetInformationRequest,
     ) -> PduResult<Vec<SvcMessage>> {
-        // Basic implementation - just acknowledge
+        let file_id = req.device_io_request.file_id;
+        let device_id = req.device_io_request.device_id;
+
+        let status = match &req.set_buffer {
+            FileInformationClass::Rename(rename) => self.apply_rename(file_id, device_id, rename),
+            FileInformationClass::EndOfFile(eof) => self.apply_truncate(file_id, eof.end_of_file),
+            FileInformationClass::Allocation(alloc) => {
+                self.apply_truncate(file_id, alloc.allocation_size)
+            }
+            FileInformationClass::Disposition(disposition) => {
+                // Delete-on-close: the removal happens in `handle_close`, which
+                // is where the server releases its last handle.
+                if disposition.delete_pending == 0 {
+                    self.delete_pending.remove(&file_id);
+                } else {
+                    self.delete_pending.insert(file_id);
+                }
+                NtStatus::SUCCESS
+            }
+            FileInformationClass::Basic(basic) => self.apply_times(file_id, basic),
+            // `ServerDriveSetInformationRequest::decode` rejects every other
+            // class, so this is unreachable in practice.
+            other => {
+                warn!("Unsupported RDPDR set information class: {other}");
+                NtStatus::NOT_SUPPORTED
+            }
+        };
+
         Ok(vec![SvcMessage::from(
             RdpdrPdu::ClientDriveSetInformationResponse(
-                ClientDriveSetInformationResponse::new(&req, NtStatus::SUCCESS).unwrap_or_else(
-                    |_| {
-                        ClientDriveSetInformationResponse::new(&req, NtStatus::UNSUCCESSFUL)
-                            .expect("infallible")
-                    },
-                ),
+                ClientDriveSetInformationResponse::new(req, status).unwrap_or_else(|_| {
+                    ClientDriveSetInformationResponse::new(req, NtStatus::UNSUCCESSFUL)
+                        .expect("infallible")
+                }),
             ),
         )])
+    }
+
+    /// Renames the file behind `file_id` to the share-relative path in `rename`.
+    ///
+    /// `std::fs::rename` always clobbers the destination on Unix, so an
+    /// existing target is rejected up front unless the server allowed it.
+    fn apply_rename(
+        &mut self,
+        file_id: u32,
+        device_id: u32,
+        rename: &FileRenameInformation,
+    ) -> NtStatus {
+        let Some(old_path) = self.file_paths.get(&file_id).cloned() else {
+            warn!("Rename requested for unknown file_id {file_id}");
+            return NtStatus::NO_SUCH_FILE;
+        };
+        let new_path = self.to_unix_path(device_id, &rename.file_name);
+
+        if rename.replace_if_exists == Boolean::False
+            && new_path != old_path
+            && std::fs::exists(&new_path).unwrap_or(false)
+        {
+            return NtStatus::OBJECT_NAME_COLLISION;
+        }
+
+        match std::fs::rename(&old_path, &new_path) {
+            Ok(()) => {
+                debug!("RDPDR rename: '{old_path}' -> '{new_path}'");
+                // Keep the handle's bookkeeping in sync: the server reuses this
+                // file_id for follow-up queries and the eventual Close.
+                self.file_paths.insert(file_id, new_path);
+                NtStatus::SUCCESS
+            }
+            Err(e) => {
+                warn!("Rename '{old_path}' -> '{new_path}' failed: {e}");
+                io_error_to_status(&e)
+            }
+        }
+    }
+
+    /// Resizes the file behind `file_id` (`FileEndOfFileInformation` and
+    /// `FileAllocationInformation` both map to `ftruncate`, as in FreeRDP).
+    fn apply_truncate(&mut self, file_id: u32, size: i64) -> NtStatus {
+        let Ok(size) = u64::try_from(size) else {
+            warn!("Refusing negative truncate size {size} for file_id {file_id}");
+            return NtStatus::UNSUCCESSFUL;
+        };
+        let Some(file) = self.file_handles.get_mut(&file_id) else {
+            warn!("Truncate requested for unknown file_id {file_id}");
+            return NtStatus::NO_SUCH_FILE;
+        };
+
+        match file.set_len(size) {
+            Ok(()) => NtStatus::SUCCESS,
+            Err(e) => {
+                warn!("Truncate to {size} failed for file_id {file_id}: {e}");
+                io_error_to_status(&e)
+            }
+        }
+    }
+
+    /// Applies the access/write timestamps from `FileBasicInformation`.
+    ///
+    /// A zero timestamp means "leave unchanged" (MS-FSCC 2.4.7), and the
+    /// attribute bits are deliberately ignored — mapping them onto Unix
+    /// permissions would surprise the user with mode changes on their files.
+    /// Reporting failure here would break copying *into* a share, since
+    /// Windows stamps the destination once the data is written.
+    #[cfg_attr(
+        target_pointer_width = "64",
+        expect(
+            clippy::useless_conversion,
+            reason = "libc::UTIME_OMIT is c_long: i64 on 64-bit targets, i32 on 32-bit ones"
+        )
+    )]
+    fn apply_times(&self, file_id: u32, basic: &FileBasicInformation) -> NtStatus {
+        use nix::sys::stat::futimens;
+        use nix::sys::time::TimeSpec;
+
+        let Some(file) = self.file_handles.get(&file_id) else {
+            warn!("Set basic information requested for unknown file_id {file_id}");
+            return NtStatus::NO_SUCH_FILE;
+        };
+
+        // `UTIME_OMIT` leaves the corresponding timestamp untouched.
+        let omit = TimeSpec::new(0, i64::from(nix::libc::UTIME_OMIT));
+        let to_spec =
+            |filetime: i64| filetime_to_unix(filetime).map_or(omit, |secs| TimeSpec::new(secs, 0));
+
+        if let Err(e) = futimens(
+            file,
+            &to_spec(basic.last_access_time),
+            &to_spec(basic.last_write_time),
+        ) {
+            // Non-fatal: the bytes are already correct, only the metadata is
+            // stale, and failing the IRP would abort the whole copy.
+            warn!("Failed to set timestamps for file_id {file_id}: {e}");
+        }
+
+        NtStatus::SUCCESS
     }
 
     /// Handles directory change notification requests
@@ -1053,6 +1270,34 @@ fn get_disk_stats(path: &str) -> (i64, i64) {
             (1_000_000, 500_000)
         }
     }
+}
+
+/// Maps a filesystem error onto the closest NTSTATUS.
+///
+/// Returning a truthful status matters: Explorer surfaces it to the user, and a
+/// blanket `STATUS_UNSUCCESSFUL` turns "permission denied" into an unhelpful
+/// generic failure.
+fn io_error_to_status(e: &std::io::Error) -> NtStatus {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => NtStatus::NO_SUCH_FILE,
+        std::io::ErrorKind::PermissionDenied => NtStatus::ACCESS_DENIED,
+        std::io::ErrorKind::AlreadyExists => NtStatus::OBJECT_NAME_COLLISION,
+        std::io::ErrorKind::DirectoryNotEmpty => NtStatus::DIRECTORY_NOT_EMPTY,
+        std::io::ErrorKind::NotADirectory => NtStatus::NOT_A_DIRECTORY,
+        _ => NtStatus::UNSUCCESSFUL,
+    }
+}
+
+/// Converts a Windows FILETIME back to Unix seconds.
+///
+/// Returns `None` for the sentinel values MS-FSCC 2.4.7 uses to mean "leave
+/// this timestamp alone" (0) and "no change" (-1).
+const fn filetime_to_unix(filetime: i64) -> Option<i64> {
+    const EPOCH_DIFF: i64 = 116_444_736_000_000_000;
+    if filetime <= 0 {
+        return None;
+    }
+    Some((filetime - EPOCH_DIFF) / 10_000_000)
 }
 
 /// Converts Unix timestamp (seconds) to Windows FILETIME (100-nanosecond intervals since 1601)
@@ -1257,5 +1502,297 @@ mod printer_tests {
     #[test]
     fn no_default_printer() {
         assert_eq!(parse_cups_default("no system default destination\n"), None);
+    }
+}
+
+/// Wire-level regression tests for the drive IO paths behind issue #256.
+///
+/// Windows Explorer aborts every rename/delete/copy on the redirected drive
+/// with `0x8007045D` (ERROR_IO_DEVICE) if a Query Information response claims
+/// `STATUS_SUCCESS` but carries a zero-length buffer, so these assert on the
+/// encoded `Length` field rather than on internal state. The Set Information
+/// tests then check that the request actually reaches the filesystem.
+#[cfg(test)]
+mod drive_io_tests {
+    use std::collections::HashMap;
+
+    use ironrdp::rdpdr::pdu::efs::{
+        CreateOptions, DesiredAccess, DeviceIoRequest, FileDispositionInformation,
+        FileEndOfFileInformation, MajorFunction, MinorFunction, SharedAccess,
+    };
+
+    use super::*;
+
+    /// Byte offset of the `Length` field: 4-byte `RDPDR_HEADER` followed by the
+    /// 12-byte `DR_DEVICE_IOCOMPLETION` (DeviceId, CompletionId, IoStatus).
+    const LENGTH_OFFSET: usize = 16;
+    /// Byte offset of `IoStatus` inside `DR_DEVICE_IOCOMPLETION`.
+    const IO_STATUS_OFFSET: usize = 12;
+
+    fn io_request(file_id: u32, major_function: MajorFunction) -> DeviceIoRequest {
+        DeviceIoRequest {
+            device_id: 1,
+            file_id,
+            completion_id: 0,
+            major_function,
+            minor_function: MinorFunction::from(0),
+        }
+    }
+
+    fn read_u32_at(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("4-byte slice"))
+    }
+
+    /// Opens `<share>/probe.txt` and returns the backend plus the assigned file
+    /// id, so each test starts from a live handle in `file_handles`.
+    fn backend_with_open_file(dir: &tempfile::TempDir) -> (RustConnRdpdrBackend, u32) {
+        std::fs::write(dir.path().join("probe.txt"), b"payload").expect("write probe file");
+
+        let drives = HashMap::from([(1u32, dir.path().to_string_lossy().into_owned())]);
+        let mut backend = RustConnRdpdrBackend::new(drives, HashMap::new());
+
+        let create = ServerDriveIoRequest::ServerCreateDriveRequest(DeviceCreateRequest {
+            device_io_request: io_request(0, MajorFunction::Create),
+            // Mirror what Windows sends when it opens an existing file it means
+            // to modify: FILE_OPEN plus write access in `desired_access`.
+            desired_access: DesiredAccess::FILE_READ_DATA_OR_FILE_LIST_DIRECTORY
+                | DesiredAccess::FILE_WRITE_DATA_OR_FILE_ADD_FILE,
+            allocation_size: 0,
+            file_attributes: FileAttributes::empty(),
+            shared_access: SharedAccess::empty(),
+            create_disposition: CreateDisposition::FILE_OPEN,
+            create_options: CreateOptions::empty(),
+            path: "\\probe.txt".to_owned(),
+        });
+        backend
+            .handle_drive_io_request(create)
+            .expect("create succeeds");
+
+        (backend, 1)
+    }
+
+    fn query(
+        backend: &mut RustConnRdpdrBackend,
+        file_id: u32,
+        lvl: FileInformationClassLevel,
+    ) -> Vec<u8> {
+        let responses = backend
+            .handle_drive_io_request(ServerDriveIoRequest::ServerDriveQueryInformationRequest(
+                ServerDriveQueryInformationRequest {
+                    device_io_request: io_request(file_id, MajorFunction::QueryInformation),
+                    file_info_class_lvl: lvl,
+                },
+            ))
+            .expect("query information succeeds");
+
+        assert_eq!(responses.len(), 1, "expected exactly one response PDU");
+        responses[0]
+            .encode_unframed_pdu()
+            .expect("response PDU encodes")
+    }
+
+    #[test]
+    fn attribute_tag_information_carries_an_eight_byte_buffer() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (mut backend, file_id) = backend_with_open_file(&dir);
+
+        let bytes = query(
+            &mut backend,
+            file_id,
+            FileInformationClassLevel::FILE_ATTRIBUTE_TAG_INFORMATION,
+        );
+
+        assert_eq!(
+            read_u32_at(&bytes, IO_STATUS_OFFSET),
+            0,
+            "FileAttributeTagInformation must complete with STATUS_SUCCESS"
+        );
+        // FileAttributes (4) + ReparseTag (4). A zero here is the issue #256 bug.
+        assert_eq!(
+            read_u32_at(&bytes, LENGTH_OFFSET),
+            8,
+            "buffer must hold FileAttributes + ReparseTag"
+        );
+        assert_eq!(
+            read_u32_at(&bytes, LENGTH_OFFSET + 8),
+            0,
+            "we never expose reparse points, so ReparseTag stays 0"
+        );
+    }
+
+    #[test]
+    fn unsupported_class_reports_not_supported_rather_than_empty_success() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (mut backend, file_id) = backend_with_open_file(&dir);
+
+        let bytes = query(
+            &mut backend,
+            file_id,
+            FileInformationClassLevel::FILE_NAMES_INFORMATION,
+        );
+
+        assert_eq!(
+            read_u32_at(&bytes, IO_STATUS_OFFSET),
+            0xC000_00BB,
+            "unhandled classes must report STATUS_NOT_SUPPORTED"
+        );
+    }
+
+    #[test]
+    fn basic_and_standard_information_still_answer_with_a_buffer() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (mut backend, file_id) = backend_with_open_file(&dir);
+
+        for lvl in [
+            FileInformationClassLevel::FILE_BASIC_INFORMATION,
+            FileInformationClassLevel::FILE_STANDARD_INFORMATION,
+        ] {
+            let bytes = query(&mut backend, file_id, lvl.clone());
+            assert_eq!(read_u32_at(&bytes, IO_STATUS_OFFSET), 0, "{lvl} status");
+            assert!(
+                read_u32_at(&bytes, LENGTH_OFFSET) > 0,
+                "{lvl} buffer length"
+            );
+        }
+    }
+
+    /// Issues a Set Information request and returns the encoded response bytes.
+    fn set_info(
+        backend: &mut RustConnRdpdrBackend,
+        file_id: u32,
+        set_buffer: FileInformationClass,
+    ) -> Vec<u8> {
+        let responses = backend
+            .handle_drive_io_request(ServerDriveIoRequest::ServerDriveSetInformationRequest(
+                ServerDriveSetInformationRequest {
+                    device_io_request: io_request(file_id, MajorFunction::SetInformation),
+                    set_buffer,
+                },
+            ))
+            .expect("set information succeeds");
+
+        assert_eq!(responses.len(), 1, "expected exactly one response PDU");
+        responses[0]
+            .encode_unframed_pdu()
+            .expect("response PDU encodes")
+    }
+
+    fn close(backend: &mut RustConnRdpdrBackend, file_id: u32) {
+        backend
+            .handle_drive_io_request(ServerDriveIoRequest::DeviceCloseRequest(
+                DeviceCloseRequest {
+                    device_io_request: io_request(file_id, MajorFunction::Close),
+                },
+            ))
+            .expect("close succeeds");
+    }
+
+    #[test]
+    fn rename_moves_the_file_on_disk() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (mut backend, file_id) = backend_with_open_file(&dir);
+
+        let bytes = set_info(
+            &mut backend,
+            file_id,
+            FileInformationClass::Rename(FileRenameInformation {
+                replace_if_exists: Boolean::False,
+                file_name: "\\renamed.txt".to_owned(),
+            }),
+        );
+
+        assert_eq!(read_u32_at(&bytes, IO_STATUS_OFFSET), 0, "rename status");
+        assert!(
+            dir.path().join("renamed.txt").exists(),
+            "new name must exist on disk"
+        );
+        assert!(
+            !dir.path().join("probe.txt").exists(),
+            "old name must be gone"
+        );
+        // Follow-up IRPs reuse the same file_id, so the tracked path must move too.
+        let expected = dir
+            .path()
+            .join("renamed.txt")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            backend.file_paths.get(&file_id),
+            Some(&expected),
+            "tracked path must follow the rename"
+        );
+    }
+
+    #[test]
+    fn rename_onto_an_existing_name_is_refused_without_replace() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("taken.txt"), b"other").expect("write blocker");
+        let (mut backend, file_id) = backend_with_open_file(&dir);
+
+        let bytes = set_info(
+            &mut backend,
+            file_id,
+            FileInformationClass::Rename(FileRenameInformation {
+                replace_if_exists: Boolean::False,
+                file_name: "\\taken.txt".to_owned(),
+            }),
+        );
+
+        assert_eq!(
+            read_u32_at(&bytes, IO_STATUS_OFFSET),
+            0xC000_0035,
+            "must report STATUS_OBJECT_NAME_COLLISION"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("taken.txt")).expect("blocker still readable"),
+            b"other",
+            "the existing file must not be clobbered"
+        );
+    }
+
+    #[test]
+    fn end_of_file_information_truncates() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (mut backend, file_id) = backend_with_open_file(&dir);
+
+        let bytes = set_info(
+            &mut backend,
+            file_id,
+            FileInformationClass::EndOfFile(FileEndOfFileInformation { end_of_file: 3 }),
+        );
+
+        assert_eq!(read_u32_at(&bytes, IO_STATUS_OFFSET), 0, "truncate status");
+        assert_eq!(
+            std::fs::read(dir.path().join("probe.txt")).expect("read back"),
+            b"pay",
+            "file must be truncated to 3 bytes"
+        );
+    }
+
+    #[test]
+    fn disposition_information_deletes_on_close() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (mut backend, file_id) = backend_with_open_file(&dir);
+
+        let bytes = set_info(
+            &mut backend,
+            file_id,
+            FileInformationClass::Disposition(FileDispositionInformation { delete_pending: 1 }),
+        );
+        assert_eq!(
+            read_u32_at(&bytes, IO_STATUS_OFFSET),
+            0,
+            "disposition status"
+        );
+        assert!(
+            dir.path().join("probe.txt").exists(),
+            "removal must wait for Close"
+        );
+
+        close(&mut backend, file_id);
+        assert!(
+            !dir.path().join("probe.txt").exists(),
+            "Close must remove the file"
+        );
     }
 }

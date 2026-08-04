@@ -265,12 +265,18 @@ pub(super) async fn process_command<W: FramedWrite>(
         RdpClientCommand::RequestClipboardData { format_id } => {
             handle_clipboard_request(active_stage, writer, format_id).await;
         }
-        RdpClientCommand::StoreLocalFiles { paths } => {
+        RdpClientCommand::StoreLocalFiles { paths, descriptor } => {
             if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>()
                 && let Some(backend) = cliprdr
                     .downcast_backend_mut::<super::super::clipboard::RustConnClipboardBackend>()
             {
                 backend.set_local_file_paths(paths);
+                // Park the listing so `on_format_data_request` can serve it the
+                // moment the peer asks for FileGroupDescriptorW.
+                backend.set_pending_copy_data(
+                    super::super::ClipboardFormatInfo::FILE_GROUP_DESCRIPTOR_W,
+                    descriptor,
+                );
             }
         }
         RdpClientCommand::RequestFileContents {

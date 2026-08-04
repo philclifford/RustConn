@@ -1319,6 +1319,11 @@ pub enum SnippetCommands {
 
 /// Group subcommands
 #[derive(Subcommand)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Clap derives the parser from the fields themselves, so `Edit`'s one-per-flag \
+              layout cannot be boxed away; the value is built once per process"
+)]
 pub enum GroupCommands {
     /// List all groups
     #[command(about = "List all connection groups")]
@@ -1446,6 +1451,14 @@ pub enum GroupCommands {
         /// Remove all existing post-login scripts before adding new ones
         #[arg(long)]
         clear_post_login_scripts: bool,
+        /// Expected text of the device's username prompt for automatic login,
+        /// inherited by connections (empty string clears it)
+        #[arg(long, value_name = "TEXT")]
+        username_prompt: Option<String>,
+        /// Expected text of the device's password prompt for automatic login,
+        /// inherited by connections (empty string clears it)
+        #[arg(long, value_name = "TEXT")]
+        password_prompt: Option<String>,
     },
 }
 

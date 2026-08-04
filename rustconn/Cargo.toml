@@ -12,7 +12,7 @@ name = "rustconn"
 path = "src/main.rs"
 
 [dependencies]
-rustconn-core = { path = "../rustconn-core", version = "0.19.11", default-features = false }
+rustconn-core = { path = "../rustconn-core", version = "0.19.12", default-features = false }
 tokio = { workspace = true }
 # Event-driven tray message delivery to the GTK main loop (no polling)
 async-channel = { workspace = true }
@@ -127,6 +127,12 @@ wildcard_imports = "allow"
 needless_borrows_for_generic_args = "allow"
 redundant_closure_for_method_calls = "allow"
 redundant_closure = "allow"
+# redundant_pub_crate conflicts with the workspace's `unreachable_pub = "warn"`:
+# it counts a `pub(crate) mod` as private, so it flags `pub(crate)` items that are
+# genuinely reached from another subtree (dialogs::connection::automation_tab is
+# used by window::edit_group) and suggests `pub`, which unreachable_pub then
+# rejects. Mirrors the same allow in [workspace.lints.clippy].
+redundant_pub_crate = "allow"
 
 [dev-dependencies]
 proptest = { workspace = true }

@@ -9,12 +9,17 @@ use gtk4::{Box as GtkBox, Button, Entry, Label, ListBox, Orientation, ScrolledWi
 use libadwaita as adw;
 use rustconn_core::automation::builtin_templates;
 
+use super::widgets::EntryRowBuilder;
 use crate::i18n::i18n;
 
 /// All widgets created by [`create_automation_combined_tab`].
 pub(super) struct AutomationTabWidgets {
     /// The outer container added to the view stack.
     pub(super) container: GtkBox,
+    /// Expected text of the device's username prompt (empty = built-in matcher).
+    pub(super) login_username_prompt_entry: Entry,
+    /// Expected text of the device's password prompt (empty = built-in matcher).
+    pub(super) login_password_prompt_entry: Entry,
     /// Expect rules list box.
     pub(super) expect_rules_list: ListBox,
     /// Button to add a new expect rule.
@@ -69,6 +74,11 @@ pub(super) fn create_automation_combined_tab() -> AutomationTabWidgets {
     content.set_margin_start(12);
     content.set_margin_end(12);
 
+    // === Automatic Login Section (issue #254) ===
+    let (login_group, login_username_prompt_entry, login_password_prompt_entry) =
+        create_automatic_login_section();
+    content.append(&login_group);
+
     // === Expect Rules Section ===
     let rules_group = adw::PreferencesGroup::builder()
         .title(i18n("Expect Rules"))
@@ -78,6 +88,11 @@ pub(super) fn create_automation_combined_tab() -> AutomationTabWidgets {
     // Info banner about variable substitution (consistent with group dialog)
     let variables_info = Label::builder()
         .label(i18n(
+            // Accurate again as of issue #257: the four built-ins really are
+            // resolved at connection time now. Deliberately left byte-identical
+            // to the string all 14 catalogues already translate — the extra
+            // detail (${host}, ${port}, and that ${password} needs a Password
+            // Source) lives in the user guide rather than costing a new msgid.
             "Responses support ${password}, ${username}, and ${VARIABLE_NAME} placeholders resolved at connection time",
         ))
         .wrap(true)
@@ -208,6 +223,8 @@ pub(super) fn create_automation_combined_tab() -> AutomationTabWidgets {
 
     AutomationTabWidgets {
         container: vbox,
+        login_username_prompt_entry,
+        login_password_prompt_entry,
         expect_rules_list,
         add_expect_rule_button: add_rule_button,
         template_list_box,
@@ -223,6 +240,46 @@ pub(super) fn create_automation_combined_tab() -> AutomationTabWidgets {
         post_disconnect_timeout_spin,
         post_disconnect_last_only_switch,
     }
+}
+
+/// Creates the Automatic Login section (issue #254).
+///
+/// Telnet and serial consoles authenticate by typing at the device's own
+/// prompts, and network gear words them inconsistently — `>>User name:` on a
+/// Huawei OLT, `Username:` on a Huawei switch, `login:` on a Datacom. These two
+/// fields let a connection (or a whole group) state the exact wording; empty
+/// means the built-in matchers, which already cover the three above.
+///
+/// Returns the group and the two entries, in username/password order.
+pub(crate) fn create_automatic_login_section() -> (adw::PreferencesGroup, Entry, Entry) {
+    let group = adw::PreferencesGroup::builder()
+        .title(i18n("Automatic Login"))
+        // NOTE: each string stays on one line. A Rust `\`-continuation strips the
+        // newline and the following indentation, but xgettext parses these files
+        // as C and keeps the spaces, so the extracted msgid would no longer match
+        // the string looked up at runtime and the translation would never apply.
+        .description(i18n(
+            "Telnet and serial sessions log in by typing at the device's own prompts. SSH types only the password.",
+        ))
+        .build();
+
+    let (username_row, username_entry) = EntryRowBuilder::new(i18n("Username Prompt"))
+        .subtitle(i18n(
+            "Expected text; empty detects login:, Username: and >>User name:",
+        ))
+        .placeholder("User name:")
+        .build();
+    group.add(&username_row);
+
+    let (password_row, password_entry) = EntryRowBuilder::new(i18n("Password Prompt"))
+        .subtitle(i18n(
+            "Expected text; empty detects Password: in every supported language",
+        ))
+        .placeholder("Password:")
+        .build();
+    group.add(&password_row);
+
+    (group, username_entry, password_entry)
 }
 
 /// Creates a task section (pre-connect or post-disconnect) wrapped in an `ExpanderRow`.

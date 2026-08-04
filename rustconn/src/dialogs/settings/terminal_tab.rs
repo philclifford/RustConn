@@ -35,6 +35,7 @@ pub fn create_terminal_page() -> (
     Entry,          // local_shell_command
     adw::SwitchRow, // close_on_clean_exit
     adw::SwitchRow, // option_is_meta (macOS)
+    adw::SwitchRow, // keep_history_on_reconnect
 ) {
     let page = adw::PreferencesPage::builder()
         .title(i18n("Terminal"))
@@ -350,6 +351,13 @@ pub fn create_terminal_page() -> (
     scrollback_row.set_activatable_widget(Some(&scrollback_spin));
     scrolling_group.add(&scrollback_row);
 
+    // Keep scrollback across an in-place reconnect (issue #253)
+    let keep_history_on_reconnect_row = adw::SwitchRow::builder()
+        .title(i18n("Keep on reconnect"))
+        .subtitle(i18n("Preserve terminal output when a session reconnects"))
+        .build();
+    scrolling_group.add(&keep_history_on_reconnect_row);
+
     // Scroll on output
     let scroll_on_output_row = adw::SwitchRow::builder()
         .title(i18n("On output"))
@@ -496,6 +504,7 @@ pub fn create_terminal_page() -> (
         local_shell_command_entry,
         close_on_clean_exit_row,
         option_is_meta_row,
+        keep_history_on_reconnect_row,
     )
 }
 
@@ -522,6 +531,7 @@ pub fn load_terminal_settings(
     local_shell_command_entry: &Entry,
     close_on_clean_exit_row: &adw::SwitchRow,
     option_is_meta_row: &adw::SwitchRow,
+    keep_history_on_reconnect_row: &adw::SwitchRow,
     settings: &TerminalSettings,
 ) {
     font_family_entry.set_text(&settings.font_family);
@@ -566,6 +576,7 @@ pub fn load_terminal_settings(
     local_shell_command_entry.set_text(&settings.local_shell_command);
     close_on_clean_exit_row.set_active(settings.close_on_clean_exit);
     option_is_meta_row.set_active(settings.option_is_meta);
+    keep_history_on_reconnect_row.set_active(settings.keep_history_on_reconnect);
 }
 
 /// Sets the active toggle index.
@@ -669,7 +680,9 @@ pub fn collect_terminal_settings(
     local_shell_command_entry: &Entry,
     close_on_clean_exit_row: &adw::SwitchRow,
     option_is_meta_row: &adw::SwitchRow,
+    keep_history_on_reconnect_row: &adw::SwitchRow,
     log_timestamps: bool,
+    existing_max_scrollback_on_reconnect: Option<u32>,
 ) -> TerminalSettings {
     let theme_names = TerminalTheme::theme_names();
     let color_theme = theme_names
@@ -711,6 +724,8 @@ pub fn collect_terminal_settings(
         copy_on_select: copy_on_select_row.is_active(),
         show_scrollbar: show_scrollbar_row.is_active(),
         local_shell_command: local_shell_command_entry.text().trim().to_string(),
+        keep_history_on_reconnect: keep_history_on_reconnect_row.is_active(),
+        max_scrollback_on_reconnect: existing_max_scrollback_on_reconnect,
         close_on_clean_exit: close_on_clean_exit_row.is_active(),
         option_is_meta: option_is_meta_row.is_active(),
     }

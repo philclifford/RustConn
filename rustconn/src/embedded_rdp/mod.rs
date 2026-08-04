@@ -860,26 +860,35 @@ impl EmbeddedRdpWidget {
                         // Build FileGroupDescriptorW and announce to server
                         let descriptor = file_dnd::build_file_group_descriptor(&files);
 
-                        // Store file paths in the backend for later file contents requests
+                        // Park the paths (for File Contents Requests) and the
+                        // listing (for the Format Data Request) in the backend.
                         let paths: Vec<std::path::PathBuf> =
                             files.iter().map(|f| f.path.clone()).collect();
-                        let _ = sender.send(RdpClientCommand::StoreLocalFiles { paths });
+                        let _ =
+                            sender.send(RdpClientCommand::StoreLocalFiles { paths, descriptor });
 
-                        // Store file paths for later on_file_contents_request
-                        // and announce CF_HDROP format to server
-                        let format_info = rustconn_core::ClipboardFormatInfo::new(
-                            rustconn_core::ClipboardFormatInfo::FILE_LIST,
-                            Some("FileGroupDescriptorW".to_string()),
-                        );
+                        // Announce the pair MS-RDPECLIP requires for stream-based
+                        // file copy: FileGroupDescriptorW carries the listing and
+                        // FileContents lets the peer pull the bytes. Both are
+                        // registered formats, so they go out with their names and
+                        // ids in the 0xC000+ range — announcing the descriptor
+                        // under CF_HDROP (15) made Windows parse it as DROPFILES
+                        // and fail the paste (issue #256).
+                        let formats = vec![
+                            rustconn_core::ClipboardFormatInfo::new(
+                                rustconn_core::ClipboardFormatInfo::FILE_GROUP_DESCRIPTOR_W,
+                                Some("FileGroupDescriptorW".to_string()),
+                            ),
+                            rustconn_core::ClipboardFormatInfo::new(
+                                rustconn_core::ClipboardFormatInfo::FILE_CONTENTS,
+                                Some("FileContents".to_string()),
+                            ),
+                        ];
 
-                        // Send clipboard copy announcement with file list format
-                        let _ = sender.send(RdpClientCommand::ClipboardCopy(vec![format_info]));
-
-                        // Store the descriptor data as pending copy data
-                        let _ = sender.send(RdpClientCommand::ClipboardData {
-                            format_id: rustconn_core::ClipboardFormatInfo::FILE_LIST,
-                            data: descriptor,
-                        });
+                        // Announce the formats. The peer answers with a Format
+                        // Data Request, which the backend serves from the parked
+                        // descriptor above.
+                        let _ = sender.send(RdpClientCommand::ClipboardCopy(formats));
 
                         cb_for_callback.borrow_mut().record_success();
 

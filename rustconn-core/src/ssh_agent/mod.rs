@@ -987,3 +987,46 @@ impl SshAgentManager {
             || first_line.contains("DSA PRIVATE KEY")
     }
 }
+
+/// Removes stale `.pub` files from the agent-keys directory.
+///
+/// Called at application startup to clean up files left behind if the app
+/// crashed or was killed before `remove_agent_identity` ran. Files older than
+/// 12 hours are considered stale — a normal session writes the file at connect
+/// time and deletes it at close time, so any file surviving that long is orphaned.
+///
+/// Best effort: errors are logged and swallowed. The directory itself is never
+/// removed because a concurrent session may be writing into it.
+pub fn prune_stale_agent_keys() {
+    use std::time::{Duration, SystemTime};
+
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map_or_else(std::env::temp_dir, std::path::PathBuf::from)
+        .join("rustconn")
+        .join("agent-keys");
+
+    let Ok(entries) = std::fs::read_dir(&base) else {
+        return; // Directory does not exist or is unreadable — nothing to prune.
+    };
+
+    // 12 hours: long enough for any legitimate session, short enough to not
+    // accumulate junk across work days.
+    let stale_threshold = Duration::from_hours(12);
+    let now = SystemTime::now();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "pub") {
+            continue;
+        }
+        let is_stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .and_then(|mtime| now.duration_since(mtime).map_err(std::io::Error::other))
+            .is_ok_and(|age| age > stale_threshold);
+        if is_stale {
+            tracing::debug!(path = %path.display(), "Removing stale agent key file");
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}

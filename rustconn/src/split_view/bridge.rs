@@ -2130,9 +2130,9 @@ impl SplitViewBridge {
             });
     }
 
-    /// Sets up the close panel callback for empty panel close buttons.
+    /// Sets up the close panel callback for panel close buttons.
     ///
-    /// When the user clicks the close button (X) on an empty panel, this callback:
+    /// When the user clicks the close button (X) on a panel, this callback:
     /// 1. Focuses the panel (so `close_pane()` closes the correct one)
     /// 2. Activates the `win.close-pane` action to properly close the panel
     ///
@@ -2143,40 +2143,74 @@ impl SplitViewBridge {
     where
         F: Fn(Uuid) + Clone + 'static,
     {
+        let handler = self.panel_action_handler("close-pane", on_focus);
+        self.adapter.borrow().set_close_panel_callback(handler);
+    }
+
+    /// Sets up the "Remove from Split" callback for panel buttons and menu items.
+    ///
+    /// Same two steps as [`Self::setup_close_panel_callback`], but activates
+    /// `win.pop-pane-to-tab`, which hands the panel's session back to its own
+    /// tab with the connection intact instead of terminating it (issue #252).
+    ///
+    /// # Arguments
+    ///
+    /// * `on_focus` - Callback to focus the panel, receives the pane UUID
+    pub fn setup_pop_panel_callback<F>(&self, on_focus: F)
+    where
+        F: Fn(Uuid) + Clone + 'static,
+    {
+        let handler = self.panel_action_handler("pop-pane-to-tab", on_focus);
+        self.adapter.borrow().set_pop_panel_callback(handler);
+    }
+
+    /// Builds the "focus this panel, then activate a window action" handler that
+    /// every panel button and panel menu item shares.
+    ///
+    /// The window actions all operate on the *focused* pane, and a click on a
+    /// panel button never reaches the panel's own focus gesture (it declines
+    /// button clicks so the button can handle them), so focusing here is what
+    /// makes the action target the panel the user pointed at.
+    fn panel_action_handler<F>(
+        &self,
+        action_name: &'static str,
+        on_focus: F,
+    ) -> impl Fn(PanelId) + use<F>
+    where
+        F: Fn(Uuid) + Clone + 'static,
+    {
         let panel_uuid_map = Rc::clone(&self.panel_uuid_map);
         let root = self.root.clone();
 
-        self.adapter
-            .borrow()
-            .set_close_panel_callback(move |panel_id| {
-                // Find the pane UUID for this panel
-                let pane_uuid = {
-                    let map = panel_uuid_map.borrow();
-                    map.get(&panel_id).copied()
-                };
+        move |panel_id| {
+            // Find the pane UUID for this panel
+            let pane_uuid = {
+                let map = panel_uuid_map.borrow();
+                map.get(&panel_id).copied()
+            };
 
-                let Some(uuid) = pane_uuid else {
-                    tracing::warn!("Close button: no UUID found for panel {panel_id}");
-                    return;
-                };
+            let Some(uuid) = pane_uuid else {
+                tracing::warn!("{action_name}: no UUID found for panel {panel_id}");
+                return;
+            };
 
-                tracing::debug!("Close button: focusing panel {panel_id} (uuid={uuid})");
+            tracing::debug!("{action_name}: focusing panel {panel_id} (uuid={uuid})");
 
-                // Focus the panel first
-                on_focus(uuid);
+            // Focus the panel first
+            on_focus(uuid);
 
-                // Activate the close-pane action on the window
-                // This ensures proper cleanup: color release, terminal reparenting, etc.
-                if let Some(window) = root
-                    .root()
-                    .and_then(|r| r.downcast::<gtk4::ApplicationWindow>().ok())
-                {
-                    tracing::debug!("Close button: activating close-pane action");
-                    gtk4::prelude::ActionGroupExt::activate_action(&window, "close-pane", None);
-                } else {
-                    tracing::warn!("Close button: could not find ApplicationWindow");
-                }
-            });
+            // Activate the action on the window: it owns the full teardown
+            // (color release, UUID maps, widget reparenting, bridge bookkeeping).
+            if let Some(window) = root
+                .root()
+                .and_then(|r| r.downcast::<gtk4::ApplicationWindow>().ok())
+            {
+                tracing::debug!("{action_name}: activating action");
+                gtk4::prelude::ActionGroupExt::activate_action(&window, action_name, None);
+            } else {
+                tracing::warn!("{action_name}: could not find ApplicationWindow");
+            }
+        }
     }
 
     /// Moves a session into a panel, displaying the given content widget.

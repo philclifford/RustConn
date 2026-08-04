@@ -56,21 +56,27 @@ pub(super) fn cmd_group(config_path: Option<&Path>, subcmd: GroupCommands) -> Re
             clear_expect_rules,
             add_post_login_script,
             clear_post_login_scripts,
+            username_prompt,
+            password_prompt,
         } => cmd_group_edit(
             config_path,
             &name,
-            new_name.as_deref(),
-            parent.as_deref(),
-            description.as_deref(),
-            icon.as_deref(),
-            ssh_key_path.as_deref(),
-            ssh_auth_method.as_deref(),
-            ssh_proxy_jump.as_deref(),
-            ssh_agent_socket.as_deref(),
-            &add_expect_rule,
-            clear_expect_rules,
-            &add_post_login_script,
-            clear_post_login_scripts,
+            GroupEditFields {
+                new_name: new_name.as_deref(),
+                parent: parent.as_deref(),
+                description: description.as_deref(),
+                icon: icon.as_deref(),
+                ssh_key_path: ssh_key_path.as_deref(),
+                ssh_auth_method: ssh_auth_method.as_deref(),
+                ssh_proxy_jump: ssh_proxy_jump.as_deref(),
+                ssh_agent_socket: ssh_agent_socket.as_deref(),
+                add_expect_rules: &add_expect_rule,
+                clear_expect_rules,
+                add_post_login_scripts: &add_post_login_script,
+                clear_post_login_scripts,
+                username_prompt: username_prompt.as_deref(),
+                password_prompt: password_prompt.as_deref(),
+            },
         ),
     }
 }
@@ -217,6 +223,8 @@ fn cmd_group_show(
                 "ssh_agent_socket": group.ssh_agent_socket,
                 "expect_rules_count": group.expect_rules.len(),
                 "post_login_scripts_count": group.post_login_scripts.len(),
+                "username_prompt": group.username_prompt,
+                "password_prompt": group.password_prompt,
                 "child_groups": child_list,
                 "connections": conn_list,
                 "connection_count": group_connections.len(),
@@ -285,6 +293,12 @@ fn cmd_group_show(
             }
 
             // Automation fields
+            if let Some(ref prompt) = group.username_prompt {
+                println!("  Username Prompt: {prompt}");
+            }
+            if let Some(ref prompt) = group.password_prompt {
+                println!("  Password Prompt: {prompt}");
+            }
             if !group.expect_rules.is_empty() {
                 println!("\nExpect Rules ({}):", group.expect_rules.len());
                 for rule in &group.expect_rules {
@@ -497,49 +511,87 @@ fn cmd_group_remove_connection(
     Ok(())
 }
 
+/// Fields a `group edit` invocation may change.
+///
+/// Bundled into a struct because the command grew past the argument count that
+/// reads sensibly positionally — every field maps 1:1 to a `--flag`. Every field
+/// is itself `Copy`, so the struct is passed by value rather than by reference.
+#[derive(Clone, Copy)]
+struct GroupEditFields<'a> {
+    new_name: Option<&'a str>,
+    parent: Option<&'a str>,
+    description: Option<&'a str>,
+    icon: Option<&'a str>,
+    ssh_key_path: Option<&'a str>,
+    ssh_auth_method: Option<&'a str>,
+    ssh_proxy_jump: Option<&'a str>,
+    ssh_agent_socket: Option<&'a str>,
+    add_expect_rules: &'a [String],
+    clear_expect_rules: bool,
+    add_post_login_scripts: &'a [String],
+    clear_post_login_scripts: bool,
+    /// Expected text of the device's username prompt (issue #254).
+    username_prompt: Option<&'a str>,
+    /// Expected text of the device's password prompt (issue #254).
+    password_prompt: Option<&'a str>,
+}
+
+impl GroupEditFields<'_> {
+    /// Returns `true` when the invocation carries no changes at all.
+    fn is_empty(&self) -> bool {
+        self.new_name.is_none()
+            && self.parent.is_none()
+            && self.description.is_none()
+            && self.icon.is_none()
+            && self.ssh_key_path.is_none()
+            && self.ssh_auth_method.is_none()
+            && self.ssh_proxy_jump.is_none()
+            && self.ssh_agent_socket.is_none()
+            && self.add_expect_rules.is_empty()
+            && !self.clear_expect_rules
+            && self.add_post_login_scripts.is_empty()
+            && !self.clear_post_login_scripts
+            && self.username_prompt.is_none()
+            && self.password_prompt.is_none()
+    }
+}
+
 #[expect(
-    clippy::too_many_arguments,
     clippy::too_many_lines,
-    reason = "edit accepts every editable group field via individual CLI flags; bundling \
-              into a struct would just duplicate the flag list and complicate Clap parsing"
+    reason = "one straight-line pass over every editable group field; splitting it would \
+              only move the same sequence of assignments behind extra call boundaries"
 )]
 fn cmd_group_edit(
     config_path: Option<&Path>,
     name: &str,
-    new_name: Option<&str>,
-    parent: Option<&str>,
-    description: Option<&str>,
-    icon: Option<&str>,
-    ssh_key_path: Option<&str>,
-    ssh_auth_method: Option<&str>,
-    ssh_proxy_jump: Option<&str>,
-    ssh_agent_socket: Option<&str>,
-    add_expect_rules: &[String],
-    clear_expect_rules: bool,
-    add_post_login_scripts: &[String],
-    clear_post_login_scripts: bool,
+    fields: GroupEditFields<'_>,
 ) -> Result<(), CliError> {
-    if new_name.is_none()
-        && parent.is_none()
-        && description.is_none()
-        && icon.is_none()
-        && ssh_key_path.is_none()
-        && ssh_auth_method.is_none()
-        && ssh_proxy_jump.is_none()
-        && ssh_agent_socket.is_none()
-        && add_expect_rules.is_empty()
-        && !clear_expect_rules
-        && add_post_login_scripts.is_empty()
-        && !clear_post_login_scripts
-    {
+    if fields.is_empty() {
         return Err(CliError::Group(
             "No fields to update. Use --new-name, --parent, --description, --icon, \
              --ssh-key-path, --ssh-auth-method, --ssh-proxy-jump, --ssh-agent-socket, \
              --add-expect-rule, --clear-expect-rules, --add-post-login-script, \
-             or --clear-post-login-scripts"
+             --clear-post-login-scripts, --username-prompt or --password-prompt"
                 .to_string(),
         ));
     }
+
+    let GroupEditFields {
+        new_name,
+        parent,
+        description,
+        icon,
+        ssh_key_path,
+        ssh_auth_method,
+        ssh_proxy_jump,
+        ssh_agent_socket,
+        add_expect_rules,
+        clear_expect_rules,
+        add_post_login_scripts,
+        clear_post_login_scripts,
+        username_prompt,
+        password_prompt,
+    } = fields;
 
     let auth_method = ssh_auth_method.map(parse_ssh_auth_method).transpose()?;
 
@@ -616,6 +668,16 @@ fn cmd_group_edit(
         updated.push("expect_rule added".to_string());
     }
 
+    // Automatic-login prompt overrides (issue #254). An empty string clears the
+    // field so a child group or connection can take over the wording again.
+    if let Some(prompt) = username_prompt {
+        group.username_prompt = (!prompt.trim().is_empty()).then(|| prompt.trim().to_string());
+        updated.push(format!("username_prompt = {prompt}"));
+    }
+    if let Some(prompt) = password_prompt {
+        group.password_prompt = (!prompt.trim().is_empty()).then(|| prompt.trim().to_string());
+        updated.push(format!("password_prompt = {prompt}"));
+    }
     // Handle post-login scripts
     if clear_post_login_scripts {
         group.post_login_scripts.clear();

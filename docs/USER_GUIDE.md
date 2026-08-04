@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.19.11** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.19.12** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -227,9 +227,44 @@ For hardware tokens that expose keys through a PKCS#11 library (YubiKey PIV, Ope
 
 **Advanced Tabs:**
 - **Advanced** — Window mode (Embedded/External/Fullscreen), remember window position, hide local cursor (embedded RDP/VNC/SPICE), Wake-on-LAN configuration (MAC address, broadcast, port, wait time), monitoring override (enable/disable per connection, overrides global setting)
-- **Automation** — Expect rules for auto-responding to terminal patterns, pattern tester with built-in templates (Sudo, SSH Host Key, Login, etc.), pre-connect task, post-disconnect task (with conditions: first/last connection only)
+- **Automation** — Automatic login (expected text of the device's username/password prompts), expect rules for auto-responding to terminal patterns, pattern tester with built-in templates (Sudo, SSH Host Key, Login, etc.), pre-connect task, post-disconnect task (with conditions: first/last connection only)
 - **Data** — Local variables (connection-scoped, override global variables), custom properties (Text/URL/Protected metadata)
 - **Logging** — Session logging (enable/disable, log path template with variables, timestamp format, max file size, retention days, granular content options: log activity, log input, log output, add timestamps)
+
+### Automatic Login (Telnet & Serial)
+
+Telnet and a serial console have no authentication protocol: the device prints a prompt and expects the account name and the password to be typed into the terminal. RustConn does that for you — the account name comes from the connection's **Username**, the password from its **Password Source**. Nothing is typed if neither is set.
+
+Prompt wording differs wildly between vendors, so the expected text is configurable per connection or per group (Edit connection → **Automation** tab → **Automatic Login**):
+
+| Field | Meaning |
+|-------|---------|
+| **Username Prompt** | Expected text before the account name is typed. Empty = built-in detection. |
+| **Password Prompt** | Expected text before the password is typed. Empty = built-in detection. |
+
+Both fields are matched as a **case-insensitive substring** of the line under the cursor — paste the literal wording the device prints, not a regex (regex belongs in Expect Rules).
+
+The built-in detection already covers the common forms, so most devices need no configuration at all:
+
+| Device | Prompt | Detected by default |
+|--------|--------|---------------------|
+| Huawei OLT MA5800 | `>>User name:` | yes |
+| Huawei S6700 | `Username:` | yes |
+| Datacom switches | `login:` | yes |
+| Cisco / PuTTY-style | `login as:` | yes |
+| Any of the above | `Password:` (and its translations) | yes |
+
+Set the fields only when a device words its prompt differently, for example `Enter operator ID >`.
+
+**Behaviour and limits:**
+
+- Each step fires **once**. If the device rejects the credentials and prompts again, RustConn stops and hands the session over to you — automatic retries are how an account gets locked out.
+- Watching stops 10 seconds after the session starts. A device that is still printing its banner after that has to be logged into manually.
+- `Last login:` and `Last failed login:` in an MOTD are explicitly not treated as username prompts.
+- The **Password Prompt** field also applies to SSH, where it overrides the built-in password-prompt detection. The **Username Prompt** field is unused for SSH — the account name travels in the command line.
+- Telnet transmits everything, including the password, **in clear text**. Automatic login does not change that; use SSH where you can.
+
+> **Tip:** Set both fields on a *group* (Edit Group → **Automation** tab) to cover every device in a vendor folder at once. See [Group Automation](#group-automation-expect-rules--post-login-scripts).
 
 ### Automation (Expect Rules)
 
@@ -257,12 +292,24 @@ Rules execute in priority order. After matching, the response is sent followed b
 
 **Variable Substitution in Responses:**
 
-Expect rule responses support `${VARIABLE_NAME}` placeholders that are resolved at connection time using Global Variables. This lets you use dynamic values (passwords, tokens, environment-specific strings) without hardcoding them into rules.
+Expect rule responses support `${VARIABLE_NAME}` placeholders that are resolved at connection time. This lets you use dynamic values (passwords, tokens, environment-specific strings) without hardcoding them into rules.
 
-- `${password}` — resolves to the connection's password from the configured secret backend
-- `${MY_VARIABLE}` — resolves to the value of the global variable `MY_VARIABLE` (defined in Menu → Tools → Variables)
-- Undefined variables remain as literal text (e.g., `${UNKNOWN}` is sent as-is)
-- If substitution fails, the raw response text is used as a fallback (with a warning in the log)
+Four placeholders are built in and come from the connection you are opening:
+
+- `${password}` — the connection's password, read from the configured **Password Source** at connection time. Nothing is written into the rule, so the response stays safe to export or sync.
+- `${username}` — the connection's Username, when it is set
+- `${host}` — the connection's Host
+- `${port}` — the connection's Port
+
+Everything else resolves by name against your global variables (Menu → Tools → Variables), so `${MY_VARIABLE}` picks up the value of `MY_VARIABLE`. For the connection being opened a built-in wins over a global of the same name.
+
+Behaviour worth knowing:
+
+- Undefined variables remain as literal text (e.g. `${UNKNOWN}` is sent as-is), and a warning naming them goes to the log. A `${password}` that stays literal means the connection has no Password Source configured.
+- Unlike a Custom Command, the response is typed straight into the session rather than passed to a shell, so a password containing `$`, `!`, `;` or any other shell metacharacter is sent unchanged.
+- A value containing a line break is rejected and the rule is skipped, because the newline would submit the answer before the rest of it was typed.
+- Escape sequences in the rule (`\n`, `\t`, `\\`) are expanded before substitution, so a backslash inside a resolved password is left alone.
+- A rule with **One-shot** enabled is discarded once it fires. A prompt that repeats — which is what a rejected password looks like — is handed back to you rather than answered again, since automatic retries are how an account gets locked out.
 
 **Example — multi-step login with variables:**
 
@@ -1691,7 +1738,9 @@ Groups can define Expect Rules and Post-login Scripts that are automatically inh
 
 > **Note:** Disabling the Automation switch shows a confirmation dialog — all rules and scripts will be cleared.
 
-> **Tip:** Responses support `${password}`, `${username}`, `${host}`, `${port}`, and `${VARIABLE_NAME}` placeholders that are resolved at connection time. `${password}` is automatically filled from the connection's configured secret backend (Vault, Variable, etc.). Use the ➕ button next to the Response field to insert these without typing.
+> **Tip:** Responses support two kinds of placeholder, both resolved at connection time. Four come from the connection itself — `${password}` (read from the configured **Password Source**, never stored in the response), `${username}`, `${host}` and `${port}` — and the rest are your own **global variables** by name. For this connection a built-in wins over a global of the same name. Use the ➕ button next to the Response field to insert a placeholder without typing.
+>
+> `${password}` resolves only when the connection actually has a Password Source configured; when it does not, the rule is left untouched and a warning naming the variable goes to the log. A value containing a line break is rejected, because a newline would submit the answer early. At a *login* prompt on Telnet or Serial prefer [Automatic Login](#automatic-login-telnet--serial), which types the credentials without a rule at all; expect rules are the right tool for a later prompt such as `sudo`.
 
 **Configure Group Automation (CLI):**
 
@@ -1724,6 +1773,7 @@ rustconn-cli group show "Production"
 
 **Inheritance Rules:**
 - Connections with **empty** automation config automatically inherit from their parent group
+- The two **Automatic Login** prompt fields are inherited field by field: a connection's own value wins, otherwise the first non-empty value found walking up the chain is used
 - If a connection has its own Expect Rules, group rules are **not** merged — the connection's rules take precedence
 - Expect rules and post-login scripts are inherited independently — rules may come from one group and scripts from another
 - Inheritance walks up the group hierarchy: child group → parent group → grandparent group
@@ -1734,7 +1784,7 @@ rustconn-cli group show "Production"
 2. Enable Automation → click **From Template** → select **Sudo Password (SSH)**
 3. The template adds a rule: pattern `\[sudo\] password for \w+:` → response `${password}\n`
 4. Save the group
-5. All SSH connections in "Production Servers" now auto-respond to sudo prompts using their vault password
+5. All SSH connections in "Production Servers" now auto-respond to sudo prompts, each with its own password — `${password}` resolves per connection from that connection's Password Source, so one group rule covers the whole folder
 
 #### Sorting
 
@@ -2429,9 +2479,11 @@ The settings dialog uses `adw::PreferencesDialog` with built-in search. Settings
 
 ### Terminal page
 
-**Terminal group:** Font (family and size), Scrollback (history buffer lines), Color Theme (Dark, Light, Solarized, Monokai, Dracula, plus user-created custom themes), Cursor (shape and blink mode), Behavior (scroll on output/keystroke, hyperlinks, mouse autohide, bell, SFTP via mc, copy on select, close tab on clean exit).
+**Terminal group:** Font (family and size), Scrollback (history buffer lines, keep on reconnect), Color Theme (Dark, Light, Solarized, Monokai, Dracula, plus user-created custom themes), Cursor (shape and blink mode), Behavior (scroll on output/keystroke, hyperlinks, mouse autohide, bell, SFTP via mc, copy on select, close tab on clean exit).
 
 **Close tab on clean exit:** When enabled, tabs are automatically closed when the remote session exits cleanly (exit code 0, e.g. user typed `exit` or `logout`) instead of showing the reconnect overlay. Disabled by default.
+
+**Keep on reconnect:** When enabled (the default), reconnecting a terminal session keeps the previous session's output instead of clearing the terminal, so output from before an idle-timeout disconnect stays readable. A dim `── Reconnected at … ──` rule marks where the new session begins, and the view returns to the bottom. Applies to sessions that reconnect in place — SSH, Telnet, Serial, Kubernetes, Mosh and custom commands — and is bounded by the Scrollback line limit like any other history. Disable it to get a cleared terminal on every reconnect.
 
 **Local Shell group:** Command — custom command to run in Local Shell tabs instead of the default login shell (e.g. `fish`, `bash --norc`, `neofetch && bash`). Leave empty for system default.
 

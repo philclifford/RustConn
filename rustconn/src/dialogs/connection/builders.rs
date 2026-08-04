@@ -38,6 +38,15 @@ use uuid::Uuid;
 use super::logging_tab;
 use crate::i18n::i18n;
 
+/// Reads an entry, returning `None` for blank input.
+///
+/// Used for optional string fields where "the user left it alone" and "the user
+/// typed spaces" must both persist as absent rather than as an empty string.
+fn non_empty_text(entry: &Entry) -> Option<String> {
+    let text = entry.text().trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
+}
+
 pub(super) struct ConnectionDialogData<'a> {
     pub name_entry: &'a Entry,
     pub icon_entry: &'a Entry,
@@ -200,6 +209,10 @@ pub(super) struct ConnectionDialogData<'a> {
     pub local_variables: &'a HashMap<String, Variable>,
     pub logging_tab: &'a logging_tab::LoggingTab,
     pub expect_rules: &'a Vec<ExpectRule>,
+    /// Expected text of the device's username prompt for automatic login (issue #254).
+    pub login_username_prompt_entry: &'a Entry,
+    /// Expected text of the device's password prompt for automatic login.
+    pub login_password_prompt_entry: &'a Entry,
     // Task fields
     pub pre_connect_enabled_switch: &'a adw::SwitchRow,
     pub pre_connect_command_entry: &'a Entry,
@@ -545,6 +558,24 @@ impl ConnectionDialogData<'_> {
             .filter(|r| !r.pattern.is_empty())
             .cloned()
             .collect();
+        // Automatic-login prompt overrides — blank means "use the built-in
+        // matcher", and is stored as None so a parent group can still supply
+        // the wording (issue #254).
+        conn.automation.username_prompt = non_empty_text(self.login_username_prompt_entry);
+        conn.automation.password_prompt = non_empty_text(self.login_password_prompt_entry);
+
+        // Warn if the username prompt text looks like it would also match as a
+        // password prompt — the password matcher wins on a tie, so auto-login
+        // would never send the username.
+        if let Some(ref up) = conn.automation.username_prompt
+            && rustconn_core::connection::looks_like_password_prompt(up)
+        {
+            tracing::warn!(
+                username_prompt = %up,
+                "The configured username prompt also matches as a password prompt; \
+                 the password matcher wins on a tie, so the username will never be sent"
+            );
+        }
 
         // Set pre-connect task if enabled
         conn.pre_connect_task = self.build_pre_connect_task();

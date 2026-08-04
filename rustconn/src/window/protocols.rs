@@ -12,8 +12,8 @@ use rustconn_core::models::AutomationConfig;
 use rustconn_core::variables::{Variable, VariableManager, VariableScope};
 use uuid::Uuid;
 
-use super::MainWindow;
 pub use super::protocols_ssh::{reconnect_ssh_in_place, start_ssh_connection_observed};
+use super::{MainWindow, prompt_autofill};
 use crate::i18n::{i18n, i18n_f};
 use crate::sidebar::ConnectionSidebar;
 use crate::state::SharedAppState;
@@ -45,7 +45,11 @@ pub(super) fn resolve_automation_for_connection(
 /// Substitutes variables in a string using global variables from settings
 ///
 /// Converts `${VAR_NAME}` references to their values from global variables.
-/// If a variable is not found, the reference is left unchanged.
+/// A reference nothing defines is replaced with the empty string, and a value
+/// containing a shell metacharacter makes the whole substitution fail, in which
+/// case the input is returned unchanged — both are `substitute_for_command`
+/// semantics, which is what a host name or a login name being built into an
+/// argument list needs.
 pub(super) fn substitute_variables(input: &str, global_variables: &[Variable]) -> String {
     if !input.contains("${") {
         return input.to_string();
@@ -77,6 +81,102 @@ fn cached_connection_password(
         .get_cached_credentials(connection_id)
         .map(|c| c.password.clone())
         .filter(|p| !p.expose_secret().is_empty())
+}
+
+/// Variables an expect-rule response resolves against, built-ins included.
+///
+/// Returns the global variables plus the four placeholders the Automation tab
+/// offers under "Built-in" — `${password}`, `${username}`, `${host}` and
+/// `${port}` — taken from the connection itself. Without them those four
+/// resolved against nothing and were replaced with the empty string, so the
+/// stock "Sudo Password" template answered the prompt with a bare newline
+/// (issue #257).
+///
+/// The built-ins are appended after the globals, so for this session they shadow
+/// a global variable that happens to share a name — which is what the labels in
+/// the insert-variable menu promise. The list is built fresh per connection, so
+/// the shadowing never reaches another one.
+///
+/// The password is copied out of the credential cache only when an enabled rule
+/// actually references `${password}`, and it lands in a variable marked secret so
+/// [`rustconn_core::Variable`]'s `Drop` scrubs it. The substituted response
+/// itself is a plain `String` for the life of the session; that is pre-existing
+/// behaviour for any secret global variable used in a response.
+pub(super) fn automation_variables(
+    state: &SharedAppState,
+    connection_id: Uuid,
+    conn: &rustconn_core::Connection,
+    automation: &AutomationConfig,
+    global_variables: &[Variable],
+) -> Vec<Variable> {
+    use secrecy::ExposeSecret;
+
+    let mut vars = global_variables.to_vec();
+
+    if let Some(username) = conn.username.as_deref().filter(|u| !u.trim().is_empty()) {
+        vars.push(Variable::new("username", username));
+    }
+    vars.push(Variable::new("host", &conn.host));
+    vars.push(Variable::new("port", conn.port.to_string()));
+
+    // Materialize the secret only for a rule that asks for it, so an ordinary
+    // connection never puts its password into a `Variable`.
+    let wants_password = automation
+        .expect_rules
+        .iter()
+        .any(|r| r.enabled && r.response.contains("${password}"));
+    if wants_password {
+        if let Some(password) = cached_connection_password(state, connection_id) {
+            vars.push(Variable::new_secret("password", password.expose_secret()));
+        } else {
+            tracing::warn!(
+                %connection_id,
+                placeholder = "password",
+                "An expect rule asks for the password placeholder but no password was \
+                 resolved for this connection; check its Password Source"
+            );
+        }
+    }
+
+    vars
+}
+
+/// Builds the login auto-fill spec for a terminal-login protocol.
+///
+/// Telnet and a serial console authenticate by typing into the terminal, so the
+/// account name and the password both come from here: the username from the
+/// connection (with `${VAR}` references expanded), the password from the
+/// credentials the vault resolved before launch. `automation` supplies the
+/// optional expected prompt texts, already resolved through the group chain
+/// (issue #254).
+///
+/// The returned spec may be empty — [`prompt_autofill::install_login_autofill`]
+/// then does nothing, which is the correct behaviour for a device the user
+/// logs into by hand.
+fn login_autofill_for(
+    state: &SharedAppState,
+    connection_id: Uuid,
+    conn: &rustconn_core::Connection,
+    automation: &AutomationConfig,
+    global_variables: &[Variable],
+    protocol: &'static str,
+) -> prompt_autofill::LoginAutofill {
+    let username = conn
+        .username
+        .as_ref()
+        .map(|u| substitute_variables(u, global_variables))
+        .filter(|u| !u.trim().is_empty());
+
+    prompt_autofill::LoginAutofill {
+        username,
+        password: cached_connection_password(state, connection_id),
+        matcher: rustconn_core::LoginPromptMatcher::new(
+            automation.username_prompt.as_deref(),
+            automation.password_prompt.as_deref(),
+        ),
+        protocol,
+        deadline_secs: automation.login_timeout_secs,
+    }
 }
 
 /// Environment variable carrying the connection password to a Custom Command.
@@ -1528,7 +1628,13 @@ fn start_telnet_connection_internal(
         Some(&resolved_automation),
         &terminal_settings,
         conn.theme_override.as_ref(),
-        &global_variables,
+        &automation_variables(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+        ),
     );
     if let Some(observer) = observer {
         observer.complete(session_id);
@@ -1610,6 +1716,25 @@ fn start_telnet_connection_internal(
         &extra_refs,
         backspace_sends,
         delete_sends,
+    );
+
+    // --- Automatic login (issue #254) ---
+    // Telnet has no authentication protocol: the device prints its own prompts
+    // and expects the account name and the password to be typed. Network gear
+    // words those prompts inconsistently (`>>User name:`, `Username:`,
+    // `login:`), so the expected text can be overridden per connection or per
+    // group; unset falls back to the built-in matchers.
+    prompt_autofill::install_login_autofill(
+        notebook,
+        session_id,
+        login_autofill_for(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+            "telnet",
+        ),
     );
 
     // --- Auto-recording for Telnet ---
@@ -1779,7 +1904,13 @@ pub fn start_zerotrust_connection(
         Some(&automation_config),
         &terminal_settings,
         conn.theme_override.as_ref(),
-        &global_variables,
+        &automation_variables(
+            state,
+            connection_id,
+            conn,
+            &automation_config,
+            &global_variables,
+        ),
     );
 
     // Record connection start in history
@@ -1900,7 +2031,13 @@ pub fn start_serial_connection(
         Some(&resolved_automation),
         &terminal_settings,
         conn.theme_override.as_ref(),
-        &global_variables,
+        &automation_variables(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+        ),
     );
 
     // Apply highlight rules (built-in defaults + global + per-connection)
@@ -1955,6 +2092,23 @@ pub fn start_serial_connection(
 
     // Spawn picocom
     notebook.spawn_serial(session_id, &command);
+
+    // --- Automatic login (issue #254) ---
+    // A serial console is the same situation as Telnet: whatever is on the
+    // other end of the line prints its own login prompts. Nothing is typed
+    // unless the connection actually carries a username or a stored password.
+    prompt_autofill::install_login_autofill(
+        notebook,
+        session_id,
+        login_autofill_for(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+            "serial",
+        ),
+    );
 
     // --- Auto-recording for Serial ---
     if conn.session_recording_enabled {
@@ -2067,7 +2221,13 @@ pub fn start_kubernetes_connection(
         Some(&resolved_automation),
         &terminal_settings,
         conn.theme_override.as_ref(),
-        &global_variables,
+        &automation_variables(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+        ),
     );
 
     // Apply highlight rules (built-in defaults + global + per-connection)
@@ -2315,7 +2475,13 @@ fn start_mosh_connection_internal(
         Some(&resolved_automation),
         &terminal_settings,
         conn.theme_override.as_ref(),
-        &global_variables,
+        &automation_variables(
+            state,
+            connection_id,
+            conn,
+            &resolved_automation,
+            &global_variables,
+        ),
     );
     if let Some(observer) = observer {
         observer.complete(session_id);
