@@ -276,4 +276,13 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn default_password_matcher_rejects_password_change_prompts() {
+        let matcher = LoginPromptMatcher::default();
+        assert_eq!(matcher.classify("Old Password:"), None);
+        assert_eq!(matcher.classify("(current) UNIX password:"), None);
+        assert_eq!(matcher.classify("New password:"), None);
+        assert_eq!(matcher.classify("Retype new password:"), None);
+    }
 }

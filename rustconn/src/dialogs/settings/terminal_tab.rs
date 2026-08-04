@@ -682,6 +682,7 @@ pub fn collect_terminal_settings(
     option_is_meta_row: &adw::SwitchRow,
     keep_history_on_reconnect_row: &adw::SwitchRow,
     log_timestamps: bool,
+    existing_max_scrollback_on_reconnect: Option<u32>,
 ) -> TerminalSettings {
     let theme_names = TerminalTheme::theme_names();
     let color_theme = theme_names
@@ -724,6 +725,7 @@ pub fn collect_terminal_settings(
         show_scrollbar: show_scrollbar_row.is_active(),
         local_shell_command: local_shell_command_entry.text().trim().to_string(),
         keep_history_on_reconnect: keep_history_on_reconnect_row.is_active(),
+        max_scrollback_on_reconnect: existing_max_scrollback_on_reconnect,
         close_on_clean_exit: close_on_clean_exit_row.is_active(),
         option_is_meta: option_is_meta_row.is_active(),
     }

@@ -1236,6 +1236,7 @@ impl SettingsDialog {
                 &option_is_meta_check_clone,
                 &keep_history_on_reconnect_check_clone,
                 log_timestamps_check_clone.is_active(),
+                settings_clone.borrow().terminal.max_scrollback_on_reconnect,
             );
 
             // Collect logging settings

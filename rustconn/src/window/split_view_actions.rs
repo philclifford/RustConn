@@ -142,6 +142,11 @@ impl SplitTeardown {
         // it set would keep mirroring into a split that no longer exists.
         bridge.broadcast_active.set(false);
 
+        // Clear the "wired" set so a session entering a *different* split later
+        // is properly re-wired for the new bridge. The old handler stays
+        // connected but becomes inert (is_session_displayed returns false).
+        bridge.broadcast_wired_sessions.borrow_mut().clear();
+
         for session_id in &returning {
             self.return_to_tab(*session_id);
         }
@@ -966,6 +971,15 @@ impl MainWindow {
 
             teardown_pop.return_to_tab(departing);
             teardown_pop.bridges.borrow_mut().remove(&departing);
+
+            // Allow re-wiring: the old commit handler stays connected but is
+            // inert (is_session_displayed returns false). Removing the entry
+            // lets wire_broadcast_for_session run again if the session is placed
+            // back into a split later.
+            bridge
+                .broadcast_wired_sessions
+                .borrow_mut()
+                .remove(&departing);
 
             if SplitTeardown::is_spent(&bridge, false) {
                 teardown_pop.collapse(owner, &bridge, Some(departing));

@@ -391,6 +391,9 @@ impl MainWindow {
             terminal_notebook.set_keep_history_on_reconnect(
                 state_ref.settings().terminal.keep_history_on_reconnect,
             );
+            terminal_notebook.set_max_scrollback_on_reconnect(
+                state_ref.settings().terminal.max_scrollback_on_reconnect,
+            );
             sidebar.set_filter_visible(state_ref.settings().ui.show_protocol_filters);
             sidebar.set_smart_folders_visible(state_ref.settings().ui.show_smart_folders);
         }
@@ -3072,6 +3075,8 @@ impl MainWindow {
 
                 // Apply reconnect history retention setting (#253)
                 notebook.set_keep_history_on_reconnect(settings.terminal.keep_history_on_reconnect);
+                notebook
+                    .set_max_scrollback_on_reconnect(settings.terminal.max_scrollback_on_reconnect);
 
                 // Apply protocol filter visibility setting
                 sidebar.set_filter_visible(settings.ui.show_protocol_filters);

@@ -834,12 +834,73 @@ impl MainWindow {
                 // The GVFS sftp backend spawns its own ssh with a fixed argument
                 // list and reads no configuration we can point it at, so a
                 // bastion cannot be applied on this path at all (issue #255).
+                // Instead of only warning, fall back to the mc path which does
+                // support jump hosts via a generated ssh_config wrapper.
                 if has_jump_host {
-                    tracing::warn!(
-                        "Jump host configured, but the file manager's SFTP backend \
-                         cannot route through it"
+                    tracing::info!(
+                        "Jump host configured — falling back to mc for SFTP \
+                         (the file manager's GVFS backend cannot route through a bastion)"
                     );
-                    toast_clone.show_warning(&Self::sftp_jump_host_warning());
+                    toast_clone.show_toast(&crate::i18n::i18n(
+                        "Jump host detected. Opening SFTP via mc instead of the file manager.",
+                    ));
+
+                    let mc_cmd = rustconn_core::sftp::build_mc_sftp_command(&conn_for_uri);
+                    let conn_name = conn_for_uri.name.clone();
+                    let terminal_settings = state_clone
+                        .try_borrow()
+                        .ok()
+                        .map(|s| s.settings().terminal.clone())
+                        .unwrap_or_default();
+
+                    let Some(mc_args) = mc_cmd else {
+                        toast_clone.show_warning(&crate::i18n::i18n(
+                            "SFTP is only available for SSH connections.",
+                        ));
+                        return;
+                    };
+
+                    let tab_name = format!("mc: {conn_name}");
+                    let session_id = notebook_clone.create_terminal_tab_with_settings(
+                        conn_id,
+                        &tab_name,
+                        "sftp",
+                        None,
+                        &terminal_settings,
+                        None,
+                        &[],
+                    );
+
+                    let downloads = rustconn_core::sftp::get_downloads_dir();
+                    let mc_home_env = rustconn_core::prepare_mc_ssh_env(
+                        session_id,
+                        &conn_for_uri,
+                        &connections_for_uri,
+                        &groups_for_uri,
+                    )
+                    .map(|env| env.path_env());
+
+                    let nb = notebook_clone.clone();
+                    let mc_clone = mc_args.clone();
+                    let dl = downloads.clone();
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(150),
+                        move || {
+                            let argv: Vec<&str> = mc_clone.iter().map(String::as_str).collect();
+                            let envv: Option<Vec<&str>> =
+                                mc_home_env.as_ref().map(|e| vec![e.as_str()]);
+                            nb.spawn_command(session_id, &argv, envv.as_deref(), Some(&dl), None);
+                        },
+                    );
+
+                    if let Some(info) = notebook_clone.get_session_info(session_id) {
+                        split_view_clone.add_session(info);
+                    }
+                    split_view_clone.widget().set_visible(false);
+                    split_view_clone.widget().set_vexpand(false);
+                    notebook_clone.widget().set_vexpand(true);
+                    notebook_clone.show_tab_view_content();
+                    return;
                 }
 
                 tracing::info!(%base_uri, "Opening SFTP file browser");
@@ -1173,17 +1234,6 @@ impl MainWindow {
     /// Warning shown when the external file-manager path is asked to reach a
     /// host behind a jump host, which its SFTP backend cannot do.
     ///
-    /// The literal is deliberately on one line. `po/update-pot.sh` runs xgettext
-    /// with its C scanner, which splices a `\`-continued string without dropping
-    /// the next line's indentation — so a wrapped literal yields a msgid carrying
-    /// spaces the runtime value does not have, and the translation is silently
-    /// dead for every language.
-    fn sftp_jump_host_warning() -> String {
-        crate::i18n::i18n(
-            "File managers cannot use a jump host. Enable \"SFTP via mc\" in Settings.",
-        )
-    }
-
     /// Shows a warning toast on the window hosting `notebook`.
     ///
     /// `handle_sftp_connect_internal` has no `ToastOverlay` of its own — it is
@@ -1435,12 +1485,80 @@ impl MainWindow {
             // The GVFS sftp backend spawns its own ssh with a fixed argument list
             // and reads no configuration we can point it at, so a bastion cannot
             // be applied on this path at all (issue #255).
+            // Fall back to mc which supports jump hosts via a generated ssh_config.
             if has_jump_host {
-                tracing::warn!(
-                    "Jump host configured, but the file manager's SFTP backend \
-                     cannot route through it"
+                tracing::info!(
+                    "Jump host configured — falling back to mc for SFTP \
+                     (the file manager's GVFS backend cannot route through a bastion)"
                 );
-                Self::sftp_warn_on_window(notebook, &Self::sftp_jump_host_warning());
+                Self::sftp_warn_on_window(
+                    notebook,
+                    &crate::i18n::i18n(
+                        "Jump host detected. Opening SFTP via mc instead of the file manager.",
+                    ),
+                );
+
+                let mc_cmd = rustconn_core::sftp::build_mc_sftp_command(&conn_for_uri);
+                let terminal_settings = state
+                    .try_borrow()
+                    .ok()
+                    .map(|s| s.settings().terminal.clone())
+                    .unwrap_or_default();
+                let conn_name = conn_for_uri.name.clone();
+
+                let Some(mc_args) = mc_cmd else {
+                    return;
+                };
+
+                let tab_name = format!("mc: {conn_name}");
+                let session_id = notebook.create_terminal_tab_with_settings(
+                    connection_id,
+                    &tab_name,
+                    "sftp",
+                    None,
+                    &terminal_settings,
+                    None,
+                    &[],
+                );
+
+                let downloads = rustconn_core::sftp::get_downloads_dir();
+                let mc_home_env = rustconn_core::prepare_mc_ssh_env(
+                    session_id,
+                    &conn_for_uri,
+                    &connections_for_uri,
+                    &groups_for_uri,
+                )
+                .map(|env| env.path_env());
+
+                let notebook_clone = notebook.clone();
+                let mc_args_clone = mc_args.clone();
+                let downloads_clone = downloads.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+                    let argv: Vec<&str> = mc_args_clone.iter().map(String::as_str).collect();
+                    let envv: Option<Vec<&str>> = mc_home_env.as_ref().map(|e| vec![e.as_str()]);
+                    notebook_clone.spawn_command(
+                        session_id,
+                        &argv,
+                        envv.as_deref(),
+                        Some(&downloads_clone),
+                        None,
+                    );
+                });
+
+                if let Some(sb) = sidebar {
+                    sb.update_connection_status(&connection_id.to_string(), "connected");
+                    sb.increment_session_count(&connection_id.to_string());
+                }
+                if let Some(sv) = split_view {
+                    if let Some(info) = notebook.get_session_info(session_id) {
+                        sv.add_session(info);
+                    }
+                    sv.widget().set_visible(false);
+                    sv.widget().set_vexpand(false);
+                }
+                notebook.widget().set_vexpand(true);
+                notebook.show_tab_view_content();
+                return;
             }
 
             tracing::info!(%base_uri, "SFTP connect: opening file browser");

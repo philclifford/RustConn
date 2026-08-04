@@ -140,6 +140,16 @@ pub struct TerminalSettings {
     /// When `false`, the terminal is cleared on reconnect.
     #[serde(default = "default_keep_history_on_reconnect")]
     pub keep_history_on_reconnect: bool,
+    /// Maximum scrollback lines to retain after a reconnect.
+    ///
+    /// When a session reconnects and `keep_history_on_reconnect` is true, VTE
+    /// adds the new session's output on top of whatever was already there. Over
+    /// many reconnects (e.g. an idle-timeout loop) the buffer can grow without
+    /// bound. This cap removes the oldest lines *before* the reconnect rule is
+    /// inserted, so the buffer never exceeds `scrollback_lines + this limit`.
+    /// `None` (the default) means no cap beyond VTE's own scrollback_lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_scrollback_on_reconnect: Option<u32>,
     /// Automatically close the tab when the session exits cleanly (exit code 0).
     ///
     /// When `true`, SSH/Telnet/Serial sessions that terminate with exit code 0
@@ -241,6 +251,7 @@ impl Default for TerminalSettings {
             show_scrollbar: default_show_scrollbar(),
             local_shell_command: String::new(),
             keep_history_on_reconnect: default_keep_history_on_reconnect(),
+            max_scrollback_on_reconnect: None,
             close_on_clean_exit: false,
             option_is_meta: false,
         }

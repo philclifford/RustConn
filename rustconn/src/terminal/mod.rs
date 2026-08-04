@@ -204,6 +204,13 @@ pub struct TerminalNotebook {
     /// Whether an in-place reconnect keeps the previous session's scrollback
     /// (`TerminalSettings::keep_history_on_reconnect`, issue #253).
     keep_history_on_reconnect: Rc<std::cell::Cell<bool>>,
+    /// Maximum scrollback lines to retain after a reconnect (None = unlimited).
+    ///
+    /// VTE's own `scrollback_lines` property is a *per-session* cap, but with
+    /// history preserved across reconnects the total buffer grows without bound.
+    /// When set, the old scrollback is trimmed to this many lines by temporarily
+    /// lowering VTE's cap before feeding the reconnect separator.
+    max_scrollback_on_reconnect: Rc<std::cell::Cell<Option<u32>>>,
     /// Absolute VTE row at which a session's current connection started.
     ///
     /// VTE cursor rows are absolute buffer coordinates — they include the
@@ -368,6 +375,7 @@ impl TerminalNotebook {
             reconnect_shown: Rc::new(RefCell::new(HashSet::new())),
             disconnected_sessions: Rc::new(RefCell::new(HashSet::new())),
             keep_history_on_reconnect: Rc::new(std::cell::Cell::new(true)),
+            max_scrollback_on_reconnect: Rc::new(std::cell::Cell::new(None)),
             cursor_row_base: Rc::new(RefCell::new(HashMap::new())),
             cluster_sessions: Rc::new(RefCell::new(HashMap::new())),
             session_to_cluster: Rc::new(RefCell::new(HashMap::new())),
@@ -1940,6 +1948,17 @@ impl TerminalNotebook {
     ///   viewport goes back to the bottom so the new output is visible without
     ///   a manual scroll.
     fn reset_keeping_history(&self, session_id: Uuid, terminal: &Terminal) {
+        // If a cap is set, trim the old scrollback by temporarily lowering VTE's
+        // limit. VTE drops the oldest lines when the cap shrinks, then restoring
+        // the original value lets the new session grow normally.
+        if let Some(max_lines) = self.max_scrollback_on_reconnect.get() {
+            let original = terminal.scrollback_lines();
+            if original > max_lines as i64 {
+                terminal.set_scrollback_lines(max_lines as i64);
+                terminal.set_scrollback_lines(original);
+            }
+        }
+
         terminal.reset(true, false);
         terminal.feed(LEAVE_ALTERNATE_SCREEN);
 
@@ -2369,6 +2388,11 @@ impl TerminalNotebook {
     /// Sets whether an in-place reconnect keeps the previous scrollback (#253).
     pub fn set_keep_history_on_reconnect(&self, enabled: bool) {
         self.keep_history_on_reconnect.set(enabled);
+    }
+
+    /// Sets the maximum scrollback lines to retain after a reconnect.
+    pub fn set_max_scrollback_on_reconnect(&self, limit: Option<u32>) {
+        self.max_scrollback_on_reconnect.set(limit);
     }
 
     /// Sets whether tabs should be colored by protocol type
