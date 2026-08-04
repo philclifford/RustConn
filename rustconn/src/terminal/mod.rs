@@ -1953,8 +1953,8 @@ impl TerminalNotebook {
         // the original value lets the new session grow normally.
         if let Some(max_lines) = self.max_scrollback_on_reconnect.get() {
             let original = terminal.scrollback_lines();
-            if original > max_lines as i64 {
-                terminal.set_scrollback_lines(max_lines as i64);
+            if original > i64::from(max_lines) {
+                terminal.set_scrollback_lines(i64::from(max_lines));
                 terminal.set_scrollback_lines(original);
             }
         }

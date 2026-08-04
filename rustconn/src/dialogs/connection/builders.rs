@@ -567,14 +567,14 @@ impl ConnectionDialogData<'_> {
         // Warn if the username prompt text looks like it would also match as a
         // password prompt — the password matcher wins on a tie, so auto-login
         // would never send the username.
-        if let Some(ref up) = conn.automation.username_prompt {
-            if rustconn_core::connection::looks_like_password_prompt(up) {
-                tracing::warn!(
-                    username_prompt = %up,
-                    "The configured username prompt also matches as a password prompt; \
-                     the password matcher wins on a tie, so the username will never be sent"
-                );
-            }
+        if let Some(ref up) = conn.automation.username_prompt
+            && rustconn_core::connection::looks_like_password_prompt(up)
+        {
+            tracing::warn!(
+                username_prompt = %up,
+                "The configured username prompt also matches as a password prompt; \
+                 the password matcher wins on a tie, so the username will never be sent"
+            );
         }
 
         // Set pre-connect task if enabled
