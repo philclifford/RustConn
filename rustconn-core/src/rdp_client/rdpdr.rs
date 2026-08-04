@@ -488,6 +488,11 @@ impl RustConnRdpdrBackend {
         // the metadata queries Explorer runs before it touches anything.
         let opened = opts.open(&path).or_else(|e| {
             if wants_write {
+                trace!(
+                    "RDPDR open: write-mode open failed for '{}', retrying read-only \
+                     (file may be read-only on disk): {}",
+                    path, e
+                );
                 OpenOptions::new().read(true).open(&path)
             } else {
                 Err(e)

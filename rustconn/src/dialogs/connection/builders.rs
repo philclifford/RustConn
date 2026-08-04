@@ -564,6 +564,19 @@ impl ConnectionDialogData<'_> {
         conn.automation.username_prompt = non_empty_text(self.login_username_prompt_entry);
         conn.automation.password_prompt = non_empty_text(self.login_password_prompt_entry);
 
+        // Warn if the username prompt text looks like it would also match as a
+        // password prompt — the password matcher wins on a tie, so auto-login
+        // would never send the username.
+        if let Some(ref up) = conn.automation.username_prompt {
+            if rustconn_core::connection::looks_like_password_prompt(up) {
+                tracing::warn!(
+                    username_prompt = %up,
+                    "The configured username prompt also matches as a password prompt; \
+                     the password matcher wins on a tie, so the username will never be sent"
+                );
+            }
+        }
+
         // Set pre-connect task if enabled
         conn.pre_connect_task = self.build_pre_connect_task();
 

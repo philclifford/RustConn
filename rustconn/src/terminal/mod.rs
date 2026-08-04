@@ -1938,10 +1938,10 @@ impl TerminalNotebook {
     ///
     /// VTE only drops the scrollback when `reset()` is called with
     /// `clear_history`, so the preserved output is simply what the terminal
-    /// already holds — nothing is copied. Three details have to be handled:
+    /// already holds — nothing is copied. Three details:
     ///
-    /// - The alternate screen has to be left explicitly — see
-    ///   [`LEAVE_ALTERNATE_SCREEN`].
+    /// - The alternate screen must be left explicitly (see
+    ///   [`LEAVE_ALTERNATE_SCREEN`] for rationale).
     /// - The dead session's output may end mid-line, so a separator opens a
     ///   fresh line and marks where the new session begins.
     /// - The user may have scrolled up while reading the dead session; the

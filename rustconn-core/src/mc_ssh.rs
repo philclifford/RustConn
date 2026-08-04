@@ -267,6 +267,11 @@ fn find_real_ssh(wrapper_dir: &Path) -> PathBuf {
             return candidate;
         }
     }
+    tracing::warn!(
+        fallback = "/usr/bin/ssh",
+        "No ssh binary found in PATH (excluding wrapper directory); \
+         using hardcoded fallback — this may be wrong on NixOS or Homebrew setups"
+    );
     PathBuf::from("/usr/bin/ssh")
 }
 

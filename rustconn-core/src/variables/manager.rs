@@ -493,6 +493,12 @@ impl VariableManager {
             });
         }
 
+        // Check newlines *before* the general control-character test so the
+        // error message says "contains newline characters" — a far more
+        // actionable diagnostic for someone who pasted a multi-line password —
+        // rather than the generic "contains control characters". Both `\n` and
+        // `\r` are control chars, so without this early return the generic arm
+        // below would catch them with a less helpful message.
         if value.contains('\n') || value.contains('\r') {
             return Err(VariableError::UnsafeValue {
                 name: name.to_string(),
