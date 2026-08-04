@@ -38,8 +38,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(150);
 ///
 /// Covers a slow SSH handshake (DNS + key exchange + banner) and a network
 /// device that spends seconds on its login banner. After this the user types
-/// the credentials manually.
-const AUTOFILL_DEADLINE: Duration = Duration::from_secs(10);
+/// the credentials manually. Overridden by
+/// [`AutomationConfig::login_timeout_secs`] when set.
+const DEFAULT_AUTOFILL_DEADLINE: Duration = Duration::from_secs(10);
 
 /// Credentials to type, and how to recognize the prompts asking for them.
 pub(crate) struct LoginAutofill {
@@ -51,6 +52,10 @@ pub(crate) struct LoginAutofill {
     pub matcher: LoginPromptMatcher,
     /// Protocol name for log fields (`"ssh"`, `"telnet"`, `"serial"`).
     pub protocol: &'static str,
+    /// How long to wait for a prompt before giving up.
+    ///
+    /// `None` means use [`DEFAULT_AUTOFILL_DEADLINE`].
+    pub deadline_secs: Option<u32>,
 }
 
 impl LoginAutofill {
@@ -94,6 +99,7 @@ pub(crate) fn install_login_autofill(
         password,
         matcher,
         protocol,
+        deadline_secs,
     } = spec;
 
     // Skip straight to the password stage when there is no username to send:
@@ -104,6 +110,10 @@ pub(crate) fn install_login_autofill(
         Stage::Password
     };
     let stage = Rc::new(Cell::new(initial));
+
+    let deadline = deadline_secs
+        .map(|s| Duration::from_secs(u64::from(s)))
+        .unwrap_or(DEFAULT_AUTOFILL_DEADLINE);
 
     tracing::info!(
         protocol,
@@ -188,7 +198,7 @@ pub(crate) fn install_login_autofill(
             if notebook.get_terminal(session_id).is_none() {
                 return glib::ControlFlow::Break;
             }
-            if started.elapsed() >= AUTOFILL_DEADLINE {
+            if started.elapsed() >= deadline {
                 tracing::debug!(
                     protocol,
                     %session_id,

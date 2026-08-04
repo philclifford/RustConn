@@ -175,6 +175,7 @@ fn login_autofill_for(
             automation.password_prompt.as_deref(),
         ),
         protocol,
+        deadline_secs: automation.login_timeout_secs,
     }
 }
 

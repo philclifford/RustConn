@@ -72,6 +72,10 @@ pub fn resolve_automation(connection: &Connection, groups: &[ConnectionGroup]) -
         post_login_scripts,
         username_prompt,
         password_prompt,
+        login_timeout_secs: connection
+            .automation
+            .login_timeout_secs
+            .or_else(|| resolve_login_timeout(connection.group_id, groups)),
     }
 }
 
@@ -100,6 +104,27 @@ where
             && !value.trim().is_empty()
         {
             return Some(value.clone());
+        }
+        current = group.parent_id;
+    }
+
+    None
+}
+
+/// Walks the group hierarchy to find an inherited login timeout.
+///
+/// Returns the first `login_timeout_secs` that is `Some` walking up the chain.
+fn resolve_login_timeout(start_group_id: Option<Uuid>, groups: &[ConnectionGroup]) -> Option<u32> {
+    let mut visited = HashSet::new();
+    let mut current = start_group_id;
+
+    while let Some(gid) = current {
+        if !visited.insert(gid) {
+            break;
+        }
+        let group = find_group(gid, groups)?;
+        if let Some(timeout) = group.login_timeout_secs {
+            return Some(timeout);
         }
         current = group.parent_id;
     }

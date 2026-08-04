@@ -38,6 +38,14 @@ pub struct AutomationConfig {
     /// `None` (or blank) uses the built-in localized password matcher.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_prompt: Option<String>,
+    /// How many seconds auto-login waits for a prompt before giving up.
+    ///
+    /// Defaults to 10 s, which covers a typical SSH handshake or switch banner.
+    /// Serial and Telnet connections to network equipment that boots slowly
+    /// (Cisco ASR, Huawei MA5800) may need 30–60 s. `None` means "use the
+    /// default" so existing configs are unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login_timeout_secs: Option<u32>,
 }
 
 /// Source of password/credentials for a connection

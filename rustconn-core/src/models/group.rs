@@ -99,6 +99,13 @@ pub struct ConnectionGroup {
     /// Expected text of the password prompt, for inheritance by child connections.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_prompt: Option<String>,
+    /// How many seconds auto-login waits for a prompt, for inheritance.
+    ///
+    /// Connections without their own `automation.login_timeout_secs` inherit
+    /// from their group chain. `None` means "inherit further up or use the
+    /// default (10 s)".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login_timeout_secs: Option<u32>,
 }
 
 /// Default `updated_at` for groups written before edit-tracking existed.
@@ -142,6 +149,7 @@ impl ConnectionGroup {
             post_login_scripts: Vec::new(),
             username_prompt: None,
             password_prompt: None,
+            login_timeout_secs: None,
         }
     }
 
@@ -175,6 +183,7 @@ impl ConnectionGroup {
             post_login_scripts: Vec::new(),
             username_prompt: None,
             password_prompt: None,
+            login_timeout_secs: None,
         }
     }
 

@@ -15,6 +15,7 @@ use rustconn_core::automation::{ExpectEngine, ExpectRule};
 use uuid::Uuid;
 use vte4::prelude::*;
 use vte4::{Format, Terminal};
+use zeroize::Zeroize;
 
 /// Shared state for automation engine
 struct AutomationState {
@@ -26,6 +27,15 @@ struct AutomationState {
     last_content: String,
     /// Counter for polling cycles
     poll_count: u32,
+}
+
+impl Drop for AutomationState {
+    fn drop(&mut self) {
+        // Scrub any remaining rule responses that may contain credentials
+        // resolved from the vault (issue #257). Without this, a session that
+        // closes before all one-shot rules fire leaves passwords in freed memory.
+        self.engine.zeroize_responses();
+    }
 }
 
 /// Manages automation for a terminal session
@@ -224,7 +234,9 @@ impl AutomationSession {
         state_ref.last_content = content.clone();
 
         // Collect matches: (rule_id, response, one_shot)
-        let mut matches: Vec<(Uuid, String, bool)> = Vec::new();
+        // Responses are wrapped in `Zeroizing` so that credentials resolved into
+        // them (issue #257) are scrubbed from memory as soon as they are sent.
+        let mut matches: Vec<(Uuid, zeroize::Zeroizing<String>, bool)> = Vec::new();
 
         for line in content.lines() {
             if line.trim().is_empty() {
@@ -250,7 +262,7 @@ impl AutomationSession {
                 // Escapes were already expanded by `prepare_rules_from_config`,
                 // before substitution — doing it here as well would reinterpret
                 // backslashes that came out of a resolved variable.
-                let response = rule.response.clone();
+                let response = zeroize::Zeroizing::new(rule.response.clone());
                 // Length only — see the note in `new()`: a response may carry a
                 // password, and tracing output is not redacted.
                 tracing::info!(
@@ -263,18 +275,22 @@ impl AutomationSession {
             }
         }
 
-        // Remove one-shot rules that matched
-        for &(id, _, one_shot) in &matches {
-            if one_shot {
-                state_ref.engine.remove_by_id(id);
-                state_ref.created_at.remove(&id);
+        // Remove one-shot rules that matched and zeroize their stored response
+        // so the credential does not linger in the freed allocation.
+        for (id, _, one_shot) in &matches {
+            if *one_shot {
+                if let Some(rule) = state_ref.engine.get_rule_mut(*id) {
+                    rule.response.zeroize();
+                }
+                state_ref.engine.remove_by_id(*id);
+                state_ref.created_at.remove(id);
             }
         }
 
         // Drop borrow before sending
         drop(state_ref);
 
-        // Send responses
+        // Send responses — `Zeroizing` scrubs the String on drop.
         for (_, response, _) in matches {
             terminal.feed_child(response.as_bytes());
         }

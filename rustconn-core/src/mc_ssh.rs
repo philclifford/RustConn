@@ -263,11 +263,30 @@ fn find_real_ssh(wrapper_dir: &Path) -> PathBuf {
             continue;
         }
         let candidate = dir.join("ssh");
-        if candidate.is_file() {
+        if candidate.is_file() && is_executable(&candidate) {
             return candidate;
         }
     }
     PathBuf::from("/usr/bin/ssh")
+}
+
+/// Returns `true` when the file has at least one execute bit set.
+///
+/// On non-Unix (unlikely for this project) always returns `true` so the
+/// fallback does not silently discard every candidate.
+fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        true
+    }
 }
 
 /// Removes wrapper directories left behind by an earlier run.

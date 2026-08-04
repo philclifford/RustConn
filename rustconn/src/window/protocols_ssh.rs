@@ -1144,6 +1144,7 @@ fn start_ssh_connection_internal(
                     resolved_automation.password_prompt.as_deref(),
                 ),
                 protocol: "ssh",
+                deadline_secs: resolved_automation.login_timeout_secs,
             },
         );
     } else if cached_password.is_some() {
@@ -1508,6 +1509,7 @@ pub fn reconnect_ssh_in_place(
                     resolved_automation.password_prompt.as_deref(),
                 ),
                 protocol: "ssh",
+                deadline_secs: resolved_automation.login_timeout_secs,
             },
         );
     } else if have_cached_password {

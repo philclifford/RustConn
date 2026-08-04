@@ -247,6 +247,9 @@ fn build_ui(app: &adw::Application, tray_manager: SharedTrayManager) {
     // background thread instead of inline in the connect/disconnect paths)
     setup_history_flush(&state);
 
+    // Prune stale agent key files left behind by a previous crash or kill.
+    rustconn_core::ssh_agent::prune_stale_agent_keys();
+
     // Apply saved color scheme from settings
     apply_saved_color_scheme(&state);
 

@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Updated**: ipnet 2.12.0 → 2.12.1, libredox 0.1.18 → 0.1.19. Both are transitive patch releases picked up when the lockfile was regenerated; `cargo deny check advisories` is clean. Every bundled Flatpak module is already at its latest upstream release (GNOME runtime 50, FreeRDP 3.30.0, VTE 0.80.5, mc 4.8.33, cJSON 1.7.19, openh264 2.6.0, waypipe 0.11.0), and TigerVNC — the only pinned CLI download — is current at 1.16.2.
 
+### Known Issues
+
+- **Windows Explorer does not auto-refresh after file operations in an RDP drive share** — rename, delete and copy operations now work correctly in the embedded RDP drive redirection (issue [#256](https://github.com/totoshko88/RustConn/issues/256)), but Explorer's directory listing does not update until the user presses F5. This happens because `ironrdp-connector` does not yet expose the `ClientDriveNotifyChangeDirectoryResponse` PDU, so change-notification IRPs are never completed and Explorer keeps its stale view. The underlying data is correct; only the display is stale. A fix requires upstream `ironrdp` work and is tracked separately.
+
 ## [0.19.11] - 2026-08-02
 
 ### Fixed
