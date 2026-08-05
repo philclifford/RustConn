@@ -43,12 +43,16 @@ fn connection_type_token(value: u64) -> Option<&'static str> {
         8 => Some("putty"),
         25 => Some("group"),
         26 => Some("credential"),
+        28 => Some("ftp"),
+        32 => Some("website"),
+        38 => Some("scp"),
         62 => Some("terminalconsole"),
         67 => Some("securecrt"),
         68 => Some("iterm"),
         74 => Some("telnet"),
         77 => Some("sshshell"),
         92 => Some("root"),
+        100 => Some("sftp"),
         104 => Some("novnc"),
         _ => None,
     }
@@ -102,11 +106,19 @@ where
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct RdmCredentials {
+    #[serde(
+        default,
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     user_name: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     domain: Option<String>,
     #[serde(
         default,
-        deserialize_with = "crate::secret::serde_helpers::deserialize_optional_secret"
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_secret"
     )]
     password: Option<secrecy::SecretString>,
 }
@@ -117,36 +129,74 @@ struct RdmCredentials {
 struct RdmConnection {
     #[serde(default)]
     name: String,
-    #[serde(rename = "ID")]
+    #[serde(
+        default,
+        rename = "ID",
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     id: Option<String>,
     #[serde(default, deserialize_with = "deserialize_connection_type")]
     connection_type: Option<String>,
     /// Target host. RDM stores it in `Host` for terminal entries and in `Url`
     /// for RDP and web based entries.
-    #[serde(alias = "Url", alias = "HostName", alias = "Server")]
+    #[serde(
+        default,
+        alias = "Url",
+        alias = "HostName",
+        alias = "Server",
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     host: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_port")]
     port: Option<u16>,
-    #[serde(alias = "UserName")]
+    #[serde(
+        default,
+        alias = "UserName",
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     username: Option<String>,
     #[serde(
         default,
-        deserialize_with = "crate::secret::serde_helpers::deserialize_optional_secret"
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_secret"
     )]
     password: Option<secrecy::SecretString>,
+    #[serde(
+        default,
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     domain: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     description: Option<String>,
     /// Backslash separated destination folder, e.g. `Customers\ACME`.
+    #[serde(
+        default,
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     group: Option<String>,
-    #[serde(rename = "ParentID")]
+    #[serde(
+        default,
+        rename = "ParentID",
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     parent_id: Option<String>,
     /// Credentials embedded in the entry.
     credentials: Option<RdmCredentials>,
     /// Reference to a separate `Credential` entry.
-    #[serde(rename = "CredentialConnectionID")]
+    #[serde(
+        default,
+        rename = "CredentialConnectionID",
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     credential_connection_id: Option<String>,
     // SSH specific
-    #[serde(rename = "PrivateKeyPath")]
+    #[serde(
+        default,
+        rename = "PrivateKeyPath",
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     private_key_path: Option<String>,
     // VNC specific
     #[serde(rename = "ViewOnly")]
@@ -157,10 +207,19 @@ struct RdmConnection {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct RdmFolder {
-    #[serde(rename = "ID")]
-    id: String,
+    #[serde(
+        default,
+        rename = "ID",
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
+    id: Option<String>,
+    #[serde(default)]
     name: String,
-    #[serde(rename = "ParentID")]
+    #[serde(
+        default,
+        rename = "ParentID",
+        deserialize_with = "crate::secret::serde_helpers::deserialize_tolerant_string"
+    )]
     parent_id: Option<String>,
 }
 
@@ -287,7 +346,9 @@ impl RdmImporter {
         // Explicit folder list (documented format and older exports)
         if let Some(folders) = &rdm_data.folders {
             for folder in folders {
-                group_map.insert(folder.id.clone(), Uuid::new_v4());
+                if let Some(id) = folder.id.as_ref().filter(|id| !id.is_empty()) {
+                    group_map.insert(id.clone(), Uuid::new_v4());
+                }
             }
 
             for folder in folders {
@@ -454,7 +515,7 @@ impl RdmImporter {
             |parent| ConnectionGroup::with_parent(folder.name.clone(), parent),
         );
         // Use the pre-allocated UUID from the group_map
-        if let Some(id) = group_map.get(&folder.id).copied() {
+        if let Some(id) = folder.id.as_ref().and_then(|id| group_map.get(id)).copied() {
             group.id = id;
         }
         group
@@ -759,5 +820,74 @@ mod tests {
             result.skipped[0].reason
         );
         assert!(result.skipped[1].reason.contains("no host"));
+    }
+
+    /// Regression test for issue #234: real RDM exports may contain integer
+    /// values in fields the documented format encodes as strings (Port inside
+    /// a URL field, numeric IDs, numeric passwords for PIN-based devices).
+    #[test]
+    fn tolerant_parsing_accepts_numeric_field_values() {
+        // Simulates a real Devolutions export where:
+        // - ConnectionType is numeric (77 = SSHShell)
+        // - Folders[].ID and ParentID are bare integers
+        // - Port is a bare integer
+        // - Description is absent (null)
+        // - A connection ParentID is numeric
+        // - Password is a numeric PIN
+        let json = r#"{"Folders":[
+            {"ID":100,"Name":"Servers"},
+            {"ID":101,"Name":"Network","ParentID":100}
+        ],"Connections":[
+            {"ConnectionType":77,"Name":"Router","Host":"192.168.1.1",
+             "Port":22,"Username":"admin","Password":1234,
+             "ParentID":101,"Description":null},
+            {"ConnectionType":1,"Name":"Win2022","Url":"10.0.0.5",
+             "Port":3389,"Domain":"CORP","Username":"sysadmin",
+             "Credentials":{"UserName":"nested-user","Domain":"NESTED","Password":"s3cret"}}
+        ]}"#;
+
+        let result = RdmImporter::new()
+            .import_from_content(json)
+            .expect("import must not fail on numeric fields");
+
+        // Two explicit folders + 2 connections
+        assert_eq!(result.groups.len(), 2);
+        assert_eq!(result.connections.len(), 2, "skipped: {:?}", result.skipped);
+
+        let servers = result
+            .groups
+            .iter()
+            .find(|group| group.name == "Servers")
+            .expect("parent folder");
+        let network = result
+            .groups
+            .iter()
+            .find(|group| group.name == "Network")
+            .expect("numeric child folder");
+        assert_eq!(network.parent_id, Some(servers.id));
+
+        let router = &result.connections[0];
+        assert_eq!(router.group_id, Some(network.id));
+        assert_eq!(router.host, "192.168.1.1");
+        assert_eq!(router.port, 22);
+        assert_eq!(router.username.as_deref(), Some("admin"));
+        assert_eq!(router.password_source, PasswordSource::Vault);
+
+        // Verify the numeric password was captured as "1234"
+        let router_creds = result.credentials.get(&router.id).expect("credentials");
+        assert_eq!(
+            router_creds
+                .password
+                .as_ref()
+                .map(|p| p.expose_secret().to_string()),
+            Some("1234".to_string())
+        );
+
+        let win = &result.connections[1];
+        assert_eq!(win.host, "10.0.0.5");
+        assert_eq!(win.port, 3389);
+        // Flat username wins over nested
+        assert_eq!(win.username.as_deref(), Some("sysadmin"));
+        assert_eq!(win.domain.as_deref(), Some("CORP"));
     }
 }

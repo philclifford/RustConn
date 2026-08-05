@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.19.12** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.19.13** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -742,6 +742,17 @@ When MPTCP is enabled on an embedded RDP or VNC session, the toolbar status labe
 
 ### RDP
 
+#### Session Toolbar
+
+The embedded RDP session provides a floating toolbar with actions like Copy, Paste, Autotype, Ctrl+Alt+Del, Quick Actions, and Scripts. The toolbar auto-hides to keep the full remote desktop visible:
+
+- **Reveal** — hover or click the small arrow indicator (▼) at the top center of the remote desktop view
+- **Hide** — the toolbar hides automatically after 2 seconds of inactivity (pointer and keyboard focus have left)
+- **Keyboard access** — Tab into the arrow indicator, then press Enter to show the toolbar; focus moves into the toolbar actions
+- **Touch** — tap the arrow indicator to toggle the toolbar
+
+The toolbar is fully transparent and pass-through when hidden — it does not block interaction with the remote desktop or window controls. In narrow panels (split view or small windows), secondary actions collapse into an overflow "⋯" menu while Fit Resolution and Ctrl+Alt+Del stay directly visible.
+
 #### Mouse Jiggler
 
 Keeps the remote RDP session awake and prevents the remote desktop from locking by sending periodic input.
@@ -1376,6 +1387,8 @@ Sessions shown through an external viewer (xfreerdp, vncviewer, or an external S
 - **Tab Overview** — split-view tabs render correctly in Tab Overview (Ctrl+Shift+O) with live thumbnails showing the split layout
 
 Embedded viewers adapt to narrow panels: the toolbar collapses its secondary actions into an overflow ("⋯") menu (Fit resolution and Ctrl+Alt+Del stay visible), and the remote desktop rescales to fully fill a small or oddly-shaped panel. The same adaptation applies to a single embedded tab in a small or narrow application window. Keystroke broadcast (Ctrl+Shift+B) applies only to terminals — its toggle appears when a split holds at least two terminal sessions and a terminal panel is focused, and mirroring never targets an embedded remote desktop.
+
+Each occupied panel has a small arrow indicator (◂) at the top-right corner. Hovering or clicking it reveals the panel action buttons: **Remove from Split** (returns the session to its own tab without closing it) and **Close** (terminates the session). The buttons hide automatically after a short delay, keeping the view uncluttered and avoiding overlap with the session toolbar.
 
 ### Detached Session Windows
 

@@ -132,7 +132,6 @@ Bug reports and feature requests are welcome on the
 
 <p>
   <a href="https://donatello.to/totoshko88"><img src="https://img.shields.io/badge/Donatello-Support-ff5e5b" alt="Donatello"></a>
-  <a href="https://ko-fi.com/totoshko88"><img src="https://img.shields.io/badge/Ko--fi-Support-ff5e5b?logo=ko-fi" alt="Ko-fi"></a>
   <a href="https://send.monobank.ua/jar/2UgaGcQ3JC"><img src="https://img.shields.io/badge/Monobank-UAH-black" alt="Monobank"></a>
 </p>
 

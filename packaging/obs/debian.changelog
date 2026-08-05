@@ -1,3 +1,16 @@
+rustconn (0.19.13-1) unstable; urgency=medium
+
+  * Version bump to 0.19.13
+  * Added US Dvorak RDP keyboard layout (PR #258)
+  * Fixed RDM JSON import rejecting real-world Devolutions exports containing
+    numeric fields where strings were expected (#234)
+  * Improved session transcript to capture initial output within 500 ms
+    instead of waiting 5 seconds (#247)
+  * Improved embedded RDP and VNC toolbar: now floats as an auto-hide overlay
+    that does not consume vertical space or affect session resolution
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Thu, 06 Aug 2026 02:09:30 +0300
+
 rustconn (0.19.12-1) unstable; urgency=medium
 
   * Version bump to 0.19.12

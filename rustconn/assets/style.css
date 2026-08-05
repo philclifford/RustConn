@@ -91,6 +91,23 @@
     background-color: alpha(@error_color, 0.25);
 }
 
+/* Panel reveal arrow — small indicator at top-right of a split pane that
+ * reveals close/detach buttons on hover. Kept subtle so it does not
+ * interfere with the session content or floating toolbar. */
+.panel-reveal-arrow {
+    opacity: 0.3;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 2px;
+    background-color: alpha(@view_bg_color, 0.4);
+    transition: opacity 150ms ease-in-out;
+}
+
+.panel-reveal-arrow:hover {
+    opacity: 0.85;
+    background-color: alpha(@view_bg_color, 0.75);
+}
+
 /* ============================================================
  * Split Pane Color Indicators
  * Applied via SPLIT_PANE_COLORS in split_view/bridge.rs
@@ -845,4 +862,32 @@ togglebutton.broadcasting label.caption {
  * the tunnel-pulse keyframes already defined above. */
 togglebutton.broadcasting image {
     animation: tunnel-pulse 1.6s ease-in-out infinite;
+}
+
+/* Embedded RDP/VNC toolbar — applied to the toolbar box itself so that the
+ * revealer container stays fully transparent when hidden. The toolbar floats
+ * over the DrawingArea without consuming vertical space. */
+.rdp-toolbar-overlay {
+    background-color: rgba(36, 36, 36, 0.85);
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
+/* Toolbar reveal handle — small arrow indicator at the top center that
+ * triggers the floating toolbar on hover/click. Kept unobtrusive so it
+ * does not interfere with the remote desktop or window controls. */
+.toolbar-reveal-handle {
+    opacity: 0.4;
+    background-color: alpha(@view_bg_color, 0.5);
+    min-width: 44px;
+    min-height: 28px;
+    padding: 2px 8px;
+    transition: opacity 150ms ease-in-out;
+}
+
+.toolbar-reveal-handle:hover {
+    opacity: 0.9;
+    background-color: alpha(@view_bg_color, 0.8);
 }

@@ -140,6 +140,17 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.13" date="2026-08-06">
+      <description>
+        <p>Version 0.19.13 - RDM import tolerance, auto-hide floating toolbar for RDP and VNC:</p>
+        <ul>
+          <li>Added US Dvorak RDP keyboard layout</li>
+          <li>Fixed RDM JSON import rejecting real-world Devolutions exports containing numeric fields</li>
+          <li>Improved session transcript to capture initial connection output within 500 ms</li>
+          <li>Improved embedded RDP and VNC toolbar to float as an auto-hide overlay, no longer consuming vertical space or affecting resolution</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.12" date="2026-08-04">
       <description>
         <p>Version 0.19.12 - terminal history survives a reconnect, automatic login for Telnet and serial, SFTP through a jump host:</p>

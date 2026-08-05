@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::MetadataExt;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use ironrdp::core::impl_as_any;
@@ -28,11 +28,12 @@ use ironrdp::rdpdr::pdu::efs::{
     DeviceControlRequest, DeviceControlResponse, DeviceCreateRequest, DeviceCreateResponse,
     DeviceIoResponse, DeviceReadRequest, DeviceReadResponse, DeviceWriteRequest,
     DeviceWriteResponse, FileAttributeTagInformation, FileAttributes, FileBasicInformation,
-    FileBothDirectoryInformation, FileFsAttributeInformation, FileFsFullSizeInformation,
-    FileFsSizeInformation, FileFsVolumeInformation, FileInformationClass,
-    FileInformationClassLevel, FileRenameInformation, FileStandardInformation,
-    FileSystemAttributes, FileSystemInformationClass, FileSystemInformationClassLevel, Information,
-    NtStatus, PrinterIoRequest, ServerDeviceAnnounceResponse, ServerDriveIoRequest,
+    FileBothDirectoryInformation, FileDirectoryInformation, FileFsAttributeInformation,
+    FileFsFullSizeInformation, FileFsSizeInformation, FileFsVolumeInformation,
+    FileFullDirectoryInformation, FileInformationClass, FileInformationClassLevel,
+    FileNamesInformation, FileRenameInformation, FileStandardInformation, FileSystemAttributes,
+    FileSystemInformationClass, FileSystemInformationClassLevel, Information, NtStatus,
+    PrinterIoRequest, ServerDeviceAnnounceResponse, ServerDriveIoRequest,
     ServerDriveLockControlRequest, ServerDriveNotifyChangeDirectoryRequest,
     ServerDriveQueryDirectoryRequest, ServerDriveQueryInformationRequest,
     ServerDriveQueryVolumeInformationRequest, ServerDriveSetInformationRequest,
@@ -42,6 +43,13 @@ use ironrdp::svc::SvcMessage;
 use tracing::{debug, trace, warn};
 
 use super::dir_watcher::{DirectoryChange, DirectoryWatcher, WatchRequest};
+
+/// A cached directory entry returned one PDU at a time.
+#[derive(Debug, Clone)]
+struct CachedDirectoryEntry {
+    path: PathBuf,
+    file_name: String,
+}
 
 /// RDPDR backend for Linux/Unix shared folders
 #[derive(Debug)]
@@ -58,8 +66,8 @@ pub struct RustConnRdpdrBackend {
     file_paths: HashMap<u32, String>,
     /// Map of file IDs to the device_id they belong to
     file_device_map: HashMap<u32, u32>,
-    /// Map of file IDs to directory iterators
-    dir_entries: HashMap<u32, Vec<String>>,
+    /// Map of file IDs to pending directory entries
+    dir_entries: HashMap<u32, Vec<CachedDirectoryEntry>>,
     /// Map of file IDs to pending directory change notifications
     pending_notifications: HashMap<u32, PendingNotification>,
     /// File IDs the server marked for delete-on-close via
@@ -155,11 +163,53 @@ impl RustConnRdpdrBackend {
             .map_or(self.default_base_path.as_str(), String::as_str)
     }
 
-    /// Converts a Windows-style path to Unix path using the correct drive base path
-    fn to_unix_path(&self, device_id: u32, windows_path: &str) -> String {
-        let base = self.base_path_for_device(device_id);
+    /// Resolves a server-supplied Windows path beneath its redirected drive.
+    ///
+    /// Parent traversal and symlink components are rejected before any
+    /// filesystem operation. RDP servers are remote peers, so their paths must
+    /// never be trusted to stay inside the user-selected share on their own.
+    fn resolve_share_path(&self, device_id: u32, windows_path: &str) -> Result<PathBuf, NtStatus> {
+        let base = std::fs::canonicalize(self.base_path_for_device(device_id)).map_err(|e| {
+            warn!(device_id, error = %e, "RDPDR share root cannot be resolved");
+            io_error_to_status(&e)
+        })?;
+
+        // A leading slash denotes the redirected-drive root in RDPDR, not the
+        // host filesystem root. Everything after it still has to be relative.
         let unix_path = windows_path.replace('\\', "/");
-        format!("{}{}", base, unix_path.trim_start_matches('/'))
+        let mut relative = PathBuf::new();
+        for component in Path::new(unix_path.trim_start_matches('/')).components() {
+            match component {
+                Component::Normal(name) => relative.push(name),
+                Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    warn!(device_id, path = %windows_path, "RDPDR path escaped the share root");
+                    return Err(NtStatus::ACCESS_DENIED);
+                }
+            }
+        }
+
+        // Reject every existing symlink component. Besides blocking direct
+        // escapes, this prevents a symlinked parent from redirecting a create,
+        // rename or delete outside the capability represented by `base`.
+        let mut current = base.clone();
+        for component in relative.components() {
+            let Component::Normal(name) = component else {
+                continue;
+            };
+            current.push(name);
+            match std::fs::symlink_metadata(&current) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    warn!(device_id, path = %windows_path, "RDPDR path contains a symlink");
+                    return Err(NtStatus::ACCESS_DENIED);
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+                Err(e) => return Err(io_error_to_status(&e)),
+            }
+        }
+
+        Ok(base.join(relative))
     }
 
     /// Polls the directory watcher for pending change notifications
@@ -373,7 +423,18 @@ impl RustConnRdpdrBackend {
     fn handle_create(&mut self, req: DeviceCreateRequest) -> PduResult<Vec<SvcMessage>> {
         let file_id = self.alloc_file_id();
         let device_id = req.device_io_request.device_id;
-        let path = self.to_unix_path(device_id, &req.path);
+        let path = match self.resolve_share_path(device_id, &req.path) {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(status) => {
+                return Ok(vec![SvcMessage::from(RdpdrPdu::DeviceCreateResponse(
+                    DeviceCreateResponse {
+                        device_io_reply: DeviceIoResponse::new(req.device_io_request, status),
+                        file_id,
+                        information: Information::empty(),
+                    },
+                ))]);
+            }
+        };
         tracing::trace!(
             "RDPDR create: file_id={}, device_id={}, path='{}', disposition={:?}",
             file_id,
@@ -881,83 +942,88 @@ impl RustConnRdpdrBackend {
         let file_id = req.device_io_request.file_id;
 
         if req.initial_query > 0 {
-            // Initial query - read directory contents
-            let path = match self.file_paths.get(&file_id) {
-                Some(p) => p.clone(),
-                None => {
-                    return Ok(vec![SvcMessage::from(
-                        RdpdrPdu::ClientDriveQueryDirectoryResponse(
-                            ClientDriveQueryDirectoryResponse {
-                                device_io_reply: DeviceIoResponse::new(
-                                    req.device_io_request,
-                                    NtStatus::NO_SUCH_FILE,
-                                ),
-                                buffer: None,
-                            },
-                        ),
-                    )]);
-                }
-            };
-
-            // Read directory entries
-            let entries: Vec<String> = std::fs::read_dir(&path).map_or_else(
-                |_| Vec::new(),
-                |dir| {
-                    dir.filter_map(std::result::Result::ok)
-                        .map(|e| e.path().to_string_lossy().into_owned())
-                        .collect()
-                },
-            );
-
-            self.dir_entries.insert(file_id, entries);
-        }
-
-        // Get next entry
-        let entries = self.dir_entries.get_mut(&file_id);
-        let entry_path = entries.and_then(|e| {
-            if e.is_empty() {
-                None
-            } else {
-                Some(e.remove(0))
-            }
-        });
-
-        if let Some(full_path) = entry_path {
-            let file_name = PathBuf::from(&full_path)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-
-            if let Ok(meta) = std::fs::metadata(&full_path) {
-                let file_attrs = get_file_attributes(&meta, &file_name);
-                #[expect(
-                    clippy::cast_possible_wrap,
-                    reason = "value range fits the target signed type by construction in this code path"
-                )]
-                let info = FileBothDirectoryInformation::new(
-                    unix_to_filetime(meta.ctime()),
-                    unix_to_filetime(meta.ctime()),
-                    unix_to_filetime(meta.atime()),
-                    unix_to_filetime(meta.mtime()),
-                    meta.size() as i64,
-                    file_attrs,
-                    file_name,
-                );
+            let Some(path) = self.file_paths.get(&file_id).map(PathBuf::from) else {
                 return Ok(vec![SvcMessage::from(
                     RdpdrPdu::ClientDriveQueryDirectoryResponse(
                         ClientDriveQueryDirectoryResponse {
                             device_io_reply: DeviceIoResponse::new(
                                 req.device_io_request,
-                                NtStatus::SUCCESS,
+                                NtStatus::NO_SUCH_FILE,
                             ),
-                            buffer: Some(FileInformationClass::BothDirectory(info)),
+                            buffer: None,
                         },
                     ),
                 )]);
+            };
+
+            let pattern = directory_search_pattern(&req.path);
+            let mut entries = Vec::new();
+
+            // Windows directory enumeration includes these pseudo entries.
+            // At the share root, `..` deliberately points back to the root so
+            // no metadata outside the redirected capability is exposed.
+            for pseudo in [".", ".."] {
+                if wildcard_match(pattern, pseudo) {
+                    let pseudo_path = if pseudo == "." {
+                        path.clone()
+                    } else {
+                        let base = std::fs::canonicalize(
+                            self.base_path_for_device(req.device_io_request.device_id),
+                        )
+                        .unwrap_or_else(|_| path.clone());
+                        path.parent()
+                            .filter(|parent| parent.starts_with(&base))
+                            .map_or_else(|| path.clone(), Path::to_path_buf)
+                    };
+                    entries.push(CachedDirectoryEntry {
+                        path: pseudo_path,
+                        file_name: pseudo.to_owned(),
+                    });
+                }
             }
+
+            if let Ok(directory) = std::fs::read_dir(&path) {
+                let mut real_entries = directory
+                    .filter_map(std::result::Result::ok)
+                    // Opening symlinks is forbidden by `resolve_share_path`, so
+                    // do not advertise entries that the server cannot safely use.
+                    .filter(|entry| entry.file_type().is_ok_and(|kind| !kind.is_symlink()))
+                    .filter_map(|entry| {
+                        let file_name = entry.file_name().to_string_lossy().into_owned();
+                        wildcard_match(pattern, &file_name).then(|| CachedDirectoryEntry {
+                            path: entry.path(),
+                            file_name,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                real_entries.sort_by_key(|entry| entry.file_name.to_lowercase());
+                entries.extend(real_entries);
+            }
+
+            self.dir_entries.insert(file_id, entries);
         }
 
-        // No more entries
+        let entry = self
+            .dir_entries
+            .get_mut(&file_id)
+            .and_then(|entries| (!entries.is_empty()).then(|| entries.remove(0)));
+
+        if let Some(entry) = entry
+            && let Ok(metadata) = std::fs::metadata(&entry.path)
+            && let Some(buffer) =
+                directory_information(&req.file_info_class_lvl, &metadata, entry.file_name)
+        {
+            return Ok(vec![SvcMessage::from(
+                RdpdrPdu::ClientDriveQueryDirectoryResponse(ClientDriveQueryDirectoryResponse {
+                    device_io_reply: DeviceIoResponse::new(
+                        req.device_io_request,
+                        NtStatus::SUCCESS,
+                    ),
+                    buffer: Some(buffer),
+                }),
+            )]);
+        }
+
         let status = if req.initial_query > 0 {
             NtStatus::NO_SUCH_FILE
         } else {
@@ -1038,7 +1104,10 @@ impl RustConnRdpdrBackend {
             warn!("Rename requested for unknown file_id {file_id}");
             return NtStatus::NO_SUCH_FILE;
         };
-        let new_path = self.to_unix_path(device_id, &rename.file_name);
+        let new_path = match self.resolve_share_path(device_id, &rename.file_name) {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(status) => return status,
+        };
 
         if rename.replace_if_exists == Boolean::False
             && new_path != old_path
@@ -1232,6 +1301,103 @@ impl RustConnRdpdrBackend {
                 device_io_response: DeviceIoResponse::new(req.device_io_request, NtStatus::SUCCESS),
             },
         ))])
+    }
+}
+
+/// Returns the final filename pattern from an RDPDR directory query.
+fn directory_search_pattern(request_path: &str) -> &str {
+    let pattern = request_path
+        .trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or("*");
+    if pattern.is_empty() || pattern == "*.*" {
+        "*"
+    } else {
+        pattern
+    }
+}
+
+/// Matches the `*` and `?` wildcards used by Windows directory enumeration.
+fn wildcard_match(pattern: &str, value: &str) -> bool {
+    let pattern = pattern.to_lowercase().chars().collect::<Vec<_>>();
+    let value = value.to_lowercase().chars().collect::<Vec<_>>();
+    let mut previous = vec![false; value.len() + 1];
+    previous[0] = true;
+
+    for token in pattern {
+        let mut current = vec![false; value.len() + 1];
+        if token == '*' {
+            current[0] = previous[0];
+            for index in 0..value.len() {
+                current[index + 1] = previous[index + 1] || current[index];
+            }
+        } else {
+            for (index, character) in value.iter().enumerate() {
+                current[index + 1] = previous[index] && (token == '?' || token == *character);
+            }
+        }
+        previous = current;
+    }
+
+    previous[value.len()]
+}
+
+/// Builds the exact directory information class requested by the server.
+fn directory_information(
+    level: &FileInformationClassLevel,
+    metadata: &std::fs::Metadata,
+    file_name: String,
+) -> Option<FileInformationClass> {
+    let creation_time = unix_to_filetime(metadata.ctime());
+    let last_access_time = unix_to_filetime(metadata.atime());
+    let last_write_time = unix_to_filetime(metadata.mtime());
+    let change_time = unix_to_filetime(metadata.ctime());
+    let file_size = i64::try_from(metadata.size()).unwrap_or(i64::MAX);
+    let attributes = get_file_attributes(metadata, &file_name);
+
+    if level == &FileInformationClassLevel::FILE_DIRECTORY_INFORMATION {
+        Some(FileInformationClass::Directory(
+            FileDirectoryInformation::new(
+                creation_time,
+                last_access_time,
+                last_write_time,
+                change_time,
+                file_size,
+                attributes,
+                file_name,
+            ),
+        ))
+    } else if level == &FileInformationClassLevel::FILE_FULL_DIRECTORY_INFORMATION {
+        Some(FileInformationClass::FullDirectory(
+            FileFullDirectoryInformation::new(
+                creation_time,
+                last_access_time,
+                last_write_time,
+                change_time,
+                file_size,
+                attributes,
+                file_name,
+            ),
+        ))
+    } else if level == &FileInformationClassLevel::FILE_BOTH_DIRECTORY_INFORMATION {
+        Some(FileInformationClass::BothDirectory(
+            FileBothDirectoryInformation::new(
+                creation_time,
+                last_access_time,
+                last_write_time,
+                change_time,
+                file_size,
+                attributes,
+                file_name,
+            ),
+        ))
+    } else if level == &FileInformationClassLevel::FILE_NAMES_INFORMATION {
+        Some(FileInformationClass::Names(FileNamesInformation::new(
+            file_name,
+        )))
+    } else {
+        None
     }
 }
 
@@ -1794,5 +1960,114 @@ mod drive_io_tests {
             !dir.path().join("probe.txt").exists(),
             "Close must remove the file"
         );
+    }
+
+    #[test]
+    fn share_paths_reject_parent_traversal_and_symlinks() {
+        let share = tempfile::tempdir().expect("share");
+        let outside = tempfile::tempdir().expect("outside");
+        std::os::unix::fs::symlink(outside.path(), share.path().join("escape"))
+            .expect("create symlink");
+
+        let drives = HashMap::from([(1u32, share.path().to_string_lossy().into_owned())]);
+        let backend = RustConnRdpdrBackend::new(drives, HashMap::new());
+
+        assert!(matches!(
+            backend.resolve_share_path(1, "\\..\\outside.txt"),
+            Err(NtStatus::ACCESS_DENIED)
+        ));
+        assert!(matches!(
+            backend.resolve_share_path(1, "\\escape\\outside.txt"),
+            Err(NtStatus::ACCESS_DENIED)
+        ));
+        assert_eq!(
+            backend
+                .resolve_share_path(1, "\\safe\\file.txt")
+                .expect("safe path"),
+            share.path().join("safe/file.txt")
+        );
+    }
+
+    #[test]
+    fn rename_cannot_escape_the_share() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (mut backend, file_id) = backend_with_open_file(&dir);
+
+        let bytes = set_info(
+            &mut backend,
+            file_id,
+            FileInformationClass::Rename(FileRenameInformation {
+                replace_if_exists: Boolean::True,
+                file_name: "\\..\\escaped.txt".to_owned(),
+            }),
+        );
+
+        assert_eq!(
+            read_u32_at(&bytes, IO_STATUS_OFFSET),
+            0xC000_0022,
+            "traversal must report STATUS_ACCESS_DENIED"
+        );
+        assert!(dir.path().join("probe.txt").exists());
+    }
+
+    #[test]
+    fn directory_query_honours_pattern_and_information_class() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("target.txt"), b"target").expect("target");
+        std::fs::write(dir.path().join("distractor.txt"), b"other").expect("distractor");
+        let drives = HashMap::from([(1u32, dir.path().to_string_lossy().into_owned())]);
+        let mut backend = RustConnRdpdrBackend::new(drives, HashMap::new());
+
+        backend
+            .handle_drive_io_request(ServerDriveIoRequest::ServerCreateDriveRequest(
+                DeviceCreateRequest {
+                    device_io_request: io_request(0, MajorFunction::Create),
+                    desired_access: DesiredAccess::FILE_READ_DATA_OR_FILE_LIST_DIRECTORY,
+                    allocation_size: 0,
+                    file_attributes: FileAttributes::empty(),
+                    shared_access: SharedAccess::empty(),
+                    create_disposition: CreateDisposition::FILE_OPEN,
+                    create_options: CreateOptions::FILE_DIRECTORY_FILE,
+                    path: "\\".to_owned(),
+                },
+            ))
+            .expect("open directory");
+
+        let responses = backend
+            .handle_drive_io_request(ServerDriveIoRequest::ServerDriveQueryDirectoryRequest(
+                ServerDriveQueryDirectoryRequest {
+                    device_io_request: io_request(1, MajorFunction::DirectoryControl),
+                    file_info_class_lvl: FileInformationClassLevel::FILE_NAMES_INFORMATION,
+                    initial_query: 1,
+                    path: "\\target.txt".to_owned(),
+                },
+            ))
+            .expect("query directory");
+        let bytes = responses[0].encode_unframed_pdu().expect("encode response");
+
+        assert_eq!(read_u32_at(&bytes, IO_STATUS_OFFSET), 0);
+        let target_utf16 = "target.txt"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        assert!(
+            bytes
+                .windows(target_utf16.len())
+                .any(|window| window == target_utf16),
+            "response must contain only the requested filename"
+        );
+        assert_eq!(
+            read_u32_at(&bytes, LENGTH_OFFSET),
+            12 + u32::try_from(target_utf16.len()).expect("filename length"),
+            "FILE_NAMES_INFORMATION must use its compact wire layout"
+        );
+    }
+
+    #[test]
+    fn windows_wildcards_are_case_insensitive() {
+        assert!(wildcard_match("*.TXT", "report.txt"));
+        assert!(wildcard_match("file?.log", "File1.log"));
+        assert!(!wildcard_match("file?.log", "file10.log"));
+        assert_eq!(directory_search_pattern("\\folder\\*.*"), "*");
     }
 }

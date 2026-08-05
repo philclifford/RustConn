@@ -692,7 +692,7 @@ pub(super) fn create_rdp_options() -> (
         i18n("Greek (gr)"),
         i18n("Japanese (jp)"),
         i18n("Korean (kr)"),
-        i18n("US Dvorak"),
+        i18n("United States - Dvorak"),
     ];
     let kb_strs: Vec<&str> = kb_items.iter().map(String::as_str).collect();
     let kb_layout_list = StringList::new(&kb_strs);

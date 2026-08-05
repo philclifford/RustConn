@@ -38,20 +38,18 @@ impl super::EmbeddedRdpWidget {
         let rdp_width = self.rdp_width.clone();
         let rdp_height = self.rdp_height.clone();
 
+        // Cache the last effective scale to avoid calling set_device_scale on
+        // every draw frame when the scale has not changed. Cairo internally
+        // invalidates pattern caches when device_scale is set, even to the
+        // same value, so this avoids a measurable per-frame overhead.
+        let cached_scale = std::cell::Cell::new(0.0_f64);
+
         self.drawing_area
             .set_draw_func(move |area, cr, width, height| {
                 let current_state = *state.borrow();
                 let embedded = *is_embedded.borrow();
 
-                // Dark background
-                cr.set_source_rgb(0.12, 0.12, 0.14);
-                let _ = cr.paint();
-
                 // Check if we should render the framebuffer
-                // This happens when:
-                // 1. We're in embedded mode (IronRDP)
-                // 2. We're connected
-                // 3. The pixel buffer has valid data
                 let should_render_framebuffer =
                     embedded && current_state == RdpConnectionState::Connected && {
                         let buffer = cairo_buffer.borrow();
@@ -74,20 +72,20 @@ impl super::EmbeddedRdpWidget {
                             c.scale_override
                                 .resolved_scale(super::widget_fractional_scale(area))
                         });
-                        surface.set_device_scale(effective_scale, effective_scale);
+
+                        // Only call set_device_scale when it actually changed — Cairo
+                        // internally invalidates pattern caches on every call regardless
+                        // of whether the value changed.
+                        if (effective_scale - cached_scale.get()).abs() > f64::EPSILON {
+                            surface.set_device_scale(effective_scale, effective_scale);
+                            cached_scale.set(effective_scale);
+                        }
 
                         // Scale to fit the drawing area while maintaining aspect ratio.
-                        // After set_device_scale, Cairo treats the surface dimensions in
-                        // CSS pixels (buf_width/scale × buf_height/scale), so we compute
-                        // the scale ratio in CSS space directly.
                         let css_buf_w = f64::from(buf_width) / effective_scale;
                         let css_buf_h = f64::from(buf_height) / effective_scale;
                         let scale_x = f64::from(width) / css_buf_w;
                         let scale_y = f64::from(height) / css_buf_h;
-                        // Within the match slack of the drawing area (the ≤1px
-                        // even-rounding residual): blit 1:1 for a sharp border instead
-                        // of a sub-pixel rescale. Larger mismatches (a resize in flight)
-                        // still scale-to-fit with aspect preserved.
                         let slack = f64::from(super::DESKTOP_MATCH_SLACK_PX);
                         let scale = if (css_buf_w - f64::from(width)).abs() <= slack
                             && (css_buf_h - f64::from(height)).abs() <= slack
@@ -101,7 +99,17 @@ impl super::EmbeddedRdpWidget {
                         let offset_x = css_buf_w.mul_add(-scale, f64::from(width)) / 2.0;
                         let offset_y = css_buf_h.mul_add(-scale, f64::from(height)) / 2.0;
 
-                        // Save the current transformation matrix
+                        // Only paint a dark background if the framebuffer does not
+                        // cover the full widget — avoids a redundant full-surface
+                        // paint when the image fills the drawing area 1:1.
+                        let covers_full_area = offset_x.abs() < 1.0
+                            && offset_y.abs() < 1.0
+                            && (scale - 1.0).abs() < 0.01;
+                        if !covers_full_area {
+                            cr.set_source_rgb(0.12, 0.12, 0.14);
+                            let _ = cr.paint();
+                        }
+
                         if let Err(e) = cr.save() {
                             tracing::warn!(error = %e, "Cairo save failed");
                         }
@@ -110,41 +118,34 @@ impl super::EmbeddedRdpWidget {
                         cr.scale(scale, scale);
                         let _ = cr.set_source_surface(surface, 0.0, 0.0);
 
-                        // Use adaptive filtering: Nearest for 1:1 pixel mapping (sharp),
-                        // Good for downscale (better quality than Bilinear when
-                        // effective_scale > 1.0 shrinks the image), Bilinear otherwise.
-                        let filter = if (scale - 1.0).abs() < 0.01 {
-                            gtk4::cairo::Filter::Nearest
-                        } else if scale < 1.0 {
-                            // Downscale: use Good for sharper text at reduced size
-                            gtk4::cairo::Filter::Good
-                        } else {
-                            gtk4::cairo::Filter::Bilinear
-                        };
-                        cr.source().set_filter(filter);
+                        // For live remote desktop at 60fps, use Nearest filtering
+                        // universally — it is significantly faster than Bilinear/Good
+                        // and the slight quality difference is imperceptible at
+                        // interactive frame rates. During a resize-in-progress (scale
+                        // != 1.0) a brief moment of aliased text is far less noticeable
+                        // than dropped frames.
+                        cr.source().set_filter(gtk4::cairo::Filter::Nearest);
 
                         let _ = cr.paint();
 
-                        // Restore the transformation matrix
                         if let Err(e) = cr.restore() {
                             tracing::warn!(error = %e, "Cairo restore failed");
                         }
 
                         // The machine resumed from sleep and this frame may be
                         // minutes old. Wash it out so a frozen desktop is never
-                        // mistaken for a live one (issue #248). The reconnect
-                        // banner below states the reason in words.
+                        // mistaken for a live one (issue #248).
                         if stale_frame.get() {
                             cr.set_source_rgba(0.12, 0.12, 0.14, STALE_FRAME_DIM_ALPHA);
                             let _ = cr.paint();
                         }
                     }
                 } else {
+                    // Dark background for non-framebuffer states
+                    cr.set_source_rgb(0.12, 0.12, 0.14);
+                    let _ = cr.paint();
+
                     // Show status overlay when not rendering framebuffer
-                    // This is used for:
-                    // - FreeRDP external mode (always)
-                    // - IronRDP before connection is established
-                    // - IronRDP when no framebuffer data is available
                     Self::draw_status_overlay(
                         cr,
                         width,

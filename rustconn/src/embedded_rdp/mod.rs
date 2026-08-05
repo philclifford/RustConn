@@ -245,6 +245,8 @@ pub struct EmbeddedRdpWidget {
     container: GtkBox,
     /// Toolbar with Ctrl+Alt+Del button
     toolbar: GtkBox,
+    /// Floating toolbar controller shared by pointer, touch, and keyboard paths
+    toolbar_auto_hide: Rc<crate::embedded_toolbar_overflow::ToolbarAutoHide>,
     /// Status label for reconnect indicator
     status_label: Label,
     /// Copy button
@@ -656,14 +658,43 @@ impl EmbeddedRdpWidget {
             toolbar.append(&save_files_button);
         }
 
-        // Hide toolbar initially (show when connected)
-        toolbar.set_visible(false);
-
-        container.append(&toolbar);
+        // Hide toolbar initially (show when connected).
+        // The toolbar is placed in a Revealer inside a GTK Overlay so it
+        // floats over the DrawingArea without consuming vertical space. This
+        // keeps the RDP resolution equal to the full widget size and avoids
+        // proportion changes when the toolbar appears/disappears (issue #259).
+        toolbar.set_visible(true); // visibility controlled by revealer, not the box
+        let toolbar_revealer = gtk4::Revealer::new();
+        // Crossfade avoids geometry changes during the transition — SlideDown
+        // forces the overlay to re-clip on every animation frame, which
+        // invalidates the DrawingArea beneath and causes expensive full
+        // redraws of the RDP framebuffer during the reveal/hide animation.
+        toolbar_revealer.set_transition_type(gtk4::RevealerTransitionType::Crossfade);
+        toolbar_revealer.set_transition_duration(150);
+        toolbar_revealer.set_reveal_child(false);
+        // Start non-targetable: the revealer is an overlay child and must not
+        // capture input when the toolbar is hidden. ToolbarAutoHide flips this
+        // to true when revealing and back to false when hiding.
+        toolbar_revealer.set_can_target(false);
+        toolbar_revealer.set_valign(gtk4::Align::Start);
+        toolbar_revealer.set_hexpand(true);
+        // The background class goes on the toolbar itself (the revealer's child),
+        // not the revealer — so no visible background remains when the toolbar is hidden.
+        toolbar.add_css_class("rdp-toolbar-overlay");
+        toolbar_revealer.set_child(Some(&toolbar));
 
         let drawing_area = DrawingArea::new();
         drawing_area.set_hexpand(true);
         drawing_area.set_vexpand(true);
+
+        // Overlay: drawing_area fills the space, toolbar floats on top
+        let overlay = gtk4::Overlay::new();
+        overlay.set_child(Some(&drawing_area));
+        overlay.add_overlay(&toolbar_revealer);
+        overlay.set_hexpand(true);
+        overlay.set_vexpand(true);
+
+        container.append(&overlay);
         // Explicitly set content size to 0 so the DrawingArea does not report
         // a natural size based on the RDP framebuffer dimensions. Without this,
         // AdwTabOverview warns "exceeds AdwApplicationWindow size" because it
@@ -674,8 +705,6 @@ impl EmbeddedRdpWidget {
         // The actual RDP resolution will be set when connect() is called
         drawing_area.set_can_focus(true);
         drawing_area.set_focusable(true);
-
-        container.append(&drawing_area);
 
         // Adaptive toolbar overflow: fold the secondary actions into a "⋯"
         // popover on narrow panels/windows, keeping Fit resolution and
@@ -698,6 +727,12 @@ impl EmbeddedRdpWidget {
             )
             .attach(&drawing_area);
         }
+
+        let toolbar_auto_hide = crate::embedded_toolbar_overflow::ToolbarAutoHide::attach(
+            &overlay,
+            &toolbar,
+            &toolbar_revealer,
+        );
 
         // Reconnect banner (shown when disconnected, at bottom like VTE sessions)
         let reconnect_banner = GtkBox::new(Orientation::Horizontal, 6);
@@ -740,6 +775,7 @@ impl EmbeddedRdpWidget {
         let widget = Self {
             container,
             toolbar,
+            toolbar_auto_hide,
             status_label,
             copy_button: copy_button.clone(),
             paste_button: paste_button.clone(),
@@ -1471,12 +1507,13 @@ impl EmbeddedRdpWidget {
 
     /// Shows the session toolbar early, before connecting.
     ///
-    /// Call this before measuring the drawing area size so GTK allocates the
-    /// correct height (with toolbar present). Without this the initial connect
-    /// resolution includes the toolbar's height, causing a resize immediately
-    /// after connection and redundant repainting.
+    /// With the overlay layout the toolbar does not consume vertical space, so
+    /// this no longer affects the measured DrawingArea resolution. It reveals
+    /// the toolbar briefly so the user sees the available actions while the
+    /// connection is being established; the auto-hide timer takes over once
+    /// connected.
     pub fn show_toolbar(&self) {
-        self.toolbar.set_visible(true);
+        self.toolbar_auto_hide.show_briefly();
     }
 
     /// Queues a redraw of the drawing area
@@ -1518,7 +1555,7 @@ impl EmbeddedRdpWidget {
         let paste_button = self.paste_button.clone();
         let ctrl_alt_del_button = self.ctrl_alt_del_button.clone();
         let separator = self.separator.clone();
-        let toolbar = self.toolbar.clone();
+        let toolbar_auto_hide = self.toolbar_auto_hide.clone();
 
         *self.on_state_changed.borrow_mut() = Some(Box::new(move |state| {
             // Update button visibility based on state
@@ -1536,9 +1573,12 @@ impl EmbeddedRdpWidget {
             ctrl_alt_del_button.set_visible(!show_reconnect);
             separator.set_visible(!show_reconnect);
 
-            // Hide toolbar when disconnected (no reconnect button there anymore)
+            // Hide toolbar overlay when disconnected; show briefly when
+            // connected so the user knows the actions are available.
             if show_reconnect {
-                toolbar.set_visible(false);
+                toolbar_auto_hide.hide();
+            } else {
+                toolbar_auto_hide.show_briefly();
             }
             // Call the user's callback
             callback(state);

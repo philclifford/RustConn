@@ -14,6 +14,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
+use zeroize::Zeroize;
 
 use crate::variables::{VariableManager, VariableScope};
 
@@ -57,7 +58,7 @@ pub type ExpectResult<T> = std::result::Result<T, ExpectError>;
 ///
 /// Expect rules define patterns to match against terminal output and
 /// responses to send when a match is found.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ExpectRule {
     /// Unique identifier for this rule
     pub id: Uuid,
@@ -169,6 +170,21 @@ impl ExpectRule {
     }
 }
 
+impl std::fmt::Debug for ExpectRule {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExpectRule")
+            .field("id", &self.id)
+            .field("pattern", &self.pattern)
+            .field("response", &"[REDACTED]")
+            .field("priority", &self.priority)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("enabled", &self.enabled)
+            .field("one_shot", &self.one_shot)
+            .finish()
+    }
+}
+
 impl PartialEq for ExpectRule {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -198,8 +214,14 @@ impl CompiledRule {
     /// # Errors
     ///
     /// Returns an error if the pattern fails to compile.
-    pub fn new(rule: ExpectRule) -> ExpectResult<Self> {
-        let regex = rule.compile_pattern()?;
+    pub fn new(mut rule: ExpectRule) -> ExpectResult<Self> {
+        let regex = match rule.compile_pattern() {
+            Ok(regex) => regex,
+            Err(error) => {
+                rule.response.zeroize();
+                return Err(error);
+            }
+        };
         Ok(Self { rule, regex })
     }
 
@@ -240,8 +262,14 @@ impl ExpectEngine {
     /// Returns an error if any rule's pattern fails to compile.
     pub fn from_rules(rules: Vec<ExpectRule>) -> ExpectResult<Self> {
         let mut engine = Self::new();
-        for rule in rules {
-            engine.add_rule(rule)?;
+        let mut rules = rules.into_iter();
+        while let Some(rule) = rules.next() {
+            if let Err(error) = engine.add_rule(rule) {
+                for mut remaining in rules {
+                    remaining.response.zeroize();
+                }
+                return Err(error);
+            }
         }
         Ok(engine)
     }
@@ -252,10 +280,12 @@ impl ExpectEngine {
     ///
     /// Returns an error if the rule's pattern fails to compile or if
     /// a rule with the same ID already exists.
-    pub fn add_rule(&mut self, rule: ExpectRule) -> ExpectResult<()> {
+    pub fn add_rule(&mut self, mut rule: ExpectRule) -> ExpectResult<()> {
         // Check for duplicate ID
         if self.rules.iter().any(|r| r.rule.id == rule.id) {
-            return Err(ExpectError::DuplicateRuleId(rule.id));
+            let id = rule.id;
+            rule.response.zeroize();
+            return Err(ExpectError::DuplicateRuleId(id));
         }
 
         let compiled = CompiledRule::new(rule)?;
@@ -264,7 +294,10 @@ impl ExpectEngine {
         Ok(())
     }
 
-    /// Removes a rule by ID
+    /// Removes a rule by ID.
+    ///
+    /// The returned rule keeps its metadata but its response is scrubbed before
+    /// ownership leaves the engine, because it may contain a resolved credential.
     ///
     /// # Errors
     ///
@@ -275,7 +308,9 @@ impl ExpectEngine {
             .iter()
             .position(|r| r.rule.id == id)
             .ok_or(ExpectError::RuleNotFound(id))?;
-        Ok(self.rules.remove(pos).rule)
+        let mut rule = self.rules.remove(pos).rule;
+        rule.response.zeroize();
+        Ok(rule)
     }
 
     /// Updates a rule
@@ -284,14 +319,15 @@ impl ExpectEngine {
     ///
     /// Returns an error if the rule is not found or if the new pattern
     /// fails to compile.
-    pub fn update_rule(&mut self, rule: ExpectRule) -> ExpectResult<()> {
-        let pos = self
-            .rules
-            .iter()
-            .position(|r| r.rule.id == rule.id)
-            .ok_or(ExpectError::RuleNotFound(rule.id))?;
+    pub fn update_rule(&mut self, mut rule: ExpectRule) -> ExpectResult<()> {
+        let Some(pos) = self.rules.iter().position(|r| r.rule.id == rule.id) else {
+            let id = rule.id;
+            rule.response.zeroize();
+            return Err(ExpectError::RuleNotFound(id));
+        };
 
         let compiled = CompiledRule::new(rule)?;
+        self.rules[pos].rule.response.zeroize();
         self.rules[pos] = compiled;
         self.sort_by_priority();
         Ok(())
@@ -416,6 +452,7 @@ impl ExpectEngine {
     /// Returns `true` if the rule was removed, `false` if not found.
     pub fn remove_by_id(&mut self, id: Uuid) -> bool {
         if let Some(pos) = self.rules.iter().position(|r| r.rule.id == id) {
+            self.rules[pos].rule.response.zeroize();
             self.rules.remove(pos);
             true
         } else {
@@ -428,13 +465,15 @@ impl ExpectEngine {
     /// Returns the number of rules removed.
     pub fn remove_expired(&mut self, now: Instant, created_at: Instant) -> usize {
         let before = self.rules.len();
-        self.rules.retain(|r| {
-            if let Some(timeout_ms) = r.rule.timeout_ms {
-                let elapsed = now.duration_since(created_at);
-                elapsed <= std::time::Duration::from_millis(u64::from(timeout_ms))
-            } else {
-                true // No timeout = never expires
+        self.rules.retain_mut(|compiled| {
+            let keep = compiled.rule.timeout_ms.is_none_or(|timeout_ms| {
+                now.duration_since(created_at)
+                    <= std::time::Duration::from_millis(u64::from(timeout_ms))
+            });
+            if !keep {
+                compiled.rule.response.zeroize();
             }
+            keep
         });
         before - self.rules.len()
     }
@@ -451,21 +490,24 @@ impl ExpectEngine {
         created_at_map: &std::collections::HashMap<Uuid, Instant>,
     ) -> usize {
         let before = self.rules.len();
-        self.rules.retain(|r| {
-            if let Some(timeout_ms) = r.rule.timeout_ms
-                && let Some(&created) = created_at_map.get(&r.rule.id)
-            {
-                let elapsed = now.duration_since(created);
-                elapsed <= std::time::Duration::from_millis(u64::from(timeout_ms))
-            } else {
-                true
+        self.rules.retain_mut(|compiled| {
+            let keep = compiled.rule.timeout_ms.is_none_or(|timeout_ms| {
+                created_at_map.get(&compiled.rule.id).is_none_or(|created| {
+                    now.duration_since(*created)
+                        <= std::time::Duration::from_millis(u64::from(timeout_ms))
+                })
+            });
+            if !keep {
+                compiled.rule.response.zeroize();
             }
+            keep
         });
         before - self.rules.len()
     }
 
-    /// Clears all rules from the engine
+    /// Clears all rules from the engine after scrubbing their responses.
     pub fn clear(&mut self) {
+        self.zeroize_responses();
         self.rules.clear();
     }
 
@@ -474,10 +516,15 @@ impl ExpectEngine {
     /// Called when an automation session is torn down so credentials that were
     /// substituted into responses (issue #257) do not linger in freed memory.
     pub fn zeroize_responses(&mut self) {
-        use zeroize::Zeroize;
         for compiled in &mut self.rules {
             compiled.rule.response.zeroize();
         }
+    }
+}
+
+impl Drop for ExpectEngine {
+    fn drop(&mut self) {
+        self.zeroize_responses();
     }
 }
 
@@ -493,6 +540,14 @@ mod tests {
         assert_eq!(rule.priority, 0);
         assert!(rule.enabled);
         assert!(rule.timeout_ms.is_none());
+    }
+
+    #[test]
+    fn debug_redacts_response() {
+        let rule = ExpectRule::new("password:", "hunter2");
+        let rendered = format!("{rule:?}");
+        assert!(!rendered.contains("hunter2"));
+        assert!(rendered.contains("[REDACTED]"));
     }
 
     #[test]

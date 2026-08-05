@@ -9,7 +9,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Button, DropTarget, Orientation, Overlay, Paned, gdk, gio, glib};
+use gtk4::{
+    Align, Box as GtkBox, Button, DropTarget, EventControllerMotion, Orientation, Overlay, Paned,
+    Revealer, gdk, gio, glib,
+};
 use libadwaita as adw;
 use rustconn_core::split::{
     DropResult, PanelId, PanelNode, SessionId, SplitDirection, SplitError, SplitLayoutModel,
@@ -687,7 +690,13 @@ impl SplitViewAdapter {
             overlay.set_hexpand(true);
             overlay.set_vexpand(true);
             overlay.set_child(Some(widget));
-            overlay.add_overlay(&self.panel_corner_buttons(panel_id));
+
+            // Auto-hide corner buttons: a small reveal arrow at the top-right
+            // shows on hover; clicking or hovering it reveals the actual
+            // close/detach buttons. This avoids blocking the session toolbar
+            // or other top-edge controls (issue with RDP floating panel).
+            let (reveal_container, _revealer) = self.panel_corner_buttons_autohide(panel_id);
+            overlay.add_overlay(&reveal_container);
 
             panel_widget.append(&overlay);
         } else {
@@ -697,6 +706,100 @@ impl SplitViewAdapter {
                 self.panel_widgets.borrow().keys().collect::<Vec<_>>()
             );
         }
+    }
+
+    /// Builds the auto-hide corner buttons for an occupied split panel.
+    ///
+    /// Returns a container with a small reveal arrow (top-right) that shows
+    /// the actual close/detach buttons on hover. The buttons fade in/out to
+    /// avoid conflicting with session toolbars or window controls.
+    fn panel_corner_buttons_autohide(&self, panel_id: PanelId) -> (GtkBox, Revealer) {
+        // Outer container positioned at top-right
+        let container = GtkBox::new(Orientation::Horizontal, 0);
+        container.set_halign(Align::End);
+        container.set_valign(Align::Start);
+
+        // The actual action buttons inside a revealer
+        let buttons = self.panel_corner_buttons(panel_id);
+        let revealer = Revealer::new();
+        revealer.set_transition_type(gtk4::RevealerTransitionType::Crossfade);
+        revealer.set_transition_duration(150);
+        revealer.set_reveal_child(false);
+        revealer.set_child(Some(&buttons));
+
+        // Small arrow that triggers reveal on hover
+        let reveal_arrow = Button::from_icon_name("pan-start-symbolic");
+        reveal_arrow.add_css_class("flat");
+        reveal_arrow.add_css_class("circular");
+        reveal_arrow.add_css_class("panel-reveal-arrow");
+        reveal_arrow.set_size_request(28, 28);
+        reveal_arrow.set_tooltip_text(Some(&i18n("Show panel actions")));
+        reveal_arrow.update_property(&[gtk4::accessible::Property::Label(&i18n(
+            "Show panel actions",
+        ))]);
+
+        // Click the arrow to toggle reveal
+        let rev_for_click = revealer.clone();
+        reveal_arrow.connect_clicked(move |_| {
+            rev_for_click.set_reveal_child(!rev_for_click.reveals_child());
+        });
+
+        // Hover over the arrow reveals buttons
+        let arrow_motion = EventControllerMotion::new();
+        let rev_for_enter = revealer.clone();
+        arrow_motion.connect_enter(move |_, _, _| {
+            rev_for_enter.set_reveal_child(true);
+        });
+        reveal_arrow.add_controller(arrow_motion);
+
+        // Hover over the buttons keeps them visible; leaving hides after delay
+        let buttons_motion = EventControllerMotion::new();
+        let rev_for_buttons = revealer.clone();
+        buttons_motion.connect_leave(move |_| {
+            // Hide after a short delay so the user can move between buttons
+            let rev = rev_for_buttons.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(800), move || {
+                // Only hide if the revealer still exists and is revealed
+                if rev.parent().is_some() {
+                    rev.set_reveal_child(false);
+                }
+            });
+        });
+        buttons.add_controller(buttons_motion);
+
+        // Also hide when pointer leaves the arrow (if not over buttons)
+        let arrow_leave_motion = EventControllerMotion::new();
+        let rev_for_leave = revealer.clone();
+        let buttons_ref = buttons.clone();
+        arrow_leave_motion.connect_leave(move |_| {
+            // Schedule hide — will be cancelled if pointer enters buttons
+            let rev = rev_for_leave.clone();
+            let btns = buttons_ref.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+                // Check if pointer is now over buttons (they'll have their own enter)
+                if rev.parent().is_some() && !btns.has_css_class("pointer-in") {
+                    rev.set_reveal_child(false);
+                }
+            });
+        });
+        reveal_arrow.add_controller(arrow_leave_motion);
+
+        // Track pointer-in state on buttons to prevent premature hide
+        let buttons_enter_motion = EventControllerMotion::new();
+        let btns_for_enter = buttons.clone();
+        buttons_enter_motion.connect_enter(move |_, _, _| {
+            btns_for_enter.add_css_class("pointer-in");
+        });
+        let btns_for_leave = buttons.clone();
+        buttons_enter_motion.connect_leave(move |_| {
+            btns_for_leave.remove_css_class("pointer-in");
+        });
+        buttons.add_controller(buttons_enter_motion);
+
+        container.append(&revealer);
+        container.append(&reveal_arrow);
+
+        (container, revealer)
     }
 
     /// Builds the corner button strip overlaid on an occupied panel.

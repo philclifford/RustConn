@@ -65,10 +65,22 @@ impl EmbeddedVncWidget {
         ctrl_alt_del_button.set_tooltip_text(Some(&i18n("Send Ctrl+Alt+Del to remote session")));
         toolbar.append(&ctrl_alt_del_button);
 
-        // Hide toolbar initially (show when connected)
-        toolbar.set_visible(false);
-
-        container.append(&toolbar);
+        // The toolbar is placed in a Revealer inside a GTK Overlay so it
+        // floats over the DrawingArea without consuming vertical space. This
+        // keeps the VNC resolution equal to the full widget size.
+        toolbar.set_visible(true); // visibility controlled by revealer
+        let toolbar_revealer = gtk4::Revealer::new();
+        // Crossfade avoids geometry changes during the transition — SlideDown
+        // causes overlay re-clip and expensive DrawingArea redraws.
+        toolbar_revealer.set_transition_type(gtk4::RevealerTransitionType::Crossfade);
+        toolbar_revealer.set_transition_duration(150);
+        toolbar_revealer.set_reveal_child(false);
+        // Start non-targetable so the overlay does not block input when hidden.
+        toolbar_revealer.set_can_target(false);
+        toolbar_revealer.set_valign(gtk4::Align::Start);
+        toolbar_revealer.set_hexpand(true);
+        toolbar.add_css_class("rdp-toolbar-overlay");
+        toolbar_revealer.set_child(Some(&toolbar));
 
         let drawing_area = DrawingArea::new();
         drawing_area.set_hexpand(true);
@@ -83,7 +95,14 @@ impl EmbeddedVncWidget {
         drawing_area.set_can_focus(true);
         drawing_area.set_focusable(true);
 
-        container.append(&drawing_area);
+        // Overlay: drawing_area fills the space, toolbar floats on top
+        let overlay = gtk4::Overlay::new();
+        overlay.set_child(Some(&drawing_area));
+        overlay.add_overlay(&toolbar_revealer);
+        overlay.set_hexpand(true);
+        overlay.set_vexpand(true);
+
+        container.append(&overlay);
 
         // Adaptive toolbar overflow: fold Copy/Paste into a "⋯" popover on
         // narrow panels/windows, keeping Ctrl+Alt+Del directly visible. The
@@ -94,6 +113,12 @@ impl EmbeddedVncWidget {
             crate::embedded_toolbar_overflow::SPICE_VNC_OVERFLOW_THRESHOLD_PX,
         )
         .attach(&drawing_area);
+
+        let toolbar_auto_hide = crate::embedded_toolbar_overflow::ToolbarAutoHide::attach(
+            &overlay,
+            &toolbar,
+            &toolbar_revealer,
+        );
 
         // Reconnect banner (shown when disconnected, at bottom like VTE sessions)
         let reconnect_banner = GtkBox::new(Orientation::Horizontal, 6);
@@ -128,7 +153,7 @@ impl EmbeddedVncWidget {
 
         let widget = Self {
             container,
-            toolbar,
+            toolbar_auto_hide,
             status_label,
             copy_button: copy_button.clone(),
             paste_button: paste_button.clone(),
