@@ -29,38 +29,39 @@ use super::logging_tab;
 /// Keyboard layout KLID values matching the dropdown order.
 /// Index 0 = Auto (None), rest map to specific Windows KLIDs.
 pub(super) const KEYBOARD_LAYOUT_KLIDS: &[u32] = &[
-    0x0000, // Auto (placeholder, not used)
-    0x0409, // US English
-    0x0407, // German
-    0x040C, // French
-    0x040A, // Spanish
-    0x0410, // Italian
-    0x0816, // Portuguese
-    0x0416, // Portuguese - Brazil
-    0x0809, // English - UK
-    0x0807, // German - Switzerland
-    0x0C07, // German - Austria
-    0x080C, // French - Belgium
-    0x0413, // Dutch
-    0x041D, // Swedish
-    0x0414, // Norwegian
-    0x0406, // Danish
-    0x040B, // Finnish
-    0x0415, // Polish
-    0x0405, // Czech
-    0x041B, // Slovak
-    0x040E, // Hungarian
-    0x0418, // Romanian
-    0x041A, // Croatian
-    0x0424, // Slovenian
-    0x081A, // Serbian
-    0x0402, // Bulgarian
-    0x0419, // Russian
-    0x0422, // Ukrainian
-    0x041F, // Turkish
-    0x0408, // Greek
-    0x0411, // Japanese
-    0x0412, // Korean
+    0x0000,      // Auto (placeholder, not used)
+    0x0409,      // US English
+    0x0407,      // German
+    0x040C,      // French
+    0x040A,      // Spanish
+    0x0410,      // Italian
+    0x0816,      // Portuguese
+    0x0416,      // Portuguese - Brazil
+    0x0809,      // English - UK
+    0x0807,      // German - Switzerland
+    0x0C07,      // German - Austria
+    0x080C,      // French - Belgium
+    0x0413,      // Dutch
+    0x041D,      // Swedish
+    0x0414,      // Norwegian
+    0x0406,      // Danish
+    0x040B,      // Finnish
+    0x0415,      // Polish
+    0x0405,      // Czech
+    0x041B,      // Slovak
+    0x040E,      // Hungarian
+    0x0418,      // Romanian
+    0x041A,      // Croatian
+    0x0424,      // Slovenian
+    0x081A,      // Serbian
+    0x0402,      // Bulgarian
+    0x0419,      // Russian
+    0x0422,      // Ukrainian
+    0x041F,      // Turkish
+    0x0408,      // Greek
+    0x0411,      // Japanese
+    0x0412,      // Korean
+    0x0001_0409, // US Dvorak
 ];
 
 /// Converts a dropdown index to an `Option<u32>` KLID.
