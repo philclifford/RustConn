@@ -8,6 +8,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use uuid::Uuid;
+use zeroize::{Zeroize, Zeroizing};
 
 use super::{MAX_NESTING_DEPTH, Variable, VariableError, VariableResult, VariableScope};
 
@@ -22,10 +23,11 @@ pub static VARIABLE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// terminal answer that silently lost a reference is indistinguishable from a
 /// wrong one at the far end — the caller needs to be able to say which variable
 /// is missing (issue #257).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct TerminalSubstitution {
     /// The input with every *defined* `${...}` reference replaced by its value.
-    pub text: String,
+    /// The buffer is scrubbed on drop because it may contain a credential.
+    pub text: Zeroizing<String>,
     /// Names nothing defined; still present as `${name}` in `text`.
     pub unresolved: Vec<String>,
 }
@@ -452,15 +454,18 @@ impl VariableManager {
         scope: VariableScope,
     ) -> VariableResult<TerminalSubstitution> {
         let refs = Self::parse_references(input)?;
-        let mut text = input.to_string();
+        let mut text = Zeroizing::new(input.to_string());
         let mut unresolved = Vec::new();
 
         for var_name in &refs {
             match self.resolve(var_name, scope) {
                 Ok(value) => {
+                    let value = Zeroizing::new(value);
                     Self::validate_terminal_value(var_name, &value)?;
                     let pattern = format!("${{{var_name}}}");
-                    text = text.replace(&pattern, &value);
+                    let replacement = Zeroizing::new(text.replace(&pattern, &value));
+                    text.zeroize();
+                    text = replacement;
                 }
                 // Undefined: keep the placeholder so the caller can report it.
                 Err(VariableError::Undefined(_)) => unresolved.push(var_name.clone()),
@@ -660,7 +665,7 @@ mod tests {
             .substitute_for_terminal_input("${password}\n", VariableScope::Global)
             .unwrap();
 
-        assert_eq!(out.text, "a;b|c&d`e$f(g)h<i>j!k\n");
+        assert_eq!(out.text.as_str(), "a;b|c&d`e$f(g)h<i>j!k\n");
         assert!(out.unresolved.is_empty());
     }
 
@@ -672,7 +677,8 @@ mod tests {
 
         let err = manager
             .substitute_for_terminal_input("${password}\n", VariableScope::Global)
-            .unwrap_err();
+            .err()
+            .expect("line break must be rejected");
 
         assert!(matches!(err, VariableError::UnsafeValue { .. }), "{err:?}");
     }
@@ -686,7 +692,7 @@ mod tests {
             .unwrap();
 
         // Not blanked: the caller has to be able to say what is missing.
-        assert_eq!(out.text, "${password}\n");
+        assert_eq!(out.text.as_str(), "${password}\n");
         assert_eq!(out.unresolved, vec!["password".to_string()]);
     }
 
@@ -702,12 +708,12 @@ mod tests {
         let out = manager
             .substitute_for_terminal_input("${password}\n", VariableScope::Connection(conn_id))
             .unwrap();
-        assert_eq!(out.text, "conn-value\n");
+        assert_eq!(out.text.as_str(), "conn-value\n");
 
         let out = manager
             .substitute_for_terminal_input("${password}\n", VariableScope::Global)
             .unwrap();
-        assert_eq!(out.text, "global-value\n");
+        assert_eq!(out.text.as_str(), "global-value\n");
     }
 
     #[test]
@@ -718,7 +724,7 @@ mod tests {
             .substitute_for_terminal_input("yes\n", VariableScope::Global)
             .unwrap();
 
-        assert_eq!(out.text, "yes\n");
+        assert_eq!(out.text.as_str(), "yes\n");
         assert!(out.unresolved.is_empty());
     }
 

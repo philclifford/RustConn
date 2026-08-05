@@ -15,7 +15,7 @@ use rustconn_core::automation::{ExpectEngine, ExpectRule};
 use uuid::Uuid;
 use vte4::prelude::*;
 use vte4::{Format, Terminal};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Shared state for automation engine
 struct AutomationState {
@@ -23,8 +23,8 @@ struct AutomationState {
     engine: ExpectEngine,
     /// Per-rule creation timestamps for timeout tracking
     created_at: HashMap<Uuid, Instant>,
-    /// Last content to detect changes
-    last_content: String,
+    /// Last content to detect changes; scrubbed because terminals may echo input.
+    last_content: Zeroizing<String>,
     /// Counter for polling cycles
     poll_count: u32,
 }
@@ -38,6 +38,30 @@ impl Drop for AutomationState {
     }
 }
 
+/// A connection-resolved rule whose response is scrubbed if setup is abandoned.
+pub(crate) struct PreparedExpectRule {
+    id: Uuid,
+    pattern: String,
+    response: Zeroizing<String>,
+    priority: i32,
+    timeout_ms: Option<u32>,
+    one_shot: bool,
+}
+
+impl PreparedExpectRule {
+    fn into_expect_rule(mut self) -> ExpectRule {
+        ExpectRule {
+            id: self.id,
+            pattern: std::mem::take(&mut self.pattern),
+            response: std::mem::take(&mut *self.response),
+            priority: self.priority,
+            timeout_ms: self.timeout_ms,
+            enabled: true,
+            one_shot: self.one_shot,
+        }
+    }
+}
+
 /// Manages automation for a terminal session
 ///
 /// The `state` field holds the shared automation state that is accessed by the
@@ -47,6 +71,17 @@ pub struct AutomationSession {
     /// Shared state accessed by the polling timer callback.
     /// Kept alive to maintain the `Rc` reference count.
     state: Rc<RefCell<AutomationState>>,
+    /// Polling source, removed when a session is replaced or its tab closes.
+    timer: Rc<RefCell<Option<glib::SourceId>>>,
+}
+
+impl Drop for AutomationSession {
+    fn drop(&mut self) {
+        if let Some(source_id) = self.timer.borrow_mut().take() {
+            source_id.remove();
+        }
+        self.state.borrow_mut().engine.clear();
+    }
 }
 
 impl AutomationSession {
@@ -65,7 +100,7 @@ impl AutomationSession {
     /// Creates a new automation session from pre-resolved expect rules
     ///
     /// Rules should already have variable substitution applied to their responses.
-    pub fn new(terminal: Terminal, rules: Vec<ExpectRule>) -> Self {
+    pub(crate) fn new(terminal: Terminal, rules: Vec<PreparedExpectRule>) -> Self {
         tracing::info!("AutomationSession: Created with {} rules", rules.len());
         for rule in &rules {
             // The response is deliberately NOT logged, only its length: a rule
@@ -87,6 +122,12 @@ impl AutomationSession {
             created_at.insert(rule.id, now);
         }
 
+        // Move resolved responses into the core engine only after all setup
+        // bookkeeping succeeds. Abandoned prepared rules zeroize on drop.
+        let rules = rules
+            .into_iter()
+            .map(PreparedExpectRule::into_expect_rule)
+            .collect();
         let engine = match ExpectEngine::from_rules(rules) {
             Ok(engine) => engine,
             Err(e) => {
@@ -98,32 +139,38 @@ impl AutomationSession {
         let state = Rc::new(RefCell::new(AutomationState {
             engine,
             created_at,
-            last_content: String::new(),
+            last_content: Zeroizing::new(String::new()),
             poll_count: 0,
         }));
 
-        // Start polling timer to check terminal content
-        let state_clone = state.clone();
+        // Start polling timer to check terminal content. The source ID is kept
+        // with the session so reconnect/tab teardown cancels the old callback
+        // before it can send a resolved response into a replacement process.
+        let state_clone = Rc::clone(&state);
         let terminal_weak = terminal.downgrade();
+        let timer = Rc::new(RefCell::new(None));
+        let timer_for_callback = Rc::clone(&timer);
 
-        glib::timeout_add_local(Duration::from_millis(100), move || {
+        let source_id = glib::timeout_add_local(Duration::from_millis(100), move || {
             let Some(terminal) = terminal_weak.upgrade() else {
+                timer_for_callback.borrow_mut().take();
                 return ControlFlow::Break;
             };
 
             Self::check_terminal_content(&terminal, &state_clone);
 
             // Continue polling while we have rules
-            let has_rules = !state_clone.borrow().engine.is_empty();
-            if has_rules {
-                ControlFlow::Continue
-            } else {
+            if state_clone.borrow().engine.is_empty() {
                 tracing::debug!("AutomationSession: No more rules, stopping polling");
+                timer_for_callback.borrow_mut().take();
                 ControlFlow::Break
+            } else {
+                ControlFlow::Continue
             }
         });
+        *timer.borrow_mut() = Some(source_id);
 
-        Self { state }
+        Self { state, timer }
     }
 
     /// Process escape sequences in response string
@@ -199,17 +246,19 @@ impl AutomationSession {
         let row_count = terminal.row_count();
 
         // Read content using text_range_format for the entire visible area
-        let content = if let (Some(text), _) = terminal.text_range_format(
-            Format::Text,
-            0,             // start row
-            0,             // start col
-            row_count - 1, // end row (last visible row)
-            -1,            // end col (-1 = end of line)
-        ) {
-            text.to_string()
-        } else {
-            String::new()
-        };
+        let content = Zeroizing::new(
+            if let (Some(text), _) = terminal.text_range_format(
+                Format::Text,
+                0,             // start row
+                0,             // start col
+                row_count - 1, // end row (last visible row)
+                -1,            // end col (-1 = end of line)
+            ) {
+                text.to_string()
+            } else {
+                String::new()
+            },
+        );
 
         // Check if content changed
         let content_changed = content != state_ref.last_content;
@@ -253,10 +302,10 @@ impl AutomationSession {
                 }
 
                 tracing::info!(
-                    "AutomationSession: MATCHED rule '{}' (id={}) on line '{}'",
-                    rule.pattern,
-                    rule.id,
-                    line.trim()
+                    rule_id = %rule.id,
+                    pattern = %rule.pattern,
+                    matched_line_len = line.trim().len(),
+                    "AutomationSession matched expect rule"
                 );
 
                 // Escapes were already expanded by `prepare_rules_from_config`,
@@ -307,10 +356,10 @@ impl AutomationSession {
 /// `${username}`, `${host}` and `${port}` alongside the global variables — see
 /// `window::protocols::automation_variables`, which assembles it. Without them
 /// those four resolve against nothing (issue #257).
-pub fn prepare_rules_from_config(
+pub(crate) fn prepare_rules_from_config(
     rules: &[ExpectRule],
     var_manager: &rustconn_core::variables::VariableManager,
-) -> Vec<ExpectRule> {
+) -> Vec<PreparedExpectRule> {
     let mut prepared = Vec::new();
 
     for rule in rules {
@@ -331,7 +380,7 @@ pub fn prepare_rules_from_config(
         // resolved values through `process_escapes` as well, so a password
         // containing a backslash (`pa\ss` → `pa` + an unknown escape, `a\nb` →
         // an embedded newline) would be silently rewritten before it was sent.
-        let template = AutomationSession::process_escapes(&rule.response);
+        let template = Zeroizing::new(AutomationSession::process_escapes(&rule.response));
 
         // Substitute ${VAR} references in the response text.
         let resolved_response = match var_manager.substitute_for_terminal_input(
@@ -340,16 +389,16 @@ pub fn prepare_rules_from_config(
         ) {
             Ok(substitution) => {
                 if !substitution.unresolved.is_empty() {
-                    // The names, never the values: a resolved response may be a
-                    // credential and `tracing` output is not redacted.
+                    // Names only, never values. An unresolved credential must
+                    // leave the prompt for the user instead of typing `${...}`
+                    // and potentially consuming an authentication attempt.
                     tracing::warn!(
                         rule_id = %rule.id,
                         pattern = %rule.pattern,
                         unresolved = %substitution.unresolved.join(", "),
-                        "Expect response references undefined variables; they are sent \
-                         verbatim. The password and username placeholders need the \
-                         connection to have a password source and a username configured"
+                        "Expect response references undefined variables; skipping rule"
                     );
+                    continue;
                 }
                 substitution.text
             }
@@ -367,13 +416,12 @@ pub fn prepare_rules_from_config(
             }
         };
 
-        prepared.push(ExpectRule {
+        prepared.push(PreparedExpectRule {
             id: rule.id,
             pattern: rule.pattern.clone(),
             response: resolved_response,
             priority: rule.priority,
             timeout_ms: rule.timeout_ms,
-            enabled: true,
             one_shot: rule.one_shot,
         });
     }
@@ -410,7 +458,7 @@ mod tests {
         let prepared = prepare_rules_from_config(&[sudo_rule("${password}\n")], &manager);
 
         assert_eq!(prepared.len(), 1);
-        assert_eq!(prepared[0].response, "hunter2\n");
+        assert_eq!(prepared[0].response.as_str(), "hunter2\n");
     }
 
     /// A password made entirely of the characters `substitute_for_command`
@@ -421,7 +469,7 @@ mod tests {
         let prepared = prepare_rules_from_config(&[sudo_rule("${password}\n")], &manager);
 
         assert_eq!(prepared.len(), 1);
-        assert_eq!(prepared[0].response, "a;b|c&d`e$f(g)h<i>j!k\n");
+        assert_eq!(prepared[0].response.as_str(), "a;b|c&d`e$f(g)h<i>j!k\n");
     }
 
     /// Escapes are expanded on the template before substitution, so a backslash
@@ -435,7 +483,7 @@ mod tests {
         assert_eq!(prepared.len(), 1);
         // The template's trailing `\n` became a real newline; the one inside the
         // password did not.
-        assert_eq!(prepared[0].response, "pa\\nss\n");
+        assert_eq!(prepared[0].response.as_str(), "pa\\nss\n");
     }
 
     /// The template's own escape sequence still has to be expanded.
@@ -445,18 +493,16 @@ mod tests {
         let prepared = prepare_rules_from_config(&[sudo_rule(r"yes\n")], &manager);
 
         assert_eq!(prepared.len(), 1);
-        assert_eq!(prepared[0].response, "yes\n");
+        assert_eq!(prepared[0].response.as_str(), "yes\n");
     }
 
-    /// An undefined reference is kept verbatim rather than blanked, so the
-    /// warning and the session agree about what happened.
+    /// An undefined reference must not consume a remote authentication attempt.
     #[test]
-    fn an_undefined_reference_is_left_in_place() {
+    fn an_undefined_reference_drops_the_rule() {
         let manager = VariableManager::new();
         let prepared = prepare_rules_from_config(&[sudo_rule("${password}\n")], &manager);
 
-        assert_eq!(prepared.len(), 1);
-        assert_eq!(prepared[0].response, "${password}\n");
+        assert!(prepared.is_empty());
     }
 
     /// A value carrying a line break would submit the answer early, so the rule
@@ -482,7 +528,7 @@ mod tests {
         let prepared = prepare_rules_from_config(&rules, &manager);
 
         assert_eq!(prepared.len(), 1);
-        assert_eq!(prepared[0].response, "kept\n");
+        assert_eq!(prepared[0].response.as_str(), "kept\n");
     }
 
     /// Priority, timeout, id and the one-shot flag are carried through, since

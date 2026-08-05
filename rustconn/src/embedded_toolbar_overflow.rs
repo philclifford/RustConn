@@ -13,11 +13,14 @@
 //! of the widget itself, so it works identically in a split panel and in a
 //! shrunk single-tab window.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, DrawingArea, MenuButton, Orientation, Popover, Widget};
+use gtk4::{
+    Box as GtkBox, Button, DrawingArea, EventControllerFocus, EventControllerMotion, MenuButton,
+    Orientation, Overlay, Popover, Revealer, Widget, glib,
+};
 
 use crate::i18n::i18n;
 
@@ -163,4 +166,236 @@ impl ToolbarOverflow {
         self.overflow_button.set_visible(false);
         self.collapsed.set(false);
     }
+}
+
+/// Delay before an inactive floating toolbar is hidden.
+const TOOLBAR_HIDE_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Controls reveal and focus-safe auto-hide for a floating embedded toolbar.
+///
+/// The controller uses a narrow arrow indicator at the top center of the view as
+/// the sole trigger for revealing the toolbar. This avoids blocking interaction
+/// with window controls or other elements at the top edge. The arrow can be
+/// focused with Tab or activated by touch/click. The toolbar is never hidden
+/// while its controls have focus, the pointer is over it, or one of its menus
+/// is open.
+pub struct ToolbarAutoHide {
+    revealer: Revealer,
+    toolbar: GtkBox,
+    reveal_button: Button,
+    hide_timer: RefCell<Option<glib::SourceId>>,
+    available: Cell<bool>,
+    pointer_in_reveal_button: Cell<bool>,
+    pointer_in_toolbar: Cell<bool>,
+    focus_in_toolbar: Cell<bool>,
+}
+
+impl ToolbarAutoHide {
+    /// Attaches auto-hide behavior and a touch/keyboard reveal control to an overlay.
+    ///
+    /// The reveal trigger is a small arrow indicator at the top center — hovering
+    /// or clicking it reveals the full toolbar. This keeps the rest of the top
+    /// edge free for window controls and split-view buttons.
+    #[must_use]
+    pub fn attach(overlay: &Overlay, toolbar: &GtkBox, revealer: &Revealer) -> Rc<Self> {
+        ensure_touch_targets(toolbar.upcast_ref());
+
+        let reveal_button = Button::from_icon_name("pan-down-symbolic");
+        reveal_button.add_css_class("flat");
+        reveal_button.add_css_class("circular");
+        reveal_button.add_css_class("toolbar-reveal-handle");
+        reveal_button.set_size_request(44, 44);
+        reveal_button.set_halign(gtk4::Align::Center);
+        reveal_button.set_valign(gtk4::Align::Start);
+        reveal_button.set_tooltip_text(Some(&i18n("Show session toolbar")));
+        reveal_button.update_property(&[gtk4::accessible::Property::Label(&i18n(
+            "Show session toolbar",
+        ))]);
+        reveal_button.set_visible(false);
+        overlay.add_overlay(&reveal_button);
+
+        let controller = Rc::new(Self {
+            revealer: revealer.clone(),
+            toolbar: toolbar.clone(),
+            reveal_button: reveal_button.clone(),
+            hide_timer: RefCell::new(None),
+            available: Cell::new(false),
+            pointer_in_reveal_button: Cell::new(false),
+            pointer_in_toolbar: Cell::new(false),
+            focus_in_toolbar: Cell::new(false),
+        });
+
+        // Click on the arrow reveals toolbar and moves focus into it.
+        let controller_weak = Rc::downgrade(&controller);
+        let toolbar_for_focus = toolbar.clone();
+        reveal_button.connect_clicked(move |_| {
+            if let Some(controller) = controller_weak.upgrade() {
+                controller.show();
+                toolbar_for_focus.child_focus(gtk4::DirectionType::TabForward);
+            }
+        });
+
+        // Hovering over the arrow reveals the toolbar without a click.
+        let reveal_motion = EventControllerMotion::new();
+        let controller_weak = Rc::downgrade(&controller);
+        reveal_motion.connect_enter(move |_, _, _| {
+            if let Some(controller) = controller_weak.upgrade() {
+                controller.pointer_in_reveal_button.set(true);
+                controller.show();
+            }
+        });
+        let controller_weak = Rc::downgrade(&controller);
+        reveal_motion.connect_leave(move |_| {
+            if let Some(controller) = controller_weak.upgrade() {
+                controller.pointer_in_reveal_button.set(false);
+                controller.schedule_hide();
+            }
+        });
+        reveal_button.add_controller(reveal_motion);
+
+        let controller_weak = Rc::downgrade(&controller);
+        revealer.connect_notify_local(Some("reveal-child"), move |_, _| {
+            if let Some(controller) = controller_weak.upgrade() {
+                controller.update_reveal_button();
+            }
+        });
+
+        // Pointer over the revealed toolbar keeps it open.
+        let toolbar_motion = EventControllerMotion::new();
+        let controller_weak = Rc::downgrade(&controller);
+        toolbar_motion.connect_enter(move |_, _, _| {
+            if let Some(controller) = controller_weak.upgrade() {
+                controller.pointer_in_toolbar.set(true);
+                controller.cancel_hide();
+            }
+        });
+        let controller_weak = Rc::downgrade(&controller);
+        toolbar_motion.connect_leave(move |_| {
+            if let Some(controller) = controller_weak.upgrade() {
+                controller.pointer_in_toolbar.set(false);
+                controller.schedule_hide();
+            }
+        });
+        toolbar.add_controller(toolbar_motion);
+
+        // Keyboard focus in toolbar keeps it open.
+        let focus = EventControllerFocus::new();
+        let controller_weak = Rc::downgrade(&controller);
+        focus.connect_enter(move |_| {
+            if let Some(controller) = controller_weak.upgrade() {
+                controller.focus_in_toolbar.set(true);
+                controller.show();
+            }
+        });
+        let controller_weak = Rc::downgrade(&controller);
+        focus.connect_leave(move |_| {
+            if let Some(controller) = controller_weak.upgrade() {
+                controller.focus_in_toolbar.set(false);
+                controller.schedule_hide();
+            }
+        });
+        toolbar.add_controller(focus);
+
+        controller
+    }
+
+    /// Reveals the toolbar and hides it after the standard inactivity delay.
+    pub fn show_briefly(self: &Rc<Self>) {
+        self.available.set(true);
+        self.revealer.set_reveal_child(true);
+        self.update_reveal_button();
+        self.schedule_hide();
+    }
+
+    /// Disables the toolbar until the next connected/connecting state.
+    pub fn hide(&self) {
+        self.available.set(false);
+        self.cancel_hide();
+        self.revealer.set_reveal_child(false);
+        self.pointer_in_reveal_button.set(false);
+        self.update_reveal_button();
+    }
+
+    fn show(&self) {
+        if !self.available.get() {
+            return;
+        }
+        self.cancel_hide();
+        self.revealer.set_can_target(true);
+        self.revealer.set_reveal_child(true);
+        self.update_reveal_button();
+    }
+
+    fn update_reveal_button(&self) {
+        let toolbar_visible = self.revealer.reveals_child();
+        self.reveal_button
+            .set_visible(self.available.get() && !toolbar_visible);
+        // When the toolbar is hidden, make the revealer pass-through so it
+        // does not block interaction with the remote desktop or window controls
+        // beneath it in the overlay stack.
+        if !toolbar_visible {
+            self.revealer.set_can_target(false);
+        }
+    }
+
+    fn interaction_active(&self) -> bool {
+        self.pointer_in_reveal_button.get()
+            || self.pointer_in_toolbar.get()
+            || self.focus_in_toolbar.get()
+            || contains_active_menu(self.toolbar.upcast_ref())
+    }
+
+    fn schedule_hide(self: &Rc<Self>) {
+        self.cancel_hide();
+        let controller_weak = Rc::downgrade(self);
+        let source_id = glib::timeout_add_local_once(TOOLBAR_HIDE_DELAY, move || {
+            let Some(controller) = controller_weak.upgrade() else {
+                return;
+            };
+            *controller.hide_timer.borrow_mut() = None;
+            if controller.interaction_active() {
+                controller.schedule_hide();
+            } else {
+                controller.revealer.set_reveal_child(false);
+            }
+        });
+        *self.hide_timer.borrow_mut() = Some(source_id);
+    }
+
+    fn cancel_hide(&self) {
+        if let Some(source_id) = self.hide_timer.borrow_mut().take() {
+            source_id.remove();
+        }
+    }
+}
+
+/// Applies the GNOME HIG 44×44 minimum target to toolbar actions.
+fn ensure_touch_targets(widget: &Widget) {
+    if widget.is::<Button>() || widget.is::<MenuButton>() {
+        widget.set_size_request(44, 44);
+    }
+
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        ensure_touch_targets(&current);
+    }
+}
+
+fn contains_active_menu(widget: &Widget) -> bool {
+    if widget
+        .downcast_ref::<MenuButton>()
+        .is_some_and(MenuButton::is_active)
+    {
+        return true;
+    }
+
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        if contains_active_menu(&current) {
+            return true;
+        }
+    }
+    false
 }

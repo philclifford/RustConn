@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.12
+Version:        0.19.13
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,13 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Wed Aug 05 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.13-0
+- Version bump to 0.19.13
+- Added US Dvorak RDP keyboard layout (PR #258)
+- Fixed RDM JSON import rejecting real-world Devolutions exports with numeric fields (#234)
+- Improved session transcript initial capture timing (#247)
+- Improved embedded RDP and VNC toolbar: auto-hide floating overlay
+
 * Tue Aug 04 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.12-0
 - Version bump to 0.19.12
 - Added preservation of terminal history across a reconnect, with a dim rule separating the old output from the new session (#253)

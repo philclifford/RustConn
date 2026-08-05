@@ -11,6 +11,7 @@ use std::sync::LazyLock;
 
 use chrono::{Local, Utc};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 use crate::variables::{VariableManager, VariableScope};
 
@@ -622,15 +623,16 @@ impl SessionLogger {
         self.rotate_if_needed()?;
 
         // Write lines, optionally with timestamp prefix
-        let data_str = sanitize_output(&String::from_utf8_lossy(data), &self.sanitize);
+        let decoded = Zeroizing::new(String::from_utf8_lossy(data).into_owned());
+        let data_str = sanitize_output_zeroizing(&decoded, &self.sanitize);
 
         for line in data_str.lines() {
-            let formatted = if self.config.log_timestamps {
+            let formatted = Zeroizing::new(if self.config.log_timestamps {
                 let timestamp = self.current_timestamp();
                 format!("[{timestamp}] {line}\n")
             } else {
                 format!("{line}\n")
-            };
+            });
             let bytes = formatted.as_bytes();
 
             // Get writer (may have changed after rotation)
@@ -664,13 +666,13 @@ impl SessionLogger {
 
         self.rotate_if_needed()?;
 
-        let sanitized = sanitize_output(record, &self.sanitize);
+        let sanitized = sanitize_output_zeroizing(record, &self.sanitize);
         let writer = self
             .writer
             .as_mut()
             .ok_or_else(|| LogError::WriteError("Log file not open".to_string()))?;
 
-        writeln!(writer, "{sanitized}")
+        writeln!(writer, "{}", sanitized.as_str())
             .map_err(|e| LogError::WriteError(format!("Failed to write: {e}")))?;
         self.bytes_written += sanitized.len() as u64 + 1;
         Ok(())
@@ -1009,46 +1011,55 @@ impl SanitizeConfig {
 /// The sanitized output with sensitive data replaced
 #[must_use]
 pub fn sanitize_output(output: &str, config: &SanitizeConfig) -> String {
+    sanitize_output_zeroizing(output, config).to_string()
+}
+
+/// Internal sanitizer used by session logging so transcript copies are scrubbed.
+fn sanitize_output_zeroizing(output: &str, config: &SanitizeConfig) -> Zeroizing<String> {
     if !config.enabled {
-        return output.to_string();
+        return Zeroizing::new(output.to_string());
     }
 
-    let mut result = output.to_string();
+    let mut result = Zeroizing::new(output.to_string());
 
-    // Check for sensitive prompt patterns and optionally sanitize full lines
+    // Check for sensitive prompt patterns and optionally sanitize full lines.
     if config.sanitize_full_lines {
-        let lines: Vec<&str> = result.lines().collect();
-        let sanitized_lines: Vec<String> = lines
-            .iter()
-            .map(|line| {
-                let line_lower = line.to_lowercase();
-                for pattern in SENSITIVE_PATTERNS {
-                    if line_lower.contains(pattern) {
-                        return config.replacement.clone();
-                    }
-                }
-                (*line).to_string()
-            })
-            .collect();
-        result = sanitized_lines.join("\n");
-        // Preserve trailing newline if original had one
-        if output.ends_with('\n') && !result.ends_with('\n') {
-            result.push('\n');
+        let mut sanitized = Zeroizing::new(String::with_capacity(result.len()));
+        for (index, line) in result.lines().enumerate() {
+            if index > 0 {
+                sanitized.push('\n');
+            }
+            let line_lower = Zeroizing::new(line.to_lowercase());
+            if SENSITIVE_PATTERNS
+                .iter()
+                .any(|pattern| line_lower.contains(pattern))
+            {
+                sanitized.push_str(&config.replacement);
+            } else {
+                sanitized.push_str(line);
+            }
         }
+        // Preserve trailing newline if original had one.
+        if output.ends_with('\n') && !sanitized.ends_with('\n') {
+            sanitized.push('\n');
+        }
+        result = sanitized;
     }
 
-    // Apply pre-compiled regex patterns for sensitive values
+    // Apply pre-compiled regex patterns for sensitive values.
     for re in COMPILED_SENSITIVE_PATTERNS.iter() {
-        result = re
-            .replace_all(&result, config.replacement.as_str())
-            .to_string();
+        result = Zeroizing::new(
+            re.replace_all(&result, config.replacement.as_str())
+                .into_owned(),
+        );
     }
 
-    // Apply pre-compiled custom patterns
+    // Apply pre-compiled custom patterns.
     for re in &config.compiled_custom {
-        result = re
-            .replace_all(&result, config.replacement.as_str())
-            .to_string();
+        result = Zeroizing::new(
+            re.replace_all(&result, config.replacement.as_str())
+                .into_owned(),
+        );
     }
 
     result

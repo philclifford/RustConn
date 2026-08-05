@@ -5,6 +5,36 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.13] - 2026-08-05
+
+### Added
+
+- **United States - Dvorak RDP keyboard layout (PR [#258](https://github.com/totoshko88/RustConn/pull/258))** — adds KLID `0x00010409` (stock Windows Dvorak layout) to the RDP keyboard layout dropdown, contributed by @cocide.
+
+### Fixed
+
+- **RDM JSON import rejected real-world Devolutions exports containing numeric fields (issue [#234](https://github.com/totoshko88/RustConn/issues/234))** — Devolutions Remote Desktop Manager serializes many fields inconsistently between data-source types: `ConnectionType` as an enum integer rather than a token string, port numbers as bare JSON integers, GUIDs that may be absent or null, and even PIN-style passwords as numbers. Prior versions added a custom deserializer for `ConnectionType` (post-0.19.2) and `Port`, but any *other* field arriving as an integer still triggered a fatal `"invalid type: integer N, expected a string"` and aborted the entire import. Every string field in the RDM parser — including `Folders[].ID`, folder/connection `ParentID`, `Host`, `Username`, `Domain`, `Description`, `Group`, `CredentialConnectionID`, `PrivateKeyPath` and both `Password` fields — now uses tolerant deserialization that coerces scalars (numbers, booleans) to strings and maps nulls to `None`. Missing folder IDs no longer collide in the folder map. Three additional `ConnectionType` numbers are recognized (28 = FTP, 38 = SCP, 100 = SFTP) so those entries are reported as "unsupported" with their name rather than crashing the parse.
+
+- **Embedded RDP drive redirection paths could escape the configured share** — RDPDR requests supplied by the remote server were converted by replacing backslashes and joining the result to the share root, so `..`, an absolute path, or an existing symlink component could reach files outside the exported directory during create, write, rename, or delete operations. The resolver now validates every path component against a canonical share root, rejects traversal, roots, prefixes, and symlink components with `ACCESS_DENIED`, and applies the same containment check to rename destinations.
+
+- **Embedded RDP directory queries ignored the requested path and information class** — directory enumeration always returned the same directory and `FileBothDirectoryInformation`, which broke exact lookups and clients requesting another supported result layout. Queries now honor the requested directory and case-insensitive `*`/`?` pattern, return `.` and `..` without allowing escape, skip symlinks, and encode the exact requested `Directory`, `FullDirectory`, `BothDirectory`, or `Names` information class.
+
+- **Expect rules could send an unresolved placeholder and retain secrets after use** — a response containing an unresolved variable is now dropped instead of typing literal `${name}` into the remote session. Substituted responses and terminal snapshots use zeroizing buffers; rules are explicitly scrubbed on match, replacement, expiry, removal, and clear. Application tracing records only rule metadata and matched-line length, never terminal content or a response value.
+
+### Improved
+
+- **Session transcript captures initial connection output within 500 ms (issue [#247](https://github.com/totoshko88/RustConn/issues/247))** — the output logger previously sampled the VTE buffer every 5 seconds, so SSH `-v` debug lines, login banners and MOTD emitted in the first second carried timestamps 5 seconds late and lacked temporal precision for diagnosing connection failures. A GLib one-shot timer now guarantees capture after a 500 ms grace period even when VTE emits no later `contents-changed` signal, then change-driven captures return to the 5-second interval. Process exit cancels any pending timer, records a final snapshot before flushing, and resets the timer state so an in-place reconnect receives its own 500 ms capture. Transcript snapshots are zeroized when replaced or dropped; sessions without output logging remain unchanged.
+
+- **Embedded RDP and VNC toolbar no longer consumes vertical space and does not block interaction** — the session toolbar (Copy, Paste, Autotype, Ctrl+Alt+Del) is a floating overlay over the remote desktop, preserving the full DrawingArea height and negotiated resolution. The toolbar is revealed exclusively by hovering or clicking a narrow arrow indicator at the top center — the rest of the top edge remains free for window controls and split-view actions. The revealer is fully transparent and pass-through (`can_target = false`) when hidden, so the remote desktop receives all input directly. The crossfade transition (150 ms) avoids the geometry-changing animation that previously forced the overlay to re-clip on every frame and invalidate the DrawingArea. A persistent 44×44 arrow control exposes the toolbar to touch and keyboard users, all toolbar actions meet the same minimum target, and auto-hide pauses while the pointer or keyboard focus is inside the toolbar or a popover is open.
+
+- **Split view panel buttons auto-hide to avoid toolbar conflict** — the close and detach buttons on split panes are now hidden behind a subtle arrow indicator at the top-right corner. Hovering or clicking the arrow reveals the buttons with a crossfade; they hide automatically after 800 ms of inactivity. This eliminates the overlap between split panel controls and the RDP/VNC floating toolbar.
+
+- **Embedded RDP rendering performance improved** — three per-frame optimizations in the draw function: (1) `set_device_scale` is cached and only called when the effective scale actually changes, avoiding Cairo's internal pattern-cache invalidation on every frame; (2) the dark background paint is skipped when the framebuffer covers the full widget at 1:1 scale; (3) nearest-neighbor filtering is used universally instead of bilinear/good — imperceptible at 60 fps interactive rates but significantly faster. Combined with the removal of a full-overlay `EventControllerMotion` that previously fired on every mouse movement, the overall redraw cost is measurably reduced.
+
+### Dependencies
+
+- **Updated**: aho-corasick 1.1.4 → 1.1.5, android_system_properties 0.1.5 → 0.1.6, clap_mangen 0.3.0 → 0.3.1, data-encoding 2.11.0 → 2.11.1, keccak 0.2.0 → 0.2.1, kqueue 1.2.0 → 1.2.1, open 5.4.0 → 5.4.1, regex-automata 0.4.16 → 0.4.18, zlib-rs 0.6.6 → 0.6.7. These are transitive patch releases picked up when the lockfile was regenerated.
+
 ## [0.19.12] - 2026-08-04
 
 ### Added

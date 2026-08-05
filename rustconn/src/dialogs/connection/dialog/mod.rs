@@ -61,7 +61,7 @@ pub(super) const KEYBOARD_LAYOUT_KLIDS: &[u32] = &[
     0x0408,      // Greek
     0x0411,      // Japanese
     0x0412,      // Korean
-    0x0001_0409, // US Dvorak
+    0x0001_0409, // United States - Dvorak
 ];
 
 /// Converts a dropdown index to an `Option<u32>` KLID.

@@ -411,6 +411,7 @@ impl TerminalNotebook {
     fn setup_tab_view_signals(&self) {
         let sessions = self.sessions.clone();
         let terminals = self.terminals.clone();
+        let automation_sessions_close = Rc::clone(&self.automation_sessions);
         let session_widgets = self.session_widgets.clone();
         let session_info = self.session_info.clone();
         let tab_view = self.tab_view.clone();
@@ -512,6 +513,9 @@ impl TerminalNotebook {
                 // Clean up session data
                 sessions.borrow_mut().remove(&session_id);
                 terminals.borrow_mut().remove(&session_id);
+                // Dropping the automation session cancels its poll source and
+                // scrubs any resolved credential responses still in the engine.
+                automation_sessions_close.borrow_mut().remove(&session_id);
 
                 // Remove active recording flag if present
                 active_recordings.borrow_mut().remove(&session_id);
@@ -686,6 +690,11 @@ impl TerminalNotebook {
         {
             Self::append_welcome_page(&self.tab_view);
         }
+    }
+
+    /// Stops expect polling and scrubs resolved responses for a finished child.
+    pub fn clear_automation_session(&self, session_id: Uuid) {
+        self.automation_sessions.borrow_mut().remove(&session_id);
     }
 
     /// Creates a new terminal tab for an SSH session with default settings

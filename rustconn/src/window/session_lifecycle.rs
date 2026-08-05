@@ -3,7 +3,82 @@
 //! Extracted from `window/mod.rs` — sets up session logging, activity
 //! monitoring with notifications, and child-exited cleanup/reconnect logic.
 
+use std::cell::Cell;
+
 use super::*;
+use zeroize::Zeroizing;
+
+/// Shared state used by every transcript capture trigger.
+#[derive(Clone)]
+struct TranscriptCapture {
+    notebook: SharedNotebook,
+    session_id: Uuid,
+    logger: Rc<RefCell<rustconn_core::session::SessionLogger>>,
+    last_content: Rc<RefCell<Zeroizing<String>>>,
+    per_line_timestamps: bool,
+}
+
+impl TranscriptCapture {
+    /// Writes terminal content added since the previous capture.
+    fn run(&self) {
+        let Some(current_text) = self.notebook.get_terminal_text(self.session_id) else {
+            return;
+        };
+        let current_text = Zeroizing::new(current_text);
+        let mut last = self.last_content.borrow_mut();
+        if current_text == *last {
+            return;
+        }
+
+        let new_lines = current_text
+            .lines()
+            .skip(last.lines().count())
+            .collect::<Vec<_>>();
+        if !new_lines.is_empty()
+            && let Ok(mut logger) = self.logger.try_borrow_mut()
+        {
+            let result = if self.per_line_timestamps {
+                let output = Zeroizing::new(new_lines.join("\n"));
+                logger.write(output.as_bytes())
+            } else {
+                let stamp = logger.current_timestamp();
+                let mut block = Zeroizing::new(format!("[{stamp}] OUTPUT:"));
+                for line in new_lines {
+                    block.push_str("\n  ");
+                    block.push_str(line);
+                }
+                logger.write_record(&block)
+            };
+            if let Err(e) = result.and_then(|()| logger.flush()) {
+                tracing::warn!(%e, "Session transcript write failed");
+            }
+        }
+
+        *last = current_text;
+    }
+}
+
+/// Schedules the first transcript capture once, including after reconnect.
+fn schedule_initial_transcript_capture(
+    capture: TranscriptCapture,
+    first_capture_done: Rc<Cell<bool>>,
+    last_log_time: Rc<RefCell<std::time::Instant>>,
+    timer: Rc<RefCell<Option<glib::SourceId>>>,
+) {
+    if timer.borrow().is_some() {
+        return;
+    }
+
+    let timer_for_callback = timer.clone();
+    let source_id =
+        glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+            capture.run();
+            first_capture_done.set(true);
+            *last_log_time.borrow_mut() = std::time::Instant::now();
+            *timer_for_callback.borrow_mut() = None;
+        });
+    *timer.borrow_mut() = Some(source_id);
+}
 
 /// The connection-derived values a session log needs besides its configuration.
 struct LogContextParts {
@@ -426,6 +501,10 @@ impl MainWindow {
                 .is_some_and(|s| s.settings().terminal.close_on_clean_exit);
 
         notebook.connect_child_exited(session_id, move |exit_status| {
+            // The child can linger on a reconnect overlay, but its expect rules
+            // must not: cancel polling and scrub resolved responses immediately.
+            notebook_clone.clear_automation_session(session_id);
+
             // Execute post-disconnect task if configured
             if let Some(ref task) = post_disconnect_task {
                 tracing::info!(
@@ -896,56 +975,62 @@ impl MainWindow {
 
         // Set up output logging (full transcript)
         if log_output {
-            let logger_clone = logger.clone();
-            let notebook_clone = notebook.clone();
-            let last_content: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
-            let last_log_time: Rc<RefCell<std::time::Instant>> =
-                Rc::new(RefCell::new(std::time::Instant::now()));
+            let capture = TranscriptCapture {
+                notebook: notebook.clone(),
+                session_id,
+                logger: logger.clone(),
+                last_content: Rc::new(RefCell::new(Zeroizing::new(String::new()))),
+                per_line_timestamps,
+            };
+            let last_log_time = Rc::new(RefCell::new(std::time::Instant::now()));
+            let first_capture_done = Rc::new(Cell::new(false));
+            let initial_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
+            // A real one-shot timer guarantees that a single early output burst
+            // is captured even when VTE emits no signal after the 500 ms grace
+            // period. Later changes are batched at five-second intervals.
+            schedule_initial_transcript_capture(
+                capture.clone(),
+                first_capture_done.clone(),
+                last_log_time.clone(),
+                initial_timer.clone(),
+            );
+
+            let capture_on_change = capture.clone();
+            let first_capture_done_on_change = first_capture_done.clone();
+            let last_log_time_on_change = last_log_time.clone();
+            let initial_timer_on_change = initial_timer.clone();
             notebook.connect_contents_changed(session_id, move || {
-                let now = std::time::Instant::now();
-                let elapsed = now.duration_since(*last_log_time.borrow());
-
-                // Only capture transcript every 5 seconds to avoid performance issues
-                if elapsed.as_secs() >= 5 {
-                    if let Some(current_text) = notebook_clone.get_terminal_text(session_id) {
-                        let mut last = last_content.borrow_mut();
-
-                        // Only log if content changed
-                        if current_text != *last {
-                            // Find new content (simple diff - just log new lines)
-                            let new_lines: Vec<&str> =
-                                current_text.lines().skip(last.lines().count()).collect();
-
-                            if !new_lines.is_empty()
-                                && let Ok(mut logger) = logger_clone.try_borrow_mut()
-                            {
-                                let result = if per_line_timestamps {
-                                    // Every transcript line carries its own
-                                    // timestamp — what "Timestamps" promises.
-                                    logger.write(new_lines.join("\n").as_bytes())
-                                } else {
-                                    // One stamped header, then the lines
-                                    // indented beneath it (pre-0.19.10 layout).
-                                    let stamp = logger.current_timestamp();
-                                    let block = std::iter::once(format!("[{stamp}] OUTPUT:"))
-                                        .chain(new_lines.iter().map(|l| format!("  {l}")))
-                                        .collect::<Vec<_>>()
-                                        .join("\n");
-                                    logger.write_record(&block)
-                                };
-                                let result = result.and_then(|()| logger.flush());
-                                if let Err(e) = result {
-                                    tracing::warn!(%e, "Session transcript write failed");
-                                }
-                            }
-
-                            *last = current_text;
-                        }
-                    }
-
-                    *last_log_time.borrow_mut() = now;
+                if !first_capture_done_on_change.get() {
+                    // `child-exited` resets the state for in-place reconnects.
+                    schedule_initial_transcript_capture(
+                        capture_on_change.clone(),
+                        first_capture_done_on_change.clone(),
+                        last_log_time_on_change.clone(),
+                        initial_timer_on_change.clone(),
+                    );
+                    return;
                 }
+
+                let now = std::time::Instant::now();
+                if now
+                    .duration_since(*last_log_time_on_change.borrow())
+                    .as_secs()
+                    >= 5
+                {
+                    capture_on_change.run();
+                    *last_log_time_on_change.borrow_mut() = now;
+                }
+            });
+
+            let capture_on_exit = capture;
+            notebook.connect_child_exited(session_id, move |_exit_status| {
+                if let Some(source_id) = initial_timer.borrow_mut().take() {
+                    source_id.remove();
+                }
+                capture_on_exit.run();
+                first_capture_done.set(false);
+                *last_log_time.borrow_mut() = std::time::Instant::now();
             });
         }
 

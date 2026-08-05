@@ -91,8 +91,8 @@ fn map_preferred_encoding(name: &str) -> Option<VncEncoding> {
 pub struct EmbeddedVncWidget {
     /// Main container widget
     container: GtkBox,
-    /// Toolbar with clipboard and Ctrl+Alt+Del buttons
-    toolbar: GtkBox,
+    /// Floating toolbar controller shared by pointer, touch, and keyboard paths
+    toolbar_auto_hide: Rc<crate::embedded_toolbar_overflow::ToolbarAutoHide>,
     /// Status label for clipboard feedback
     status_label: Label,
     /// Copy button
@@ -190,7 +190,7 @@ impl EmbeddedVncWidget {
         let paste_button = self.paste_button.clone();
         let ctrl_alt_del_button = self.ctrl_alt_del_button.clone();
         let separator = self.separator.clone();
-        let toolbar = self.toolbar.clone();
+        let toolbar_auto_hide = self.toolbar_auto_hide.clone();
 
         *self.on_state_changed.borrow_mut() = Some(Box::new(move |state| {
             // Update button visibility based on state
@@ -208,9 +208,11 @@ impl EmbeddedVncWidget {
             ctrl_alt_del_button.set_visible(!show_reconnect);
             separator.set_visible(!show_reconnect);
 
-            // Hide toolbar when disconnected (no reconnect button there anymore)
+            // Hide toolbar overlay when disconnected; show briefly when connected.
             if show_reconnect {
-                toolbar.set_visible(false);
+                toolbar_auto_hide.hide();
+            } else {
+                toolbar_auto_hide.show_briefly();
             }
             // Call the user's callback
             callback(state);
@@ -417,7 +419,7 @@ impl EmbeddedVncWidget {
         let cairo_buffer = self.cairo_buffer.clone();
         let state = self.state.clone();
         let drawing_area = self.drawing_area.clone();
-        let toolbar = self.toolbar.clone();
+        let toolbar_auto_hide = self.toolbar_auto_hide.clone();
         let status_label = self.status_label.clone();
         let on_state_changed = self.on_state_changed.clone();
         let on_error = self.on_error.clone();
@@ -462,7 +464,7 @@ impl EmbeddedVncWidget {
                     VncClientEvent::Connected => {
                         tracing::debug!("[EmbeddedVNC] Connected!");
                         *state.borrow_mut() = VncConnectionState::Connected;
-                        toolbar.set_visible(true);
+                        toolbar_auto_hide.show_briefly();
                         // Show MPTCP indicator in status label when enabled
                         if mptcp_enabled {
                             status_label.set_text("MPTCP");
@@ -490,7 +492,7 @@ impl EmbeddedVncWidget {
                     VncClientEvent::Disconnected => {
                         tracing::debug!("[EmbeddedVNC] Disconnected");
                         *state.borrow_mut() = VncConnectionState::Disconnected;
-                        toolbar.set_visible(false);
+                        toolbar_auto_hide.hide();
                         if let Some(ref callback) = *on_state_changed.borrow() {
                             callback(VncConnectionState::Disconnected);
                         }
@@ -543,7 +545,7 @@ impl EmbeddedVncWidget {
                         if msg.contains("unexpected end of file") {
                             tracing::debug!("[EmbeddedVNC] Treating EOF as disconnect");
                             *state.borrow_mut() = VncConnectionState::Disconnected;
-                            toolbar.set_visible(false);
+                            toolbar_auto_hide.hide();
                             if let Some(ref callback) = *on_state_changed.borrow() {
                                 callback(VncConnectionState::Disconnected);
                             }
@@ -617,14 +619,14 @@ impl EmbeddedVncWidget {
                                 }
                             } else {
                                 *state.borrow_mut() = VncConnectionState::Error;
-                                toolbar.set_visible(false);
+                                toolbar_auto_hide.hide();
                                 if let Some(ref cb) = *on_error.borrow() {
                                     cb(&no_support_msg);
                                 }
                             }
                         } else {
                             *state.borrow_mut() = VncConnectionState::Error;
-                            toolbar.set_visible(false);
+                            toolbar_auto_hide.hide();
                             if let Some(ref callback) = *on_error.borrow() {
                                 callback(&msg);
                             }
@@ -835,7 +837,7 @@ impl EmbeddedVncWidget {
         }
 
         // Hide toolbar
-        self.toolbar.set_visible(false);
+        self.toolbar_auto_hide.hide();
 
         // Reset state (but keep config for potential reconnect)
         *self.is_embedded.borrow_mut() = false;
@@ -852,7 +854,7 @@ impl EmbeddedVncWidget {
         }
 
         // Hide toolbar
-        self.toolbar.set_visible(false);
+        self.toolbar_auto_hide.hide();
 
         // Reset state (but keep config for potential reconnect)
         *self.is_embedded.borrow_mut() = false;
