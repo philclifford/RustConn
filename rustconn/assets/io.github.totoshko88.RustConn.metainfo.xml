@@ -140,7 +140,7 @@
     <control>touch</control>
   </supports>
   <releases>
-    <release version="0.19.13" date="2026-08-05">
+    <release version="0.19.13" date="2026-08-06">
       <description>
         <p>Version 0.19.13 - RDM import tolerance, auto-hide floating toolbar for RDP and VNC:</p>
         <ul>

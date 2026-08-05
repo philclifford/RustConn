@@ -278,7 +278,7 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
-* Wed Aug 05 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.13-0
+* Thu Aug 06 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.13-0
 - Version bump to 0.19.13
 - Added US Dvorak RDP keyboard layout (PR #258)
 - Fixed RDM JSON import rejecting real-world Devolutions exports with numeric fields (#234)
