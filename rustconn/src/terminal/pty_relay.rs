@@ -363,6 +363,124 @@ pub fn spawn_with_relay(
     Ok(relay)
 }
 
+/// Spawns a child on a new PTY and gives VTE ownership for I/O.
+///
+/// Unlike [`spawn_with_relay`] (which intercepts output via a relay thread),
+/// this function lets VTE handle both reading and writing to the PTY —
+/// exactly like VTE's built-in `spawn_async`, but with our own PTY creation
+/// and `set_controlling_terminal` for cross-platform consistency.
+///
+/// VTE's `feed_child` and `commit` signal work normally. Output observers
+/// should be wired via `connect_contents_changed` on the VTE terminal.
+///
+/// Returns the child PID on success, or an error string on failure.
+///
+/// # Errors
+///
+/// Returns a string describing the failure.
+pub fn spawn_on_vte_pty(
+    session_id: Uuid,
+    terminal: &vte4::Terminal,
+    argv: &[&str],
+    envv: &[&str],
+    working_directory: Option<&str>,
+) -> Result<u32, String> {
+    use gtk4::gio;
+    use std::process::{Command, Stdio};
+    use vte4::prelude::*;
+
+    if argv.is_empty() {
+        return Err("argv is empty".to_string());
+    }
+
+    // 1. Create PTY pair
+    let pair =
+        rustconn_pty_sys::open_pty_pair().map_err(|e| format!("openpty failed: {e}"))?;
+
+    // Set initial terminal size from VTE widget
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "VTE row/col counts are always small positive numbers"
+    )]
+    let (rows, cols) = (terminal.row_count() as u16, terminal.column_count() as u16);
+    if let Err(e) = rustconn_pty_sys::pty_set_winsize(&pair.master, rows, cols) {
+        tracing::warn!(%e, "Initial TIOCSWINSZ failed (non-fatal)");
+    }
+
+    // 2. Build child process
+    let mut cmd = Command::new(argv[0]);
+    if argv.len() > 1 {
+        cmd.args(&argv[1..]);
+    }
+
+    if let Some(dir) = working_directory {
+        cmd.current_dir(dir);
+    }
+
+    // Set environment
+    cmd.env_clear();
+    if envv.is_empty() {
+        for (key, value) in std::env::vars() {
+            cmd.env(&key, &value);
+        }
+    } else {
+        for env_str in envv {
+            if let Some(eq_pos) = env_str.find('=') {
+                cmd.env(&env_str[..eq_pos], &env_str[eq_pos + 1..]);
+            }
+        }
+    }
+    if !envv.iter().any(|e| e.starts_with("TERM=")) {
+        cmd.env("TERM", "xterm-256color");
+    }
+
+    // 3. Connect slave fd as stdin/stdout/stderr
+    let stdin_fd =
+        rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stdin: {e}"))?;
+    let stdout_fd =
+        rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stdout: {e}"))?;
+    let stderr_fd =
+        rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stderr: {e}"))?;
+
+    cmd.stdin(Stdio::from(stdin_fd));
+    cmd.stdout(Stdio::from(stdout_fd));
+    cmd.stderr(Stdio::from(stderr_fd));
+
+    // 4. Set controlling terminal
+    rustconn_pty_sys::set_controlling_terminal(&mut cmd);
+
+    // 5. Spawn
+    let child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+    let child_pid = child.id();
+    std::mem::forget(child);
+
+    tracing::info!(
+        command = %argv[0],
+        %session_id,
+        pid = child_pid,
+        "spawn_on_vte_pty: child spawned"
+    );
+
+    // 6. Close slave fd in parent
+    drop(pair.slave);
+
+    // 7. Give VTE the master fd — VTE takes over reading and writing
+    let vte_pty = vte4::Pty::foreign_sync(pair.master, gio::Cancellable::NONE)
+        .map_err(|e| format!("Pty::foreign_sync failed: {e}"))?;
+    terminal.set_pty(Some(&vte_pty));
+
+    // 8. Watch for child exit
+    let terminal_weak = terminal.downgrade();
+    glib::child_watch_add_local(glib::Pid(child_pid as i32), move |_pid, status| {
+        if let Some(term) = terminal_weak.upgrade() {
+            term.emit_by_name::<()>("child-exited", &[&status]);
+        }
+    });
+
+    Ok(child_pid)
+}
+
 /// Shared relay handle stored per-session in the notebook.
 ///
 /// Multiple GTK callbacks (input, resize, close) need access to the relay,

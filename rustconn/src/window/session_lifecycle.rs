@@ -973,78 +973,65 @@ impl MainWindow {
             });
         }
 
-        // Set up output logging (full transcript)
+        // Set up output logging (full transcript, issue #247)
         if log_output {
-            // PTY relay path (issue #247): output observer receives every byte
-            // in real-time — no polling, no delay, no truncation.
-            if notebook.has_relay(session_id) {
-                let logger_for_output = logger.clone();
-                notebook.add_output_observer(session_id, move |data| {
-                    if let Ok(mut logger) = logger_for_output.try_borrow_mut()
-                        && let Err(e) = logger.write(data).and_then(|()| logger.flush())
-                    {
-                        tracing::warn!(%e, "Session output log write failed (relay)");
-                    }
-                });
-            } else {
-                // Legacy path: poll VTE buffer via TranscriptCapture.
-                // Used when the session is spawned via the old spawn_command
-                // (VTE spawn_async) path.
-                let capture = TranscriptCapture {
-                    notebook: notebook.clone(),
-                    session_id,
-                    logger: logger.clone(),
-                    last_content: Rc::new(RefCell::new(Zeroizing::new(String::new()))),
-                    per_line_timestamps,
-                };
-                let last_log_time = Rc::new(RefCell::new(std::time::Instant::now()));
-                let first_capture_done = Rc::new(Cell::new(false));
-                let initial_timer: Rc<RefCell<Option<glib::SourceId>>> =
-                    Rc::new(RefCell::new(None));
+            let capture = TranscriptCapture {
+                notebook: notebook.clone(),
+                session_id,
+                logger: logger.clone(),
+                last_content: Rc::new(RefCell::new(Zeroizing::new(String::new()))),
+                per_line_timestamps,
+            };
+            let last_log_time = Rc::new(RefCell::new(std::time::Instant::now()));
+            let first_capture_done = Rc::new(Cell::new(false));
+            let initial_timer: Rc<RefCell<Option<glib::SourceId>>> =
+                Rc::new(RefCell::new(None));
 
-                schedule_initial_transcript_capture(
-                    capture.clone(),
-                    first_capture_done.clone(),
-                    last_log_time.clone(),
-                    initial_timer.clone(),
-                );
+            schedule_initial_transcript_capture(
+                capture.clone(),
+                first_capture_done.clone(),
+                last_log_time.clone(),
+                initial_timer.clone(),
+            );
 
-                let capture_on_change = capture.clone();
-                let first_capture_done_on_change = first_capture_done.clone();
-                let last_log_time_on_change = last_log_time.clone();
-                let initial_timer_on_change = initial_timer.clone();
-                notebook.connect_contents_changed(session_id, move || {
-                    if !first_capture_done_on_change.get() {
-                        schedule_initial_transcript_capture(
-                            capture_on_change.clone(),
-                            first_capture_done_on_change.clone(),
-                            last_log_time_on_change.clone(),
-                            initial_timer_on_change.clone(),
-                        );
-                        return;
-                    }
+            let capture_on_change = capture.clone();
+            let first_capture_done_on_change = first_capture_done.clone();
+            let last_log_time_on_change = last_log_time.clone();
+            let initial_timer_on_change = initial_timer.clone();
+            notebook.connect_contents_changed(session_id, move || {
+                if !first_capture_done_on_change.get() {
+                    schedule_initial_transcript_capture(
+                        capture_on_change.clone(),
+                        first_capture_done_on_change.clone(),
+                        last_log_time_on_change.clone(),
+                        initial_timer_on_change.clone(),
+                    );
+                    return;
+                }
 
-                    let now = std::time::Instant::now();
-                    if now
-                        .duration_since(*last_log_time_on_change.borrow())
-                        .as_secs()
-                        >= 5
-                    {
-                        capture_on_change.run();
-                        *last_log_time_on_change.borrow_mut() = now;
-                    }
-                });
+                let now = std::time::Instant::now();
+                // 1-second debounce: captures output much faster than the
+                // previous 5-second interval while keeping syscall overhead
+                // low (issue #247).
+                if now
+                    .duration_since(*last_log_time_on_change.borrow())
+                    .as_secs()
+                    >= 1
+                {
+                    capture_on_change.run();
+                    *last_log_time_on_change.borrow_mut() = now;
+                }
+            });
 
-                let capture_on_exit = capture;
-                notebook.connect_child_exited(session_id, move |_exit_status| {
-                    if let Some(source_id) = initial_timer.borrow_mut().take() {
-                        source_id.remove();
-                    }
-                    capture_on_exit.run();
-                    first_capture_done.set(false);
-                    *last_log_time.borrow_mut() = std::time::Instant::now();
-                });
-            }
+            let capture_on_exit = capture;
+            notebook.connect_child_exited(session_id, move |_exit_status| {
+                if let Some(source_id) = initial_timer.borrow_mut().take() {
+                    source_id.remove();
+                }
+                capture_on_exit.run();
+                first_capture_done.set(false);
+                *last_log_time.borrow_mut() = std::time::Instant::now();
+            });
         }
 
         // Flush when the session's process exits, so the log is readable while

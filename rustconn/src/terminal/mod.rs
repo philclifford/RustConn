@@ -1814,48 +1814,18 @@ impl TerminalNotebook {
 
         let command_name = argv.first().unwrap_or(&"").to_string();
 
-        // Build the event handler that feeds VTE on the main thread
-        let terminal_weak = terminal.downgrade();
-        let session_id_for_handler = session_id;
-        let vte_child_pids = self.vte_child_pids.clone();
-        let output_observers = self.pty_output_observers.clone();
-
-        let event_handler: pty_relay::PtyEventHandler = Box::new(move |_sid, event| {
-            match event {
-                pty_relay::PtyEvent::Output(ref data) => {
-                    // Feed VTE for display
-                    if let Some(term) = terminal_weak.upgrade() {
-                        term.feed(data);
-                    }
-                    // Notify output observers (SessionLogger, SessionRecorder)
-                    if let Some(observers) = output_observers.borrow().get(&session_id_for_handler)
-                    {
-                        for observer in observers {
-                            observer(data);
-                        }
-                    }
-                }
-                pty_relay::PtyEvent::ChildEof => {
-                    // The relay read loop ended — child has exited.
-                    // VTE's child-exited signal will be emitted by the
-                    // glib::child_watch we set up below.
-                    vte_child_pids.borrow_mut().remove(&session_id_for_handler);
-                }
-            }
-        });
-
-        // Spawn via relay
+        // Spawn child on a new PTY and give VTE ownership.
+        // VTE handles both reading (display) and writing (input) to the PTY.
+        // Logging hooks into VTE signals (connect_contents_changed, connect_commit).
         let argv_refs: Vec<&str> = argv.to_vec();
-        match pty_relay::spawn_with_relay(
+        match pty_relay::spawn_on_vte_pty(
             session_id,
+            terminal,
             &argv_refs,
             &env_refs,
             working_directory,
-            initial_size,
-            event_handler,
         ) {
-            Ok(relay) => {
-                let child_pid = relay.child_pid();
+            Ok(child_pid) => {
                 self.vte_child_pids
                     .borrow_mut()
                     .insert(session_id, child_pid as i32);
@@ -1867,18 +1837,7 @@ impl TerminalNotebook {
                     "Command spawned via PTY relay"
                 );
 
-                // Watch for child exit so VTE gets its child-exited signal
-                let terminal_weak_exit = terminal.downgrade();
-                glib::child_watch_add_local(glib::Pid(child_pid as i32), move |_pid, status| {
-                    if let Some(term) = terminal_weak_exit.upgrade() {
-                        term.emit_by_name::<()>("child-exited", &[&status]);
-                    }
-                });
-
-                // Register the relay (wires resize, enables relay-based input)
-                drop(terminals); // Release the borrow before register_relay borrows terminals again
-                self.register_relay(session_id, relay);
-
+                drop(terminals);
                 true
             }
             Err(e) => {
