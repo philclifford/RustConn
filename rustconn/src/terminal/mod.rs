@@ -14,6 +14,7 @@ pub use detach::{DetachMonitor, DetachPresentation};
 pub mod file_drop;
 pub mod highlight_overlay;
 pub mod playback;
+#[expect(dead_code, reason = "relay thread infrastructure kept for future PTY-level capture (issue #247)")]
 pub mod pty_relay;
 mod recording;
 pub mod tab_container;
@@ -1805,13 +1806,6 @@ impl TerminalNotebook {
         let env_refs: Vec<&str> = env_vec.iter().map(String::as_str).collect();
 
         // Get terminal size for initial PTY dimensions
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "VTE row/col counts are always small positive numbers"
-        )]
-        let initial_size = (terminal.row_count() as u16, terminal.column_count() as u16);
-
         let command_name = argv.first().unwrap_or(&"").to_string();
 
         // Spawn child on a new PTY and give VTE ownership.
