@@ -5,12 +5,16 @@
 //!
 //! - [`set_controlling_terminal`] — `pre_exec` hook for `setsid` + `TIOCSCTTY`
 //! - [`open_pty_pair`] — creates a PTY master/slave pair via `openpty(2)`
-//! - [`pty_set_winsize`] — sends `TIOCSWINSZ` to resize the terminal
-//! - [`pty_read`] — blocking read from a raw fd (for the relay thread)
-//! - [`pty_write`] — write to a raw fd (sends input to the child)
+//! - [`pty_set_winsize`] — sends `TIOCSWINSZ` to size the terminal
+//! - [`pty_wait_readable`] — `poll(2)` with a timeout, so a reader thread can stop
+//! - [`dup_fd`] — close-on-exec duplicate of a descriptor
+//!
+//! Reading and writing the descriptor itself is deliberately absent: the caller
+//! turns the master into a [`std::fs::File`], so no session data passes through
+//! any `unsafe` code.
 
 use std::io;
-use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 
 // ============================================================================
 // Controlling terminal (macOS PTY fix, #175)
@@ -110,21 +114,19 @@ pub fn open_pty_pair() -> io::Result<PtyPair> {
 ///
 /// Returns `io::Error` if the ioctl fails.
 #[cfg(unix)]
-pub fn pty_set_winsize(master_fd: &OwnedFd, rows: u16, cols: u16) -> io::Result<()> {
-    use std::os::fd::AsRawFd;
-
+pub fn pty_set_winsize(master_fd: impl AsFd, rows: u16, cols: u16) -> io::Result<()> {
     let ws = libc::winsize {
         ws_row: rows,
         ws_col: cols,
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
-    // SAFETY: TIOCSWINSZ is a well-defined ioctl; master_fd is a valid open fd
-    // (caller owns it via OwnedFd); ws is a stack-local properly initialized
-    // struct. The ioctl reads from the pointer, does not write.
+    // SAFETY: TIOCSWINSZ is a well-defined ioctl; the descriptor is valid for
+    // the duration of the call because `AsFd` borrows it; `ws` is a stack-local
+    // fully initialised struct that the ioctl only reads.
     let ret = unsafe {
         libc::ioctl(
-            master_fd.as_raw_fd(),
+            master_fd.as_fd().as_raw_fd(),
             libc::TIOCSWINSZ as libc::c_ulong,
             &ws as *const libc::winsize,
         )
@@ -137,78 +139,79 @@ pub fn pty_set_winsize(master_fd: &OwnedFd, rows: u16, cols: u16) -> io::Result<
 }
 
 // ============================================================================
-// Raw fd I/O for the relay thread
+// Readable wait
 // ============================================================================
 
-/// Reads from a raw file descriptor (blocking).
+/// Waits until the descriptor has data to read, or the timeout expires.
 ///
-/// Returns the number of bytes read, or `Ok(0)` on EOF.
-/// Returns `Err` with the OS error on failure (including `EIO` which signals
-/// that the slave side of a PTY was closed — normal child exit).
+/// Returns `true` when a following read will not block. This exists so a
+/// blocking reader thread can notice that it has been asked to stop: without a
+/// timeout it would sit in `read` until the child exits and the PTY reports
+/// `EIO`, which is too late for a session the user just closed. `POLLHUP`
+/// counts as readable, because the read that follows is what turns a hangup
+/// into the end of the stream.
 ///
-/// # Safety contract (internal)
-///
-/// The caller must ensure `raw_fd` is a valid, open file descriptor for the
-/// lifetime of the call. In practice this is guaranteed because the relay
-/// thread holds a reference to the `OwnedFd` stored in `PtyRelay`.
+/// `EINTR` is reported as "not ready" rather than as an error, since the caller
+/// simply loops.
 ///
 /// # Errors
 ///
-/// Returns `io::Error` on read failure. Notable cases:
-/// - `EIO` (errno 5): child closed the slave PTY — treat as EOF
-/// - `EINTR` (errno 4): interrupted by signal — caller should retry
+/// Returns `io::Error` if `poll(2)` fails for any reason other than `EINTR`.
 #[cfg(unix)]
-pub fn pty_read(raw_fd: i32, buf: &mut [u8]) -> io::Result<usize> {
-    // SAFETY: raw_fd is valid (caller contract); buf is a valid mutable slice.
-    let n = unsafe { libc::read(raw_fd, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len()) };
-    if n < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        #[allow(clippy::cast_sign_loss)]
-        Ok(n as usize)
+pub fn pty_wait_readable(fd: impl AsFd, timeout: std::time::Duration) -> io::Result<bool> {
+    let mut pollfd = libc::pollfd {
+        fd: fd.as_fd().as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // `poll` takes whole milliseconds; a sub-millisecond timeout would busy-loop,
+    // so it is rounded up to one.
+    let timeout_ms = i32::try_from(timeout.as_millis().max(1)).unwrap_or(i32::MAX);
+
+    // SAFETY: `pollfd` is a single fully initialised struct and the length
+    // passed matches; the descriptor is borrowed for the duration of the call.
+    let ret = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+    match ret {
+        -1 => {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
+                Ok(false)
+            } else {
+                Err(err)
+            }
+        }
+        0 => Ok(false),
+        _ => Ok(pollfd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0),
     }
 }
 
-/// Writes to a raw file descriptor.
-///
-/// Returns the number of bytes written.
-///
-/// # Errors
-///
-/// Returns `io::Error` on write failure.
-#[cfg(unix)]
-pub fn pty_write(raw_fd: i32, buf: &[u8]) -> io::Result<usize> {
-    // SAFETY: raw_fd is valid (caller contract); buf is a valid slice.
-    let n = unsafe { libc::write(raw_fd, buf.as_ptr().cast::<libc::c_void>(), buf.len()) };
-    if n < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        #[allow(clippy::cast_sign_loss)]
-        Ok(n as usize)
-    }
-}
+// ============================================================================
+// Descriptor duplication
+// ============================================================================
 
-/// Duplicates an `OwnedFd` and returns the new owned duplicate.
+/// Duplicates an `OwnedFd` as a close-on-exec descriptor.
 ///
-/// Both the original and the duplicate refer to the same underlying file
-/// description — reads/writes on one affect the other's file offset (for
-/// regular files). For PTY master fds this means both can write input, but
-/// only one should read output (otherwise bytes are split between them).
+/// Both descriptors refer to the same open file description, so either can be
+/// used to talk to the same PTY. `FD_CLOEXEC` is set on the duplicate because
+/// the callers hand these to `Command::stdin`/`stdout`/`stderr`: the standard
+/// library `dup2`s them onto 0/1/2 in the child and leaves the originals open,
+/// which would give every session's child three stray descriptors pointing at
+/// its own terminal. `dup2` clears the flag on its target, so 0/1/2 survive
+/// `exec` as intended while the spares do not.
 ///
 /// # Errors
 ///
-/// Returns `io::Error` if `dup(2)` fails.
+/// Returns `io::Error` if `fcntl(F_DUPFD_CLOEXEC)` fails.
 #[cfg(unix)]
 pub fn dup_fd(fd: &OwnedFd) -> io::Result<OwnedFd> {
-    use std::os::fd::AsRawFd;
-
-    // SAFETY: fd is a valid open fd (owned). dup returns a new fd that
-    // is independently closeable.
-    let new_raw = unsafe { libc::dup(fd.as_raw_fd()) };
+    // SAFETY: fd is a valid open fd (owned). F_DUPFD_CLOEXEC returns the
+    // lowest-numbered free descriptor above the third argument, which we now
+    // own exclusively.
+    let new_raw = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
     if new_raw == -1 {
         Err(io::Error::last_os_error())
     } else {
-        // SAFETY: new_raw is a freshly dup'd fd that we now own exclusively.
+        // SAFETY: new_raw is a freshly duplicated fd that we now own.
         Ok(unsafe { OwnedFd::from_raw_fd(new_raw) })
     }
 }
@@ -256,30 +259,6 @@ mod tests {
         assert_ne!(pair.master.as_raw_fd(), pair.slave.as_raw_fd());
     }
 
-    /// Verifies that write to master is readable from slave and vice versa.
-    #[test]
-    fn pty_pair_bidirectional_io() {
-        let pair = open_pty_pair().expect("openpty");
-
-        // Write to master → read from slave
-        let written = pty_write(pair.master.as_raw_fd(), b"hello").expect("write to master");
-        assert_eq!(written, 5);
-
-        // Read from slave — PTY may echo or transform, but bytes should arrive.
-        // Use a short non-blocking check: set O_NONBLOCK on slave temporarily.
-        unsafe {
-            let flags = libc::fcntl(pair.slave.as_raw_fd(), libc::F_GETFL);
-            libc::fcntl(
-                pair.slave.as_raw_fd(),
-                libc::F_SETFL,
-                flags | libc::O_NONBLOCK,
-            );
-        }
-        let mut buf = [0u8; 64];
-        // PTY line discipline may buffer until newline; just verify no error
-        let _ = pty_read(pair.slave.as_raw_fd(), &mut buf);
-    }
-
     /// Verifies that `pty_set_winsize` succeeds on a valid PTY master.
     #[test]
     fn set_winsize_succeeds() {
@@ -287,11 +266,54 @@ mod tests {
         pty_set_winsize(&pair.master, 24, 80).expect("TIOCSWINSZ should succeed");
     }
 
-    /// Verifies that `dup_fd` returns a distinct fd.
+    /// An idle PTY reports "not readable" and returns after the timeout.
     #[test]
-    fn dup_fd_returns_distinct_fd() {
+    fn wait_readable_times_out_on_a_quiet_pty() {
+        let pair = open_pty_pair().expect("openpty");
+        let started = std::time::Instant::now();
+        let ready = pty_wait_readable(&pair.master, std::time::Duration::from_millis(50))
+            .expect("poll should succeed");
+        assert!(!ready, "nothing was written, so nothing is readable");
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(40),
+            "the call must actually wait, otherwise a reader thread busy-loops"
+        );
+    }
+
+    /// Data written to the slave makes the master readable before the timeout.
+    #[test]
+    fn wait_readable_reports_pending_output() {
+        use std::io::Write;
+
+        let pair = open_pty_pair().expect("openpty");
+        let mut slave = std::fs::File::from(pair.slave);
+        slave.write_all(b"output\n").expect("write to slave");
+        slave.flush().expect("flush");
+
+        assert!(
+            pty_wait_readable(&pair.master, std::time::Duration::from_secs(2))
+                .expect("poll should succeed"),
+            "the master must become readable once the child writes"
+        );
+    }
+
+    /// Verifies that `dup_fd` returns a distinct fd and marks it close-on-exec.
+    ///
+    /// The flag is the point of the function: without it every session's child
+    /// would inherit three spare descriptors pointing at its own PTY.
+    #[test]
+    fn dup_fd_returns_distinct_cloexec_fd() {
         let pair = open_pty_pair().expect("openpty");
         let duped = dup_fd(&pair.master).expect("dup");
         assert_ne!(pair.master.as_raw_fd(), duped.as_raw_fd());
+
+        // SAFETY: duped is a valid open fd; F_GETFD only reads flags.
+        let flags = unsafe { libc::fcntl(duped.as_raw_fd(), libc::F_GETFD) };
+        assert!(flags >= 0, "F_GETFD should succeed");
+        assert_ne!(
+            flags & libc::FD_CLOEXEC,
+            0,
+            "the duplicate must be close-on-exec"
+        );
     }
 }

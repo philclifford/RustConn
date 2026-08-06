@@ -378,24 +378,20 @@ impl SplitViewBridge {
         }
     }
 
-    /// Creates with shared state
+    /// Creates a bridge that reads the notebook's live terminal map.
+    ///
+    /// The map is what distinguishes a terminal session from an embedded
+    /// RDP/VNC viewer, which decides whether keystroke broadcast is offered at
+    /// all ([`Self::terminal_sessions`], [`Self::has_embedded_panel`]). A bridge
+    /// left with its own empty map answers "no terminals, embedded panel
+    /// present" for every layout, so the broadcast toggle stays hidden and
+    /// `wire_broadcast_for_session` declines every session.
     #[must_use]
-    pub fn with_shared_state(sessions: SharedSessions, terminals: SharedTerminals) -> Self {
-        let mut bridge = Self::new();
-        bridge.sessions = sessions;
-        bridge.terminals = terminals;
-        bridge
-    }
-
-    /// Creates with shared state and color pool
-    #[must_use]
-    pub fn with_shared_state_and_color_pool(
-        sessions: SharedSessions,
+    pub fn with_shared_terminals_and_color_pool(
         terminals: SharedTerminals,
         color_pool: SharedColorPool,
     ) -> Self {
         let mut bridge = Self::with_color_pool(color_pool);
-        bridge.sessions = sessions;
         bridge.terminals = terminals;
         bridge
     }

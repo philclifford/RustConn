@@ -1,486 +1,463 @@
-//! PTY relay: owns the master fd, relays output to VTE and session loggers.
+//! Moves bytes between a session's PTY and the rest of the application.
 //!
-//! Instead of letting VTE read from the PTY master fd directly (which makes
-//! it impossible to intercept the data stream), we:
+//! The relay owns the master descriptor produced by [`super::pty_spawn`] and
+//! runs two threads around it:
 //!
-//! 1. Create the PTY pair ourselves (`rustconn_pty_sys::open_pty_pair`)
-//! 2. Spawn the child process on the slave side
-//! 3. Run a background thread that reads from the master fd
-//! 4. Deliver output chunks to the GTK main thread via a GLib channel
-//! 5. On the main thread: `terminal.feed(chunk)` for display, plus logging
+//! - a **reader** that blocks on the descriptor and publishes every chunk the
+//!   child wrote on a channel, and
+//! - a **writer** that drains a queue of input onto the descriptor.
 //!
-//! This solves three problems at once (issue #247):
-//! - **No delay**: output is written to the log as soon as it arrives
-//! - **Correct ordering**: input and output go through the same event queue
-//! - **No truncation**: we see every byte from the PTY, not a VTE buffer snapshot
+//! Both exist to keep the GTK main thread out of blocking I/O. The reader must
+//! block, because output has to reach the terminal the moment it is produced;
+//! the writer must block, because a PTY write stalls when the child is not
+//! reading (a paste into a stopped process is enough) and doing that on the
+//! main thread would freeze the window.
+//!
+//! Output is delivered as [`Zeroizing`] chunks, and input is queued the same
+//! way: everything a session types passes through here, including the password
+//! an expect rule answers a prompt with.
+//!
+//! Nothing in this module touches GTK, so it is tested against a real PTY pair
+//! without a display. The GTK side of the wiring — feeding the terminal,
+//! forwarding `commit`, and the window-size poll — lives in
+//! [`super::TerminalNotebook`].
 
-use std::cell::RefCell;
-use std::io;
-use std::os::fd::{AsRawFd, OwnedFd};
-use std::rc::Rc;
+use std::io::{Read, Write};
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
-use gtk4::glib;
-use uuid::Uuid;
+use zeroize::Zeroizing;
 
-/// Size of the read buffer for the relay thread.
+/// Read buffer size, matching VTE's own chunk size.
 ///
-/// 8 KiB matches VTE's internal buffer and keeps syscall overhead low while
-/// ensuring interactive latency stays sub-millisecond.
-const READ_BUF_SIZE: usize = 8192;
+/// Large enough that a burst of output costs few syscalls, small enough that the
+/// first chunk of a slow line still arrives promptly.
+const READ_CHUNK: usize = 8192;
 
-/// Events delivered from the relay thread to the GTK main thread.
-#[derive(Debug)]
-pub enum PtyEvent {
-    /// A chunk of output data read from the child process.
-    Output(Vec<u8>),
-    /// The child process has exited (read returned 0 or EIO).
-    ChildEof,
+/// How long the reader blocks before checking whether it should stop.
+///
+/// Output latency is unaffected — `poll` returns as soon as a byte arrives — so
+/// this only bounds how long a closing session waits for its thread to finish.
+const STOP_CHECK_INTERVAL: Duration = Duration::from_millis(200);
+
+/// How long a session close waits for the reader thread before giving up on it.
+///
+/// The thread is detached rather than blocked on: a descriptor lingering for a
+/// moment is better than a window that stops repainting.
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
+
+/// Maximum output chunks buffered between the reader and the main thread.
+///
+/// The bound is the backpressure: once the main thread falls behind, the reader
+/// blocks, the PTY buffer fills and the kernel stops the child — which is what
+/// keeps `yes` from growing the queue until the process is killed. At
+/// [`READ_CHUNK`] per slot this caps the queue at half a megabyte.
+const OUTPUT_QUEUE_CHUNKS: usize = 64;
+
+/// A chunk of bytes the child wrote.
+pub type OutputChunk = Zeroizing<Vec<u8>>;
+
+/// Recovers the bytes behind a `commit` signal.
+///
+/// VTE emits the signal as a NUL-terminated C string plus the true byte count,
+/// and the binding turns the pointer into a `&str` that stops at the first NUL.
+/// A key that sends NUL — `Ctrl+Space`, which Emacs and readline use to set the
+/// mark — therefore arrives as an empty string with a `size` of 1, and
+/// forwarding the string alone would drop the keystroke.
+///
+/// Bytes missing from the string are restored as NUL. That is exact for
+/// keyboard input, where VTE emits one `commit` per key press, and approximate
+/// only for pasted text containing embedded NULs, where the position of the
+/// NULs within the chunk is unrecoverable — and where the bytes were never
+/// going to survive a `char*` signal in the first place.
+#[must_use]
+pub fn commit_bytes(text: &str, size: u32) -> Zeroizing<Vec<u8>> {
+    let declared = size as usize;
+    let mut bytes = Zeroizing::new(text.as_bytes().to_vec());
+    if declared > bytes.len() {
+        bytes.resize(declared, 0);
+    }
+    bytes
 }
 
-/// Callback type invoked on the GTK main thread for each PTY event.
-///
-/// The closure receives the session id and the event. It runs inside the
-/// GLib main loop so it is safe to touch GTK widgets.
-pub type PtyEventHandler = Box<dyn Fn(Uuid, PtyEvent)>;
+/// Receiving end of a session's output stream.
+pub type OutputStream = async_channel::Receiver<OutputChunk>;
 
-/// A PTY relay that owns the master fd and drives a read thread.
+/// Owns a session's PTY master descriptor and the threads around it.
 ///
-/// Created per-session; lives as long as the terminal tab. On drop, signals
-/// the relay thread to stop and joins it.
+/// Dropping the relay stops both threads: the writer ends when its queue is
+/// closed, and the reader ends at the next [`STOP_CHECK_INTERVAL`] boundary.
 pub struct PtyRelay {
-    /// Session this relay belongs to.
-    session_id: Uuid,
-    /// Master PTY fd (write-side duplicate) — we write input here.
-    write_fd: OwnedFd,
-    /// Flag signalling the read thread to exit.
-    stop_flag: Arc<AtomicBool>,
-    /// Join handle for the relay thread.
-    thread_handle: Option<JoinHandle<()>>,
-    /// Child PID (needed for kill on close, glib child watch).
-    child_pid: u32,
+    /// Queue of pending input; closing it stops the writer thread.
+    input: Option<async_channel::Sender<Zeroizing<Vec<u8>>>>,
+    /// Descriptor kept for `TIOCSWINSZ`, which needs no thread.
+    winsize_fd: OwnedFd,
+    /// Set to ask the reader thread to stop.
+    stop: Arc<AtomicBool>,
+    reader: Option<JoinHandle<()>>,
+    writer: Option<JoinHandle<()>>,
+    /// Last size pushed to the child, so an unchanged poll costs nothing.
+    last_size: std::cell::Cell<(u16, u16)>,
 }
 
 impl PtyRelay {
-    /// Creates a new PTY relay and starts the read thread.
+    /// Starts relaying on `master`, returning the relay and its output stream.
     ///
-    /// The `event_handler` is invoked on the GLib main thread for every output
-    /// chunk and on EOF. It must not block.
-    ///
-    /// # Arguments
-    ///
-    /// * `session_id` — identifies the session this relay belongs to
-    /// * `master_fd` — the master side of the PTY pair (caller transfers ownership)
-    /// * `child_pid` — PID of the child process on the slave side
-    /// * `event_handler` — callback for delivering events to the main thread
-    pub fn new(
-        session_id: Uuid,
-        master_fd: OwnedFd,
-        child_pid: u32,
-        event_handler: PtyEventHandler,
-    ) -> Self {
-        let stop_flag = Arc::new(AtomicBool::new(false));
-
-        // Duplicate the master fd: original goes to the read thread,
-        // duplicate stays in Self for write_input() and resize().
-        let write_fd = rustconn_pty_sys::dup_fd(&master_fd)
-            .expect("dup master fd for write side should not fail");
-
-        // The read thread gets the raw fd value. The OwnedFd is moved into
-        // the thread closure so it stays alive for the thread's lifetime.
-        let stop = stop_flag.clone();
-        let sid = session_id;
-
-        // Channel for delivering events to the main thread.
-        // async_channel is used because glib::MainContext::channel was removed
-        // in newer gtk4-rs. The receiver is polled on the GLib main context
-        // via spawn_future_local.
-        let (tx, rx) = async_channel::unbounded::<(Uuid, PtyEvent)>();
-
-        let thread_handle = std::thread::Builder::new()
-            .name(format!("pty-relay-{}", &session_id.to_string()[..8]))
-            .spawn(move || {
-                Self::read_loop(master_fd, sid, &stop, tx);
-                // master_fd is dropped here, closing the read side
-            })
-            .expect("spawning pty-relay thread should not fail");
-
-        // Receive events on the GLib main context (main thread).
-        let handler = Rc::new(event_handler);
-        glib::spawn_future_local(async move {
-            while let Ok((sid, event)) = rx.recv().await {
-                handler(sid, event);
-            }
-        });
-
-        Self {
-            session_id,
-            write_fd,
-            stop_flag,
-            thread_handle: Some(thread_handle),
-            child_pid,
-        }
-    }
-
-    /// Sends input data to the child process (writes to master fd).
-    ///
-    /// This is the equivalent of VTE's `feed_child()` — it sends keystrokes
-    /// and pasted text to the child's stdin via the PTY master.
+    /// The caller drives the stream on the main thread; when the relay is
+    /// dropped the stream ends, which is how the consumer learns to stop.
     ///
     /// # Errors
     ///
-    /// Returns `io::Error` if the write fails (e.g. child has exited).
-    pub fn write_input(&self, data: &[u8]) -> io::Result<usize> {
-        rustconn_pty_sys::pty_write(self.write_fd.as_raw_fd(), data)
+    /// Returns `io::Error` if the descriptor cannot be duplicated for the
+    /// writer thread, or if a thread cannot be started — both of which mean the
+    /// process is out of descriptors or out of threads, so the session simply
+    /// cannot run.
+    pub fn start(
+        master: OwnedFd,
+        initial_size: (u16, u16),
+    ) -> std::io::Result<(Self, OutputStream)> {
+        // Three views of the same PTY: one per thread, plus one for the ioctl.
+        // They are separate descriptors so that closing one thread's copy
+        // cannot pull the descriptor out from under another.
+        let write_fd = rustconn_pty_sys::dup_fd(&master)?;
+        let winsize_fd = rustconn_pty_sys::dup_fd(&master)?;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let (output_tx, output_rx) = async_channel::bounded(OUTPUT_QUEUE_CHUNKS);
+        let (input_tx, input_rx) = async_channel::unbounded::<Zeroizing<Vec<u8>>>();
+
+        let reader_stop = Arc::clone(&stop);
+        let reader = std::thread::Builder::new()
+            .name("pty-read".to_owned())
+            .spawn(move || read_loop(master, &reader_stop, &output_tx))?;
+
+        let writer = std::thread::Builder::new()
+            .name("pty-write".to_owned())
+            .spawn(move || write_loop(write_fd, &input_rx))?;
+
+        Ok((
+            Self {
+                input: Some(input_tx),
+                winsize_fd,
+                stop,
+                reader: Some(reader),
+                writer: Some(writer),
+                last_size: std::cell::Cell::new(initial_size),
+            },
+            output_rx,
+        ))
     }
 
-    /// Resizes the child's terminal (sends TIOCSWINSZ to the master fd).
+    /// Queues input for the child.
     ///
-    /// Called when the VTE widget changes size (`char-size-changed` signal).
-    pub fn resize(&self, rows: u16, cols: u16) {
-        if let Err(e) = rustconn_pty_sys::pty_set_winsize(&self.write_fd, rows, cols) {
-            tracing::warn!(
-                session_id = %self.session_id,
-                %e,
-                "TIOCSWINSZ failed"
-            );
-        }
+    /// Returns `false` once the writer thread is gone, which happens when the
+    /// child has exited; the caller treats that as "this session is over"
+    /// rather than as an error worth showing.
+    pub fn write_input(&self, data: &[u8]) -> bool {
+        let Some(ref input) = self.input else {
+            return false;
+        };
+        input.send_blocking(Zeroizing::new(data.to_vec())).is_ok()
     }
 
-    /// Returns the child PID.
-    #[must_use]
-    pub const fn child_pid(&self) -> u32 {
-        self.child_pid
-    }
-
-    /// Returns the session ID.
-    #[must_use]
-    pub const fn session_id(&self) -> Uuid {
-        self.session_id
-    }
-
-    /// The read loop running on the background thread.
+    /// Tells the child the window size, if it differs from the last one sent.
     ///
-    /// Reads from the PTY master fd in a loop and sends chunks through the
-    /// GLib channel. Exits on EOF, EIO (normal for PTY when child exits), or
-    /// when the stop flag is set.
-    fn read_loop(
-        master_fd: OwnedFd,
-        session_id: Uuid,
-        stop: &AtomicBool,
-        tx: async_channel::Sender<(Uuid, PtyEvent)>,
-    ) {
-        let raw_fd = master_fd.as_raw_fd();
-        let mut buf = [0u8; READ_BUF_SIZE];
-
-        loop {
-            if stop.load(Ordering::Relaxed) {
-                break;
-            }
-
-            match rustconn_pty_sys::pty_read(raw_fd, &mut buf) {
-                Ok(0) => {
-                    // EOF — child closed the slave side
-                    let _ = tx.send_blocking((session_id, PtyEvent::ChildEof));
-                    break;
-                }
-                Ok(n) => {
-                    let chunk = buf[..n].to_vec();
-                    if tx
-                        .send_blocking((session_id, PtyEvent::Output(chunk)))
-                        .is_err()
-                    {
-                        // Receiver dropped (tab closed) — exit quietly
-                        break;
-                    }
-                }
-                Err(e) => {
-                    #[expect(
-                        clippy::needless_continue,
-                        reason = "explicit continue aids readability of match arms in a read loop"
-                    )]
-                    match e.raw_os_error() {
-                        Some(libc::EIO) => {
-                            // Normal on Linux: master read returns EIO when child exits
-                            let _ = tx.send_blocking((session_id, PtyEvent::ChildEof));
-                            break;
-                        }
-                        Some(libc::EINTR) => {
-                            // Interrupted by signal — retry
-                            continue;
-                        }
-                        Some(libc::EAGAIN) => {
-                            // Non-blocking fd (shouldn't happen, but handle gracefully)
-                            std::thread::sleep(std::time::Duration::from_millis(1));
-                            continue;
-                        }
-                        _ => {
-                            tracing::error!(
-                                %session_id,
-                                %e,
-                                "PTY relay read error"
-                            );
-                            let _ = tx.send_blocking((session_id, PtyEvent::ChildEof));
-                            break;
-                        }
-                    }
-                }
-            }
+    /// Returns `true` when a change was pushed. Sending an unchanged size would
+    /// deliver a pointless `SIGWINCH`, which full-screen programs answer with a
+    /// full redraw.
+    pub fn sync_size(&self, rows: u16, cols: u16) -> bool {
+        if rows == 0 || cols == 0 || self.last_size.get() == (rows, cols) {
+            return false;
         }
-        // master_fd dropped here → closes the read side of the PTY
-    }
-
-    /// Signals the relay thread to stop and waits for it to finish.
-    fn shutdown(&mut self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.thread_handle.take() {
-            // The thread will exit when it gets EIO/EOF from the closed master fd.
-            // Give it a moment, then proceed (don't block the UI indefinitely).
-            let _ = handle.join();
+        self.last_size.set((rows, cols));
+        if let Err(e) = rustconn_pty_sys::pty_set_winsize(&self.winsize_fd, rows, cols) {
+            tracing::warn!(%e, rows, cols, "TIOCSWINSZ failed");
         }
+        true
     }
 }
 
 impl Drop for PtyRelay {
     fn drop(&mut self) {
-        self.shutdown();
-    }
-}
+        // Closing the input queue ends the writer thread; the flag ends the
+        // reader at its next poll timeout.
+        self.input = None;
+        self.stop.store(true, Ordering::Relaxed);
 
-/// Spawns a child process on a new PTY and returns the relay.
-///
-/// This is the unified PTY spawn that replaces both VTE's `spawn_async` (Linux)
-/// and the macOS-specific `spawn_native_pty`. It:
-///
-/// 1. Creates a PTY pair via `openpty()`
-/// 2. Spawns the child with the slave as stdin/stdout/stderr
-/// 3. Sets the slave as the child's controlling terminal
-/// 4. Starts a relay thread on the master fd
-///
-/// # Arguments
-///
-/// * `session_id` — session identifier
-/// * `argv` — command and arguments
-/// * `envv` — environment variables as `KEY=VALUE` strings
-/// * `working_directory` — optional cwd for the child
-/// * `initial_size` — initial terminal size (rows, cols)
-/// * `event_handler` — callback for output events on the main thread
-///
-/// # Errors
-///
-/// Returns a string describing the failure (PTY allocation, spawn, etc.).
-pub fn spawn_with_relay(
-    session_id: Uuid,
-    argv: &[&str],
-    envv: &[&str],
-    working_directory: Option<&str>,
-    initial_size: (u16, u16),
-    event_handler: PtyEventHandler,
-) -> Result<PtyRelay, String> {
-    use std::process::{Command, Stdio};
-
-    if argv.is_empty() {
-        return Err("argv is empty".to_string());
-    }
-
-    // 1. Create PTY pair
-    let pair = rustconn_pty_sys::open_pty_pair().map_err(|e| format!("openpty failed: {e}"))?;
-
-    // Set initial terminal size
-    let (rows, cols) = initial_size;
-    if let Err(e) = rustconn_pty_sys::pty_set_winsize(&pair.master, rows, cols) {
-        tracing::warn!(%e, "Initial TIOCSWINSZ failed (non-fatal)");
-    }
-
-    // 2. Build child process
-    let mut cmd = Command::new(argv[0]);
-    if argv.len() > 1 {
-        cmd.args(&argv[1..]);
-    }
-
-    if let Some(dir) = working_directory {
-        cmd.current_dir(dir);
-    }
-
-    // Set environment
-    cmd.env_clear();
-    if envv.is_empty() {
-        // No explicit env → inherit parent
-        for (key, value) in std::env::vars() {
-            cmd.env(&key, &value);
-        }
-    } else {
-        for env_str in envv {
-            if let Some(eq_pos) = env_str.find('=') {
-                let key = &env_str[..eq_pos];
-                let value = &env_str[eq_pos + 1..];
-                cmd.env(key, value);
+        for handle in [self.writer.take(), self.reader.take()]
+            .into_iter()
+            .flatten()
+        {
+            // Threads that are already finished join immediately; one still
+            // inside a poll is left to notice the flag on its own rather than
+            // blocking the main loop for it.
+            let deadline = std::time::Instant::now() + SHUTDOWN_GRACE;
+            while !handle.is_finished() && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if handle.is_finished() {
+                let _ = handle.join();
+            } else {
+                tracing::debug!("PTY thread still running at shutdown; detaching");
             }
         }
     }
-
-    // Ensure TERM is set
-    if !envv.iter().any(|e| e.starts_with("TERM=")) {
-        cmd.env("TERM", "xterm-256color");
-    }
-
-    // 3. Connect slave fd as stdin/stdout/stderr
-    let stdin_fd = rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stdin: {e}"))?;
-    let stdout_fd =
-        rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stdout: {e}"))?;
-    let stderr_fd =
-        rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stderr: {e}"))?;
-
-    cmd.stdin(Stdio::from(stdin_fd));
-    cmd.stdout(Stdio::from(stdout_fd));
-    cmd.stderr(Stdio::from(stderr_fd));
-
-    // 4. Set controlling terminal (setsid + TIOCSCTTY)
-    rustconn_pty_sys::set_controlling_terminal(&mut cmd);
-
-    // 5. Spawn
-    let child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
-    let child_pid = child.id();
-
-    // Forget the Child handle — GLib's child_watch_add_local will reap via waitpid.
-    std::mem::forget(child);
-
-    tracing::info!(
-        command = %argv[0],
-        %session_id,
-        pid = child_pid,
-        "PTY relay: child spawned"
-    );
-
-    // 6. Close slave fd in parent (child has its own copies via dup'd fds)
-    drop(pair.slave);
-
-    // 7. Start the relay
-    let relay = PtyRelay::new(session_id, pair.master, child_pid, event_handler);
-
-    Ok(relay)
 }
 
-/// Spawns a child on a new PTY and gives VTE ownership for I/O.
-///
-/// Unlike [`spawn_with_relay`] (which intercepts output via a relay thread),
-/// this function lets VTE handle both reading and writing to the PTY —
-/// exactly like VTE's built-in `spawn_async`, but with our own PTY creation
-/// and `set_controlling_terminal` for cross-platform consistency.
-///
-/// VTE's `feed_child` and `commit` signal work normally. Output observers
-/// should be wired via `connect_contents_changed` on the VTE terminal.
-///
-/// Returns the child PID on success, or an error string on failure.
-///
-/// # Errors
-///
-/// Returns a string describing the failure.
-pub fn spawn_on_vte_pty(
-    session_id: Uuid,
-    terminal: &vte4::Terminal,
-    argv: &[&str],
-    envv: &[&str],
-    working_directory: Option<&str>,
-) -> Result<u32, String> {
-    use gtk4::gio;
-    use std::process::{Command, Stdio};
-    use vte4::prelude::*;
+/// Publishes everything the child writes until it exits or the relay stops.
+fn read_loop(master: OwnedFd, stop: &AtomicBool, output: &async_channel::Sender<OutputChunk>) {
+    let mut file = std::fs::File::from(master);
+    let mut buf = Zeroizing::new(vec![0_u8; READ_CHUNK]);
 
-    if argv.is_empty() {
-        return Err("argv is empty".to_string());
-    }
-
-    // 1. Create PTY pair
-    let pair = rustconn_pty_sys::open_pty_pair().map_err(|e| format!("openpty failed: {e}"))?;
-
-    // Set initial terminal size from VTE widget
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "VTE row/col counts are always small positive numbers"
-    )]
-    let (rows, cols) = (terminal.row_count() as u16, terminal.column_count() as u16);
-    if let Err(e) = rustconn_pty_sys::pty_set_winsize(&pair.master, rows, cols) {
-        tracing::warn!(%e, "Initial TIOCSWINSZ failed (non-fatal)");
-    }
-
-    // 2. Build child process
-    let mut cmd = Command::new(argv[0]);
-    if argv.len() > 1 {
-        cmd.args(&argv[1..]);
-    }
-
-    if let Some(dir) = working_directory {
-        cmd.current_dir(dir);
-    }
-
-    // Set environment
-    cmd.env_clear();
-    if envv.is_empty() {
-        for (key, value) in std::env::vars() {
-            cmd.env(&key, &value);
+    while !stop.load(Ordering::Relaxed) {
+        match rustconn_pty_sys::pty_wait_readable(&file, STOP_CHECK_INTERVAL) {
+            Ok(false) => continue,
+            Ok(true) => {}
+            Err(e) => {
+                tracing::warn!(%e, "PTY poll failed; ending session output");
+                break;
+            }
         }
-    } else {
-        for env_str in envv {
-            if let Some(eq_pos) = env_str.find('=') {
-                cmd.env(&env_str[..eq_pos], &env_str[eq_pos + 1..]);
+
+        match file.read(&mut buf) {
+            // End of stream: the child closed the slave.
+            Ok(0) => break,
+            Ok(n) => {
+                if output
+                    .send_blocking(Zeroizing::new(buf[..n].to_vec()))
+                    .is_err()
+                {
+                    // The consumer is gone, so the session is being torn down.
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => {
+                // A PTY master reports EIO rather than end-of-file once the
+                // last descriptor on the slave side is closed, which is the
+                // ordinary way a session ends.
+                if e.raw_os_error() != Some(nix::errno::Errno::EIO as i32) {
+                    tracing::warn!(%e, "PTY read failed; ending session output");
+                }
+                break;
             }
         }
     }
-    if !envv.iter().any(|e| e.starts_with("TERM=")) {
-        cmd.env("TERM", "xterm-256color");
-    }
-
-    // 3. Connect slave fd as stdin/stdout/stderr
-    let stdin_fd = rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stdin: {e}"))?;
-    let stdout_fd =
-        rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stdout: {e}"))?;
-    let stderr_fd =
-        rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stderr: {e}"))?;
-
-    cmd.stdin(Stdio::from(stdin_fd));
-    cmd.stdout(Stdio::from(stdout_fd));
-    cmd.stderr(Stdio::from(stderr_fd));
-
-    // 4. Set controlling terminal
-    rustconn_pty_sys::set_controlling_terminal(&mut cmd);
-
-    // 5. Spawn
-    let child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
-    let child_pid = child.id();
-    std::mem::forget(child);
-
-    tracing::info!(
-        command = %argv[0],
-        %session_id,
-        pid = child_pid,
-        "spawn_on_vte_pty: child spawned"
-    );
-
-    // 6. Close slave fd in parent
-    drop(pair.slave);
-
-    // 7. Give VTE the master fd — VTE takes over reading and writing
-    let vte_pty = vte4::Pty::foreign_sync(pair.master, gio::Cancellable::NONE)
-        .map_err(|e| format!("Pty::foreign_sync failed: {e}"))?;
-    terminal.set_pty(Some(&vte_pty));
-
-    // 8. Watch for child exit
-    let terminal_weak = terminal.downgrade();
-    glib::child_watch_add_local(glib::Pid(child_pid as i32), move |_pid, status| {
-        if let Some(term) = terminal_weak.upgrade() {
-            term.emit_by_name::<()>("child-exited", &[&status]);
-        }
-    });
-
-    Ok(child_pid)
 }
 
-/// Shared relay handle stored per-session in the notebook.
-///
-/// Multiple GTK callbacks (input, resize, close) need access to the relay,
-/// so it lives behind `Rc<RefCell<>>` like other per-session state.
-pub type SharedPtyRelay = Rc<RefCell<Option<PtyRelay>>>;
+/// Writes queued input to the child in order, until the queue is closed.
+fn write_loop(write_fd: OwnedFd, input: &async_channel::Receiver<Zeroizing<Vec<u8>>>) {
+    let mut file = std::fs::File::from(write_fd);
+    while let Ok(chunk) = input.recv_blocking() {
+        if let Err(e) = file.write_all(&chunk) {
+            // A closed PTY means the child is gone; anything else is worth a
+            // line in the log, but either way there is nowhere left to write.
+            if e.kind() != std::io::ErrorKind::BrokenPipe {
+                tracing::warn!(%e, "PTY write failed; dropping session input");
+            }
+            break;
+        }
+        if let Err(e) = file.flush() {
+            tracing::warn!(%e, "PTY flush failed");
+            break;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+
+    use super::*;
+
+    /// Collects output until `wanted` shows up, or the deadline passes.
+    fn collect_until(stream: &OutputStream, wanted: &str) -> String {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut seen = String::new();
+        while std::time::Instant::now() < deadline {
+            match stream.recv_blocking() {
+                Ok(chunk) => {
+                    seen.push_str(&String::from_utf8_lossy(&chunk));
+                    if seen.contains(wanted) {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        seen
+    }
+
+    fn reap(pid: u32) {
+        let pid = nix::unistd::Pid::from_raw(pid as i32);
+        let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
+        let _ = nix::sys::wait::waitpid(pid, None);
+    }
+
+    #[test]
+    fn commit_bytes_passes_ordinary_input_through() {
+        assert_eq!(commit_bytes("ls -la\r", 7).as_slice(), b"ls -la\r");
+    }
+
+    #[test]
+    fn commit_bytes_restores_a_lone_nul() {
+        // Ctrl+Space: the C string is empty, the declared size is 1.
+        assert_eq!(commit_bytes("", 1).as_slice(), b"\0");
+    }
+
+    #[test]
+    fn commit_bytes_ignores_a_short_declared_size() {
+        // A size smaller than the string would mean VTE contradicted itself;
+        // truncating the user's keystrokes on that basis would be worse than
+        // sending one byte too many.
+        assert_eq!(commit_bytes("abc", 1).as_slice(), b"abc");
+    }
+
+    #[test]
+    fn output_written_by_the_child_reaches_the_stream() {
+        let child =
+            super::super::pty_spawn::spawn_on_pty(&["echo", "relayed-output"], &[], None, (24, 80))
+                .expect("echo should spawn");
+        let pid = child.pid;
+        let (relay, stream) = PtyRelay::start(child.master, (24, 80)).expect("relay starts");
+
+        let seen = collect_until(&stream, "relayed-output");
+        drop(relay);
+        reap(pid);
+        assert!(seen.contains("relayed-output"), "got {seen:?}");
+    }
+
+    #[test]
+    fn input_queued_on_the_relay_reaches_the_child() {
+        // `cat` echoes whatever it is given, so a round trip proves both
+        // directions at once.
+        let child = super::super::pty_spawn::spawn_on_pty(&["cat"], &[], None, (24, 80))
+            .expect("cat should spawn");
+        let pid = child.pid;
+        let (relay, stream) = PtyRelay::start(child.master, (24, 80)).expect("relay starts");
+
+        assert!(relay.write_input(b"round-trip\n"), "input must be accepted");
+        let seen = collect_until(&stream, "round-trip");
+
+        drop(relay);
+        reap(pid);
+        assert!(seen.contains("round-trip"), "got {seen:?}");
+    }
+
+    #[test]
+    fn the_stream_ends_when_the_child_exits() {
+        let child = super::super::pty_spawn::spawn_on_pty(&["true"], &[], None, (24, 80))
+            .expect("true should spawn");
+        let pid = child.pid;
+        let (relay, stream) = PtyRelay::start(child.master, (24, 80)).expect("relay starts");
+
+        // Draining to the end proves the reader recognises the PTY's EIO as the
+        // end of the session rather than logging it as a failure forever.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if stream.recv_blocking().is_err() {
+                break;
+            }
+        }
+        assert!(
+            stream.recv_blocking().is_err(),
+            "the stream must close once the child is gone"
+        );
+        drop(relay);
+        reap(pid);
+    }
+
+    #[test]
+    fn a_size_change_is_pushed_once_and_seen_by_the_child() {
+        // `sh` reporting its own geometry after a SIGWINCH proves the ioctl
+        // reached the child, not merely that the call succeeded.
+        let child = super::super::pty_spawn::spawn_on_pty(
+            &[
+                "sh",
+                "-c",
+                "trap 'stty size' WINCH; sleep 5 & wait; stty size",
+            ],
+            &[],
+            None,
+            (24, 80),
+        )
+        .expect("sh should spawn");
+        let pid = child.pid;
+        let (relay, stream) = PtyRelay::start(child.master, (24, 80)).expect("relay starts");
+
+        // Give the shell time to install its trap before resizing.
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(relay.sync_size(44, 133), "a new size must be pushed");
+        assert!(
+            !relay.sync_size(44, 133),
+            "the same size must not be pushed twice: a needless SIGWINCH makes \
+             full-screen programs redraw"
+        );
+
+        let seen = collect_until(&stream, "44 133");
+        drop(relay);
+        reap(pid);
+        assert!(seen.contains("44 133"), "got {seen:?}");
+    }
+
+    #[test]
+    fn a_zero_size_is_ignored_and_does_not_disturb_the_stored_one() {
+        // A widget that has not been allocated yet reports zero rows; pushing
+        // that would tell the child its terminal has no size at all.
+        let pair = rustconn_pty_sys::open_pty_pair().expect("openpty");
+        let (relay, _stream) = PtyRelay::start(pair.master, (24, 80)).expect("relay starts");
+        assert!(!relay.sync_size(0, 80), "zero rows must be refused");
+        assert!(!relay.sync_size(24, 0), "zero columns must be refused");
+        assert!(
+            !relay.sync_size(24, 80),
+            "the refused calls must not have overwritten the known size"
+        );
+        assert!(relay.sync_size(30, 90), "a real change still gets through");
+    }
+
+    #[test]
+    fn dropping_the_relay_closes_the_stream() {
+        let pair = rustconn_pty_sys::open_pty_pair().expect("openpty");
+        // Keep the slave open so the PTY does not end on its own: this test is
+        // about the relay stopping, not about the child exiting.
+        let mut slave = std::fs::File::from(pair.slave);
+        let (relay, stream) = PtyRelay::start(pair.master, (24, 80)).expect("relay starts");
+
+        slave.write_all(b"before-drop\n").expect("write");
+        let seen = collect_until(&stream, "before-drop");
+        assert!(seen.contains("before-drop"), "got {seen:?}");
+
+        drop(relay);
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline && !stream.is_closed() {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            stream.is_closed(),
+            "dropping the relay must end the stream so its consumer stops"
+        );
+
+        // The slave outliving the relay must not keep anything alive either.
+        let mut buf = [0_u8; 8];
+        let _ = slave.read(&mut buf);
+    }
+
+    #[test]
+    fn input_after_the_child_exits_is_reported_rather_than_panicking() {
+        let child = super::super::pty_spawn::spawn_on_pty(&["true"], &[], None, (24, 80))
+            .expect("true should spawn");
+        let pid = child.pid;
+        let (relay, stream) = PtyRelay::start(child.master, (24, 80)).expect("relay starts");
+        while stream.recv_blocking().is_ok() {}
+        reap(pid);
+
+        // The queue accepts the bytes even after the child is gone (the writer
+        // thread discovers the closed PTY when it gets there); what matters is
+        // that nothing panics and the session can be torn down.
+        let _ = relay.write_input(b"ignored\n");
+        drop(relay);
+    }
+}

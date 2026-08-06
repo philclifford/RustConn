@@ -624,9 +624,7 @@ impl SessionLogger {
 
         // Write lines, optionally with timestamp prefix
         let decoded = Zeroizing::new(String::from_utf8_lossy(data).into_owned());
-        // Strip ANSI escape sequences so log files are human-readable (issue #247)
-        let stripped = Zeroizing::new(strip_ansi_escapes(&decoded));
-        let data_str = sanitize_output_zeroizing(&stripped, &self.sanitize);
+        let data_str = prepare_for_log(&decoded, &self.sanitize);
 
         for line in data_str.lines() {
             let formatted = Zeroizing::new(if self.config.log_timestamps {
@@ -656,7 +654,9 @@ impl SessionLogger {
     ///
     /// Unlike [`Self::write`], the caller owns the formatting — including any
     /// timestamp prefix — so event records such as `INPUT:` lines keep their
-    /// own layout. Redaction and size-based rotation still apply.
+    /// own layout. Escape stripping, redaction and size-based rotation still
+    /// apply: a record is assembled from terminal content, so it carries the
+    /// same escape sequences and the same secrets that [`Self::write`] handles.
     ///
     /// # Errors
     ///
@@ -668,7 +668,7 @@ impl SessionLogger {
 
         self.rotate_if_needed()?;
 
-        let sanitized = sanitize_output_zeroizing(record, &self.sanitize);
+        let sanitized = prepare_for_log(record, &self.sanitize);
         let writer = self
             .writer
             .as_mut()
@@ -680,7 +680,13 @@ impl SessionLogger {
         Ok(())
     }
 
-    /// Writes raw data to the log file without timestamp prefix
+    /// Writes bytes through to the log file exactly as given.
+    ///
+    /// Nothing is added and nothing is removed: no timestamp, no escape
+    /// stripping, no redaction. This exists for formats that must survive
+    /// byte-for-byte (a replayable recording keeps its escape sequences,
+    /// because they *are* the recording). Anything holding terminal text for a
+    /// human to read belongs in [`Self::write`] or [`Self::write_record`].
     ///
     /// # Errors
     ///
@@ -1016,6 +1022,18 @@ pub fn sanitize_output(output: &str, config: &SanitizeConfig) -> String {
     sanitize_output_zeroizing(output, config).to_string()
 }
 
+/// Prepares terminal text for a log file: escapes stripped, secrets redacted.
+///
+/// The order matters. Redaction matches patterns like `password:` against the
+/// text, and an escape sequence embedded in a prompt would split the pattern in
+/// two and let the line through unredacted — so stripping runs first and
+/// redaction sees plain text. Both intermediate copies are zeroizing, because
+/// the input may well be a credential.
+fn prepare_for_log(input: &str, config: &SanitizeConfig) -> Zeroizing<String> {
+    let stripped = Zeroizing::new(strip_ansi_escapes(input));
+    sanitize_output_zeroizing(&stripped, config)
+}
+
 /// Internal sanitizer used by session logging so transcript copies are scrubbed.
 fn sanitize_output_zeroizing(output: &str, config: &SanitizeConfig) -> Zeroizing<String> {
     if !config.enabled {
@@ -1108,11 +1126,13 @@ static ANSI_ESCAPE_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
 /// Strips ANSI escape sequences and non-printable control characters from
 /// terminal output, producing clean text suitable for log files.
 ///
-/// Preserves: tab (`\t`), newline (`\n`), carriage return (`\r`).
-/// Removes: CSI sequences (colors, cursor), OSC (titles), and control chars.
+/// Preserves tab, newline and carriage return; removes CSI sequences (colour,
+/// cursor movement), OSC sequences (window titles, hyperlinks) and the
+/// remaining control characters.
 ///
-/// This is applied to raw PTY output before writing to session logs (issue
-/// #247), so log files opened in a text editor are human-readable.
+/// Session logs go through this so a transcript opened in a text editor is
+/// readable, and so redaction matches against plain text (issue
+/// [#247](https://github.com/totoshko88/RustConn/issues/247)).
 #[must_use]
 pub fn strip_ansi_escapes(input: &str) -> String {
     ANSI_ESCAPE_RE.replace_all(input, "").into_owned()
@@ -1620,6 +1640,74 @@ mod tests {
         let input = "\x1b[1mBold\x1b[4mUnderline\x1b[0m Normal";
         let result = super::strip_ansi_escapes(input);
         assert_eq!(result, "BoldUnderline Normal");
+    }
+
+    #[test]
+    fn write_record_strips_ansi_from_output() {
+        // The default configuration has `log_timestamps` off, which routes the
+        // transcript through `write_record` rather than `write` — so this is the
+        // path most session logs actually take.
+        let dir = TempDir::new().expect("temp dir");
+        let config = LogConfig::new(
+            dir.path()
+                .join("ansi-record.log")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let mut logger = SessionLogger::new(config, &LogContext::new("host", "ssh"), None)
+            .expect("logger opens");
+        logger
+            .write_record("[10:00:00] OUTPUT:\n  \x1b[32mgreen text\x1b[0m normal")
+            .expect("write record");
+        logger.flush().expect("flush");
+
+        let written = fs::read_to_string(logger.log_path()).expect("read back");
+        assert!(
+            !written.contains('\x1b'),
+            "ANSI escapes must be stripped from a record too: {written}"
+        );
+        assert!(written.contains("green text normal"));
+    }
+
+    #[test]
+    fn write_record_redacts_a_credential_hidden_behind_an_escape() {
+        // Redaction runs after stripping precisely so a colour code inside the
+        // prompt cannot split the pattern it looks for.
+        let dir = TempDir::new().expect("temp dir");
+        let config = LogConfig::new(
+            dir.path()
+                .join("ansi-redact.log")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let mut logger = SessionLogger::new(config, &LogContext::new("host", "ssh"), None)
+            .expect("logger opens");
+        logger
+            .write_record("[10:00:00] INPUT: pass\x1b[0mword: hunter2")
+            .expect("write record");
+        logger.flush().expect("flush");
+
+        let written = fs::read_to_string(logger.log_path()).expect("read back");
+        assert!(
+            !written.contains("hunter2"),
+            "the credential must not survive: {written}"
+        );
+    }
+
+    #[test]
+    fn write_raw_keeps_escape_sequences() {
+        // `write_raw` is the byte-for-byte path a replayable recording needs.
+        let dir = TempDir::new().expect("temp dir");
+        let config = LogConfig::new(dir.path().join("raw.log").to_string_lossy().into_owned());
+        let mut logger = SessionLogger::new(config, &LogContext::new("host", "ssh"), None)
+            .expect("logger opens");
+        logger
+            .write_raw(b"\x1b[32mgreen\x1b[0m")
+            .expect("write raw");
+        logger.flush().expect("flush");
+
+        let written = fs::read_to_string(logger.log_path()).expect("read back");
+        assert!(written.contains("\x1b[32m"), "raw writes must pass through");
     }
 
     #[test]

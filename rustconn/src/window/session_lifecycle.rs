@@ -3,102 +3,105 @@
 //! Extracted from `window/mod.rs` — sets up session logging, activity
 //! monitoring with notifications, and child-exited cleanup/reconnect logic.
 
-use std::cell::Cell;
-
 use super::*;
 use zeroize::Zeroizing;
 
-/// Shared state used by every transcript capture trigger.
-#[derive(Clone)]
-struct TranscriptCapture {
-    notebook: SharedNotebook,
-    session_id: Uuid,
+/// Longest a trailing partial line is held before it is written anyway.
+///
+/// Output is written a line at a time, so a prompt — which carries no line
+/// break, because the shell is waiting on the same line — would otherwise sit in
+/// the buffer unrecorded. Half a second is short enough that a transcript
+/// followed live shows the prompt, and long enough that a line arriving in
+/// several chunks is not split across records (issue
+/// [#247](https://github.com/totoshko88/RustConn/issues/247)).
+const PARTIAL_LINE_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Writes a session's transcript from the bytes its child actually produced.
+///
+/// This is fed by [`crate::terminal::pty_relay`] rather than read back from the
+/// widget. Scraping the widget cannot be made correct: VTE rewraps its buffer
+/// when the window is resized and renumbers the rows underneath the reader, so
+/// a scraped transcript repeats some lines and skips others — the contract tests
+/// in `terminal::vte_contract_tests` pin that behaviour down. Reading the PTY
+/// instead means the log is a copy of the session, in order, with nothing
+/// inferred (issue #247).
+///
+/// Bytes are buffered until a line is complete, because a log file is read by
+/// lines and because redaction matches patterns against them. Everything held
+/// here is zeroizing: this is the byte stream a password prompt travels on.
+struct TranscriptWriter {
     logger: Rc<RefCell<rustconn_core::session::SessionLogger>>,
-    last_content: Rc<RefCell<Zeroizing<String>>>,
-    per_line_timestamps: bool,
+    /// Bytes of the line currently being written by the child.
+    pending: Zeroizing<Vec<u8>>,
+    /// When the pending line was last added to, for [`PARTIAL_LINE_GRACE`].
+    pending_since: Option<std::time::Instant>,
 }
 
-impl TranscriptCapture {
-    /// Writes terminal content added since the previous capture.
-    fn run(&self) {
-        let Some(current_text) = self.notebook.get_terminal_text(self.session_id) else {
+impl TranscriptWriter {
+    fn new(logger: Rc<RefCell<rustconn_core::session::SessionLogger>>) -> Self {
+        Self {
+            logger,
+            pending: Zeroizing::new(Vec::new()),
+            pending_since: None,
+        }
+    }
+
+    /// Accepts a chunk of PTY output and writes every complete line in it.
+    fn accept(&mut self, chunk: &[u8]) {
+        self.pending.extend_from_slice(chunk);
+
+        // `\n` is the only separator worth splitting on. A bare `\r` returns the
+        // cursor to the start of the same line — progress bars and spinners use
+        // it — and treating it as a line break would turn one download into
+        // hundreds of log lines.
+        let last_break = self.pending.iter().rposition(|byte| *byte == b'\n');
+        if let Some(index) = last_break {
+            let complete = Zeroizing::new(self.pending[..=index].to_vec());
+            self.pending = Zeroizing::new(self.pending[index + 1..].to_vec());
+            self.write(&complete);
+        }
+        self.pending_since = (!self.pending.is_empty()).then(std::time::Instant::now);
+    }
+
+    /// Writes a partial line that has stopped growing, such as a prompt.
+    fn flush_stale_partial(&mut self) {
+        let Some(since) = self.pending_since else {
             return;
         };
-        let current_text = Zeroizing::new(current_text);
-        let mut last = self.last_content.borrow_mut();
-        if current_text == *last {
+        if since.elapsed() < PARTIAL_LINE_GRACE || self.pending.is_empty() {
             return;
         }
+        let partial = std::mem::replace(&mut self.pending, Zeroizing::new(Vec::new()));
+        self.pending_since = None;
+        self.write(&partial);
+    }
 
-        // Determine new content by comparing line-by-line.
-        // VTE often modifies the last line in-place (cursor repositioning,
-        // echo of typed characters), so a byte-level prefix check fails.
-        // Instead: find the first line where current differs from last,
-        // and log everything from that point forward (minus trailing blanks).
-        let current_lines: Vec<&str> = current_text.lines().collect();
-        let last_lines: Vec<&str> = last.lines().collect();
-
-        // Find first divergence point
-        let common_prefix = current_lines
-            .iter()
-            .zip(last_lines.iter())
-            .take_while(|(a, b)| a == b)
-            .count();
-
-        // New lines = everything in current after the common prefix
-        let new_lines = &current_lines[common_prefix..];
-
-        // Trim trailing empty lines (VTE viewport padding)
-        let end = new_lines
-            .iter()
-            .rposition(|l| !l.trim().is_empty())
-            .map_or(0, |i| i + 1);
-        let trimmed = &new_lines[..end];
-
-        if !trimmed.is_empty()
-            && let Ok(mut logger) = self.logger.try_borrow_mut()
-        {
-            let result = if self.per_line_timestamps {
-                let output = Zeroizing::new(trimmed.join("\n"));
-                logger.write(output.as_bytes())
-            } else {
-                let stamp = logger.current_timestamp();
-                let mut block = Zeroizing::new(format!("[{stamp}] OUTPUT:"));
-                for line in trimmed {
-                    block.push_str("\n  ");
-                    block.push_str(line);
-                }
-                logger.write_record(&block)
-            };
-            if let Err(e) = result.and_then(|()| logger.flush()) {
-                tracing::warn!(%e, "Session transcript write failed");
-            }
+    /// Writes whatever is left, for a session whose process has exited.
+    fn finish(&mut self) {
+        if self.pending.is_empty() {
+            return;
         }
-
-        *last = current_text;
-    }
-}
-
-/// Schedules the first transcript capture once, including after reconnect.
-fn schedule_initial_transcript_capture(
-    capture: TranscriptCapture,
-    first_capture_done: Rc<Cell<bool>>,
-    last_log_time: Rc<RefCell<std::time::Instant>>,
-    timer: Rc<RefCell<Option<glib::SourceId>>>,
-) {
-    if timer.borrow().is_some() {
-        return;
+        let partial = std::mem::replace(&mut self.pending, Zeroizing::new(Vec::new()));
+        self.pending_since = None;
+        self.write(&partial);
     }
 
-    let timer_for_callback = timer.clone();
-    let source_id =
-        glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
-            capture.run();
-            first_capture_done.set(true);
-            *last_log_time.borrow_mut() = std::time::Instant::now();
-            *timer_for_callback.borrow_mut() = None;
-        });
-    *timer.borrow_mut() = Some(source_id);
+    fn write(&self, data: &[u8]) {
+        // A VTE signal can fire while another handler holds the logger; losing a
+        // chunk is better than panicking a session, and the next one follows in
+        // milliseconds.
+        let Ok(mut logger) = self.logger.try_borrow_mut() else {
+            return;
+        };
+        // `write` strips escape sequences, redacts credentials, and prefixes each
+        // line with a timestamp only when the connection asks for one. Deciding
+        // that here as well is what made "Add Timestamps: off" stamp every
+        // record anyway: the branch meant to be the plain one wrapped the output
+        // in `[timestamp] OUTPUT:`.
+        if let Err(e) = logger.write(data).and_then(|()| logger.flush()) {
+            tracing::warn!(%e, "Session transcript write failed");
+        }
+    }
 }
 
 /// The connection-derived values a session log needs besides its configuration.
@@ -893,14 +896,9 @@ impl MainWindow {
         session_id: Uuid,
         logger: rustconn_core::session::SessionLogger,
     ) {
-        let (log_activity, log_input, log_output, per_line_timestamps) = {
+        let (log_activity, log_input, log_output) = {
             let config = logger.config();
-            (
-                config.log_activity,
-                config.log_input,
-                config.log_output,
-                config.log_timestamps,
-            )
+            (config.log_activity, config.log_input, config.log_output)
         };
         let logger = Rc::new(RefCell::new(logger));
 
@@ -994,63 +992,55 @@ impl MainWindow {
             });
         }
 
-        // Set up output logging (full transcript, issue #247)
+        // Set up output logging (full transcript, issue #247).
+        //
+        // The transcript is a copy of the session's PTY output, delivered by the
+        // relay as the child produces it. There is no sampling and no diffing:
+        // the previous implementations read the text back out of the widget,
+        // which cannot be made correct because VTE rewraps and renumbers its
+        // buffer on a resize.
         if log_output {
-            let capture = TranscriptCapture {
-                notebook: notebook.clone(),
-                session_id,
-                logger: logger.clone(),
-                last_content: Rc::new(RefCell::new(Zeroizing::new(String::new()))),
-                per_line_timestamps,
-            };
-            let last_log_time = Rc::new(RefCell::new(std::time::Instant::now()));
-            let first_capture_done = Rc::new(Cell::new(false));
-            let initial_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+            let writer = Rc::new(RefCell::new(TranscriptWriter::new(logger.clone())));
 
-            schedule_initial_transcript_capture(
-                capture.clone(),
-                first_capture_done.clone(),
-                last_log_time.clone(),
-                initial_timer.clone(),
-            );
-
-            let capture_on_change = capture.clone();
-            let first_capture_done_on_change = first_capture_done.clone();
-            let last_log_time_on_change = last_log_time.clone();
-            let initial_timer_on_change = initial_timer.clone();
-            notebook.connect_contents_changed(session_id, move || {
-                if !first_capture_done_on_change.get() {
-                    schedule_initial_transcript_capture(
-                        capture_on_change.clone(),
-                        first_capture_done_on_change.clone(),
-                        last_log_time_on_change.clone(),
-                        initial_timer_on_change.clone(),
-                    );
-                    return;
-                }
-
-                let now = std::time::Instant::now();
-                // 1-second debounce: captures output much faster than the
-                // previous 5-second interval while keeping syscall overhead
-                // low (issue #247).
-                if now
-                    .duration_since(*last_log_time_on_change.borrow())
-                    .as_secs()
-                    >= 1
-                {
-                    capture_on_change.run();
-                    *last_log_time_on_change.borrow_mut() = now;
+            let writer_for_output = Rc::clone(&writer);
+            notebook.add_output_observer(session_id, move |chunk: &[u8]| {
+                // A reentrant call cannot happen — observers run one at a time on
+                // the main thread — but dropping a chunk is still better than
+                // panicking a live session.
+                if let Ok(mut writer) = writer_for_output.try_borrow_mut() {
+                    writer.accept(chunk);
                 }
             });
 
-            let capture_on_exit = capture;
+            // On exit the shell's last line (a `logout`, an authentication
+            // failure) is still partial, and no further output will complete it.
+            // This handler holds the second strong reference, and it is released
+            // when the terminal is destroyed — after the close path has removed
+            // the observer, so a session ending normally still gets its final
+            // line.
+            let writer_on_exit = Rc::clone(&writer);
             notebook.connect_child_exited(session_id, move |_exit_status| {
-                if let Some(source_id) = initial_timer.borrow_mut().take() {
-                    source_id.remove();
+                if let Ok(mut writer) = writer_on_exit.try_borrow_mut() {
+                    writer.finish();
                 }
-                capture_on_exit.run();
-                first_capture_done.set(false);
-                *last_log_time.borrow_mut() = std::time::Instant::now();
+            });
+
+            // A prompt carries no line break, so a trailing partial line needs a
+            // deadline of its own rather than waiting for output that will only
+            // arrive once the user has typed something. The timer holds a weak
+            // reference, which is also how it ends: once the tab is gone and both
+            // strong references with it, the upgrade fails and the source stops.
+            // It deliberately survives an in-place reconnect, because the same
+            // writer keeps serving the reconnected session.
+            let writer_for_timer = Rc::downgrade(&writer);
+            glib::timeout_add_local(PARTIAL_LINE_GRACE, move || {
+                let Some(writer) = writer_for_timer.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                if let Ok(mut writer) = writer.try_borrow_mut() {
+                    writer.flush_stale_partial();
+                }
+                glib::ControlFlow::Continue
             });
         }
 
@@ -1083,12 +1073,236 @@ fn log_event(
     let Ok(mut logger) = logger.try_borrow_mut() else {
         return;
     };
-    let record = format!("[{}] {event}", logger.current_timestamp());
+    // "Add Timestamps" governs every line in the file, not just the transcript:
+    // a log the user asked to keep unstamped should not have stamps on its
+    // `INPUT:` and activity records either.
+    let record = if logger.config().log_timestamps {
+        format!("[{}] {event}", logger.current_timestamp())
+    } else {
+        event.to_owned()
+    };
     if let Err(e) = logger.write_record(&record) {
         tracing::warn!(%e, "Session log write failed");
         return;
     }
     if flush && let Err(e) = logger.flush() {
         tracing::warn!(%e, "Session log flush failed");
+    }
+}
+
+#[cfg(test)]
+mod transcript_writer_tests {
+    use rustconn_core::session::{LogConfig, LogContext, SessionLogger};
+
+    use super::{PARTIAL_LINE_GRACE, TranscriptWriter};
+
+    /// Builds a writer over a real log file and returns both.
+    ///
+    /// `LogConfig::new` leaves timestamps off, which is the default and
+    /// therefore the shape most session logs take.
+    fn writer() -> (TranscriptWriter, tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let config = LogConfig::new(
+            dir.path()
+                .join("session.log")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let logger = SessionLogger::new(config, &LogContext::new("host", "ssh"), None)
+            .expect("logger opens");
+        let path = logger.log_path().to_owned();
+        let logger = std::rc::Rc::new(std::cell::RefCell::new(logger));
+        (TranscriptWriter::new(logger), dir, path)
+    }
+
+    fn read(path: &std::path::Path) -> String {
+        std::fs::read_to_string(path).expect("read log back")
+    }
+
+    #[test]
+    fn complete_lines_are_written_and_the_partial_is_held() {
+        let (mut writer, _dir, path) = writer();
+        writer.accept(b"first line\nsecond line\npart");
+
+        let written = read(&path);
+        assert!(written.contains("first line"), "{written}");
+        assert!(written.contains("second line"), "{written}");
+        assert!(
+            !written.contains("part"),
+            "an unfinished line must wait for its newline: {written}"
+        );
+    }
+
+    #[test]
+    fn a_line_split_across_chunks_is_written_once_and_whole() {
+        // The relay hands over whatever a read returned, so a line arriving in
+        // three pieces is the normal case, not an edge case.
+        let (mut writer, _dir, path) = writer();
+        writer.accept(b"total ");
+        writer.accept(b"used ");
+        writer.accept(b"free\n");
+
+        let written = read(&path);
+        assert_eq!(
+            written.matches("total used free").count(),
+            1,
+            "the line must appear exactly once, reassembled: {written}"
+        );
+    }
+
+    #[test]
+    fn carriage_returns_do_not_split_a_line() {
+        // A progress bar redraws itself with `\r`. Treating that as a line break
+        // would turn one download into hundreds of log lines.
+        let (mut writer, _dir, path) = writer();
+        writer.accept(b"10%\r 50%\r100%\n");
+
+        let written = read(&path);
+        assert!(written.contains("100%"), "{written}");
+        assert_eq!(
+            written.lines().filter(|l| l.contains('%')).count(),
+            1,
+            "one line, not one per redraw: {written}"
+        );
+    }
+
+    #[test]
+    fn timestamps_are_absent_unless_the_connection_asks_for_them() {
+        // "Add Timestamps" governs the whole file. The transcript used to wrap
+        // output in `[timestamp] OUTPUT:` on exactly the path that is supposed to
+        // have no timestamps, so a log with the switch off was stamped anyway.
+        let (mut writer, _dir, path) = writer();
+        writer.accept(b"plain output\n");
+
+        let written = read(&path);
+        assert!(written.contains("plain output"), "{written}");
+        assert!(
+            !written.contains("] OUTPUT:"),
+            "no record marker when timestamps are off: {written}"
+        );
+        assert!(
+            written
+                .lines()
+                .filter(|line| line.contains("plain output"))
+                .all(|line| !line.trim_start().starts_with('[')),
+            "the output line must carry no timestamp: {written}"
+        );
+    }
+
+    #[test]
+    fn timestamps_are_written_when_the_connection_asks_for_them() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let config = LogConfig::new(
+            dir.path()
+                .join("stamped.log")
+                .to_string_lossy()
+                .into_owned(),
+        )
+        .with_log_timestamps(true);
+        let logger = SessionLogger::new(config, &LogContext::new("host", "ssh"), None)
+            .expect("logger opens");
+        let path = logger.log_path().to_owned();
+        let mut writer = TranscriptWriter::new(std::rc::Rc::new(std::cell::RefCell::new(logger)));
+
+        writer.accept(b"stamped output\n");
+
+        let written = read(&path);
+        assert!(
+            written
+                .lines()
+                .any(|line| line.contains("stamped output") && line.trim_start().starts_with('[')),
+            "with the switch on, the line must be prefixed: {written}"
+        );
+    }
+
+    #[test]
+    fn a_stale_partial_line_is_written_so_a_prompt_is_recorded() {
+        // A shell prompt carries no newline: the shell is waiting on the same
+        // line. Diagnosing a connection needs to see where it stopped (issue
+        // #247), so a partial that stops growing is written anyway.
+        let (mut writer, _dir, path) = writer();
+        writer.accept(b"[ec2-user@ip-10-0-0-1 ~]$ ");
+        assert!(
+            !read(&path).contains("ec2-user"),
+            "held at first, in case more of the line follows"
+        );
+
+        std::thread::sleep(PARTIAL_LINE_GRACE + std::time::Duration::from_millis(100));
+        writer.flush_stale_partial();
+
+        assert!(
+            read(&path).contains("[ec2-user@ip-10-0-0-1 ~]$"),
+            "a prompt must reach the log without waiting for the next command"
+        );
+    }
+
+    #[test]
+    fn a_growing_partial_line_is_not_flushed_early() {
+        let (mut writer, _dir, path) = writer();
+        writer.accept(b"still ");
+        std::thread::sleep(PARTIAL_LINE_GRACE + std::time::Duration::from_millis(100));
+        // More output resets the clock, so the line is still being written.
+        writer.accept(b"arriving");
+        writer.flush_stale_partial();
+
+        assert!(
+            !read(&path).contains("still arriving"),
+            "a line that is still growing must not be cut in half"
+        );
+    }
+
+    #[test]
+    fn finish_writes_the_last_line_of_a_session() {
+        // `logout` and an authentication failure both land on an unterminated
+        // line that no later output will complete.
+        let (mut writer, _dir, path) = writer();
+        writer.accept(b"Permission denied (publickey).");
+        writer.finish();
+
+        assert!(
+            read(&path).contains("Permission denied (publickey)."),
+            "the last thing a session says must be recorded"
+        );
+    }
+
+    #[test]
+    fn finish_on_an_empty_buffer_writes_nothing() {
+        let (mut writer, _dir, path) = writer();
+        writer.accept(b"line\n");
+        let before = read(&path);
+        writer.finish();
+        assert_eq!(before, read(&path), "no empty record may be appended");
+    }
+
+    #[test]
+    fn escape_sequences_are_stripped_but_the_text_survives() {
+        // Raw PTY output is full of colour codes; the log is read by people.
+        let (mut writer, _dir, path) = writer();
+        writer.accept(b"\x1b[32mconnected\x1b[0m to host\r\n");
+
+        let written = read(&path);
+        assert!(!written.contains('\x1b'), "escapes must be gone: {written}");
+        assert!(written.contains("connected"), "{written}");
+        assert!(written.contains("to host"), "{written}");
+    }
+
+    #[test]
+    fn a_credential_in_the_stream_is_redacted() {
+        // The transcript now carries what the child wrote, byte for byte, so
+        // redaction is the only thing between an echoed secret and the log file.
+        // It still runs on this path: the writer goes through the same
+        // `write_record` the scraped transcript used.
+        let (mut writer, _dir, path) = writer();
+        writer.accept(b"password: hunter2\n");
+
+        let written = read(&path);
+        assert!(
+            !written.contains("hunter2"),
+            "the secret must not reach the log: {written}"
+        );
+        assert!(
+            written.contains("[REDACTED]"),
+            "the line must be marked, not silently dropped: {written}"
+        );
     }
 }

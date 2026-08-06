@@ -93,21 +93,31 @@ fn setup_copy_on_select(terminal: &Terminal) {
     });
 }
 
-/// Sets up keyboard shortcuts for copy/paste
+/// Sets up keyboard shortcuts for copy/paste.
+///
+/// The pressed key is translated to its Latin equivalent before matching.
+/// GDK reports `keyval` according to the *active* layout, so `Ctrl+Shift+C`
+/// under a Cyrillic layout arrives as `Cyrillic_es` and a comparison against
+/// `"c"` silently fails — the shortcut then falls through to VTE, which sends
+/// the control character to the remote host instead. Window accelerators already
+/// go through [`crate::utils::latin_keyval`] for exactly this reason; this
+/// controller has to as well, because it handles the keys itself rather than
+/// through the accelerator table.
 fn setup_keyboard_shortcuts(terminal: &Terminal) {
     let controller = gtk4::EventControllerKey::new();
     let term = terminal.clone();
-    controller.connect_key_pressed(move |_, key, _, state| {
+    controller.connect_key_pressed(move |_, key, keycode, state| {
         let mask = gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK;
         if state.contains(mask) {
-            match key.name().as_deref() {
-                Some("C" | "c") => {
+            let latin = crate::utils::latin_keyval(key, keycode);
+            match latin.to_unicode().map(|c| c.to_ascii_lowercase()) {
+                Some('c') => {
                     if let Some(text) = term.text_selected(vte4::Format::Text) {
                         term.display().clipboard().set_text(&text);
                     }
                     return glib::Propagation::Stop;
                 }
-                Some("V" | "v") => {
+                Some('v') => {
                     term.paste_clipboard();
                     return glib::Propagation::Stop;
                 }

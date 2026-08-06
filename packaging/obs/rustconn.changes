@@ -2,8 +2,9 @@
 Thu Aug 06 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.14
 
 - Version bump to 0.19.14
+- Fixed session logs losing output and repeating whole screens: the transcript is now written from the session's own PTY instead of being read back out of the terminal widget (#247)
 - Fixed opening Settings panel corrupted KeePassXC config (#259)
-- Improved session logging: unified PTY spawn, 1s capture interval, ANSI stripping, line-by-line diff (#247)
+- Improved: one PTY path for every session on every platform (#175)
 
 -------------------------------------------------------------------
 Thu Aug 06 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.13

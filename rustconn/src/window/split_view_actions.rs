@@ -205,6 +205,7 @@ impl MainWindow {
             session_id: Uuid,
             session_split_bridges: &SessionSplitBridges,
             color_pool: &SharedColorPool,
+            terminals: &crate::split_view::SharedTerminals,
         ) -> Rc<SplitViewBridge> {
             let mut bridges = session_split_bridges.borrow_mut();
             // Check if this session already owns a bridge
@@ -228,7 +229,15 @@ impl MainWindow {
                     &*color_pool.borrow(),
                     color_pool.borrow().allocated_count()
                 );
-                let new_bridge = Rc::new(SplitViewBridge::with_color_pool(Rc::clone(color_pool)));
+                // The terminal map is shared with the notebook rather than left
+                // empty: the bridge uses it to tell a terminal session from an
+                // embedded RDP/VNC viewer, and an empty map answers "embedded"
+                // for everything — which is what kept keystroke broadcast
+                // permanently unavailable.
+                let new_bridge = Rc::new(SplitViewBridge::with_shared_terminals_and_color_pool(
+                    Rc::clone(terminals),
+                    Rc::clone(color_pool),
+                ));
                 bridges.insert(session_id, new_bridge.clone());
                 new_bridge
             }
@@ -313,8 +322,12 @@ impl MainWindow {
             tracing::debug!("split-horizontal: splitting session {:?}", current_session);
 
             // Get or create a split bridge for this session (with shared color pool)
-            let split_view =
-                get_or_create_session_bridge(current_session, &session_bridges, &color_pool_h);
+            let split_view = get_or_create_session_bridge(
+                current_session,
+                &session_bridges,
+                &color_pool_h,
+                &notebook_for_split_h.shared_terminals(),
+            );
 
             // Wire the content provider so the bridge can place any session's
             // display widget (VTE terminal or embedded RDP/VNC/SPICE viewer)
@@ -621,8 +634,12 @@ impl MainWindow {
             tracing::debug!("split-vertical: splitting session {:?}", current_session);
 
             // Get or create a split bridge for this session (with shared color pool)
-            let split_view =
-                get_or_create_session_bridge(current_session, &session_bridges_v, &color_pool_v);
+            let split_view = get_or_create_session_bridge(
+                current_session,
+                &session_bridges_v,
+                &color_pool_v,
+                &notebook_for_split_v.shared_terminals(),
+            );
 
             // Wire the content provider so the bridge can place any session's
             // display widget (VTE terminal or embedded RDP/VNC/SPICE viewer)
