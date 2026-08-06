@@ -5,6 +5,16 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.14] - 2026-08-06
+
+### Fixed
+
+- **Opening Settings panel silently corrupted KeePassXC database password configuration (issue [#259](https://github.com/totoshko88/RustConn/issues/259))** — the storage combo validation handler in the secrets tab treated a pending `secret-tool` detection result (`None`) as "unavailable", reverting the "System keyring" selection to "Don't save" before the dialog was even visible. On close the collected settings wrote `kdbx_save_to_keyring = false`, breaking database access until restart. The same mechanism also cleared the encrypted-file password blob for Scenario 1. The handler now only reverts when detection has **confirmed** absence (`Some(false)`), preserving previously-saved config values loaded before async detection completes.
+
+### Improved
+
+- **Session logging rewritten with PTY-level capture (issue [#247](https://github.com/totoshko88/RustConn/issues/247))** — terminal output is now intercepted at the PTY master fd before it reaches VTE, replacing the previous approach of polling VTE's text buffer every 5 seconds. A dedicated relay thread reads every byte from the child process and delivers it to the GLib main thread, where it simultaneously feeds VTE for display and writes to the session log. This fixes three reported problems: output no longer appears in the log with a 5-second delay, input and output maintain correct chronological order (previously input was logged instantly while output waited for the next poll), and no output is lost to VTE scrollback overflow. ANSI escape sequences are now stripped from log files so they are human-readable in any text editor. The legacy polling path remains as a fallback for sessions not yet migrated to the relay.
+
 ## [0.19.13] - 2026-08-06
 
 ### Added

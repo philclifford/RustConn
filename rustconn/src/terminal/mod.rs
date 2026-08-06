@@ -14,6 +14,7 @@ pub use detach::{DetachMonitor, DetachPresentation};
 pub mod file_drop;
 pub mod highlight_overlay;
 pub mod playback;
+pub mod pty_relay;
 mod recording;
 pub mod tab_container;
 mod tab_menu;
@@ -290,6 +291,19 @@ pub struct TerminalNotebook {
     /// Some terminal clients (e.g. telnet) do not exit on PTY close (SIGHUP),
     /// so an explicit kill is needed (#172).
     vte_child_pids: Rc<RefCell<HashMap<Uuid, i32>>>,
+    /// PTY relays per session (issue #247).
+    ///
+    /// When a session is spawned via the PTY relay path, input goes through
+    /// `PtyRelay::write_input()` instead of VTE's `feed_child()`, and output
+    /// arrives via `terminal.feed()` from the relay thread. This enables
+    /// real-time logging without the latency/truncation of VTE buffer polling.
+    pty_relays: Rc<RefCell<HashMap<Uuid, pty_relay::SharedPtyRelay>>>,
+    /// Output observers for PTY relay sessions (issue #247).
+    ///
+    /// Registered by `setup_session_logging` to receive raw PTY output in
+    /// real-time. Each observer is called on the GLib main thread with every
+    /// output chunk — no polling, no delay, no truncation.
+    pty_output_observers: Rc<RefCell<HashMap<Uuid, Vec<Box<dyn Fn(&[u8])>>>>>,
     /// Whether to show the Welcome tab when no sessions are open (issue #232).
     /// Shared with signal handlers via `Rc<Cell<bool>>`.
     show_welcome: Rc<std::cell::Cell<bool>>,
@@ -398,6 +412,8 @@ impl TerminalNotebook {
             monitoring: Rc::new(RefCell::new(None)),
             snippet_menu_section: Rc::new(gio::Menu::new()),
             vte_child_pids: Rc::new(RefCell::new(HashMap::new())),
+            pty_relays: Rc::new(RefCell::new(HashMap::new())),
+            pty_output_observers: Rc::new(RefCell::new(HashMap::new())),
             show_welcome: Rc::new(std::cell::Cell::new(show_welcome)),
         };
 
@@ -432,6 +448,8 @@ impl TerminalNotebook {
         let show_welcome_on_close = self.show_welcome.clone();
         let disconnected_on_close = Rc::clone(&self.disconnected_sessions);
         let cursor_row_base_on_close = Rc::clone(&self.cursor_row_base);
+        let pty_relays_on_close = Rc::clone(&self.pty_relays);
+        let pty_output_observers_on_close = Rc::clone(&self.pty_output_observers);
 
         // Handle create-window signal - we must connect this to prevent the default
         // behavior which causes CRITICAL warnings. Returning None cancels the tearoff.
@@ -554,6 +572,13 @@ impl TerminalNotebook {
                 session_info.borrow_mut().remove(&session_id);
                 disconnected_on_close.borrow_mut().remove(&session_id);
                 cursor_row_base_on_close.borrow_mut().remove(&session_id);
+
+                // Drop PTY relay (issue #247) — this signals the relay thread
+                // to exit and closes the write side of the master fd.
+                pty_relays_on_close.borrow_mut().remove(&session_id);
+                pty_output_observers_on_close
+                    .borrow_mut()
+                    .remove(&session_id);
 
                 // Kill VTE child process group explicitly (#172).
                 // Some CLI clients (notably telnet) do not exit on SIGHUP
@@ -1650,6 +1675,228 @@ impl TerminalNotebook {
         }
     }
 
+    /// Spawns a command using the PTY relay (issue #247).
+    ///
+    /// This is the preferred spawn path: output is captured at the PTY level
+    /// before reaching VTE, enabling real-time logging without delay or
+    /// truncation. The relay feeds output to VTE via `terminal.feed()` and
+    /// handles input via `PtyRelay::write_input()`.
+    ///
+    /// Returns `true` on success, `false` if the terminal doesn't exist or
+    /// spawn failed.
+    pub fn spawn_command_with_relay(
+        &self,
+        session_id: Uuid,
+        argv: &[&str],
+        envv: Option<&[&str]>,
+        working_directory: Option<&str>,
+        ssh_agent_socket: Option<&str>,
+    ) -> bool {
+        let terminals = self.terminals.borrow();
+        let Some(terminal) = terminals.get(&session_id) else {
+            return false;
+        };
+
+        // Build the full environment (same logic as spawn_command)
+        let extended_path = rustconn_core::cli_download::get_extended_path();
+        let mut env_vec: Vec<String> = Vec::new();
+
+        for (key, value) in std::env::vars() {
+            if key == "PATH" {
+                env_vec.push(format!("PATH={extended_path}"));
+            } else {
+                env_vec.push(format!("{key}={value}"));
+            }
+        }
+        if std::env::var("PATH").is_err() {
+            env_vec.push(format!("PATH={extended_path}"));
+        }
+
+        // SSH agent
+        if let Some(custom_socket) = ssh_agent_socket {
+            env_vec.retain(|e| !e.starts_with("SSH_AUTH_SOCK="));
+            env_vec.push(format!("SSH_AUTH_SOCK={custom_socket}"));
+        } else if let Some(agent_info) = rustconn_core::sftp::get_agent_info() {
+            env_vec.retain(|e| !e.starts_with("SSH_AUTH_SOCK="));
+            env_vec.push(format!("SSH_AUTH_SOCK={}", agent_info.socket_path));
+            if let Some(ref pid) = agent_info.pid {
+                env_vec.retain(|e| !e.starts_with("SSH_AGENT_PID="));
+                env_vec.push(format!("SSH_AGENT_PID={pid}"));
+            }
+        }
+
+        // Strip SSH_ASKPASS
+        env_vec.retain(|e| !e.starts_with("SSH_ASKPASS="));
+
+        // Flatpak/Snap redirections (same as spawn_command)
+        if rustconn_core::flatpak::is_flatpak() {
+            if !env_vec.iter().any(|e| e.starts_with("CLOUDSDK_CONFIG="))
+                && let Some(dir) = rustconn_core::flatpak::get_flatpak_gcloud_config_dir()
+            {
+                env_vec.push(format!("CLOUDSDK_CONFIG={}", dir.display()));
+            }
+            if !env_vec.iter().any(|e| e.starts_with("AZURE_CONFIG_DIR="))
+                && let Some(dir) = rustconn_core::flatpak::get_flatpak_azure_config_dir()
+            {
+                env_vec.push(format!("AZURE_CONFIG_DIR={}", dir.display()));
+            }
+            if !env_vec.iter().any(|e| e.starts_with("TELEPORT_HOME="))
+                && let Some(dir) = rustconn_core::flatpak::get_flatpak_teleport_config_dir()
+            {
+                env_vec.push(format!("TELEPORT_HOME={}", dir.display()));
+            }
+            if !env_vec
+                .iter()
+                .any(|e| e.starts_with("OCI_CLI_CONFIG_FILE="))
+                && let Some(dir) = rustconn_core::flatpak::get_flatpak_oci_config_dir()
+            {
+                env_vec.push(format!(
+                    "OCI_CLI_CONFIG_FILE={}",
+                    dir.join("config").display()
+                ));
+            }
+        } else if rustconn_core::is_snap() {
+            if !env_vec.iter().any(|e| e.starts_with("CLOUDSDK_CONFIG="))
+                && let Some(dir) = rustconn_core::snap::get_snap_gcloud_config_dir()
+            {
+                env_vec.push(format!("CLOUDSDK_CONFIG={}", dir.display()));
+            }
+            if !env_vec.iter().any(|e| e.starts_with("AZURE_CONFIG_DIR="))
+                && let Some(dir) = rustconn_core::snap::get_snap_azure_config_dir()
+            {
+                env_vec.push(format!("AZURE_CONFIG_DIR={}", dir.display()));
+            }
+            if !env_vec.iter().any(|e| e.starts_with("TELEPORT_HOME="))
+                && let Some(dir) = rustconn_core::snap::get_snap_teleport_config_dir()
+            {
+                env_vec.push(format!("TELEPORT_HOME={}", dir.display()));
+            }
+            if !env_vec
+                .iter()
+                .any(|e| e.starts_with("OCI_CLI_CONFIG_FILE="))
+                && let Some(dir) = rustconn_core::snap::get_snap_oci_config_dir()
+            {
+                env_vec.push(format!(
+                    "OCI_CLI_CONFIG_FILE={}",
+                    dir.join("config").display()
+                ));
+            }
+        }
+
+        // TERM
+        if !env_vec.iter().any(|e| e.starts_with("TERM=")) {
+            env_vec.push("TERM=xterm-256color".to_string());
+        } else if rustconn_core::flatpak::is_flatpak() || env_vec.iter().any(|e| e == "TERM=dumb") {
+            env_vec.retain(|e| !e.starts_with("TERM="));
+            env_vec.push("TERM=xterm-256color".to_string());
+        }
+
+        // Layer caller-provided variables
+        if let Some(user_env) = envv {
+            for e in user_env {
+                if let Some(eq_pos) = e.find('=') {
+                    let key_prefix = &e[..=eq_pos];
+                    env_vec.retain(|existing| !existing.starts_with(key_prefix));
+                }
+                env_vec.push((*e).to_string());
+            }
+        }
+
+        let env_refs: Vec<&str> = env_vec.iter().map(String::as_str).collect();
+
+        // Get terminal size for initial PTY dimensions
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "VTE row/col counts are always small positive numbers"
+        )]
+        let initial_size = (terminal.row_count() as u16, terminal.column_count() as u16);
+
+        let command_name = argv.first().unwrap_or(&"").to_string();
+
+        // Build the event handler that feeds VTE on the main thread
+        let terminal_weak = terminal.downgrade();
+        let session_id_for_handler = session_id;
+        let vte_child_pids = self.vte_child_pids.clone();
+        let output_observers = self.pty_output_observers.clone();
+
+        let event_handler: pty_relay::PtyEventHandler = Box::new(move |_sid, event| {
+            match event {
+                pty_relay::PtyEvent::Output(ref data) => {
+                    // Feed VTE for display
+                    if let Some(term) = terminal_weak.upgrade() {
+                        term.feed(data);
+                    }
+                    // Notify output observers (SessionLogger, SessionRecorder)
+                    if let Some(observers) = output_observers.borrow().get(&session_id_for_handler)
+                    {
+                        for observer in observers {
+                            observer(data);
+                        }
+                    }
+                }
+                pty_relay::PtyEvent::ChildEof => {
+                    // The relay read loop ended — child has exited.
+                    // VTE's child-exited signal will be emitted by the
+                    // glib::child_watch we set up below.
+                    vte_child_pids.borrow_mut().remove(&session_id_for_handler);
+                }
+            }
+        });
+
+        // Spawn via relay
+        let argv_refs: Vec<&str> = argv.to_vec();
+        match pty_relay::spawn_with_relay(
+            session_id,
+            &argv_refs,
+            &env_refs,
+            working_directory,
+            initial_size,
+            event_handler,
+        ) {
+            Ok(relay) => {
+                let child_pid = relay.child_pid();
+                self.vte_child_pids
+                    .borrow_mut()
+                    .insert(session_id, child_pid as i32);
+
+                tracing::info!(
+                    command = %command_name,
+                    %session_id,
+                    pid = child_pid,
+                    "Command spawned via PTY relay"
+                );
+
+                // Watch for child exit so VTE gets its child-exited signal
+                let terminal_weak_exit = terminal.downgrade();
+                glib::child_watch_add_local(glib::Pid(child_pid as i32), move |_pid, status| {
+                    if let Some(term) = terminal_weak_exit.upgrade() {
+                        term.emit_by_name::<()>("child-exited", &[&status]);
+                    }
+                });
+
+                // Register the relay (wires resize, enables relay-based input)
+                drop(terminals); // Release the borrow before register_relay borrows terminals again
+                self.register_relay(session_id, relay);
+
+                true
+            }
+            Err(e) => {
+                tracing::error!(
+                    command = %command_name,
+                    %session_id,
+                    %e,
+                    "Failed to spawn via PTY relay"
+                );
+                crate::toast::show_error_toast_on_active_window(&i18n_f(
+                    "Failed to start '{}': {}",
+                    &[&command_name, &e],
+                ));
+                false
+            }
+        }
+    }
+
     /// Spawns an SSH command in the terminal
     #[expect(
         clippy::too_many_arguments,
@@ -1776,7 +2023,7 @@ impl TerminalNotebook {
             argv.push(&startup_wrapped);
         }
 
-        self.spawn_command(session_id, &argv, extra_env, None, ssh_agent_socket)
+        self.spawn_command_with_relay(session_id, &argv, extra_env, None, ssh_agent_socket)
     }
 
     /// Spawns a Telnet command in the terminal
@@ -1828,7 +2075,7 @@ impl TerminalNotebook {
         argv.push(host);
         let port_str = port.to_string();
         argv.push(&port_str);
-        self.spawn_command(session_id, &argv, None, None, None)
+        self.spawn_command_with_relay(session_id, &argv, None, None, None)
     }
 
     /// Spawns a serial connection using picocom in the terminal tab.
@@ -1837,7 +2084,7 @@ impl TerminalNotebook {
     /// directly in the VTE terminal (no shell wrapper).
     pub fn spawn_serial(&self, session_id: Uuid, command: &[String]) -> bool {
         let argv: Vec<&str> = command.iter().map(String::as_str).collect();
-        self.spawn_command(session_id, &argv, None, None, None)
+        self.spawn_command_with_relay(session_id, &argv, None, None, None)
     }
 
     /// Closes a terminal tab by session ID
@@ -2724,15 +2971,36 @@ impl TerminalNotebook {
         None
     }
 
-    /// Sends text to the active terminal
+    /// Sends text to the active terminal.
+    ///
+    /// Routes through the PTY relay when available (issue #247), falling back
+    /// to VTE's `feed_child` for sessions not yet migrated to the relay path.
     pub fn send_text(&self, text: &str) {
-        if let Some(terminal) = self.get_active_terminal() {
+        if let Some(session_id) = self.get_active_session_id() {
+            self.send_text_to_session(session_id, text);
+        } else if let Some(terminal) = self.get_active_terminal() {
             terminal.feed_child(text.as_bytes());
         }
     }
 
-    /// Sends text to a specific terminal session
+    /// Sends text to a specific terminal session.
+    ///
+    /// Routes through the PTY relay when available (issue #247), falling back
+    /// to VTE's `feed_child` for sessions not yet migrated to the relay path.
     pub fn send_text_to_session(&self, session_id: Uuid, text: &str) {
+        // Try relay first
+        if let Some(relay_rc) = self.pty_relays.borrow().get(&session_id)
+            && let Some(ref relay) = *relay_rc.borrow()
+        {
+            if let Err(e) = relay.write_input(text.as_bytes()) {
+                tracing::warn!(%session_id, %e, "PTY relay write failed, falling back to feed_child");
+                if let Some(terminal) = self.get_terminal(session_id) {
+                    terminal.feed_child(text.as_bytes());
+                }
+            }
+            return;
+        }
+        // Fallback: VTE feed_child (legacy path)
         if let Some(terminal) = self.get_terminal(session_id) {
             terminal.feed_child(text.as_bytes());
         }
@@ -3105,6 +3373,72 @@ impl TerminalNotebook {
                 callback(text);
             });
         }
+    }
+
+    // ========================================================================
+    // PTY Relay (issue #247)
+    // ========================================================================
+
+    /// Registers a PTY relay for a session.
+    ///
+    /// Once registered, `send_text_to_session` routes input through the relay
+    /// instead of VTE's `feed_child`. The relay also handles terminal resize.
+    pub fn register_relay(&self, session_id: Uuid, relay: pty_relay::PtyRelay) {
+        // Wire resize: when VTE widget changes size, forward to the relay
+        if let Some(terminal) = self.get_terminal(session_id) {
+            let relay_rc: pty_relay::SharedPtyRelay = Rc::new(RefCell::new(Some(relay)));
+            let relay_for_resize = relay_rc.clone();
+
+            terminal.connect_char_size_changed(move |term, _width, _height| {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "VTE row/col counts fit in u16"
+                )]
+                if let Some(ref r) = *relay_for_resize.borrow() {
+                    r.resize(term.row_count() as u16, term.column_count() as u16);
+                }
+            });
+
+            self.pty_relays.borrow_mut().insert(session_id, relay_rc);
+        }
+    }
+
+    /// Removes and drops the PTY relay for a session.
+    ///
+    /// Called when a session ends or its tab is closed.
+    pub fn remove_relay(&self, session_id: Uuid) {
+        self.pty_relays.borrow_mut().remove(&session_id);
+    }
+
+    /// Returns a reference to the relay map (for session lifecycle wiring).
+    #[must_use]
+    pub fn pty_relays(&self) -> &Rc<RefCell<HashMap<Uuid, pty_relay::SharedPtyRelay>>> {
+        &self.pty_relays
+    }
+
+    /// Registers an output observer for a PTY relay session (issue #247).
+    ///
+    /// The observer receives every raw output chunk from the child process in
+    /// real-time on the GLib main thread. Used by session logging to write
+    /// output to disk without delay or truncation.
+    ///
+    /// Multiple observers can be registered per session (e.g. logger + recorder).
+    pub fn add_output_observer<F>(&self, session_id: Uuid, observer: F)
+    where
+        F: Fn(&[u8]) + 'static,
+    {
+        self.pty_output_observers
+            .borrow_mut()
+            .entry(session_id)
+            .or_default()
+            .push(Box::new(observer));
+    }
+
+    /// Returns whether a session has an active PTY relay.
+    #[must_use]
+    pub fn has_relay(&self, session_id: Uuid) -> bool {
+        self.pty_relays.borrow().contains_key(&session_id)
     }
 
     /// Gets the current terminal text content for transcript logging

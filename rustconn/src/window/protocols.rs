@@ -1402,7 +1402,7 @@ pub fn reconnect_generic_vte_in_place(
             let argv: Vec<&str> = launch.argv.iter().map(String::as_str).collect();
             let env = launch.env_refs();
             let envv = (!env.is_empty()).then_some(env.as_slice());
-            notebook.spawn_command(session_id, &argv, envv, None, None);
+            notebook.spawn_command_with_relay(session_id, &argv, envv, None, None);
         }
         rustconn_core::ProtocolConfig::Telnet(telnet_config) => {
             let conn_msg = format_connection_message("Telnet", &conn.host);
@@ -1454,7 +1454,7 @@ pub fn reconnect_generic_vte_in_place(
             // kubectl runs in-sandbox under Flatpak (Flatpak Components), so the
             // old flatpak-spawn wrapper is no longer needed — same as Mosh below.
             let argv: Vec<&str> = command.iter().map(String::as_str).collect();
-            notebook.spawn_command(session_id, &argv, None, None, None);
+            notebook.spawn_command_with_relay(session_id, &argv, None, None, None);
         }
         rustconn_core::ProtocolConfig::Mosh(_) => {
             let mosh = MoshProtocol::new();
@@ -1469,7 +1469,7 @@ pub fn reconnect_generic_vte_in_place(
 
             // Mosh uses direct exec (no shell wrapper needed)
             let argv: Vec<&str> = command.iter().map(String::as_str).collect();
-            notebook.spawn_command(session_id, &argv, None, None, None);
+            notebook.spawn_command_with_relay(session_id, &argv, None, None, None);
         }
         _ => {
             tracing::warn!("Unsupported protocol for generic VTE reconnect");
@@ -1949,7 +1949,7 @@ pub fn start_zerotrust_connection(
     let argv: Vec<&str> = launch.argv.iter().map(String::as_str).collect();
     let env = launch.env_refs();
     let envv = (!env.is_empty()).then_some(env.as_slice());
-    notebook.spawn_command(session_id, &argv, envv, None, None);
+    notebook.spawn_command_with_relay(session_id, &argv, envv, None, None);
 
     Some(session_id)
 }
@@ -2289,7 +2289,7 @@ pub fn start_kubernetes_connection(
     // in (possibly imported, untrusted) kubectl configs. kubectl runs in-sandbox
     // under Flatpak (Flatpak Components), so no host wrapper is needed.
     let argv: Vec<&str> = command.iter().map(String::as_str).collect();
-    notebook.spawn_command(session_id, &argv, None, None, None);
+    notebook.spawn_command_with_relay(session_id, &argv, None, None, None);
 
     // --- Auto-recording for Kubernetes ---
     if conn.session_recording_enabled {
@@ -2532,7 +2532,7 @@ fn start_mosh_connection_internal(
 
     // Spawn mosh — uses exec (no shell wrapper needed)
     let argv: Vec<&str> = command.iter().map(String::as_str).collect();
-    notebook.spawn_command(session_id, &argv, None, None, None);
+    notebook.spawn_command_with_relay(session_id, &argv, None, None, None);
 
     // --- Auto-recording for MOSH ---
     if conn.session_recording_enabled {

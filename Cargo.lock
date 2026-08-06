@@ -5129,6 +5129,7 @@ dependencies = [
  "gtk4",
  "ksni",
  "libadwaita",
+ "libc",
  "muda",
  "nix",
  "open",
@@ -5240,6 +5241,7 @@ name = "rustconn-pty-sys"
 version = "0.19.13"
 dependencies = [
  "libc",
+ "nix",
 ]
 
 [[package]]

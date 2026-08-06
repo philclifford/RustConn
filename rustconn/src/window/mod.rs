@@ -3827,14 +3827,14 @@ impl MainWindow {
             }
         } else if let Some(ref cmd) = custom_command {
             // Custom command: run via user's shell with -c
-            notebook.spawn_command(session_id, &[&shell, "-c", cmd], None, None, None);
+            notebook.spawn_command_with_relay(session_id, &[&shell, "-c", cmd], None, None, None);
         } else {
             // On macOS, launch as login shell so .zprofile/.zshrc are sourced
             // and the shell gets a proper controlling terminal.
             #[cfg(target_os = "macos")]
-            notebook.spawn_command(session_id, &[&shell, "--login"], None, None, None);
+            notebook.spawn_command_with_relay(session_id, &[&shell, "--login"], None, None, None);
             #[cfg(not(target_os = "macos"))]
-            notebook.spawn_command(session_id, &[&shell], None, None, None);
+            notebook.spawn_command_with_relay(session_id, &[&shell], None, None, None);
         }
 
         // Per spec: New connections ALWAYS create independent Root_Tabs

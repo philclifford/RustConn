@@ -624,7 +624,9 @@ impl SessionLogger {
 
         // Write lines, optionally with timestamp prefix
         let decoded = Zeroizing::new(String::from_utf8_lossy(data).into_owned());
-        let data_str = sanitize_output_zeroizing(&decoded, &self.sanitize);
+        // Strip ANSI escape sequences so log files are human-readable (issue #247)
+        let stripped = Zeroizing::new(strip_ansi_escapes(&decoded));
+        let data_str = sanitize_output_zeroizing(&stripped, &self.sanitize);
 
         for line in data_str.lines() {
             let formatted = Zeroizing::new(if self.config.log_timestamps {
@@ -1075,6 +1077,45 @@ pub fn contains_sensitive_prompt(line: &str) -> bool {
     SENSITIVE_PATTERNS
         .iter()
         .any(|pattern| line_lower.contains(pattern))
+}
+
+/// Pre-compiled regex for stripping ANSI escape sequences from PTY output.
+///
+/// Matches:
+/// - CSI sequences: `ESC [ ... <final byte>` (colors, cursor movement, etc.)
+/// - OSC sequences: `ESC ] ... ST` (window titles, hyperlinks)
+/// - Simple escapes: `ESC <char>` (alternate screen, keypad mode, etc.)
+/// - C1 control codes (rare, 8-bit): `0x9B .. <final>`
+static ANSI_ESCAPE_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    // Matches ANSI escape sequences and control characters:
+    // - CSI: ESC [ <params> <intermediate> <final>
+    // - OSC: ESC ] <text> (BEL | ST)
+    // - Character set selection: ESC ( | ) | # followed by one char
+    // - Other ESC sequences: ESC <intermediate>* <final>
+    // - 8-bit CSI: 0x9B <params> <final>
+    // - Control chars (except tab, newline, CR)
+    regex::Regex::new(concat!(
+        r"\x1b\[[0-9;?]*[ -/]*[@-~]",          // CSI sequences
+        r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", // OSC (BEL or ST terminated)
+        r"|\x1b[()#].",                        // Character set selection
+        r"|\x1b[ -/]*[0-~]",                   // Other ESC sequences
+        r"|\x9b[0-9;]*[@-~]",                  // 8-bit CSI
+        r"|[\x00-\x08\x0b\x0c\x0e-\x1f]",      // Control chars (not \t\n\r)
+    ))
+    .expect("ANSI escape regex must compile")
+});
+
+/// Strips ANSI escape sequences and non-printable control characters from
+/// terminal output, producing clean text suitable for log files.
+///
+/// Preserves: tab (`\t`), newline (`\n`), carriage return (`\r`).
+/// Removes: CSI sequences (colors, cursor), OSC (titles), and control chars.
+///
+/// This is applied to raw PTY output before writing to session logs (issue
+/// #247), so log files opened in a text editor are human-readable.
+#[must_use]
+pub fn strip_ansi_escapes(input: &str) -> String {
+    ANSI_ESCAPE_RE.replace_all(input, "").into_owned()
 }
 
 #[cfg(test)]
@@ -1533,5 +1574,71 @@ mod tests {
             "a typed password must not reach the log file: {written}"
         );
         assert!(written.contains("[REDACTED]"));
+    }
+
+    // ===== ANSI stripping (issue #247, PTY relay) =====
+
+    #[test]
+    fn strip_ansi_removes_color_codes() {
+        let input = "\x1b[32mHello\x1b[0m World";
+        let result = super::strip_ansi_escapes(input);
+        assert_eq!(result, "Hello World");
+    }
+
+    #[test]
+    fn strip_ansi_removes_cursor_movement() {
+        let input = "\x1b[2J\x1b[H\x1b[1;1Huser@host:~$";
+        let result = super::strip_ansi_escapes(input);
+        assert_eq!(result, "user@host:~$");
+    }
+
+    #[test]
+    fn strip_ansi_preserves_newlines_and_tabs() {
+        let input = "line1\n\tindented\r\nline3";
+        let result = super::strip_ansi_escapes(input);
+        assert_eq!(result, "line1\n\tindented\r\nline3");
+    }
+
+    #[test]
+    fn strip_ansi_removes_osc_sequences() {
+        // Window title: ESC ] 0 ; title BEL
+        let input = "\x1b]0;user@host: ~\x07user@host:~$ ";
+        let result = super::strip_ansi_escapes(input);
+        assert_eq!(result, "user@host:~$ ");
+    }
+
+    #[test]
+    fn strip_ansi_handles_ssh_debug_output() {
+        // Typical ssh -v output doesn't have ANSI codes but may have control chars
+        let input = "debug1: Connecting to host [192.168.1.1] port 22.\n";
+        let result = super::strip_ansi_escapes(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn strip_ansi_removes_bold_and_underline() {
+        let input = "\x1b[1mBold\x1b[4mUnderline\x1b[0m Normal";
+        let result = super::strip_ansi_escapes(input);
+        assert_eq!(result, "BoldUnderline Normal");
+    }
+
+    #[test]
+    fn write_strips_ansi_from_output() {
+        let dir = TempDir::new().expect("temp dir");
+        let config = LogConfig::new(dir.path().join("ansi.log").to_string_lossy().into_owned());
+        let mut logger = SessionLogger::new(config, &LogContext::new("host", "ssh"), None)
+            .expect("logger opens");
+        logger
+            .write(b"\x1b[32mgreen text\x1b[0m normal")
+            .expect("write");
+        logger.flush().expect("flush");
+
+        let written = fs::read_to_string(logger.log_path()).expect("read back");
+        assert!(
+            !written.contains("\x1b["),
+            "ANSI escapes must be stripped from log: {written}"
+        );
+        assert!(written.contains("green text"));
+        assert!(written.contains("normal"));
     }
 }

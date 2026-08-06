@@ -47,7 +47,11 @@ tracing-subscriber = { workspace = true }
 cpal = { version = "0.18", optional = true }
 serde = { workspace = true, features = ["derive"] }
 shell-words = "1"
-nix = { version = "0.31", features = ["signal", "process"] }
+nix = { version = "0.31", features = ["signal", "process", "term"] }
+# PTY relay layer: openpty, TIOCSWINSZ, raw fd I/O (issue #247).
+# Lives in its own crate because it contains the workspace's only `unsafe`.
+rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.19.0" }
+libc = "0.2"
 # WebKitGTK 6.0 bindings for embedded web browser (Linux only)
 webkit6 = { version = "0.6", optional = true }
 
@@ -140,6 +144,3 @@ tempfile = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nix = { version = "0.31", features = ["term", "process", "signal"] }
-# Isolated FFI helper for the native PTY controlling-terminal setup (#175).
-# Lives in its own crate because it contains the workspace's only `unsafe`.
-rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.19.0" }
