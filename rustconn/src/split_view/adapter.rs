@@ -67,6 +67,11 @@ pub struct SplitViewAdapter {
     /// This allows the bridge to show a session selection popover when
     /// the user clicks the "Select Tab" button instead of dragging.
     select_tab_callback: Rc<RefCell<Option<SelectTabCallback>>>,
+    /// Callback for "Local Shell" button clicks in empty panels.
+    ///
+    /// Lets the bridge start a fresh local shell session and place it in the
+    /// panel, for when there is no open tab worth moving there.
+    new_shell_callback: Rc<RefCell<Option<SelectTabCallback>>>,
     /// Callback for close button clicks in empty panels.
     ///
     /// This allows the bridge to focus the panel and trigger the close action
@@ -90,6 +95,7 @@ impl std::fmt::Debug for SplitViewAdapter {
             .field("needs_rebuild", &self.needs_rebuild)
             .field("last_drop_outcome", &self.last_drop_outcome)
             .field("select_tab_callback", &"<callback>")
+            .field("new_shell_callback", &"<callback>")
             .field("close_panel_callback", &"<callback>")
             .field("pop_panel_callback", &"<callback>")
             .finish()
@@ -113,6 +119,7 @@ impl SplitViewAdapter {
             needs_rebuild: Rc::new(RefCell::new(false)),
             last_drop_outcome: Rc::new(RefCell::new(None)),
             select_tab_callback: Rc::new(RefCell::new(None)),
+            new_shell_callback: Rc::new(RefCell::new(None)),
             close_panel_callback: Rc::new(RefCell::new(None)),
             pop_panel_callback: Rc::new(RefCell::new(None)),
         };
@@ -137,6 +144,7 @@ impl SplitViewAdapter {
             needs_rebuild: Rc::new(RefCell::new(false)),
             last_drop_outcome: Rc::new(RefCell::new(None)),
             select_tab_callback: Rc::new(RefCell::new(None)),
+            new_shell_callback: Rc::new(RefCell::new(None)),
             close_panel_callback: Rc::new(RefCell::new(None)),
             pop_panel_callback: Rc::new(RefCell::new(None)),
         };
@@ -208,6 +216,21 @@ impl SplitViewAdapter {
         F: Fn(PanelId) + 'static,
     {
         *self.select_tab_callback.borrow_mut() = Some(Rc::new(callback));
+    }
+
+    /// Sets a callback for "Local Shell" button clicks in empty panels.
+    ///
+    /// Invoked with the panel's `PanelId` when the user asks for a fresh local
+    /// shell rather than moving an existing tab into the panel.
+    ///
+    /// # Arguments
+    ///
+    /// * `callback` - A closure that receives the `PanelId` when the button is clicked
+    pub fn set_new_shell_callback<F>(&self, callback: F)
+    where
+        F: Fn(PanelId) + 'static,
+    {
+        *self.new_shell_callback.borrow_mut() = Some(Rc::new(callback));
     }
 
     /// Sets a callback for close button clicks in empty panels.
@@ -1285,8 +1308,36 @@ impl SplitViewAdapter {
             }
         });
 
-        // Set the button as the child of the status page
-        status_page.set_child(Some(&select_button));
+        // A second way to fill the panel: start a local shell in it, for when
+        // there is no open tab worth moving here. Deliberately not
+        // `suggested-action` — the panel has one primary action, and it is
+        // choosing an existing session; this one keeps the same pill shape so the
+        // pair reads as one group.
+        let shell_button = Button::builder()
+            .label(i18n("Local Shell"))
+            .tooltip_text(i18n("Open a new local shell in this panel"))
+            .halign(Align::Center)
+            .build();
+        shell_button.add_css_class("pill");
+
+        let shell_callback_ref = Rc::clone(&self.new_shell_callback);
+        shell_button.connect_clicked(move |_| {
+            tracing::debug!("Local Shell button clicked for panel {panel_id}");
+            if let Some(ref callback) = *shell_callback_ref.borrow() {
+                callback(panel_id);
+            } else {
+                tracing::debug!(
+                    "Local Shell button clicked for panel {panel_id}, but no callback set"
+                );
+            }
+        });
+
+        // `AdwStatusPage` takes a single child, so the two buttons share a box.
+        let buttons = GtkBox::new(Orientation::Vertical, 6);
+        buttons.set_halign(Align::Center);
+        buttons.append(&select_button);
+        buttons.append(&shell_button);
+        status_page.set_child(Some(&buttons));
 
         // Create the close button
         let close_button = Button::builder()

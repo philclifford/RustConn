@@ -311,6 +311,16 @@ pub struct SplitViewBridge {
     /// fire and characters would be doubled. The shared cell is set to `true`
     /// while a broadcast pass is in progress and reset when the pass completes.
     pub broadcast_busy: Rc<std::cell::Cell<bool>>,
+    /// The session whose tab hosts this layout.
+    ///
+    /// A layout is keyed in `session_split_bridges` under every session it
+    /// displays, because several lookups need to find the layout a session is
+    /// in. Only one of those sessions owns it, though: the one that asked for
+    /// the split, whose `TabPage` the split widget actually lives on. Closing
+    /// that tab destroys the layout and its guests have to be sent home first;
+    /// closing a guest must leave the layout alone. The map cannot tell the two
+    /// apart, so the bridge records it.
+    owner_session: Rc<std::cell::Cell<Option<Uuid>>>,
 }
 
 impl SplitViewBridge {
@@ -375,7 +385,25 @@ impl SplitViewBridge {
             broadcast_active: Rc::new(std::cell::Cell::new(false)),
             broadcast_wired_sessions: Rc::new(RefCell::new(HashSet::new())),
             broadcast_busy: Rc::new(std::cell::Cell::new(false)),
+            owner_session: Rc::new(std::cell::Cell::new(None)),
         }
+    }
+
+    /// Records which session's tab hosts this layout.
+    ///
+    /// Set once, when the layout is created for the session that asked to split.
+    pub fn set_owner_session(&self, session_id: Uuid) {
+        self.owner_session.set(Some(session_id));
+    }
+
+    /// Returns whether `session_id` is the session whose tab hosts this layout.
+    ///
+    /// The distinction decides what closing a tab means: the owner's tab takes
+    /// the layout with it, so its guests must be returned to their own tabs
+    /// first, while a guest leaving changes nothing for the rest.
+    #[must_use]
+    pub fn is_owned_by(&self, session_id: Uuid) -> bool {
+        self.owner_session.get() == Some(session_id)
     }
 
     /// Creates a bridge that reads the notebook's live terminal map.
@@ -1904,6 +1932,33 @@ impl SplitViewBridge {
         }
         col.append(&formats_group);
         col
+    }
+
+    /// Sets up the "Local Shell" callback for empty panel placeholders.
+    ///
+    /// The adapter knows panels by `PanelId`, while everything above the bridge
+    /// works in pane UUIDs, so the translation happens here — the same one
+    /// [`Self::setup_select_tab_callback_with_provider`] performs before handing a
+    /// panel to the window layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `on_shell_requested` - Receives the pane UUID that should hold the new
+    ///   local shell session.
+    pub fn setup_new_shell_callback<F>(&self, on_shell_requested: F)
+    where
+        F: Fn(Uuid) + 'static,
+    {
+        let panel_uuid_map = Rc::clone(&self.panel_uuid_map);
+        self.adapter
+            .borrow()
+            .set_new_shell_callback(move |panel_id| {
+                let Some(panel_uuid) = panel_uuid_map.borrow().get(&panel_id).copied() else {
+                    tracing::warn!("No UUID found for panel {panel_id}");
+                    return;
+                };
+                on_shell_requested(panel_uuid);
+            });
     }
 
     /// Sets up the "Select Tab" callback for empty panel placeholders.

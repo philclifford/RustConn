@@ -54,6 +54,173 @@ pub(super) fn wire_panel_action_callbacks(bridge: &Rc<SplitViewBridge>) {
     bridge.setup_pop_panel_callback(focus_pane);
 }
 
+/// Wires the empty panel's "Local Shell" button for one split layout.
+///
+/// Select Tab moves a session that already exists; this starts one. The order
+/// matters: creating a session also selects its new tab, and
+/// [`PanelPlacement::place`] then parks that tab away, at which point
+/// `AdwTabView` picks whatever page happens to be next. Restoring the tab the
+/// split lives on is therefore part of the operation, not a nicety — without it
+/// the user is thrown out of the split they were working in.
+fn wire_new_shell_button(placement: PanelPlacement, state: SharedAppState) {
+    let bridge = Rc::clone(&placement.bridge);
+    bridge.setup_new_shell_callback(move |panel_uuid| {
+        let notebook = &placement.notebook;
+        // The tab hosting this split, which the new session is about to steal
+        // selection from.
+        let host_tab = notebook.get_active_session_id();
+
+        let session_id = MainWindow::spawn_local_shell(notebook, Some(&state));
+        tracing::debug!(%session_id, %panel_uuid, "local shell requested for an empty panel");
+
+        if !placement.place(panel_uuid, session_id) {
+            // The session is alive in its own tab, which is a usable outcome —
+            // leave the user on it rather than hiding it behind the split.
+            tracing::warn!(
+                %session_id,
+                "local shell could not be placed in the panel; it stays in its own tab"
+            );
+            return;
+        }
+
+        if let Some(host_tab) = host_tab {
+            notebook.switch_to_tab(host_tab);
+        }
+
+        // The user asked for a shell here, so put the cursor here.
+        if let Err(e) = placement.bridge.focus_pane(panel_uuid) {
+            tracing::debug!(%panel_uuid, "could not focus the new pane: {e}");
+        }
+        if let Some(widget) = placement.bridge.content_widget(session_id) {
+            widget.grab_focus();
+        }
+    });
+}
+
+/// Everything a session needs done to it to become a pane's content.
+///
+/// Three routes lead here — Select Tab in a horizontal split, Select Tab in a
+/// vertical one, and the empty panel's Local Shell button — and every step below
+/// is load-bearing. Skip the tab park and a dead placeholder tab is left in the
+/// tab bar; skip the bridge registration and the pane is invisible to the
+/// clipboard and broadcast lookups; skip the monitoring suspend and a collector
+/// keeps polling a session that no longer has a tab of its own. Keeping one copy
+/// is also the point: the two Select Tab paths held near-identical copies, and
+/// [#252](https://github.com/totoshko88/RustConn/issues/252) was a fix applied to
+/// one of them and not the other.
+///
+/// Cloneable because the callbacks that use it must be: the bridge re-registers
+/// them whenever a layout is rebuilt.
+#[derive(Clone)]
+struct PanelPlacement {
+    notebook: SharedNotebook,
+    /// The layout the session is joining.
+    bridge: Rc<SplitViewBridge>,
+    bridges: SessionSplitBridges,
+    monitoring: Rc<MonitoringCoordinator>,
+    /// Re-evaluates the broadcast toggle once the pane count changes.
+    refresh_broadcast: Rc<dyn Fn()>,
+    /// Where the placement came from, for the log only.
+    origin: &'static str,
+}
+
+impl PanelPlacement {
+    /// Moves `session_id` into the panel and completes the bookkeeping.
+    ///
+    /// Returns `false` when the session was refused or could not be moved, in
+    /// which case nothing has changed.
+    fn place(&self, panel_uuid: Uuid, session_id: Uuid) -> bool {
+        let origin = self.origin;
+        tracing::debug!(%session_id, %panel_uuid, origin, "placing session in panel");
+
+        // Refuse before anything moves — see `refuses_split_placement`.
+        if refuses_split_placement(&self.notebook, session_id, origin) {
+            return false;
+        }
+
+        self.clear_from_other_layouts(session_id);
+
+        // The display widget comes from the notebook — terminal or embedded
+        // viewer — rather than from the bridge's own map.
+        let Some(content) = self.notebook.get_session_display_widget(session_id) else {
+            tracing::warn!(%session_id, origin, "no content widget for session");
+            return false;
+        };
+
+        let color_index = match self
+            .bridge
+            .move_session_to_panel(panel_uuid, session_id, &content)
+        {
+            Ok(color_index) => color_index,
+            Err(e) => {
+                tracing::warn!(%session_id, %panel_uuid, origin, "failed to move session to panel: {e}");
+                return false;
+            }
+        };
+
+        self.bridges
+            .borrow_mut()
+            .insert(session_id, Rc::clone(&self.bridge));
+        self.notebook.set_tab_split_color(session_id, color_index);
+
+        // The session lives in this split now, so its standalone tab would only
+        // clutter the tab bar and the Tab Overview.
+        self.notebook.park_session_tab(session_id);
+        self.monitoring.suspend_monitoring(session_id);
+
+        tracing::debug!(
+            %session_id,
+            %panel_uuid,
+            color_index,
+            origin,
+            "session placed in panel"
+        );
+
+        // The layout now has one more occupied pane, so the broadcast toggle may
+        // need to appear.
+        (self.refresh_broadcast)();
+
+        // A session placed while broadcast is already on has to be wired at
+        // once, or it would silently miss keystroke mirroring until broadcast is
+        // switched off and on again.
+        if self.bridge.broadcast_active.get() {
+            super::navigation_actions::wire_broadcast_for_session(
+                &self.bridge,
+                &self.notebook,
+                session_id,
+            );
+        }
+
+        // Deliberately no `switch_to_tab`: the session is displayed inside this
+        // tab's split, and switching would navigate away from the split widget.
+        true
+    }
+
+    /// Removes the session from whatever other layout was showing it.
+    ///
+    /// A session can only be in one pane at a time, and the layout it is leaving
+    /// keeps its colour indicator otherwise.
+    fn clear_from_other_layouts(&self, session_id: Uuid) {
+        let bridges = self.bridges.borrow();
+        for (owner, other) in bridges.iter() {
+            if Rc::ptr_eq(other, &self.bridge) {
+                continue;
+            }
+            if other.is_session_displayed(session_id) {
+                tracing::debug!(
+                    %session_id,
+                    previous_owner = %owner,
+                    origin = self.origin,
+                    "clearing session from its previous split"
+                );
+                other.clear_session_from_panes(session_id);
+                self.notebook.clear_tab_split_color(session_id);
+                break;
+            }
+        }
+    }
+}
+
 /// The window handles needed to take a split layout apart.
 ///
 /// Grouped into one struct because three actions dismantle splits —
@@ -238,6 +405,11 @@ impl MainWindow {
                     Rc::clone(terminals),
                     Rc::clone(color_pool),
                 ));
+                // This session asked for the split, so its tab is where the
+                // layout widget lives. Everything placed into the layout later is
+                // a guest, and the difference decides what closing a tab does to
+                // the layout — see `SplitViewBridge::is_owned_by`.
+                new_bridge.set_owner_session(session_id);
                 bridges.insert(session_id, new_bridge.clone());
                 new_bridge
             }
@@ -285,6 +457,9 @@ impl MainWindow {
         let split_horizontal_action = gio::SimpleAction::new("split-horizontal", None);
         let session_bridges = self.session_split_bridges.clone();
         let notebook_for_split_h = self.terminal_notebook.clone();
+        // Needed by the panel's Local Shell button, which reads the configured
+        // shell command out of settings.
+        let state_h = self.state.clone();
         let split_container_h = self.split_container.clone();
         let global_split_view_h = self.split_view.clone();
         let color_pool_h = self.global_color_pool.clone();
@@ -434,25 +609,20 @@ impl MainWindow {
                 });
 
                 // Setup select tab callback for this per-session bridge
-                let split_view_for_select = split_view.clone();
-                let notebook_for_select = notebook_for_split_h.clone();
                 let notebook_for_provider = notebook_for_split_h.clone();
-                let notebook_for_terminal = notebook_for_split_h.clone();
-                let notebook_for_placeholder_h = notebook_for_split_h.clone();
-                // Clone session_bridges so we can register the new session in the map
-                let session_bridges_for_select = session_bridges.clone();
-                // Clone for clearing from previous split
-                let session_bridges_for_clear = session_bridges.clone();
                 // Clone for provider closure
                 let split_view_for_provider = split_view.clone();
-                let monitoring_for_select_h = monitoring_h.clone();
                 let split_colors_h = Rc::clone(notebook_for_split_h.split_colors());
-                // Refresh broadcast toggle once a new session is placed via Select Tab —
-                // until this point the bridge has 1 active session and the toggle is hidden.
-                let refresh_broadcast_select_h = refresh_broadcast_h.clone();
-                // Notebook clone for wiring broadcast on the freshly-placed session
-                // (needed because the wired commit handler also calls send_text_to_session).
-                let notebook_for_broadcast_h = notebook_for_split_h.clone();
+                // Everything a placement needs, in one handle: the same sequence
+                // serves this callback and the panel's Local Shell button.
+                let placement_h = PanelPlacement {
+                    notebook: notebook_for_split_h.clone(),
+                    bridge: split_view.clone(),
+                    bridges: session_bridges.clone(),
+                    monitoring: monitoring_h.clone(),
+                    refresh_broadcast: refresh_broadcast_h.clone(),
+                    origin: "horizontal",
+                };
                 split_view.setup_select_tab_callback_with_provider(
                     move || {
                         // Get all sessions from the notebook, excluding those already in THIS split.
@@ -476,112 +646,17 @@ impl MainWindow {
                             .filter(|(id, _, _)| !split_view_for_provider.is_session_displayed(*id))
                             .collect()
                     },
-                    move |panel_uuid, session_id| {
-                        tracing::debug!(
-                            "Select Tab callback (horizontal): moving session {} to panel {}",
-                            session_id,
-                            panel_uuid
-                        );
-
-                        // Refuse before anything moves — see
-                        // `refuses_split_placement`.
-                        if refuses_split_placement(&notebook_for_terminal, session_id, "horizontal")
-                        {
-                            return;
+                    {
+                        let placement = placement_h.clone();
+                        move |panel_uuid, session_id| {
+                            placement.place(panel_uuid, session_id);
                         }
-
-                        // First, clear this session from any previous split view
-                        {
-                            let bridges = session_bridges_for_clear.borrow();
-                            for (other_session_id, other_bridge) in bridges.iter() {
-                                // Skip if this is the same bridge we're adding to
-                                if Rc::ptr_eq(other_bridge, &split_view_for_select) {
-                                    continue;
-                                }
-                                // Check if this session is displayed in another bridge
-                                if other_bridge.is_session_displayed(session_id) {
-                                    tracing::debug!(
-                                        "Select Tab callback (horizontal): clearing session {} \
-                                         from previous split (owner: {})",
-                                        session_id,
-                                        other_session_id
-                                    );
-                                    other_bridge.clear_session_from_panes(session_id);
-                                    // Clear the old tab color
-                                    notebook_for_select.clear_tab_split_color(session_id);
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Resolve the session's display widget from the notebook
-                        // (terminal or embedded viewer) — not from the bridge's
-                        // internal map.
-                        let Some(content) =
-                            notebook_for_terminal.get_session_display_widget(session_id)
-                        else {
-                            tracing::warn!(
-                                "Select Tab callback (horizontal): no content widget for session {}",
-                                session_id
-                            );
-                            return;
-                        };
-
-                        // Move the session to the panel with its content widget.
-                        // This returns the color index on success
-                        match split_view_for_select
-                            .move_session_to_panel(panel_uuid, session_id, &content)
-                        {
-                            Ok(color_index) => {
-                                // Register this session in session_split_bridges
-                                session_bridges_for_select
-                                    .borrow_mut()
-                                    .insert(session_id, split_view_for_select.clone());
-
-                                // Set tab color indicator using the color from the panel
-                                notebook_for_select.set_tab_split_color(session_id, color_index);
-
-                                // Remove the moved session's standalone tab — it
-                                // now lives in this split, so a placeholder tab
-                                // would only clutter the tab bar and Tab Overview.
-                                notebook_for_placeholder_h.park_session_tab(session_id);
-
-                                // Suspend monitoring — session is now in split view
-                                monitoring_for_select_h.suspend_monitoring(session_id);
-
-                                tracing::debug!(
-                                    "Select Tab callback (horizontal): moved session {} to panel {} with color {}",
-                                    session_id,
-                                    panel_uuid,
-                                    color_index
-                                );
-
-                                // Layout changed — the bridge now has ≥2 active panels,
-                                // so the broadcast toggle should appear in the header bar.
-                                refresh_broadcast_select_h();
-
-                                // If broadcast is already on, the freshly-placed session
-                                // must be wired immediately — otherwise it would silently
-                                // miss keystroke mirroring until broadcast is toggled off
-                                // and back on.
-                                if split_view_for_select.broadcast_active.get() {
-                                    super::navigation_actions::wire_broadcast_for_session(
-                                        &split_view_for_select,
-                                        &notebook_for_broadcast_h,
-                                        session_id,
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to move session to panel: {}", e);
-                            }
-                        }
-
-                        // Note: Do NOT call switch_to_tab() here - the terminal should be
-                        // displayed in the split panel, not switched to as the active tab
                     },
                     split_colors_h,
                 );
+
+                // The panel's other way out of being empty: a fresh local shell.
+                wire_new_shell_button(placement_h, state_h.clone());
 
                 // Wire the panel buttons and panel context menu
                 wire_panel_action_callbacks(&split_view);
@@ -597,6 +672,9 @@ impl MainWindow {
         let split_vertical_action = gio::SimpleAction::new("split-vertical", None);
         let session_bridges_v = self.session_split_bridges.clone();
         let notebook_for_split_v = self.terminal_notebook.clone();
+        // Needed by the panel's Local Shell button, which reads the configured
+        // shell command out of settings.
+        let state_v = self.state.clone();
         let split_container_v = self.split_container.clone();
         let global_split_view_v = self.split_view.clone();
         let color_pool_v = self.global_color_pool.clone();
@@ -746,25 +824,20 @@ impl MainWindow {
                 });
 
                 // Setup select tab callback for this per-session bridge
-                let split_view_for_select = split_view.clone();
-                let notebook_for_select = notebook_for_split_v.clone();
                 let notebook_for_provider = notebook_for_split_v.clone();
-                let notebook_for_terminal = notebook_for_split_v.clone();
-                // Clone session_bridges so we can register the new session in the map
-                let session_bridges_for_select = session_bridges_v.clone();
-                // Clone for clearing from previous split
-                let session_bridges_for_clear = session_bridges_v.clone();
                 // Clone for provider closure
                 let split_view_for_provider = split_view.clone();
-                let monitoring_for_select_v = monitoring_v.clone();
                 let split_colors_v = Rc::clone(notebook_for_split_v.split_colors());
-                let notebook_for_placeholder_v = notebook_for_split_v.clone();
-                // Refresh broadcast toggle once a new session is placed via Select Tab —
-                // until this point the bridge has 1 active session and the toggle is hidden.
-                let refresh_broadcast_select_v = refresh_broadcast_v.clone();
-                // Notebook clone for wiring broadcast on the freshly-placed session
-                // (needed because the wired commit handler also calls send_text_to_session).
-                let notebook_for_broadcast_v = notebook_for_split_v.clone();
+                // Everything a placement needs, in one handle: the same sequence
+                // serves this callback and the panel's Local Shell button.
+                let placement_v = PanelPlacement {
+                    notebook: notebook_for_split_v.clone(),
+                    bridge: split_view.clone(),
+                    bridges: session_bridges_v.clone(),
+                    monitoring: monitoring_v.clone(),
+                    refresh_broadcast: refresh_broadcast_v.clone(),
+                    origin: "vertical",
+                };
                 split_view.setup_select_tab_callback_with_provider(
                     move || {
                         // Get all sessions from the notebook, excluding those already in THIS split.
@@ -788,111 +861,17 @@ impl MainWindow {
                             .filter(|(id, _, _)| !split_view_for_provider.is_session_displayed(*id))
                             .collect()
                     },
-                    move |panel_uuid, session_id| {
-                        tracing::debug!(
-                            "Select Tab callback (vertical): moving session {} to panel {}",
-                            session_id,
-                            panel_uuid
-                        );
-
-                        // Refuse before anything moves — see
-                        // `refuses_split_placement`.
-                        if refuses_split_placement(&notebook_for_terminal, session_id, "vertical") {
-                            return;
+                    {
+                        let placement = placement_v.clone();
+                        move |panel_uuid, session_id| {
+                            placement.place(panel_uuid, session_id);
                         }
-
-                        // First, clear this session from any previous split view
-                        {
-                            let bridges = session_bridges_for_clear.borrow();
-                            for (other_session_id, other_bridge) in bridges.iter() {
-                                // Skip if this is the same bridge we're adding to
-                                if Rc::ptr_eq(other_bridge, &split_view_for_select) {
-                                    continue;
-                                }
-                                // Check if this session is displayed in another bridge
-                                if other_bridge.is_session_displayed(session_id) {
-                                    tracing::debug!(
-                                        "Select Tab callback (vertical): clearing session {} \
-                                         from previous split (owner: {})",
-                                        session_id,
-                                        other_session_id
-                                    );
-                                    other_bridge.clear_session_from_panes(session_id);
-                                    // Clear the old tab color
-                                    notebook_for_select.clear_tab_split_color(session_id);
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Resolve the session's display widget from the notebook
-                        // (terminal or embedded viewer) — not from the bridge's
-                        // internal map.
-                        let Some(content) =
-                            notebook_for_terminal.get_session_display_widget(session_id)
-                        else {
-                            tracing::warn!(
-                                "Select Tab callback (vertical): no content widget for session {}",
-                                session_id
-                            );
-                            return;
-                        };
-
-                        // Move the session to the panel with its content widget.
-                        // This returns the color index on success
-                        match split_view_for_select
-                            .move_session_to_panel(panel_uuid, session_id, &content)
-                        {
-                            Ok(color_index) => {
-                                // Register this session in session_split_bridges
-                                session_bridges_for_select
-                                    .borrow_mut()
-                                    .insert(session_id, split_view_for_select.clone());
-
-                                // Set tab color indicator using the color from the panel
-                                notebook_for_select.set_tab_split_color(session_id, color_index);
-
-                                // Remove the moved session's standalone tab — it
-                                // now lives in this split, so a placeholder tab
-                                // would only clutter the tab bar and Tab Overview.
-                                notebook_for_placeholder_v.park_session_tab(session_id);
-
-                                // Suspend monitoring — session is now in split view
-                                monitoring_for_select_v.suspend_monitoring(session_id);
-
-                                tracing::debug!(
-                                    "Select Tab callback (vertical): moved session {} to panel {} with color {}",
-                                    session_id,
-                                    panel_uuid,
-                                    color_index
-                                );
-
-                                // Layout changed — the bridge now has ≥2 active panels,
-                                // so the broadcast toggle should appear in the header bar.
-                                refresh_broadcast_select_v();
-
-                                // If broadcast is already on, the freshly-placed session
-                                // must be wired immediately — otherwise it would silently
-                                // miss keystroke mirroring until broadcast is toggled off
-                                // and back on.
-                                if split_view_for_select.broadcast_active.get() {
-                                    super::navigation_actions::wire_broadcast_for_session(
-                                        &split_view_for_select,
-                                        &notebook_for_broadcast_v,
-                                        session_id,
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to move session to panel: {}", e);
-                            }
-                        }
-
-                        // Note: Do NOT call switch_to_tab() here - the terminal should be
-                        // displayed in the split panel, not switched to as the active tab
                     },
                     split_colors_v,
                 );
+
+                // The panel's other way out of being empty: a fresh local shell.
+                wire_new_shell_button(placement_v, state_v.clone());
 
                 // Wire the panel buttons and panel context menu
                 wire_panel_action_callbacks(&split_view);

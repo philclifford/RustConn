@@ -1171,14 +1171,23 @@ impl MainWindow {
                 if let Some(notebook) = notebook_for_cleanup.upgrade() {
                     let guests: Vec<Uuid> = {
                         let bridges = session_bridges_for_cleanup.borrow();
-                        bridges.get(&session_id).map_or_else(Vec::new, |bridge| {
-                            bridge
-                                .pane_ids()
-                                .iter()
-                                .filter_map(|&pane_id| bridge.get_pane_session(pane_id))
-                                .filter(|&sid| sid != session_id)
-                                .collect()
-                        })
+                        bridges
+                            .get(&session_id)
+                            // The map holds an entry for *every* session a layout
+                            // displays, so finding one here does not mean this
+                            // session owns it. Asking the bridge is what tells
+                            // owner from guest; without this check, closing a
+                            // single pane evacuated the whole layout, because the
+                            // departing guest looked like the owner.
+                            .filter(|bridge| bridge.is_owned_by(session_id))
+                            .map_or_else(Vec::new, |bridge| {
+                                bridge
+                                    .pane_ids()
+                                    .iter()
+                                    .filter_map(|&pane_id| bridge.get_pane_session(pane_id))
+                                    .filter(|&sid| sid != session_id)
+                                    .collect()
+                            })
                     };
                     for guest_id in guests {
                         tracing::debug!(
@@ -3722,6 +3731,36 @@ impl MainWindow {
         split_view: &SharedSplitView,
         state: Option<&SharedAppState>,
     ) {
+        let session_id = Self::spawn_local_shell(notebook, state);
+
+        // Per spec: New connections ALWAYS create independent Root_Tabs
+        // Register session for potential drag-and-drop, but don't show in split pane
+        if let Some(info) = notebook.get_session_info(session_id) {
+            // The display widget is resolved on demand via the content provider.
+            split_view.add_session(info);
+        }
+
+        // Hide split view, show TabView content for the new tab
+        split_view.widget().set_visible(false);
+        split_view.widget().set_vexpand(false);
+        notebook.widget().set_vexpand(true);
+        notebook.show_tab_view_content();
+
+        // Note: The switch_page signal handler will handle visibility
+        // based on whether the session has a split_color assigned
+    }
+
+    /// Creates a local shell session and starts the user's shell in it.
+    ///
+    /// Returns the new session id. Nothing beyond the tab and the child process
+    /// is touched — no split-view visibility, no tab switching — because the
+    /// caller decides where the session belongs: [`Self::open_local_shell_with_split`]
+    /// leaves it in its own tab, while the empty split panel's Local Shell button
+    /// moves it straight into that panel.
+    pub(crate) fn spawn_local_shell(
+        notebook: &SharedNotebook,
+        state: Option<&SharedAppState>,
+    ) -> Uuid {
         // Get terminal settings from state if available
         let terminal_settings = state
             .and_then(|s| s.try_borrow().ok())
@@ -3837,21 +3876,7 @@ impl MainWindow {
             notebook.spawn_command(session_id, &[&shell], None, None, None);
         }
 
-        // Per spec: New connections ALWAYS create independent Root_Tabs
-        // Register session for potential drag-and-drop, but don't show in split pane
-        if let Some(info) = notebook.get_session_info(session_id) {
-            // The display widget is resolved on demand via the content provider.
-            split_view.add_session(info);
-        }
-
-        // Hide split view, show TabView content for the new tab
-        split_view.widget().set_visible(false);
-        split_view.widget().set_vexpand(false);
-        notebook.widget().set_vexpand(true);
-        notebook.show_tab_view_content();
-
-        // Note: The switch_page signal handler will handle visibility
-        // based on whether the session has a split_color assigned
+        session_id
     }
 
     /// Shows the quick connect dialog with protocol selection
