@@ -30,29 +30,45 @@ impl TranscriptCapture {
             return;
         }
 
-        let new_lines: Vec<&str> = current_text
-            .lines()
-            .skip(last.lines().count())
-            .collect();
-        // Trim trailing empty lines — VTE's viewport extends below the
-        // last output line and get_terminal_text includes those blanks.
-        let trimmed: Vec<&str> = {
-            let mut v = new_lines;
-            while v.last().is_some_and(|l| l.trim().is_empty()) {
-                v.pop();
+        // Find new content by comparing current viewport with the previous
+        // snapshot. The viewport is a sliding window: as output scrolls, old
+        // lines leave the top and new lines appear at the bottom. A simple
+        // lines().skip(N) fails when the viewport scrolled.
+        //
+        // Strategy: if the current text starts with (or contains) the last
+        // text as a prefix, the new content is everything after that prefix.
+        // If not (viewport scrolled past what we saw last), log the full
+        // current viewport content that differs.
+        let new_content = if last.is_empty() {
+            current_text.as_str()
+        } else if current_text.starts_with(last.as_str()) {
+            // Common case: content was appended
+            &current_text[last.len()..]
+        } else {
+            // Viewport scrolled — find the overlap.
+            // Look for the longest suffix of `last` that is a prefix of `current`.
+            let overlap = find_overlap(&last, &current_text);
+            if overlap > 0 {
+                &current_text[overlap..]
+            } else {
+                // No overlap at all — log everything as new
+                current_text.as_str()
             }
-            v
         };
+
+        // Trim trailing empty lines from VTE viewport padding
+        let trimmed = new_content.trim_end_matches('\n').trim_end();
+
         if !trimmed.is_empty()
             && let Ok(mut logger) = self.logger.try_borrow_mut()
         {
             let result = if self.per_line_timestamps {
-                let output = Zeroizing::new(trimmed.join("\n"));
+                let output = Zeroizing::new(trimmed.to_string());
                 logger.write(output.as_bytes())
             } else {
                 let stamp = logger.current_timestamp();
                 let mut block = Zeroizing::new(format!("[{stamp}] OUTPUT:"));
-                for line in trimmed {
+                for line in trimmed.lines() {
                     block.push_str("\n  ");
                     block.push_str(line);
                 }
@@ -65,6 +81,30 @@ impl TranscriptCapture {
 
         *last = current_text;
     }
+}
+
+/// Finds the length of the longest suffix of `old` that is a prefix of `new`.
+///
+/// When the terminal viewport scrolls, the beginning of the previous snapshot
+/// falls off the top and new lines appear at the bottom. The overlap is where
+/// the end of `old` matches the beginning of `new`. Returns 0 if no overlap.
+fn find_overlap(old: &str, new: &str) -> usize {
+    // Check increasingly longer suffixes of `old` against `new`'s prefix.
+    // Start from the end of `old` for efficiency (most common case: a few
+    // lines scrolled, so the overlap is near the end).
+    let max_check = old.len().min(new.len());
+    // Only check at line boundaries for correctness and performance
+    let mut best = 0;
+    for (i, _) in old.char_indices().rev().take(max_check) {
+        if i == 0 || old.as_bytes().get(i.wrapping_sub(1)) == Some(&b'\n') {
+            let suffix = &old[i..];
+            if new.starts_with(suffix) && suffix.len() > best {
+                best = suffix.len();
+                break; // First (longest) match from the end wins
+            }
+        }
+    }
+    best
 }
 
 /// Schedules the first transcript capture once, including after reconnect.
