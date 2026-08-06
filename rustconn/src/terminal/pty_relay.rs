@@ -394,8 +394,7 @@ pub fn spawn_on_vte_pty(
     }
 
     // 1. Create PTY pair
-    let pair =
-        rustconn_pty_sys::open_pty_pair().map_err(|e| format!("openpty failed: {e}"))?;
+    let pair = rustconn_pty_sys::open_pty_pair().map_err(|e| format!("openpty failed: {e}"))?;
 
     // Set initial terminal size from VTE widget
     #[expect(
@@ -436,8 +435,7 @@ pub fn spawn_on_vte_pty(
     }
 
     // 3. Connect slave fd as stdin/stdout/stderr
-    let stdin_fd =
-        rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stdin: {e}"))?;
+    let stdin_fd = rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stdin: {e}"))?;
     let stdout_fd =
         rustconn_pty_sys::dup_fd(&pair.slave).map_err(|e| format!("dup stdout: {e}"))?;
     let stderr_fd =

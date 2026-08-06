@@ -1,3 +1,12 @@
+rustconn (0.19.14-1) unstable; urgency=medium
+
+  * Version bump to 0.19.14
+  * Fixed opening Settings panel corrupted KeePassXC config (#259)
+  * Improved session logging: unified PTY spawn, 1s capture interval, ANSI
+    stripping, line-by-line diff (#247)
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Thu, 06 Aug 2026 12:45:00 +0300
+
 rustconn (0.19.13-1) unstable; urgency=medium
 
   * Version bump to 0.19.13

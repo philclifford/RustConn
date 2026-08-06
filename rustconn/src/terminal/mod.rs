@@ -14,7 +14,10 @@ pub use detach::{DetachMonitor, DetachPresentation};
 pub mod file_drop;
 pub mod highlight_overlay;
 pub mod playback;
-#[expect(dead_code, reason = "relay thread infrastructure kept for future PTY-level capture (issue #247)")]
+#[expect(
+    dead_code,
+    reason = "relay thread infrastructure kept for future PTY-level capture (issue #247)"
+)]
 pub mod pty_relay;
 mod recording;
 pub mod tab_container;

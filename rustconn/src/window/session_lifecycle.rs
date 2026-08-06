@@ -1005,8 +1005,7 @@ impl MainWindow {
             };
             let last_log_time = Rc::new(RefCell::new(std::time::Instant::now()));
             let first_capture_done = Rc::new(Cell::new(false));
-            let initial_timer: Rc<RefCell<Option<glib::SourceId>>> =
-                Rc::new(RefCell::new(None));
+            let initial_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
             schedule_initial_transcript_capture(
                 capture.clone(),

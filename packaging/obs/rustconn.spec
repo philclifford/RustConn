@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.13
+Version:        0.19.14
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,11 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Thu Aug 06 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.14-0
+- Version bump to 0.19.14
+- Fixed opening Settings panel corrupted KeePassXC config (#259)
+- Improved session logging: unified PTY spawn, 1s capture, ANSI stripping (#247)
+
 * Thu Aug 06 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.13-0
 - Version bump to 0.19.13
 - Added US Dvorak RDP keyboard layout (PR #258)

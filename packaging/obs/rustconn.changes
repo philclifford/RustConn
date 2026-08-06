@@ -1,4 +1,11 @@
 -------------------------------------------------------------------
+Thu Aug 06 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.14
+
+- Version bump to 0.19.14
+- Fixed opening Settings panel corrupted KeePassXC config (#259)
+- Improved session logging: unified PTY spawn, 1s capture interval, ANSI stripping, line-by-line diff (#247)
+
+-------------------------------------------------------------------
 Thu Aug 06 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.13
 
 - Version bump to 0.19.13

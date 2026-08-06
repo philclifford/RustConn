@@ -123,9 +123,12 @@ const fn index_to_storage(idx: u32) -> CredentialStorage {
 /// "System keyring (recommended)".
 ///
 /// The combo enforces availability of `secret-tool` for the keyring option:
-/// if the user picks "System keyring" while `secret_tool_available` is false,
-/// the selection is reverted to the previous one and `status_label` shows a
-/// warning.
+/// if the user picks "System keyring" while `secret_tool_available` is
+/// **confirmed false** (`Some(false)`), the selection is reverted to the
+/// previous one and `status_label` shows a warning. While detection is still
+/// pending (`None`), the selection is allowed — this prevents corruption of
+/// previously-saved config values loaded before async detection completes
+/// (issue #259).
 fn make_storage_combo(
     title: &str,
     secret_tool_available: Rc<RefCell<Option<bool>>>,
@@ -151,9 +154,11 @@ fn make_storage_combo(
         let previous_clone = previous.clone();
         combo.connect_selected_notify(move |c| {
             let new_sel = c.selected();
-            if new_sel == STORAGE_KEYRING_INDEX
-                && !*secret_tool_available.borrow().as_ref().unwrap_or(&false)
-            {
+            // Only revert when detection has COMPLETED and confirmed that
+            // secret-tool is absent. While detection is pending (None) we
+            // allow the selection — the value came from a previously-saved
+            // config that was already working (#259).
+            if new_sel == STORAGE_KEYRING_INDEX && *secret_tool_available.borrow() == Some(false) {
                 let revert_to = *previous_clone.borrow();
                 update_status_label(
                     &status_label,
