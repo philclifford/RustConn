@@ -1,5 +1,13 @@
 # macOS Port — Changelog
 
+## [0.19.14] - 2026-08-06
+
+### Changed
+
+- **`rustconn/src/macos_pty.rs` is gone, and the mechanism it introduced is now the only one** — the module existed because VTE's `spawn_async` never connects the child's output to the PTY in the Homebrew build, so macOS created the PTY itself and handed the master to VTE via `Pty::foreign_sync()`. That approach turned out to be the better one on both platforms and moved to `rustconn/src/terminal/pty_spawn.rs`, which Linux now uses as well. What disappears is the second implementation that every environment fix had to be applied to separately — including the macOS `SSH_ASKPASS_REQUIRE` guard from #161, which now lives in the one place that assembles a child's environment.
+
+- **The master descriptor is no longer handed to VTE at all** — `Pty::foreign_sync()` is gone with it. `rustconn/src/terminal/pty_relay.rs` keeps the descriptor and moves bytes in both directions, because a session transcript has to be a copy of what the child wrote and that cannot be read back out of the widget (#247; see `docs/ARCHITECTURE.md`, "Who Owns a Session's PTY"). For macOS specifically this changes nothing about how a child is started, and the controlling-terminal work from #175 is untouched: what changes is who reads the descriptor afterwards. Two details improved in the move: the descriptors handed to the child are duplicated close-on-exec, and the PTY is sized before `exec` rather than only on the first `SIGWINCH`.
+
 ## [0.19.6] - 2026-07-29
 
 ### Added

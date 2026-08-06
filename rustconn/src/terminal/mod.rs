@@ -14,6 +14,8 @@ pub use detach::{DetachMonitor, DetachPresentation};
 pub mod file_drop;
 pub mod highlight_overlay;
 pub mod playback;
+pub mod pty_relay;
+pub mod pty_spawn;
 mod recording;
 pub mod tab_container;
 mod tab_menu;
@@ -33,10 +35,9 @@ use rustconn_core::models::AutomationConfig;
 use rustconn_core::terminal_themes::TerminalTheme;
 pub use types::{SessionWidgetStorage, TerminalSession};
 use uuid::Uuid;
-#[cfg(not(target_os = "macos"))]
-use vte4::PtyFlags;
 use vte4::Terminal;
 use vte4::prelude::*;
+use zeroize::Zeroizing;
 
 /// PCRE2 multiline compile flag — required by VTE's `match_add_regex()`.
 ///
@@ -54,6 +55,15 @@ const PCRE2_MULTILINE: u32 = 0x0000_0400;
 /// side effect unconditionally, so feeding this is a no-op on the normal
 /// screen. Feed it *after* `reset`, which discards unprocessed input.
 const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
+
+/// How often a live session's grid is compared with the size its child knows.
+///
+/// Nothing in VTE reports a resize (see the `vte_contract_tests` module), so
+/// this is the delay between the user letting go of the window edge and the
+/// child receiving `SIGWINCH`. Two integer reads per session at this interval is
+/// nothing, and a shorter one would only chase an event the user cannot perceive
+/// anyway.
+const GRID_SIZE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
 use rustconn_core::automation::{KeyElement, KeySequence};
 use rustconn_core::highlight::CompiledHighlightRules;
@@ -222,6 +232,42 @@ pub struct TerminalNotebook {
     /// that output has actually landed. A session with no entry started on an
     /// empty buffer and needs no baseline.
     cursor_row_base: Rc<RefCell<HashMap<Uuid, Option<i64>>>>,
+    /// First buffer row a session's transcript has not been logged yet
+    /// (issue [#247](https://github.com/totoshko88/RustConn/issues/247)).
+    ///
+    /// Like [`Self::cursor_row_base`] this is an absolute VTE buffer row, so it
+    /// survives scrolling: everything that scrolls off the viewport stays
+    /// addressable in the scrollback and still reaches the log. A missing entry
+    /// means "start at row 0", which is where a fresh buffer begins.
+    /// The PTY each live session is running on
+    /// (issue [#247](https://github.com/totoshko88/RustConn/issues/247)).
+    ///
+    /// VTE renders the session but owns no descriptor, so this is what the
+    /// child is actually attached to: output is read here and fed to the
+    /// widget, input the widget reports through `commit` is written back, and
+    /// the window size is pushed down. Dropping the entry stops the session's
+    /// relay threads, so it is removed when the tab closes and replaced when a
+    /// reconnect starts a new child on the same terminal.
+    pty_relays: Rc<RefCell<HashMap<Uuid, pty_relay::PtyRelay>>>,
+    /// Observers of raw PTY output, per session.
+    ///
+    /// Session logging registers one of these, which is how a transcript
+    /// records what the child wrote rather than what the widget ended up
+    /// displaying. They are `Rc` so the delivery loop can clone the list and
+    /// release its borrow before calling anything.
+    output_observers: Rc<RefCell<HashMap<Uuid, Vec<Rc<dyn Fn(&[u8])>>>>>,
+    /// Sessions whose terminal already forwards `commit` to its relay.
+    ///
+    /// The handler resolves the relay through [`Self::pty_relays`] on every
+    /// keystroke rather than capturing one, so it keeps working across a
+    /// reconnect — and must therefore be connected only once per terminal.
+    commit_forwarded: Rc<RefCell<HashSet<Uuid>>>,
+    /// Window-size poll for each live session.
+    ///
+    /// Nothing in VTE announces a geometry change (see the `vte_contract_tests`
+    /// module), so the grid is compared against the size last pushed to the
+    /// child. Removed together with the relay.
+    pty_size_timers: Rc<RefCell<HashMap<Uuid, glib::SourceId>>>,
     /// Cluster terminal tracking: cluster_id → Vec<session_id>
     cluster_sessions: Rc<RefCell<HashMap<Uuid, Vec<Uuid>>>>,
     /// Reverse lookup: session_id → cluster_id
@@ -377,6 +423,10 @@ impl TerminalNotebook {
             keep_history_on_reconnect: Rc::new(std::cell::Cell::new(true)),
             max_scrollback_on_reconnect: Rc::new(std::cell::Cell::new(None)),
             cursor_row_base: Rc::new(RefCell::new(HashMap::new())),
+            pty_relays: Rc::new(RefCell::new(HashMap::new())),
+            output_observers: Rc::new(RefCell::new(HashMap::new())),
+            commit_forwarded: Rc::new(RefCell::new(HashSet::new())),
+            pty_size_timers: Rc::new(RefCell::new(HashMap::new())),
             cluster_sessions: Rc::new(RefCell::new(HashMap::new())),
             session_to_cluster: Rc::new(RefCell::new(HashMap::new())),
             cluster_pending: Rc::new(RefCell::new(HashMap::new())),
@@ -432,6 +482,10 @@ impl TerminalNotebook {
         let show_welcome_on_close = self.show_welcome.clone();
         let disconnected_on_close = Rc::clone(&self.disconnected_sessions);
         let cursor_row_base_on_close = Rc::clone(&self.cursor_row_base);
+        let pty_relays_on_close = Rc::clone(&self.pty_relays);
+        let output_observers_on_close = Rc::clone(&self.output_observers);
+        let commit_forwarded_on_close = Rc::clone(&self.commit_forwarded);
+        let pty_size_timers_on_close = Rc::clone(&self.pty_size_timers);
 
         // Handle create-window signal - we must connect this to prevent the default
         // behavior which causes CRITICAL warnings. Returning None cancels the tearoff.
@@ -554,6 +608,17 @@ impl TerminalNotebook {
                 session_info.borrow_mut().remove(&session_id);
                 disconnected_on_close.borrow_mut().remove(&session_id);
                 cursor_row_base_on_close.borrow_mut().remove(&session_id);
+
+                // Stop the session's PTY: dropping the relay ends its reader and
+                // writer threads and closes the descriptor. The child is killed
+                // just below, which is what releases a reader still waiting on
+                // output (#247, #172).
+                if let Some(timer) = pty_size_timers_on_close.borrow_mut().remove(&session_id) {
+                    timer.remove();
+                }
+                drop(pty_relays_on_close.borrow_mut().remove(&session_id));
+                output_observers_on_close.borrow_mut().remove(&session_id);
+                commit_forwarded_on_close.borrow_mut().remove(&session_id);
 
                 // Kill VTE child process group explicitly (#172).
                 // Some CLI clients (notably telnet) do not exit on SIGHUP
@@ -1243,7 +1308,12 @@ impl TerminalNotebook {
         }
     }
 
-    /// Spawns a command in the terminal
+    /// Spawns a session command on its own PTY and attaches it to the terminal.
+    ///
+    /// `envv` entries override the inherited environment assembled by
+    /// [`build_child_env`]. Returns `false` when the session has no terminal or
+    /// the command could not be started; a failure also marks the tab
+    /// disconnected and offers a reconnect banner.
     pub fn spawn_command(
         &self,
         session_id: Uuid,
@@ -1252,404 +1322,442 @@ impl TerminalNotebook {
         working_directory: Option<&str>,
         ssh_agent_socket: Option<&str>,
     ) -> bool {
-        let terminals = self.terminals.borrow();
-        let Some(terminal) = terminals.get(&session_id) else {
+        let Some(terminal) = self.get_terminal(session_id) else {
             return false;
         };
 
-        let argv_gstr: Vec<glib::GString> = argv.iter().map(|s| glib::GString::from(*s)).collect();
-        let argv_refs: Vec<&str> = argv_gstr.iter().map(gtk4::glib::GString::as_str).collect();
+        // A reconnect starts a new child on the same terminal, so the previous
+        // session's relay has to go first: dropping it stops its threads and
+        // closes its descriptors, and leaving it would keep feeding the widget
+        // from a PTY nobody is on any more.
+        self.teardown_relay(session_id);
 
-        // Inherit the current process environment so that child
-        // processes see SSH_AUTH_SOCK, HOME, TERM, DISPLAY, etc.
-        // Then override PATH with our extended version (Flatpak CLI
-        // tools) and layer any caller-provided variables on top.
-        let extended_path = rustconn_core::cli_download::get_extended_path();
-
-        let mut env_vec: Vec<glib::GString> = Vec::new();
-
-        // Start with the full parent environment
-        for (key, value) in std::env::vars() {
-            if key == "PATH" {
-                // Replace PATH with our extended version
-                env_vec.push(glib::GString::from(format!("PATH={extended_path}")));
-            } else {
-                env_vec.push(glib::GString::from(format!("{key}={value}")));
-            }
-        }
-
-        // If PATH wasn't in the parent env, add it explicitly
-        if std::env::var("PATH").is_err() {
-            env_vec.push(glib::GString::from(format!("PATH={extended_path}")));
-        }
-
-        // Inject SSH agent env: custom socket override takes priority,
-        // then OnceLock agent info, then inherited environment.
-        if let Some(custom_socket) = ssh_agent_socket {
-            env_vec.retain(|e| !e.starts_with("SSH_AUTH_SOCK="));
-            env_vec.push(glib::GString::from(format!(
-                "SSH_AUTH_SOCK={custom_socket}"
-            )));
-        } else if let Some(agent_info) = rustconn_core::sftp::get_agent_info() {
-            env_vec.retain(|e| !e.starts_with("SSH_AUTH_SOCK="));
-            env_vec.push(glib::GString::from(format!(
-                "SSH_AUTH_SOCK={}",
-                agent_info.socket_path
-            )));
-            if let Some(ref pid) = agent_info.pid {
-                env_vec.retain(|e| !e.starts_with("SSH_AGENT_PID="));
-                env_vec.push(glib::GString::from(format!("SSH_AGENT_PID={pid}")));
-            }
-        }
-
-        // Strip host SSH_ASKPASS — RustConn handles password input via
-        // VTE feed_child() injection, so the host askpass program (e.g.
-        // ksshaskpass on KDE) is never needed and may not exist inside
-        // sandboxed environments like Flatpak (#48).
-        env_vec.retain(|e| !e.starts_with("SSH_ASKPASS="));
-
-        // On macOS, SSH may still try the compiled-in default askpass path
-        // (e.g. /usr/X11R6/bin/ssh-askpass from XQuartz) even when SSH_ASKPASS
-        // is unset. Setting SSH_ASKPASS_REQUIRE=never tells OpenSSH ≥8.4 to
-        // never invoke an external askpass program. (#161)
-        #[cfg(target_os = "macos")]
-        {
-            env_vec.retain(|e| !e.starts_with("SSH_ASKPASS_REQUIRE="));
-            env_vec.push(glib::GString::from("SSH_ASKPASS_REQUIRE=never"));
-        }
-
-        // In Flatpak, redirect CLI config directories to writable sandbox
-        // locations. Host directories are either mounted read-only (gcloud,
-        // Azure, kubectl) or not mounted at all (Teleport, Boundary, etc.).
-        if rustconn_core::flatpak::is_flatpak() {
-            // gcloud: ~/.config/gcloud/ mounted :ro
-            if !env_vec.iter().any(|e| e.starts_with("CLOUDSDK_CONFIG="))
-                && let Some(dir) = rustconn_core::flatpak::get_flatpak_gcloud_config_dir()
-            {
-                env_vec.push(glib::GString::from(format!(
-                    "CLOUDSDK_CONFIG={}",
-                    dir.display()
-                )));
-            }
-            // Azure CLI: ~/.azure/ mounted :ro
-            if !env_vec.iter().any(|e| e.starts_with("AZURE_CONFIG_DIR="))
-                && let Some(dir) = rustconn_core::flatpak::get_flatpak_azure_config_dir()
-            {
-                env_vec.push(glib::GString::from(format!(
-                    "AZURE_CONFIG_DIR={}",
-                    dir.display()
-                )));
-            }
-            // Teleport: ~/.tsh/ not mounted — TELEPORT_HOME redirects
-            // tsh config/data directory (default ~/.tsh)
-            if !env_vec.iter().any(|e| e.starts_with("TELEPORT_HOME="))
-                && let Some(dir) = rustconn_core::flatpak::get_flatpak_teleport_config_dir()
-            {
-                env_vec.push(glib::GString::from(format!(
-                    "TELEPORT_HOME={}",
-                    dir.display()
-                )));
-            }
-            // Boundary: uses system keyring via D-Bus (org.freedesktop.secrets)
-            // which works in Flatpak — no env var redirection needed.
-            //
-            // Cloudflare Tunnel: `cloudflared access ssh` uses browser-based
-            // auth with short-lived tokens — no persistent config dir needed
-            // for the SSH proxy use case.
-            // OCI CLI: ~/.oci/ not mounted
-            if !env_vec
-                .iter()
-                .any(|e| e.starts_with("OCI_CLI_CONFIG_FILE="))
-                && let Some(dir) = rustconn_core::flatpak::get_flatpak_oci_config_dir()
-            {
-                env_vec.push(glib::GString::from(format!(
-                    "OCI_CLI_CONFIG_FILE={}",
-                    dir.join("config").display()
-                )));
-            }
-        }
-        // In a snap, mirror the Flatpak redirection above using the snap's
-        // writable user-data CLI config dirs. The personal-files plugs expose
-        // host credentials read-only, so writable config must live under
-        // $SNAP_USER_DATA (see rustconn_core::snap::get_snap_cli_config_dir).
-        else if rustconn_core::is_snap() {
-            if !env_vec.iter().any(|e| e.starts_with("CLOUDSDK_CONFIG="))
-                && let Some(dir) = rustconn_core::snap::get_snap_gcloud_config_dir()
-            {
-                env_vec.push(glib::GString::from(format!(
-                    "CLOUDSDK_CONFIG={}",
-                    dir.display()
-                )));
-            }
-            if !env_vec.iter().any(|e| e.starts_with("AZURE_CONFIG_DIR="))
-                && let Some(dir) = rustconn_core::snap::get_snap_azure_config_dir()
-            {
-                env_vec.push(glib::GString::from(format!(
-                    "AZURE_CONFIG_DIR={}",
-                    dir.display()
-                )));
-            }
-            if !env_vec.iter().any(|e| e.starts_with("TELEPORT_HOME="))
-                && let Some(dir) = rustconn_core::snap::get_snap_teleport_config_dir()
-            {
-                env_vec.push(glib::GString::from(format!(
-                    "TELEPORT_HOME={}",
-                    dir.display()
-                )));
-            }
-            if !env_vec
-                .iter()
-                .any(|e| e.starts_with("OCI_CLI_CONFIG_FILE="))
-                && let Some(dir) = rustconn_core::snap::get_snap_oci_config_dir()
-            {
-                env_vec.push(glib::GString::from(format!(
-                    "OCI_CLI_CONFIG_FILE={}",
-                    dir.join("config").display()
-                )));
-            }
-        }
-
-        // Ensure TERM is set. GUI applications (like RustConn) typically
-        // don't have TERM in their environment. Without it, ncurses-based
-        // programs (mc, htop, etc.) can't detect terminal capabilities
-        // including mouse support, causing raw escape sequences to appear
-        // as text artifacts. VTE doesn't auto-add TERM when envv is provided.
-        //
-        // Always use xterm-256color for VTE child processes.
-        // In Flatpak the sandbox may inherit TERM=dumb; outside Flatpak
-        // GUI apps typically don't have TERM set at all. xterm-256color
-        // is universally available and provides full color + mouse support.
-        // MC is launched with `-g` (--oldmouse) to force X10 mouse mode
-        // regardless of the XM terminfo capability.
-        if !env_vec.iter().any(|e| e.starts_with("TERM=")) {
-            env_vec.push(glib::GString::from("TERM=xterm-256color"));
-        } else if rustconn_core::flatpak::is_flatpak() || env_vec.iter().any(|e| e == "TERM=dumb") {
-            env_vec.retain(|e| !e.starts_with("TERM="));
-            env_vec.push(glib::GString::from("TERM=xterm-256color"));
-        }
-
-        // Layer caller-provided variables (override parent values)
-        if let Some(user_env) = envv {
-            for e in user_env {
-                // Remove any existing entry with the same key
-                if let Some(eq_pos) = e.find('=') {
-                    let key_prefix = &e[..=eq_pos];
-                    env_vec.retain(|existing| !existing.starts_with(key_prefix));
-                }
-                env_vec.push(glib::GString::from(*e));
-            }
-        }
-
-        let env_refs: Vec<&str> = env_vec.iter().map(gtk4::glib::GString::as_str).collect();
-
-        // Capture command name for error reporting
-        let command_name = argv.first().unwrap_or(&"").to_string();
-
-        // Capture Rc references for the spawn error callback
-        let sessions_rc = self.sessions.clone();
-        let session_info_rc = self.session_info.clone();
-        let on_reconnect_rc = self.on_reconnect.clone();
-        let vte_child_pids_rc = self.vte_child_pids.clone();
+        let env_vec = build_child_env(envv, ssh_agent_socket);
+        let env_refs: Vec<&str> = env_vec.iter().map(|e| e.as_str()).collect();
+        let command_name = (*argv.first().unwrap_or(&"")).to_owned();
+        let size = grid_size(&terminal);
 
         tracing::debug!(
             command = %command_name,
             %session_id,
-            argv = ?argv_refs,
+            argv = ?argv,
             working_directory = ?working_directory,
             env_count = env_refs.len(),
-            "Spawning command via VTE spawn_async"
+            rows = size.0,
+            cols = size.1,
+            "Spawning session command"
         );
 
-        // On macOS, VTE's built-in spawn_async doesn't connect PTY to child
-        // process output (known Homebrew VTE issue). Use native PTY instead.
-        #[cfg(target_os = "macos")]
-        {
-            match crate::macos_pty::spawn_native_pty(
-                terminal,
-                &argv_refs,
-                &env_refs,
-                working_directory,
-            ) {
-                Ok(pid) => {
-                    vte_child_pids_rc
-                        .borrow_mut()
-                        .insert(session_id, pid as i32);
-                    tracing::info!(
-                        command = %command_name,
-                        %session_id,
-                        %pid,
-                        "Command spawned successfully (macOS native PTY)"
-                    );
+        let child = match pty_spawn::spawn_on_pty(argv, &env_refs, working_directory, size) {
+            Ok(child) => child,
+            Err(e) => {
+                tracing::error!(
+                    command = %command_name,
+                    %session_id,
+                    %e,
+                    "Failed to spawn session command"
+                );
+                self.show_spawn_failure(session_id, &command_name, &e);
+                return false;
+            }
+        };
+
+        let (relay, output) = match pty_relay::PtyRelay::start(child.master, size) {
+            Ok(started) => started,
+            Err(e) => {
+                // The child is already running on a PTY nothing will read, so
+                // it has to go rather than linger on an invisible terminal.
+                reap_child(child.pid);
+                tracing::error!(
+                    command = %command_name,
+                    %session_id,
+                    %e,
+                    "Failed to start the PTY relay"
+                );
+                self.show_spawn_failure(
+                    session_id,
+                    &command_name,
+                    &pty_spawn::SpawnError::Failed(e.to_string()),
+                );
+                return false;
+            }
+        };
+
+        self.pty_relays.borrow_mut().insert(session_id, relay);
+        self.vte_child_pids
+            .borrow_mut()
+            .insert(session_id, child.pid as i32);
+
+        self.deliver_output_to(session_id, &terminal, output);
+        self.forward_input_from(session_id, &terminal);
+        self.watch_grid_size(session_id, &terminal);
+        watch_child_exit(&terminal, child.pid);
+
+        true
+    }
+
+    /// Feeds a session's PTY output to its terminal and to its observers.
+    ///
+    /// Runs on the GTK main thread for as long as the relay lives; when the
+    /// relay is dropped the stream ends and this loop finishes on its own.
+    fn deliver_output_to(
+        &self,
+        session_id: Uuid,
+        terminal: &Terminal,
+        output: pty_relay::OutputStream,
+    ) {
+        let terminal = terminal.downgrade();
+        let observers = Rc::clone(&self.output_observers);
+        glib::spawn_future_local(async move {
+            while let Ok(chunk) = output.recv().await {
+                if let Some(terminal) = terminal.upgrade() {
+                    terminal.feed(&chunk);
                 }
-                Err(e) => {
-                    tracing::error!(
-                        command = %command_name,
-                        %session_id,
-                        %e,
-                        "Failed to spawn command (macOS native PTY)"
-                    );
-
-                    // A missing executable surfaces as a NotFound spawn error
-                    // ("No such file or directory" / os error 2). Anything else
-                    // (PTY allocation, fd dup, controlling-terminal setup) is a
-                    // genuine failure the user must see verbatim instead of a
-                    // misleading "not installed" message.
-                    let not_found =
-                        e.contains("No such file or directory") || e.contains("os error 2");
-                    let banner_msg = if not_found {
-                        i18n_f("Command not found: {}", &[&command_name])
-                    } else {
-                        i18n_f("Failed to start '{}'", &[&command_name])
-                    };
-
-                    // Mark tab as disconnected and show reconnect overlay
-                    if let Some(page) = sessions_rc.borrow().get(&session_id) {
-                        page.set_indicator_icon(Some(&gio::ThemedIcon::new(
-                            "network-offline-symbolic",
-                        )));
-                        page.set_indicator_activatable(false);
-
-                        // Build reconnect banner inside the tab container
-                        if let Ok(outer) = page.child().downcast::<GtkBox>()
-                            && let Some(inner) = outer.first_child()
-                            && let Ok(container) = inner.downcast::<GtkBox>()
-                        {
-                            let info = session_info_rc.borrow();
-                            let connection_id = info
-                                .get(&session_id)
-                                .map(|i| i.connection_id)
-                                .unwrap_or(Uuid::nil());
-                            drop(info);
-
-                            let banner = GtkBox::new(Orientation::Horizontal, 6);
-                            banner.set_margin_start(12);
-                            banner.set_margin_end(12);
-                            banner.set_margin_top(6);
-                            banner.set_margin_bottom(6);
-                            banner.set_halign(gtk4::Align::Center);
-                            banner.set_widget_name("reconnect-banner");
-
-                            let msg = banner_msg.clone();
-                            let label = gtk4::Label::new(Some(&msg));
-                            label.add_css_class("dim-label");
-
-                            let button = gtk4::Button::with_label(&i18n("Reconnect"));
-                            button.add_css_class("suggested-action");
-                            button.set_tooltip_text(Some(&i18n("Reconnect to this session")));
-
-                            banner.append(&label);
-                            banner.append(&button);
-                            container.append(&banner);
-
-                            let on_reconnect = on_reconnect_rc.clone();
-                            button.connect_clicked(move |_| {
-                                if let Some(ref cb) = *on_reconnect.borrow() {
-                                    cb(session_id, connection_id);
-                                }
-                            });
-                        }
-                    }
-
-                    // Show toast on the nearest window
-                    let msg = if not_found {
-                        i18n_f("'{}' is not installed", &[&command_name])
-                    } else {
-                        i18n_f("Failed to start '{}': {}", &[&command_name, &e])
-                    };
-                    crate::toast::show_error_toast_on_active_window(&msg);
+                // The list is cloned so that no borrow is held while an observer
+                // runs: session logging is then free to touch the notebook.
+                let handlers = observers
+                    .borrow()
+                    .get(&session_id)
+                    .cloned()
+                    .unwrap_or_default();
+                for handler in handlers {
+                    handler(&chunk);
                 }
             }
-            true
+        });
+    }
+
+    /// Sends whatever the terminal reports as input to the session's PTY.
+    ///
+    /// Keys, pasted text, mouse reports and the replies VTE makes to terminal
+    /// queries all arrive through `commit`, which VTE emits whether or not it
+    /// owns a PTY. Connected once per terminal, because the handler resolves the
+    /// relay by session and so keeps working across a reconnect.
+    fn forward_input_from(&self, session_id: Uuid, terminal: &Terminal) {
+        if !self.commit_forwarded.borrow_mut().insert(session_id) {
+            return;
         }
+        let relays = Rc::clone(&self.pty_relays);
+        terminal.connect_commit(move |_terminal, text, size| {
+            if let Some(relay) = relays.borrow().get(&session_id) {
+                relay.write_input(&pty_relay::commit_bytes(text, size));
+            }
+        });
+    }
 
-        #[cfg(not(target_os = "macos"))]
-        {
-            terminal.spawn_async(
-                PtyFlags::DEFAULT,
-                working_directory,
-                &argv_refs,
-                &env_refs,
-                glib::SpawnFlags::SEARCH_PATH_FROM_ENVP,
-                || {},
-                -1,
-                gio::Cancellable::NONE,
-                move |result| {
-                    if let Ok(pid) = &result {
-                        vte_child_pids_rc.borrow_mut().insert(session_id, pid.0);
-                        tracing::info!(
-                            command = %command_name,
-                            %session_id,
-                            pid = pid.0,
-                            "Command spawned successfully"
-                        );
-                    }
-                    if let Err(e) = result {
-                        tracing::error!(
-                            command = %command_name,
-                            %session_id,
-                            %e,
-                            "Failed to spawn command"
-                        );
-
-                        // Mark tab as disconnected and show reconnect overlay
-                        if let Some(page) = sessions_rc.borrow().get(&session_id) {
-                            page.set_indicator_icon(Some(&gio::ThemedIcon::new(
-                                "network-offline-symbolic",
-                            )));
-                            page.set_indicator_activatable(false);
-
-                            // Build reconnect banner inside the tab container
-                            if let Ok(outer) = page.child().downcast::<GtkBox>()
-                                && let Some(inner) = outer.first_child()
-                                && let Ok(container) = inner.downcast::<GtkBox>()
-                            {
-                                let info = session_info_rc.borrow();
-                                let connection_id = info
-                                    .get(&session_id)
-                                    .map(|i| i.connection_id)
-                                    .unwrap_or(Uuid::nil());
-                                drop(info);
-
-                                let banner = GtkBox::new(Orientation::Horizontal, 6);
-                                banner.set_margin_start(12);
-                                banner.set_margin_end(12);
-                                banner.set_margin_top(6);
-                                banner.set_margin_bottom(6);
-                                banner.set_halign(gtk4::Align::Center);
-                                banner.set_widget_name("reconnect-banner");
-
-                                let msg = i18n_f("Command not found: {}", &[&command_name]);
-                                let label = gtk4::Label::new(Some(&msg));
-                                label.add_css_class("dim-label");
-
-                                let button = gtk4::Button::with_label(&i18n("Reconnect"));
-                                button.add_css_class("suggested-action");
-                                button.set_tooltip_text(Some(&i18n("Reconnect to this session")));
-
-                                banner.append(&label);
-                                banner.append(&button);
-                                container.append(&banner);
-
-                                let on_reconnect = on_reconnect_rc.clone();
-                                button.connect_clicked(move |_| {
-                                    if let Some(ref cb) = *on_reconnect.borrow() {
-                                        cb(session_id, connection_id);
-                                    }
-                                });
-                            }
-                        }
-
-                        // Show toast on the nearest window
-                        let msg = i18n_f("'{}' is not installed", &[&command_name]);
-                        crate::toast::show_error_toast_on_active_window(&msg);
-                    }
-                },
-            );
-
-            true
+    /// Keeps the child's idea of the window size in step with the widget.
+    ///
+    /// A poll rather than a signal, because VTE has none to offer: no row-count
+    /// or column-count notification, `char-size-changed` covers font metrics
+    /// only, and GTK4 removed `size-allocate` (see `vte_contract_tests`). The
+    /// check is two integer reads, and `TIOCSWINSZ` is only sent when the grid
+    /// really changed — a redundant `SIGWINCH` makes full-screen programs
+    /// repaint for nothing.
+    fn watch_grid_size(&self, session_id: Uuid, terminal: &Terminal) {
+        let terminal = terminal.downgrade();
+        let relays = Rc::clone(&self.pty_relays);
+        let timers = Rc::clone(&self.pty_size_timers);
+        let source = glib::timeout_add_local(GRID_SIZE_POLL, move || {
+            let Some(terminal) = terminal.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let relays = relays.borrow();
+            let Some(relay) = relays.get(&session_id) else {
+                // No relay means the session is over, and so is this poll.
+                timers.borrow_mut().remove(&session_id);
+                return glib::ControlFlow::Break;
+            };
+            let (rows, cols) = grid_size(&terminal);
+            if relay.sync_size(rows, cols) {
+                tracing::debug!(%session_id, rows, cols, "Pushed new window size to child");
+            }
+            glib::ControlFlow::Continue
+        });
+        if let Some(previous) = self.pty_size_timers.borrow_mut().insert(session_id, source) {
+            previous.remove();
         }
     }
 
+    /// Registers a callback for a session's raw PTY output.
+    ///
+    /// The callback runs on the GTK main thread with each chunk exactly as the
+    /// child wrote it — no viewport, no rewrapping, no de-duplication — which is
+    /// what a session transcript needs. Several observers can coexist.
+    pub fn add_output_observer<F>(&self, session_id: Uuid, observer: F)
+    where
+        F: Fn(&[u8]) + 'static,
+    {
+        self.output_observers
+            .borrow_mut()
+            .entry(session_id)
+            .or_default()
+            .push(Rc::new(observer));
+    }
+
+    /// Stops a session's relay and its window-size poll.
+    ///
+    /// Output observers deliberately survive: an in-place reconnect keeps the
+    /// same session log, and re-registering them would double every line.
+    fn teardown_relay(&self, session_id: Uuid) {
+        if let Some(timer) = self.pty_size_timers.borrow_mut().remove(&session_id) {
+            timer.remove();
+        }
+        drop(self.pty_relays.borrow_mut().remove(&session_id));
+    }
+
+    /// Marks a session's tab as failed and explains why.
+    ///
+    /// A missing CLI tool is the common case and gets its own wording, because
+    /// "not installed" tells the user what to do while an errno does not. The
+    /// banner carries a Reconnect button so the tab stays useful after the tool
+    /// has been installed.
+    fn show_spawn_failure(
+        &self,
+        session_id: Uuid,
+        command_name: &str,
+        error: &pty_spawn::SpawnError,
+    ) {
+        let not_found = error.is_not_found();
+
+        if let Some(page) = self.sessions.borrow().get(&session_id) {
+            page.set_indicator_icon(Some(&gio::ThemedIcon::new("network-offline-symbolic")));
+            page.set_indicator_activatable(false);
+
+            if let Ok(outer) = page.child().downcast::<GtkBox>()
+                && let Some(inner) = outer.first_child()
+                && let Ok(container) = inner.downcast::<GtkBox>()
+            {
+                let connection_id = self
+                    .session_info
+                    .borrow()
+                    .get(&session_id)
+                    .map_or_else(Uuid::nil, |i| i.connection_id);
+
+                let banner = GtkBox::new(Orientation::Horizontal, 6);
+                banner.set_margin_start(12);
+                banner.set_margin_end(12);
+                banner.set_margin_top(6);
+                banner.set_margin_bottom(6);
+                banner.set_halign(gtk4::Align::Center);
+                banner.set_widget_name("reconnect-banner");
+
+                let label = gtk4::Label::new(Some(&if not_found {
+                    i18n_f("Command not found: {}", &[command_name])
+                } else {
+                    i18n_f("Failed to start '{}'", &[command_name])
+                }));
+                label.add_css_class("dim-label");
+
+                let button = gtk4::Button::with_label(&i18n("Reconnect"));
+                button.add_css_class("suggested-action");
+                button.set_tooltip_text(Some(&i18n("Reconnect to this session")));
+
+                banner.append(&label);
+                banner.append(&button);
+                container.append(&banner);
+
+                let on_reconnect = self.on_reconnect.clone();
+                button.connect_clicked(move |_| {
+                    if let Some(ref cb) = *on_reconnect.borrow() {
+                        cb(session_id, connection_id);
+                    }
+                });
+            }
+        }
+
+        let msg = if not_found {
+            i18n_f("'{}' is not installed", &[command_name])
+        } else {
+            i18n_f(
+                "Failed to start '{}': {}",
+                &[command_name, &error.to_string()],
+            )
+        };
+        crate::toast::show_error_toast_on_active_window(&msg);
+    }
+}
+
+/// Returns a terminal's grid as `(rows, columns)`, clamped to `u16`.
+///
+/// VTE reports these as `i64`; a terminal larger than 65535 cells in either
+/// direction does not exist, and `TIOCSWINSZ` could not express it anyway.
+fn grid_size(terminal: &Terminal) -> (u16, u16) {
+    let clamp = |value: i64| u16::try_from(value.max(0)).unwrap_or(u16::MAX);
+    (clamp(terminal.row_count()), clamp(terminal.column_count()))
+}
+
+/// Kills a child and collects it, so a failed startup leaves no zombie.
+fn reap_child(pid: u32) {
+    let pid = nix::unistd::Pid::from_raw(pid as i32);
+    let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
+    let _ = nix::sys::wait::waitpid(pid, None);
+}
+
+/// Raises `child-exited` on a terminal when its child process ends.
+///
+/// VTE only emits that signal for a child it spawned itself, and the whole
+/// teardown path hangs off it — reconnect banner, log flush, monitoring, tab
+/// state. The GLib watch also performs the `waitpid`, which is why
+/// [`pty_spawn::spawn_on_pty`] deliberately leaks its `Child` handle.
+fn watch_child_exit(terminal: &Terminal, pid: u32) {
+    let terminal = terminal.downgrade();
+    glib::child_watch_add_local(glib::Pid(pid as i32), move |_pid, status| {
+        tracing::debug!(status, pid, "Session child exited");
+        if let Some(terminal) = terminal.upgrade() {
+            terminal.emit_by_name::<()>("child-exited", &[&status]);
+        }
+    });
+}
+
+/// Assembles the complete environment for a session's child process.
+///
+/// The parent environment is inherited so the child sees `HOME`, `DISPLAY` and
+/// friends, then four things are layered on top; `envv` overrides all of them.
+///
+/// Both spawn paths used to carry their own copy of this, which is how the
+/// macOS `SSH_ASKPASS_REQUIRE` guard (#161) ended up applied on one path only.
+///
+/// Entries are zeroizing: a jump host's password is handed to `ssh` through
+/// `envv` as an askpass variable, so this vector holds a credential for as long
+/// as it takes to spawn.
+fn build_child_env(
+    envv: Option<&[&str]>,
+    ssh_agent_socket: Option<&str>,
+) -> Vec<Zeroizing<String>> {
+    /// Replaces any existing definitions of `KEY=` before appending `entry`.
+    fn set(env_vec: &mut Vec<Zeroizing<String>>, entry: String) {
+        if let Some(eq_pos) = entry.find('=') {
+            let key_prefix = &entry[..=eq_pos];
+            env_vec.retain(|existing| !existing.starts_with(key_prefix));
+        }
+        env_vec.push(Zeroizing::new(entry));
+    }
+
+    // PATH is replaced with the extended version so CLI tools RustConn
+    // downloaded itself (Flatpak, snap) are found by name.
+    let extended_path = rustconn_core::cli_download::get_extended_path();
+    let mut env_vec: Vec<Zeroizing<String>> = std::env::vars()
+        .map(|(key, value)| {
+            Zeroizing::new(if key == "PATH" {
+                format!("PATH={extended_path}")
+            } else {
+                format!("{key}={value}")
+            })
+        })
+        .collect();
+    if std::env::var_os("PATH").is_none() {
+        env_vec.push(Zeroizing::new(format!("PATH={extended_path}")));
+    }
+
+    // SSH agent: an explicit socket wins over the process-wide agent RustConn
+    // started, which in turn wins over whatever the desktop session exported.
+    if let Some(custom_socket) = ssh_agent_socket {
+        set(&mut env_vec, format!("SSH_AUTH_SOCK={custom_socket}"));
+    } else if let Some(agent_info) = rustconn_core::sftp::get_agent_info() {
+        set(
+            &mut env_vec,
+            format!("SSH_AUTH_SOCK={}", agent_info.socket_path),
+        );
+        if let Some(ref pid) = agent_info.pid {
+            set(&mut env_vec, format!("SSH_AGENT_PID={pid}"));
+        }
+    }
+
+    // Strip host SSH_ASKPASS — RustConn types passwords into the session
+    // itself, so the host askpass program (e.g. ksshaskpass) is never needed
+    // and may not exist inside a sandbox (#48).
+    env_vec.retain(|e| !e.starts_with("SSH_ASKPASS="));
+
+    // On macOS, ssh may still try its compiled-in askpass path (XQuartz) with
+    // SSH_ASKPASS unset; OpenSSH >= 8.4 honours this instead (#161).
+    #[cfg(target_os = "macos")]
+    set(&mut env_vec, "SSH_ASKPASS_REQUIRE=never".to_owned());
+
+    push_sandbox_cli_config(&mut env_vec);
+
+    // ncurses programs (mc, htop) need TERM to detect colour and mouse
+    // support; a GUI process usually has none, and a Flatpak sandbox may
+    // inherit TERM=dumb. xterm-256color is universally available.
+    if !env_vec.iter().any(|e| e.starts_with("TERM="))
+        || rustconn_core::flatpak::is_flatpak()
+        || env_vec.iter().any(|e| e.as_str() == "TERM=dumb")
+    {
+        set(&mut env_vec, "TERM=xterm-256color".to_owned());
+    }
+
+    if let Some(user_env) = envv {
+        for entry in user_env {
+            set(&mut env_vec, (*entry).to_owned());
+        }
+    }
+
+    env_vec
+}
+
+/// Redirects CLI config directories to writable locations inside a sandbox.
+///
+/// Host directories are either mounted read-only (gcloud, Azure, kubectl) or
+/// not mounted at all (Teleport, OCI). Boundary needs nothing: it reaches the
+/// system keyring over D-Bus, which works in a sandbox. Cloudflare Tunnel needs
+/// nothing either: `cloudflared access ssh` authenticates in a browser with
+/// short-lived tokens and keeps no config.
+fn push_sandbox_cli_config(env_vec: &mut Vec<Zeroizing<String>>) {
+    let dirs: [(&str, Option<PathBuf>); 4] = if rustconn_core::flatpak::is_flatpak() {
+        [
+            (
+                "CLOUDSDK_CONFIG",
+                rustconn_core::flatpak::get_flatpak_gcloud_config_dir(),
+            ),
+            (
+                "AZURE_CONFIG_DIR",
+                rustconn_core::flatpak::get_flatpak_azure_config_dir(),
+            ),
+            (
+                "TELEPORT_HOME",
+                rustconn_core::flatpak::get_flatpak_teleport_config_dir(),
+            ),
+            (
+                "OCI_CLI_CONFIG_FILE",
+                rustconn_core::flatpak::get_flatpak_oci_config_dir().map(|dir| dir.join("config")),
+            ),
+        ]
+    } else if rustconn_core::is_snap() {
+        // The personal-files plugs expose host credentials read-only, so
+        // writable config lives under $SNAP_USER_DATA.
+        [
+            (
+                "CLOUDSDK_CONFIG",
+                rustconn_core::snap::get_snap_gcloud_config_dir(),
+            ),
+            (
+                "AZURE_CONFIG_DIR",
+                rustconn_core::snap::get_snap_azure_config_dir(),
+            ),
+            (
+                "TELEPORT_HOME",
+                rustconn_core::snap::get_snap_teleport_config_dir(),
+            ),
+            (
+                "OCI_CLI_CONFIG_FILE",
+                rustconn_core::snap::get_snap_oci_config_dir().map(|dir| dir.join("config")),
+            ),
+        ]
+    } else {
+        return;
+    };
+
+    for (key, dir) in dirs {
+        let prefix = format!("{key}=");
+        // An inherited or caller-provided value is left alone.
+        if let Some(dir) = dir
+            && !env_vec.iter().any(|e| e.starts_with(&prefix))
+        {
+            env_vec.push(Zeroizing::new(format!("{prefix}{}", dir.display())));
+        }
+    }
+}
+
+impl TerminalNotebook {
     /// Spawns an SSH command in the terminal
     #[expect(
         clippy::too_many_arguments,
@@ -2501,6 +2609,16 @@ impl TerminalNotebook {
         self.terminals.borrow().get(&session_id).cloned()
     }
 
+    /// Returns the live session → terminal map.
+    ///
+    /// Handed to a split-view bridge so it can tell a terminal session from an
+    /// embedded viewer. A bridge with its own empty map reports every session as
+    /// embedded, which silently disables keystroke broadcast.
+    #[must_use]
+    pub fn shared_terminals(&self) -> Rc<RefCell<HashMap<Uuid, Terminal>>> {
+        Rc::clone(&self.terminals)
+    }
+
     /// Executes a key sequence on a terminal session
     ///
     /// Sends text, special keys (as VTE escape codes), and handles
@@ -3107,7 +3225,7 @@ impl TerminalNotebook {
         }
     }
 
-    /// Gets the current terminal text content for transcript logging
+    /// Gets the current terminal text content for prompt and banner detection.
     ///
     /// Reads the visible viewport. VTE addresses the whole scrollback and the
     /// visible area in one coordinate system, so rows `0..row_count` are the
@@ -3947,6 +4065,200 @@ mod split_eligibility_tests {
         assert_eq!(
             eligibility_from(false, Some(&storage)),
             SplitEligibility::Embeddable
+        );
+    }
+}
+
+/// Contract tests for the VTE behaviours the PTY relay is built on (#247).
+///
+/// The transcript has been rewritten three times because each attempt reasoned
+/// about how VTE addresses rows and delivers input instead of checking. These
+/// tests check. They need a display and initialise GTK, which can only happen
+/// once per process, so they are opt-in:
+///
+/// ```text
+/// cargo test -p rustconn --bin rustconn -- --ignored --exact \
+///     terminal::vte_contract_tests::<name>
+/// ```
+#[cfg(test)]
+mod vte_contract_tests {
+    use vte4::TerminalExt;
+
+    const OPT_IN: &str = "initialises GTK: needs a display and its own process";
+
+    /// Pumps the GLib main context until `ready` holds, or the deadline passes.
+    ///
+    /// VTE parses fed bytes from a queued source rather than inside `feed`, so
+    /// nothing is observable until the loop runs.
+    fn pump_until(ready: impl Fn() -> bool) -> bool {
+        let ctx = gtk4::glib::MainContext::default();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !ready() && std::time::Instant::now() < deadline {
+            ctx.iteration(false);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        ready()
+    }
+
+    /// `commit` carries keyboard and pasted input even with no PTY attached.
+    ///
+    /// This is what lets RustConn own the master file descriptor: VTE renders
+    /// and handles keys, and every byte it would have written to a PTY of its
+    /// own arrives here instead. VTE guarantees it explicitly — `send_child`
+    /// emits `commit` before checking for a PTY, for
+    /// [vte#222](https://gitlab.gnome.org/GNOME/vte/-/issues/222) — and the
+    /// whole relay collapses without it, so it is pinned here.
+    #[test]
+    #[ignore = "initialises GTK: needs a display and its own process"]
+    fn commit_fires_without_a_pty() {
+        if gtk4::init().is_err() {
+            return;
+        }
+        let terminal = super::Terminal::new();
+        assert!(terminal.pty().is_none(), "no PTY is the point of this test");
+
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let seen_in_handler = seen.clone();
+        terminal.connect_commit(move |_t, text, _size| {
+            seen_in_handler.borrow_mut().push_str(text);
+        });
+
+        terminal.feed_child(b"whoami\r");
+        assert!(
+            pump_until(|| !seen.borrow().is_empty()),
+            "commit must fire without a PTY, or the relay cannot receive input ({OPT_IN})"
+        );
+        assert_eq!(
+            *seen.borrow(),
+            "whoami\r",
+            "commit must carry the bytes verbatim"
+        );
+    }
+
+    /// No VTE signal announces a geometry change, which is why the relay polls.
+    ///
+    /// Owning the PTY means RustConn has to tell the child when the window
+    /// changes size, and there is no event to hang that on: VTE exposes no
+    /// row-count or column-count signal, `char-size-changed` covers font
+    /// metrics only, GTK4 removed `GtkWidget::size-allocate`, and
+    /// `contents-changed` — the obvious candidate, already used elsewhere in
+    /// this file — does not fire for a resize, as asserted below. So
+    /// [`super::pty_relay::PtyRelay`] compares the grid size on a timer
+    /// instead. Should a future VTE grow a suitable signal, this test starts
+    /// failing and the poll can go.
+    #[test]
+    #[ignore = "initialises GTK: needs a display and its own process"]
+    fn geometry_change_raises_no_contents_changed() {
+        if gtk4::init().is_err() {
+            return;
+        }
+        let terminal = super::Terminal::new();
+        terminal.set_size(80, 24);
+        terminal.feed(b"anchor\r\n");
+        assert!(pump_until(|| terminal.cursor_position().1 > 0), "{OPT_IN}");
+
+        let fired = std::rc::Rc::new(std::cell::Cell::new(false));
+        let fired_in_handler = fired.clone();
+        terminal.connect_contents_changed(move |_t| fired_in_handler.set(true));
+
+        terminal.set_size(100, 30);
+        // Give it every chance to arrive before concluding that it does not.
+        pump_until(|| fired.get());
+        assert!(
+            !fired.get(),
+            "contents-changed now fires on a resize: the relay's winsize poll \
+             can be replaced by this signal"
+        );
+        assert_eq!(
+            (terminal.column_count(), terminal.row_count()),
+            (100, 30),
+            "the grid itself did change, so polling it detects the resize"
+        );
+    }
+
+    /// `cursor_position` and `text_range_format` address the same rows.
+    ///
+    /// Kept from the row-anchored transcript that the relay replaced: prompt
+    /// detection (`cursor_line_text`) still mixes the two, and issue
+    /// [#253](https://github.com/totoshko88/RustConn/issues/253) came from
+    /// getting this wrong.
+    #[test]
+    #[ignore = "initialises GTK: needs a display and its own process"]
+    fn cursor_row_and_text_range_share_coordinates() {
+        if gtk4::init().is_err() {
+            return;
+        }
+        let terminal = super::Terminal::new();
+        terminal.set_size(80, 24);
+        terminal.feed(b"alpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
+        assert!(pump_until(|| terminal.cursor_position().1 > 0), "{OPT_IN}");
+
+        assert_eq!(
+            terminal.cursor_position().1,
+            4,
+            "four newline-terminated lines leave the cursor on row 4"
+        );
+
+        let (first, _) = terminal.text_range_format(vte4::Format::Text, 0, 0, 0, 80);
+        assert_eq!(
+            first.map(|g| g.to_string().trim_end().to_owned()),
+            Some("alpha".to_owned()),
+            "row 0 is the first line fed, so both APIs count rows the same way"
+        );
+
+        let (bounded, _) = terminal.text_range_format(vte4::Format::Text, 1, 0, 2, 80);
+        let bounded = bounded.map(|g| g.to_string()).unwrap_or_default();
+        assert!(
+            bounded.contains("bravo") && bounded.contains("charlie"),
+            "requested rows must be present: {bounded:?}"
+        );
+        assert!(
+            !bounded.contains("delta"),
+            "the end row must bound the range: {bounded:?}"
+        );
+    }
+
+    /// Widening the terminal renumbers every row below a wrapped line.
+    ///
+    /// This is why the transcript is no longer scraped from the widget at all.
+    /// A session's terminal is resized when the widget receives its real
+    /// allocation — around the first capture of a session — and again whenever
+    /// the user resizes the window. VTE rewraps, a wrapped logical line stops
+    /// occupying two rows, and everything below it moves: an absolute row
+    /// recorded before the change points at different text afterwards, which
+    /// duplicated some lines and skipped others (issue #247).
+    #[test]
+    #[ignore = "initialises GTK: needs a display and its own process"]
+    fn widening_renumbers_rows_below_a_wrapped_line() {
+        if gtk4::init().is_err() {
+            return;
+        }
+        let terminal = super::Terminal::new();
+        terminal.set_size(40, 10);
+        terminal.feed(b"short\r\n");
+        terminal.feed("wrapped-".repeat(9).as_bytes()); // 72 chars: two rows at 40
+        terminal.feed(b"\r\n");
+        assert!(pump_until(|| terminal.cursor_position().1 >= 3), "{OPT_IN}");
+
+        let before_cursor = terminal.cursor_position().1;
+        let (before_row0, _) = terminal.text_range_format(vte4::Format::Text, 0, 0, 0, 40);
+
+        terminal.set_size(100, 10);
+        assert!(
+            pump_until(|| terminal.cursor_position().1 < before_cursor),
+            "{OPT_IN}"
+        );
+
+        let (after_row0, _) = terminal.text_range_format(vte4::Format::Text, 0, 0, 0, 100);
+        assert_eq!(
+            before_row0.map(|g| g.to_string().trim_end().to_owned()),
+            after_row0.map(|g| g.to_string().trim_end().to_owned()),
+            "a row above the wrap point keeps its content"
+        );
+        assert_eq!(
+            (before_cursor, terminal.cursor_position().1),
+            (3, 2),
+            "the wrapped line collapses to one row and pulls the rest upwards"
         );
     }
 }

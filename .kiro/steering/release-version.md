@@ -39,7 +39,7 @@ Then perform ALL of the following steps:
    - `packaging/obs/debian.dsc` → `Version: X.Y.Z-1` + `DEBTRANSFORM-TAR`
    - `packaging/obs/_service` → `<param name="revision">vX.Y.Z</param>`
    - `flake.nix` → `version = "X.Y.Z";`
-   - `rustconn/Cargo.toml` → `rustconn-core = { ..., version = "X.Y.Z", ... }`
+   - `rustconn/Cargo.toml` → **every** sibling path dependency: `rustconn-core = { ..., version = "X.Y.Z", ... }` *and* `rustconn-pty-sys = { ..., version = "X.Y.Z", ... }`. The `release.sh` gate only greps for one `version = "X.Y.Z"` line per file, so a stale sibling passes the check unnoticed.
    - `rustconn-cli/Cargo.toml` → `rustconn-core = { ..., version = "X.Y.Z", ... }`
    - `po/rustconn.pot` → `Project-Id-Version: rustconn X.Y.Z`
    - `packaging/macos/rustconn.rb` → `url "https://...archive/refs/tags/vX.Y.Z.tar.gz"`

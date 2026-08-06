@@ -372,6 +372,31 @@ fi
 ok "All ${#PKG_FILES[@]} packaging files synced to $VERSION"
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 5a. Every sibling path dependency carries the release version
+#
+# The gate above greps each file for one `version = "X.Y.Z"` line, so a
+# Cargo.toml declaring two sibling crates passes as soon as either one is
+# current. That is how rustconn-pty-sys stayed pinned at 0.19.0 while
+# rustconn-core was bumped release after release: the requirement is a caret
+# range, so it resolved anyway and nothing ever complained.
+# ──────────────────────────────────────────────────────────────────────────────
+SIBLING_FAILED=0
+for file in rustconn/Cargo.toml rustconn-cli/Cargo.toml; do
+    while IFS= read -r line; do
+        # A path dependency without a `version` key is valid — nothing to check.
+        [[ "$line" == *'version = "'* ]] || continue
+        if ! grep -qE -- "version = \"$VERSION_RE\"" <<<"$line"; then
+            warn "$file: sibling dependency '${line%% *}' is not at $VERSION"
+            ((SIBLING_FAILED+=1))
+        fi
+    done < <(grep -E '^[a-z0-9_-]+ = \{[^}]*path = "\.\./rustconn' "$file")
+done
+if (( SIBLING_FAILED > 0 )); then
+    fail "$SIBLING_FAILED sibling path dependency version(s) out of sync"
+fi
+ok "Sibling path dependencies synced to $VERSION"
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 5b. The new version is the TOP entry of every changelog-style file
 #
 # The gate above uses plain grep, which is satisfied by an entry anywhere in the

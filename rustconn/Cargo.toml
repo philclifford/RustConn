@@ -12,7 +12,7 @@ name = "rustconn"
 path = "src/main.rs"
 
 [dependencies]
-rustconn-core = { path = "../rustconn-core", version = "0.19.13", default-features = false }
+rustconn-core = { path = "../rustconn-core", version = "0.19.14", default-features = false }
 tokio = { workspace = true }
 # Event-driven tray message delivery to the GTK main loop (no polling)
 async-channel = { workspace = true }
@@ -48,6 +48,9 @@ cpal = { version = "0.18", optional = true }
 serde = { workspace = true, features = ["derive"] }
 shell-words = "1"
 nix = { version = "0.31", features = ["signal", "process"] }
+# PTY creation, sizing and controlling-terminal setup for every session's
+# child. Lives in its own crate because it holds the workspace's only `unsafe`.
+rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.19.14" }
 # WebKitGTK 6.0 bindings for embedded web browser (Linux only)
 webkit6 = { version = "0.6", optional = true }
 
@@ -138,8 +141,4 @@ redundant_pub_crate = "allow"
 proptest = { workspace = true }
 tempfile = { workspace = true }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-nix = { version = "0.31", features = ["term", "process", "signal"] }
-# Isolated FFI helper for the native PTY controlling-terminal setup (#175).
-# Lives in its own crate because it contains the workspace's only `unsafe`.
-rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.19.0" }
+

@@ -282,8 +282,7 @@ All macOS-specific Rust paths are target-gated. Key areas are:
 
 | File | Purpose |
 |------|---------|
-| `rustconn/src/macos_pty.rs` | Native PTY integration for VTE |
-| `rustconn-pty-sys/` | Isolated controlling-terminal FFI |
+| `rustconn-pty-sys/` | Isolated PTY and controlling-terminal FFI |
 | `rustconn-core/src/secret/macos_keychain.rs` | Security.framework secret backend |
 | `rustconn-core/src/secret/keyring.rs` | Native auxiliary Keychain delegation on macOS |
 | `rustconn-core/src/cli_download/` | Homebrew and application search paths |

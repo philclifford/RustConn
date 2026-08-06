@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.13
+Version:        0.19.14
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,14 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Thu Aug 06 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.14-0
+- Version bump to 0.19.14
+- Added a Local Shell button to the empty split panel for starting a scratch shell there
+- Fixed closing one pane taking the whole split layout apart
+- Fixed session logs losing output and repeating whole screens; the transcript now comes from the session's own PTY (#247)
+- Fixed opening Settings panel corrupted KeePassXC config (#259)
+- Improved: one PTY path for every session on every platform (#175)
+
 * Thu Aug 06 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.13-0
 - Version bump to 0.19.13
 - Added US Dvorak RDP keyboard layout (PR #258)

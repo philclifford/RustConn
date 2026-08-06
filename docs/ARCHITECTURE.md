@@ -1,6 +1,6 @@
 # RustConn Architecture Guide
 
-**Version 0.19.13** | Last updated: August 2026
+**Version 0.19.14** | Last updated: August 2026
 
 This document describes the internal architecture of RustConn for contributors and maintainers.
 
@@ -77,10 +77,54 @@ not require their runtime dependencies in the default feature set.
 The workspace sets `unsafe_code = "forbid"` in every crate **except** `rustconn-pty-sys`.
 That crate is the single sanctioned location for `unsafe`, following the M-UNSAFE
 guideline (isolate FFI in a small `-sys` crate with a documented safety contract)
-instead of relaxing the lint in the main crates. It exposes one safe function,
-`set_controlling_terminal()`, which registers a `pre_exec` hook calling only
-async-signal-safe `libc` functions. See `rustconn-pty-sys/src/lib.rs` and its
-usage in `rustconn/src/macos_pty.rs`.
+instead of relaxing the lint in the main crates. It exposes a handful of safe
+functions covering PTY creation (`open_pty_pair`), sizing (`pty_set_winsize`),
+readiness waiting (`pty_wait_readable`), close-on-exec descriptor duplication
+(`dup_fd`) and controlling-terminal setup (`set_controlling_terminal`, a
+`pre_exec` hook calling only async-signal-safe `libc` functions). Reading and
+writing the descriptor is deliberately *not* there: callers turn the master into
+a `std::fs::File`, so no session data passes through any `unsafe` code. See
+`rustconn-pty-sys/src/lib.rs` and its consumers,
+`rustconn/src/terminal/pty_spawn.rs` and `rustconn/src/terminal/pty_relay.rs`.
+
+### Who Owns a Session's PTY
+
+RustConn creates the pseudo-terminal for every VTE-backed session and keeps the
+master descriptor; VTE is given none. The division of labour is:
+
+| Concern | Owner |
+|---------|-------|
+| Rendering, scrollback, selection, key interpretation | VTE |
+| PTY creation, child process, controlling terminal | `terminal::pty_spawn` |
+| Reading output, writing input, window size | `terminal::pty_relay` |
+| Wiring the two together per session | `TerminalNotebook` |
+
+Output flows from a reader thread over a bounded channel to the GTK main thread,
+which feeds it to VTE and to any registered observer — session logging is one.
+Input flows the other way: VTE emits `commit` for every key, paste, mouse report
+and terminal reply *even with no PTY attached* (guaranteed by VTE for
+[vte#222](https://gitlab.gnome.org/GNOME/vte/-/issues/222)), and the notebook
+forwards those bytes to a writer thread. Both directions use bounded or
+off-thread I/O so that a flood of output or a paste into a process that is not
+reading cannot block the window.
+
+This arrangement exists because a session transcript has to be a copy of what
+the child wrote, and that cannot be recovered from the widget: VTE rewraps its
+buffer on a width change and renumbers the rows underneath any reader, so a
+scraped transcript both repeats and skips lines (issue
+[#247](https://github.com/totoshko88/RustConn/issues/247)). The VTE behaviours the
+design depends on are pinned by `terminal::vte_contract_tests`, which need a
+display and are therefore `#[ignore]`d — run them when touching this area.
+
+Two consequences worth knowing when editing session code:
+
+- Input must keep going through `terminal.feed_child()`. That is what raises
+  `commit`, which is what reaches the PTY. Writing to the relay directly from a
+  call site would bypass input logging and keystroke broadcast.
+- VTE never learns that a child exited, because it did not spawn one. A GLib
+  child watch raises `child-exited` on the terminal instead, and the whole
+  teardown path (reconnect banner, log flush, monitoring, tab state) still hangs
+  off that signal.
 
 ### Why This Separation?
 

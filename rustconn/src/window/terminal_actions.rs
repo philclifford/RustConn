@@ -4,6 +4,35 @@
 
 use super::*;
 
+/// Returns the terminal of the focused pane, when the active tab holds a split.
+///
+/// A tab that hosts a split layout still reports its own session as the active
+/// one, so a clipboard action resolved through the notebook alone always lands on
+/// the pane the layout was created from — the first one — no matter which pane
+/// the user is typing into. The pane actually in focus is known only to the
+/// layout's bridge, and those live in `session_split_bridges` keyed by the
+/// hosting session. (The window's `split_view` field is a separate bridge that
+/// never receives these sessions, so asking it always answered `None` and the
+/// clipboard silently fell back to the host pane.)
+///
+/// Returns `None` when the active tab has no split, when the focused pane holds
+/// no session, or when that session is an embedded viewer rather than a
+/// terminal — in each case the caller's notebook-level fallback is correct.
+fn focused_pane_terminal(
+    notebook: &SharedNotebook,
+    bridges: &SessionSplitBridges,
+) -> Option<vte4::Terminal> {
+    let host_session = notebook.get_active_session_id()?;
+    // A failed borrow would mean a split is being rebuilt at this very moment;
+    // falling back is better than panicking on a keystroke.
+    let focused_session = bridges
+        .try_borrow()
+        .ok()?
+        .get(&host_session)?
+        .get_focused_session()?;
+    notebook.get_terminal(focused_session)
+}
+
 impl MainWindow {
     pub(crate) fn setup_terminal_actions(
         &self,
@@ -63,38 +92,32 @@ impl MainWindow {
         });
         window.add_action(&command_palette_commands_action);
 
-        // Copy action - works with split view's focused session for SSH
+        // Copy action - targets the focused pane when the tab holds a split
         let copy_action = gio::SimpleAction::new("copy", None);
         let notebook_clone = terminal_notebook.clone();
-        let split_view_clone = self.split_view.clone();
+        let session_bridges_copy = self.session_split_bridges.clone();
         copy_action.connect_activate(move |_, _| {
-            // Try split view's focused session first (for SSH in split panes)
-            if let Some(session_id) = split_view_clone.get_focused_session()
-                && let Some(terminal) = notebook_clone.get_terminal(session_id)
-            {
+            if let Some(terminal) = focused_pane_terminal(&notebook_clone, &session_bridges_copy) {
                 if let Some(text) = terminal.text_selected(vte4::Format::Text) {
                     terminal.display().clipboard().set_text(&text);
                 }
                 return;
             }
-            // Fall back to TabView's active terminal (for RDP/VNC/SPICE)
+            // No split: the active tab is the session (also the RDP/VNC path).
             notebook_clone.copy_to_clipboard();
         });
         window.add_action(&copy_action);
 
-        // Paste action - works with split view's focused session for SSH
+        // Paste action - targets the focused pane when the tab holds a split
         let paste_action = gio::SimpleAction::new("paste", None);
         let notebook_clone = terminal_notebook.clone();
-        let split_view_clone = self.split_view.clone();
+        let session_bridges_paste = self.session_split_bridges.clone();
         paste_action.connect_activate(move |_, _| {
-            // Try split view's focused session first (for SSH in split panes)
-            if let Some(session_id) = split_view_clone.get_focused_session()
-                && let Some(terminal) = notebook_clone.get_terminal(session_id)
-            {
+            if let Some(terminal) = focused_pane_terminal(&notebook_clone, &session_bridges_paste) {
                 terminal.paste_clipboard();
                 return;
             }
-            // Fall back to TabView's active terminal (for RDP/VNC/SPICE)
+            // No split: the active tab is the session (also the RDP/VNC path).
             notebook_clone.paste_from_clipboard();
         });
         window.add_action(&paste_action);

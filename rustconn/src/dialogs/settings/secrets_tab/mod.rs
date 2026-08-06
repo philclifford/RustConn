@@ -123,9 +123,12 @@ const fn index_to_storage(idx: u32) -> CredentialStorage {
 /// "System keyring (recommended)".
 ///
 /// The combo enforces availability of `secret-tool` for the keyring option:
-/// if the user picks "System keyring" while `secret_tool_available` is false,
-/// the selection is reverted to the previous one and `status_label` shows a
-/// warning.
+/// if the user picks "System keyring" while `secret_tool_available` is
+/// **confirmed false** (`Some(false)`), the selection is reverted to the
+/// previous one and `status_label` shows a warning. While detection is still
+/// pending (`None`), the selection is allowed — this prevents corruption of
+/// previously-saved config values loaded before async detection completes
+/// (issue #259).
 fn make_storage_combo(
     title: &str,
     secret_tool_available: Rc<RefCell<Option<bool>>>,
@@ -151,9 +154,11 @@ fn make_storage_combo(
         let previous_clone = previous.clone();
         combo.connect_selected_notify(move |c| {
             let new_sel = c.selected();
-            if new_sel == STORAGE_KEYRING_INDEX
-                && !*secret_tool_available.borrow().as_ref().unwrap_or(&false)
-            {
+            // Only revert when detection has COMPLETED and confirmed that
+            // secret-tool is absent. While detection is pending (None) we
+            // allow the selection — the value came from a previously-saved
+            // config that was already working (#259).
+            if new_sel == STORAGE_KEYRING_INDEX && *secret_tool_available.borrow() == Some(false) {
                 let revert_to = *previous_clone.borrow();
                 update_status_label(
                     &status_label,
@@ -179,11 +184,35 @@ fn storage_combo_value(combo: &adw::ComboRow) -> CredentialStorage {
     index_to_storage(combo.selected())
 }
 
-/// Sets a storage combo to the given [`CredentialStorage`] without triggering
-/// validation of `secret-tool` availability — load-time positions should
-/// always succeed because they came from a previously-saved config.
+/// Sets a storage combo to a value loaded from the saved configuration.
+///
+/// `set_selected` does emit `selected-notify`, so the availability guard in
+/// [`make_storage_combo`] runs — it is simply a no-op at load time, because
+/// detection has not resolved yet. That is deliberate: a position that came
+/// from a previously-saved config must survive being displayed (issue #259).
 fn set_storage_combo_value(combo: &adw::ComboRow, storage: CredentialStorage) {
     combo.set_selected(storage_to_index(storage));
+}
+
+/// Warns about keyring selections the machine turns out not to support.
+///
+/// Runs once background detection reports that `secret-tool` is missing. The
+/// selections are deliberately left as they are: they came from a saved
+/// configuration, and rewriting them behind the user's back is exactly what
+/// destroyed the KeePassXC setting in issue
+/// [#259](https://github.com/totoshko88/RustConn/issues/259). The guard in
+/// [`make_storage_combo`] still blocks picking the keyring from here on, so
+/// this only has to explain the situation.
+fn warn_about_unavailable_keyring(combos: &[(&adw::ComboRow, &Label)]) {
+    for (combo, status_label) in combos {
+        if combo.selected() == STORAGE_KEYRING_INDEX {
+            update_status_label(
+                status_label,
+                &i18n("Install libsecret-tools for keyring"),
+                "warning",
+            );
+        }
+    }
 }
 
 /// Creates the secrets settings page using AdwPreferencesPage
@@ -1347,6 +1376,23 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         let pass_ver = pass_version.clone();
         let det_complete = detection_complete.clone();
         let st_avail = secret_tool_available.clone();
+        // Storage combos and their status labels, so a keyring selection loaded
+        // from config can be flagged once detection lands (#259).
+        let storage_combos_det = [
+            (
+                bitwarden_storage_combo.clone(),
+                bitwarden_status_label.clone(),
+            ),
+            (
+                onepassword_storage_combo.clone(),
+                onepassword_status_label.clone(),
+            ),
+            (
+                passbolt_storage_combo.clone(),
+                passbolt_status_label.clone(),
+            ),
+            (kdbx_storage_combo.clone(), kdbx_status_label.clone()),
+        ];
         let availability_row_det = availability_row.clone();
         let availability_label_det = availability_label.clone();
         let keyring_avail_det = keyring_availability.clone();
@@ -1379,6 +1425,20 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                     *pass_ver.borrow_mut() = det.pass_version.clone();
                     *det_complete.borrow_mut() = true;
                     *st_avail.borrow_mut() = Some(det.secret_tool_available);
+                    if !det.secret_tool_available {
+                        // Until now the guard could not tell "no keyring" from
+                        // "not asked yet", so a keyring selection restored from
+                        // config was allowed through unremarked (#259).
+                        let pairs: Vec<(&adw::ComboRow, &Label)> = storage_combos_det
+                            .iter()
+                            .map(|(combo, label)| (combo, label))
+                            .collect();
+                        warn_about_unavailable_keyring(&pairs);
+                        tracing::warn!(
+                            "secret-tool not found; existing keyring selections were left \
+                             untouched and flagged in the Secrets tab"
+                        );
+                    }
                     *keyring_avail_det.borrow_mut() = Some(det.system_keyring_availability.clone());
 
                     // Refresh the system-keyring availability indicator if that
