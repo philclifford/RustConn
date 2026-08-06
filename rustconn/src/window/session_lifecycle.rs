@@ -30,40 +30,41 @@ impl TranscriptCapture {
             return;
         }
 
-        // Determine new content since last capture.
-        // VTE's get_terminal_text returns the full scrollback + visible area,
-        // growing monotonically. The simplest correct approach: if current
-        // starts with last, the diff is the suffix. If not (VTE modified
-        // in-place, e.g. cursor repositioning), record the full current text
-        // as delta once (to avoid losing output) and reset baseline.
-        let new_content = if last.is_empty() {
-            current_text.as_str()
-        } else if current_text.len() > last.len()
-            && current_text.as_bytes()[..last.len()] == last.as_bytes()[..]
-        {
-            // Fast path: content was appended (byte-level prefix check)
-            &current_text[last.len()..]
-        } else {
-            // VTE modified existing content (cursor repositioning, line editing).
-            // Skip this capture — it's an in-place update, not new output.
-            // Update baseline so next real append is captured.
-            *last = current_text;
-            return;
-        };
+        // Determine new content by comparing line-by-line.
+        // VTE often modifies the last line in-place (cursor repositioning,
+        // echo of typed characters), so a byte-level prefix check fails.
+        // Instead: find the first line where current differs from last,
+        // and log everything from that point forward (minus trailing blanks).
+        let current_lines: Vec<&str> = current_text.lines().collect();
+        let last_lines: Vec<&str> = last.lines().collect();
 
-        // Trim trailing whitespace (VTE viewport padding below prompt)
-        let trimmed = new_content.trim_end();
+        // Find first divergence point
+        let common_prefix = current_lines
+            .iter()
+            .zip(last_lines.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        // New lines = everything in current after the common prefix
+        let new_lines = &current_lines[common_prefix..];
+
+        // Trim trailing empty lines (VTE viewport padding)
+        let end = new_lines
+            .iter()
+            .rposition(|l| !l.trim().is_empty())
+            .map_or(0, |i| i + 1);
+        let trimmed = &new_lines[..end];
 
         if !trimmed.is_empty()
             && let Ok(mut logger) = self.logger.try_borrow_mut()
         {
             let result = if self.per_line_timestamps {
-                let output = Zeroizing::new(trimmed.to_string());
+                let output = Zeroizing::new(trimmed.join("\n"));
                 logger.write(output.as_bytes())
             } else {
                 let stamp = logger.current_timestamp();
                 let mut block = Zeroizing::new(format!("[{stamp}] OUTPUT:"));
-                for line in trimmed.lines() {
+                for line in trimmed {
                     block.push_str("\n  ");
                     block.push_str(line);
                 }
