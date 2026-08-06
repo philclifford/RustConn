@@ -30,20 +30,29 @@ impl TranscriptCapture {
             return;
         }
 
-        let new_lines = current_text
+        let new_lines: Vec<&str> = current_text
             .lines()
             .skip(last.lines().count())
-            .collect::<Vec<_>>();
-        if !new_lines.is_empty()
+            .collect();
+        // Trim trailing empty lines — VTE's viewport extends below the
+        // last output line and get_terminal_text includes those blanks.
+        let trimmed: Vec<&str> = {
+            let mut v = new_lines;
+            while v.last().is_some_and(|l| l.trim().is_empty()) {
+                v.pop();
+            }
+            v
+        };
+        if !trimmed.is_empty()
             && let Ok(mut logger) = self.logger.try_borrow_mut()
         {
             let result = if self.per_line_timestamps {
-                let output = Zeroizing::new(new_lines.join("\n"));
+                let output = Zeroizing::new(trimmed.join("\n"));
                 logger.write(output.as_bytes())
             } else {
                 let stamp = logger.current_timestamp();
                 let mut block = Zeroizing::new(format!("[{stamp}] OUTPUT:"));
-                for line in new_lines {
+                for line in trimmed {
                     block.push_str("\n  ");
                     block.push_str(line);
                 }
