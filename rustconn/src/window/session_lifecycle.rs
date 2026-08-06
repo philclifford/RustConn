@@ -30,34 +30,29 @@ impl TranscriptCapture {
             return;
         }
 
-        // Find new content by comparing current viewport with the previous
-        // snapshot. The viewport is a sliding window: as output scrolls, old
-        // lines leave the top and new lines appear at the bottom. A simple
-        // lines().skip(N) fails when the viewport scrolled.
-        //
-        // Strategy: if the current text starts with (or contains) the last
-        // text as a prefix, the new content is everything after that prefix.
-        // If not (viewport scrolled past what we saw last), log the full
-        // current viewport content that differs.
+        // Determine new content since last capture.
+        // VTE's get_terminal_text returns the full scrollback + visible area,
+        // growing monotonically. The simplest correct approach: if current
+        // starts with last, the diff is the suffix. If not (VTE modified
+        // in-place, e.g. cursor repositioning), record the full current text
+        // as delta once (to avoid losing output) and reset baseline.
         let new_content = if last.is_empty() {
             current_text.as_str()
-        } else if current_text.starts_with(last.as_str()) {
-            // Common case: content was appended
+        } else if current_text.len() > last.len()
+            && current_text.as_bytes()[..last.len()] == last.as_bytes()[..]
+        {
+            // Fast path: content was appended (byte-level prefix check)
             &current_text[last.len()..]
         } else {
-            // Viewport scrolled — find the overlap.
-            // Look for the longest suffix of `last` that is a prefix of `current`.
-            let overlap = find_overlap(&last, &current_text);
-            if overlap > 0 {
-                &current_text[overlap..]
-            } else {
-                // No overlap at all — log everything as new
-                current_text.as_str()
-            }
+            // VTE modified existing content (cursor repositioning, line editing).
+            // Skip this capture — it's an in-place update, not new output.
+            // Update baseline so next real append is captured.
+            *last = current_text;
+            return;
         };
 
-        // Trim trailing empty lines from VTE viewport padding
-        let trimmed = new_content.trim_end_matches('\n').trim_end();
+        // Trim trailing whitespace (VTE viewport padding below prompt)
+        let trimmed = new_content.trim_end();
 
         if !trimmed.is_empty()
             && let Ok(mut logger) = self.logger.try_borrow_mut()
@@ -81,30 +76,6 @@ impl TranscriptCapture {
 
         *last = current_text;
     }
-}
-
-/// Finds the length of the longest suffix of `old` that is a prefix of `new`.
-///
-/// When the terminal viewport scrolls, the beginning of the previous snapshot
-/// falls off the top and new lines appear at the bottom. The overlap is where
-/// the end of `old` matches the beginning of `new`. Returns 0 if no overlap.
-fn find_overlap(old: &str, new: &str) -> usize {
-    // Check increasingly longer suffixes of `old` against `new`'s prefix.
-    // Start from the end of `old` for efficiency (most common case: a few
-    // lines scrolled, so the overlap is near the end).
-    let max_check = old.len().min(new.len());
-    // Only check at line boundaries for correctness and performance
-    let mut best = 0;
-    for (i, _) in old.char_indices().rev().take(max_check) {
-        if i == 0 || old.as_bytes().get(i.wrapping_sub(1)) == Some(&b'\n') {
-            let suffix = &old[i..];
-            if new.starts_with(suffix) && suffix.len() > best {
-                best = suffix.len();
-                break; // First (longest) match from the end wins
-            }
-        }
-    }
-    best
 }
 
 /// Schedules the first transcript capture once, including after reconnect.
