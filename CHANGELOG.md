@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Translations
 
-- **Ukrainian is complete again** — regenerating the translation template surfaced four strings that had been added since it was last refreshed and were therefore missing from every catalogue: the US Dvorak RDP layout name, the session-toolbar and panel-actions reveal tooltips, and the jump-host SFTP fallback notice. All four are translated in Ukrainian along with the new Local Shell tooltip. The other fifteen catalogues now carry the five entries untranslated, which reads as English at runtime exactly as it did while the entries were absent.
+- **Ukrainian is complete again** — regenerating the translation template surfaced four strings that had been added since it was last refreshed and were therefore missing from every catalogue: the US Dvorak RDP layout name, the session-toolbar and panel-actions reveal tooltips, and the jump-host SFTP fallback notice. All four are translated in Ukrainian along with the new Local Shell tooltip. The other fifteen catalogues are unchanged and still complete — those five strings remain absent from them and read as English at runtime, exactly as they did before the template was refreshed. They are now recorded in `po/rustconn.pot`, so a `msgmerge` picks them up whenever a translator takes them on; they were deliberately not machine-filled, since a guessed translation is indistinguishable from a reviewed one once it lands in a catalogue.
 
 ## [0.19.13] - 2026-08-06
 

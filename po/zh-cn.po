@@ -2629,10 +2629,6 @@ msgstr "日语 (jp)"
 msgid "Korean (kr)"
 msgstr "韩语 (kr)"
 
-#: rustconn/src/dialogs/connection/rdp.rs:695
-msgid "United States - Dvorak"
-msgstr ""
-
 #: rustconn/src/dialogs/connection/rdp.rs:704
 msgid "Keyboard Layout"
 msgstr "键盘布局"
@@ -8448,11 +8444,6 @@ msgstr "已连接到 {}"
 msgid "More actions"
 msgstr "更多操作"
 
-#: rustconn/src/embedded_toolbar_overflow.rs:210
-#: rustconn/src/embedded_toolbar_overflow.rs:212
-msgid "Show session toolbar"
-msgstr ""
-
 #: rustconn/src/embedded_trait.rs:206 rustconn/src/embedded_vnc/ui.rs:48
 msgid "Copy from remote session to local clipboard"
 msgstr "从远程会话复制到本地剪贴板"
@@ -9045,11 +9036,6 @@ msgstr "创建新智能文件夹"
 msgid "No smart folders"
 msgstr "无智能文件夹"
 
-#: rustconn/src/split_view/adapter.rs:759
-#: rustconn/src/split_view/adapter.rs:761
-msgid "Show panel actions"
-msgstr ""
-
 #: rustconn/src/split_view/adapter.rs:845
 msgid "Remove this session from the split and show it in its own tab"
 msgstr "将此会话从拆分视图中移除，并在其独立标签页中显示"
@@ -9096,10 +9082,6 @@ msgstr "选择标签页..."
 #: rustconn/src/split_view/adapter.rs:1292
 msgid "Choose an open tab to display in this panel"
 msgstr "选择一个打开的标签页在此面板中显示"
-
-#: rustconn/src/split_view/adapter.rs:1318
-msgid "Open a new local shell in this panel"
-msgstr ""
 
 #: rustconn/src/split_view/adapter.rs:1345
 msgid "Close panel"
@@ -9861,11 +9843,6 @@ msgid ""
 msgstr ""
 "外部文件管理器无法访问 Flatpak 中的 SSH 代理。                          请在"
 "设置中启用 \"SFTP via mc\" 以获得可靠的访问。"
-
-#: rustconn/src/window/edit_actions.rs:845
-#: rustconn/src/window/edit_actions.rs:1497
-msgid "Jump host detected. Opening SFTP via mc instead of the file manager."
-msgstr ""
 
 #: rustconn/src/window/edit_actions.rs:907
 msgid "Opening SFTP..."

@@ -2689,10 +2689,6 @@ msgstr "Japanese (jp)"
 msgid "Korean (kr)"
 msgstr "Korean (kr)"
 
-#: rustconn/src/dialogs/connection/rdp.rs:695
-msgid "United States - Dvorak"
-msgstr ""
-
 #: rustconn/src/dialogs/connection/rdp.rs:704
 msgid "Keyboard Layout"
 msgstr "Disposition du clavier"
@@ -8644,11 +8640,6 @@ msgstr "Connecté à {}"
 msgid "More actions"
 msgstr "Plus d’actions"
 
-#: rustconn/src/embedded_toolbar_overflow.rs:210
-#: rustconn/src/embedded_toolbar_overflow.rs:212
-msgid "Show session toolbar"
-msgstr ""
-
 #: rustconn/src/embedded_trait.rs:206 rustconn/src/embedded_vnc/ui.rs:48
 msgid "Copy from remote session to local clipboard"
 msgstr "Copier de la session distante vers le presse-papiers local"
@@ -9243,11 +9234,6 @@ msgstr "Créer un nouveau dossier intelligent"
 msgid "No smart folders"
 msgstr "Aucun dossier intelligent"
 
-#: rustconn/src/split_view/adapter.rs:759
-#: rustconn/src/split_view/adapter.rs:761
-msgid "Show panel actions"
-msgstr ""
-
 #: rustconn/src/split_view/adapter.rs:845
 msgid "Remove this session from the split and show it in its own tab"
 msgstr ""
@@ -9296,10 +9282,6 @@ msgstr "Sélectionner un onglet…"
 #: rustconn/src/split_view/adapter.rs:1292
 msgid "Choose an open tab to display in this panel"
 msgstr "Choisir un onglet ouvert à afficher dans ce panneau"
-
-#: rustconn/src/split_view/adapter.rs:1318
-msgid "Open a new local shell in this panel"
-msgstr ""
 
 #: rustconn/src/split_view/adapter.rs:1345
 msgid "Close panel"
@@ -10085,11 +10067,6 @@ msgstr ""
 "Les gestionnaires de fichiers externes ne peuvent pas accéder à l'agent SSH "
 "dans Flatpak. Activez « SFTP via mc » dans les Paramètres pour un accès "
 "fiable."
-
-#: rustconn/src/window/edit_actions.rs:845
-#: rustconn/src/window/edit_actions.rs:1497
-msgid "Jump host detected. Opening SFTP via mc instead of the file manager."
-msgstr ""
 
 #: rustconn/src/window/edit_actions.rs:907
 msgid "Opening SFTP..."

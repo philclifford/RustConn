@@ -2666,10 +2666,6 @@ msgstr "Japanese (jp)"
 msgid "Korean (kr)"
 msgstr "Korean (kr)"
 
-#: rustconn/src/dialogs/connection/rdp.rs:695
-msgid "United States - Dvorak"
-msgstr ""
-
 #: rustconn/src/dialogs/connection/rdp.rs:704
 msgid "Keyboard Layout"
 msgstr "Tastaturlayout"
@@ -8551,11 +8547,6 @@ msgstr "Forbundet til {}"
 msgid "More actions"
 msgstr "Flere handlinger"
 
-#: rustconn/src/embedded_toolbar_overflow.rs:210
-#: rustconn/src/embedded_toolbar_overflow.rs:212
-msgid "Show session toolbar"
-msgstr ""
-
 #: rustconn/src/embedded_trait.rs:206 rustconn/src/embedded_vnc/ui.rs:48
 msgid "Copy from remote session to local clipboard"
 msgstr "Kopiér fra fjernsession til lokal udklipsholder"
@@ -9150,11 +9141,6 @@ msgstr "Opret ny smart mappe"
 msgid "No smart folders"
 msgstr "Ingen smarte mapper"
 
-#: rustconn/src/split_view/adapter.rs:759
-#: rustconn/src/split_view/adapter.rs:761
-msgid "Show panel actions"
-msgstr ""
-
 #: rustconn/src/split_view/adapter.rs:845
 msgid "Remove this session from the split and show it in its own tab"
 msgstr "Fjern denne session fra den delte visning og vis den i sin egen fane"
@@ -9201,10 +9187,6 @@ msgstr "Vælg fane..."
 #: rustconn/src/split_view/adapter.rs:1292
 msgid "Choose an open tab to display in this panel"
 msgstr "Vælg en åben fane til visning i dette panel"
-
-#: rustconn/src/split_view/adapter.rs:1318
-msgid "Open a new local shell in this panel"
-msgstr ""
 
 #: rustconn/src/split_view/adapter.rs:1345
 msgid "Close panel"
@@ -9980,11 +9962,6 @@ msgstr ""
 "Eksterne filhåndteringer kan ikke tilgå SSH-agenten i "
 "Flatpak.                          Aktivér \"SFTP via mc\" i Indstillinger "
 "for pålidelig adgang."
-
-#: rustconn/src/window/edit_actions.rs:845
-#: rustconn/src/window/edit_actions.rs:1497
-msgid "Jump host detected. Opening SFTP via mc instead of the file manager."
-msgstr ""
 
 #: rustconn/src/window/edit_actions.rs:907
 msgid "Opening SFTP..."
