@@ -10,7 +10,7 @@ use rustconn_core::config::TerminalSettings;
 use rustconn_core::models::ConnectionThemeOverride;
 use rustconn_core::terminal_themes::{Color, TerminalTheme};
 use vte4::prelude::*;
-use vte4::{CursorBlinkMode, CursorShape, Terminal};
+use vte4::{CursorBlinkMode, CursorShape, EraseBinding, Terminal};
 
 /// Configures terminal with specific settings
 pub fn configure_terminal_with_settings(terminal: &Terminal, settings: &TerminalSettings) {
@@ -40,6 +40,7 @@ pub fn configure_terminal_with_settings(terminal: &Terminal, settings: &Terminal
     terminal.set_input_enabled(true);
     terminal.set_allow_hyperlink(settings.allow_hyperlinks);
     terminal.set_mouse_autohide(settings.mouse_autohide);
+    apply_erase_bindings(terminal);
 
     // Fallback scrolling lets VTE scroll the scrollback buffer with the
     // mouse wheel when the running program has NOT requested mouse tracking.
@@ -74,6 +75,31 @@ pub fn configure_terminal_with_settings(terminal: &Terminal, settings: &Terminal
     // Colors and font
     setup_colors_with_theme(terminal, &settings.color_theme);
     setup_font_with_settings(terminal, settings);
+}
+
+/// Names what Backspace and Delete send instead of letting VTE work it out.
+///
+/// VTE's default binding is `Auto`, which it resolves by reading `VERASE` out
+/// of the termios of the pseudo-terminal it owns — and here it owns none,
+/// because RustConn creates the PTY itself (issue
+/// [#247](https://github.com/totoshko88/RustConn/issues/247)). Asking anyway is
+/// fatal rather than merely wrong: vte 0.84 still reaches
+/// `map_erase_binding()`'s `assert(auto_mode != eTTY)` with no descriptor to
+/// read, and an assertion in a library is an `abort()` of the whole process, so
+/// a single Backspace press took the window down. Naming both bindings keeps
+/// that branch unreachable — the mapper answers from the constant and never
+/// looks for a PTY.
+///
+/// The values are the ones VTE would have arrived at itself. `openpty` leaves
+/// the Linux default `VERASE = 0x7f` on our PTY, so Backspace sends DEL, which
+/// is what the remote side's `stty erase` agrees with; Delete sends the VT220
+/// sequence `\e[3~`, VTE's own fallback for it.
+///
+/// Applies to every terminal RustConn shows, including read-only ones: key
+/// mapping happens before VTE checks whether input is enabled.
+pub fn apply_erase_bindings(terminal: &Terminal) {
+    terminal.set_backspace_binding(EraseBinding::AsciiDelete);
+    terminal.set_delete_binding(EraseBinding::DeleteSequence);
 }
 
 /// Automatically copies selected text to the clipboard when the user

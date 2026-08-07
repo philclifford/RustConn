@@ -140,6 +140,21 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.15" date="2026-08-07">
+      <description>
+        <p>Version 0.19.15 - embedded RDP graphics pipeline fixes, VTE crash fix, clipboard leak fix:</p>
+        <ul>
+          <li>Fixed embedded RDP sessions in Automatic graphics mode showing a frozen desktop (#262)</li>
+          <li>Fixed scrolling, window drags and solid fills silently discarded in GFX sessions (#262)</li>
+          <li>Fixed sessions with no OpenH264 opening a GFX channel they could not paint through (#262)</li>
+          <li>Fixed session status bar reporting a graphics pipeline the session was not using (#262)</li>
+          <li>Fixed pressing Backspace in a session killing the whole window (VTE assertion failure)</li>
+          <li>Fixed embedded RDP clipboard watcher leak causing coredumps (#261)</li>
+          <li>Improved embedded RDP rendering performance</li>
+          <li>Improved split view panel buttons auto-hide behind an arrow indicator</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.14" date="2026-08-06">
       <description>
         <ul>

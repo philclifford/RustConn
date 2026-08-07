@@ -1892,6 +1892,11 @@ impl TerminalNotebook {
     /// Supports configurable backspace/delete key behavior via VTE
     /// `EraseBinding`. Settings are applied directly on the terminal
     /// widget before spawning the telnet process.
+    ///
+    /// `Automatic` resolves to the same pair as every other session gets from
+    /// [`config::apply_erase_bindings`] rather than to `EraseBinding::Auto`:
+    /// VTE has no PTY of ours to read a `VERASE` from, and asking it to look
+    /// aborts the process.
     pub fn spawn_telnet(
         &self,
         session_id: Uuid,
@@ -1908,7 +1913,7 @@ impl TerminalNotebook {
         if let Some(terminal) = self.terminals.borrow().get(&session_id) {
             match backspace_sends {
                 TelnetBackspaceSends::Automatic => {
-                    terminal.set_backspace_binding(EraseBinding::Auto);
+                    terminal.set_backspace_binding(EraseBinding::AsciiDelete);
                 }
                 TelnetBackspaceSends::Backspace => {
                     terminal.set_backspace_binding(EraseBinding::AsciiBackspace);
@@ -1919,7 +1924,7 @@ impl TerminalNotebook {
             }
             match delete_sends {
                 TelnetDeleteSends::Automatic => {
-                    terminal.set_delete_binding(EraseBinding::Auto);
+                    terminal.set_delete_binding(EraseBinding::DeleteSequence);
                 }
                 TelnetDeleteSends::Backspace => {
                     terminal.set_delete_binding(EraseBinding::AsciiBackspace);
@@ -4133,6 +4138,40 @@ mod vte_contract_tests {
             "whoami\r",
             "commit must carry the bytes verbatim"
         );
+    }
+
+    /// Neither erase binding may be left for VTE to resolve on its own.
+    ///
+    /// Owning the PTY means VTE has no termios to read `VERASE` from, and
+    /// vte 0.84 does not treat that as a reason to stop: `map_erase_binding()`
+    /// reaches `assert(auto_mode != eTTY)` and aborts the process, so one
+    /// Backspace press was enough to take the window down. A configured
+    /// terminal must therefore name both bindings — see
+    /// [`super::config::apply_erase_bindings`].
+    #[test]
+    #[ignore = "initialises GTK: needs a display and its own process"]
+    fn erase_bindings_are_never_left_to_vte() {
+        if gtk4::init().is_err() {
+            return;
+        }
+        let terminal = super::Terminal::new();
+        assert!(terminal.pty().is_none(), "no PTY is the point of this test");
+
+        super::config::configure_terminal_with_settings(
+            &terminal,
+            &rustconn_core::config::TerminalSettings::default(),
+        );
+
+        for (key, binding) in [
+            ("Backspace", terminal.backspace_binding()),
+            ("Delete", terminal.delete_binding()),
+        ] {
+            assert!(
+                !matches!(binding, vte4::EraseBinding::Auto | vte4::EraseBinding::Tty),
+                "{key} is left as {binding:?}: with no PTY, vte 0.84 aborts \
+                 while resolving that ({OPT_IN})"
+            );
+        }
     }
 
     /// No VTE signal announces a geometry change, which is why the relay polls.

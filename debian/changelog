@@ -1,3 +1,24 @@
+rustconn (0.19.15-1) unstable; urgency=medium
+
+  * Version bump to 0.19.15
+  * Fixed embedded RDP sessions in Automatic graphics mode showing a frozen
+    desktop: now advertises only AVC420, not AVC444 (#262)
+  * Fixed scrolling, window drags and solid fills silently discarded in GFX
+    sessions: the handler now composites SolidFill, SurfaceToSurface,
+    SurfaceToCache and CacheToSurface operations (#262)
+  * Fixed sessions with no OpenH264 opening a GFX channel they could not
+    paint through (#262)
+  * Fixed session status bar reporting a graphics pipeline the session was
+    not using (#262)
+  * Fixed pressing Backspace in a session killing the whole window due to a
+    VTE assertion failure
+  * Fixed embedded RDP clipboard watcher leak causing coredumps (#261)
+  * Improved embedded RDP rendering performance: cached scale, skip
+    unnecessary background paint, nearest-neighbor filtering
+  * Improved split view panel buttons auto-hide behind an arrow indicator
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Fri, 07 Aug 2026 12:00:00 +0300
+
 rustconn (0.19.14-1) unstable; urgency=medium
 
   * Version bump to 0.19.14

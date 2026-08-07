@@ -67,9 +67,16 @@ zune-jpeg = { version = "0.5.15", optional = true }
 # ON UPGRADE (0.17 → next) — re-check whether these are now usable upstream:
 #   * RAIL / RemoteApp (MS-RDPERP): only opaque CapabilitySet::Rail buffer exists,
 #     no channel/handshake → RemoteApp still forces external xfreerdp3 fallback.
-#   * GFX pipeline + H.264/AVC444 (MS-RDPEGFX): ✅ DONE — integrated via
+#   * GFX pipeline + H.264/AVC420 (MS-RDPEGFX): ✅ DONE — integrated via
 #     ironrdp-egfx 0.3 + gfx-h264 feature (AVC420 decode, OpenH264 dlopen).
-#     Phase 2 (AVC444 dual-stream) pending upstream verification.
+#   * GFX + AVC444: ❌ NOT usable. ironrdp-egfx 0.3.0 client.rs matches
+#     Codec1Type::Avc444 / Avc444v2 and forwards them to on_unhandled_pdu with
+#     "AVC444 codec not yet implemented" instead of decoding. Because Windows
+#     picks the client's best offer, advertising AVC444 froze whole sessions
+#     (issue #262). rdp_client::gfx_handler::RustConnGfxHandler::capabilities()
+#     therefore advertises V8_1(AVC420)+V8 only, never V10.x. When AVC444 lands
+#     upstream, re-add CapabilitySet::V10_7 there — the test
+#     `advertised_capabilities_exclude_avc444` marks the spot.
 #   * Audio input / microphone (MS-RDPEAI): no channel → microphone_enabled field
 #     in RdpClientConfig is still dead (unrelated to GFX work; needs upstream support).
 #   * Drive change notifications: needs ClientDriveNotifyChangeDirectoryResponse PDU

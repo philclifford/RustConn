@@ -349,9 +349,12 @@ pub struct EmbeddedRdpWidget {
     /// logical size moved beyond a threshold from this reference. `None` until
     /// the first request.
     last_resize_request_css: Rc<RefCell<Option<(u32, u32)>>>,
-    /// Signal handler ID for local clipboard change monitoring (Phase 3)
-    #[cfg(feature = "rdp-embedded")]
-    clipboard_handler_id: Rc<RefCell<Option<glib::SignalHandlerId>>>,
+    /// Live `changed` subscription on the local clipboard (Phase 3), if any.
+    ///
+    /// Not feature-gated: `disconnect` has to clear it on every teardown path,
+    /// including `Drop`, and that method is compiled in every configuration
+    /// (issue #261).
+    clipboard_monitor: connection::ClipboardMonitorSlot,
     /// Flag to suppress clipboard change events when we set the clipboard
     /// ourselves (Copy button or Phase 2 auto-sync), preventing feedback loops.
     clipboard_sync_suppressed: Rc<RefCell<bool>>,
@@ -827,8 +830,7 @@ impl EmbeddedRdpWidget {
             },
             resize_handler_id: Rc::new(RefCell::new(None)),
             last_resize_request_css: Rc::new(RefCell::new(None)),
-            #[cfg(feature = "rdp-embedded")]
-            clipboard_handler_id: Rc::new(RefCell::new(None)),
+            clipboard_monitor: Rc::new(RefCell::new(None)),
             clipboard_sync_suppressed: Rc::new(RefCell::new(false)),
             jiggler_timer: Rc::new(RefCell::new(None)),
             file_dnd_circuit_breaker: Rc::new(RefCell::new(file_dnd::FileDndCircuitBreaker::new())),

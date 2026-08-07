@@ -396,7 +396,13 @@ pub struct FrameStatistics {
     pub avg_decode_time_us: u64,
     /// H.264 decode/blit time in microseconds (exponential moving average, alpha=0.1)
     pub h264_decode_time_us: u64,
-    /// Currently active graphics pipeline mode
+    /// Currently active graphics pipeline mode.
+    ///
+    /// Do not populate this from `cfg!(feature = ...)`: the session loop used to
+    /// do exactly that, which made the GUI report "GFX + H.264" for sessions
+    /// that never opened the GFX channel (issue #262). The authoritative value
+    /// is the EGFX capability set the server confirms, reported to the GUI as
+    /// [`RdpClientEvent::GraphicsModeActive`](super::RdpClientEvent::GraphicsModeActive).
     pub active_graphics_mode: GraphicsMode,
     /// Current frames per second
     pub current_fps: f32,

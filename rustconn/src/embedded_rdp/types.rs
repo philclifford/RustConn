@@ -251,6 +251,25 @@ impl RdpConfig {
         }
     }
 
+    /// Returns the graphics pipeline this configuration will end up on if the
+    /// EGFX channel never negotiates.
+    ///
+    /// Used as the initial status-bar value; a real GFX session overrides it
+    /// with the confirmed capability set. When GFX is off, the pipeline follows
+    /// the bitmap codecs we advertise, which are driven by the performance
+    /// mode: Speed advertises no codecs at all (plain bitmap updates), while
+    /// Quality and Balanced advertise RemoteFX.
+    #[must_use]
+    pub const fn assumed_graphics_mode(&self) -> GraphicsMode {
+        if self.force_legacy_graphics || matches!(self.graphics_mode, GraphicsMode::Legacy) {
+            return GraphicsMode::Legacy;
+        }
+        match self.performance_mode {
+            RdpPerformanceMode::Speed => GraphicsMode::Legacy,
+            RdpPerformanceMode::Quality | RdpPerformanceMode::Balanced => GraphicsMode::RemoteFx,
+        }
+    }
+
     /// Sets the port
     #[must_use]
     pub const fn with_port(mut self, port: u16) -> Self {

@@ -118,7 +118,17 @@ const NON_FALLBACK_MARKERS: &[&str] = &[
 ];
 
 /// Markers of a GFX/EGFX pipeline problem.
-const GRAPHICS_MARKERS: &[&str] = &["no-frame-watchdog", "gfx pipeline decode failure"];
+///
+/// `gfx unsupported codec` covers the case where the server sends surface
+/// content in a codec `ironrdp-egfx` cannot decode. Retrying without GFX is the
+/// right response: the RemoteFX/bitmap path has no such gap (issue [#262]).
+///
+/// [#262]: https://github.com/totoshko88/RustConn/issues/262
+const GRAPHICS_MARKERS: &[&str] = &[
+    "no-frame-watchdog",
+    "gfx pipeline decode failure",
+    "gfx unsupported codec",
+];
 
 /// Explicit security protocols IronRDP cannot speak.
 const SECURITY_MARKERS: &[&str] = &[
@@ -292,6 +302,17 @@ mod tests {
             classify_rdp_failure("NO-FRAME-WATCHDOG: no decodable frame"),
             RdpFailureClass::GraphicsPipeline
         );
+    }
+
+    /// Exact message built by the GFX unsupported-codec branch of the GUI event
+    /// loop; it must reach the Legacy retry rather than being reported as-is.
+    #[test]
+    fn unsupported_gfx_codec_retries_without_gfx() {
+        let class =
+            classify_rdp_failure("gfx unsupported codec: Avc444v2 (5 surface updates dropped)");
+        assert_eq!(class, RdpFailureClass::GraphicsPipeline);
+        assert!(class.warrants_freerdp_fallback());
+        assert!(!class.requires_explicit_consent());
     }
 
     #[test]
