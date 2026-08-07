@@ -48,6 +48,15 @@ impl super::EmbeddedRdpWidget {
                 return;
             }
 
+            // Autotype bypasses CLIPRDR, but it still has to *read* the local
+            // selection, and that read is what crashes while the upstream GTK
+            // bug is unfixed. Honour the profile setting here too, so turning
+            // clipboard sharing off is a complete escape hatch (issue #261).
+            if !super::connection::clipboard_sharing_enabled(&config) {
+                show_autotype_status(&status_label, &i18n("Clipboard sharing is off"), 2);
+                return;
+            }
+
             // Read autotype timing from connection config
             let (delay_ms, initial_ms) = if let Some(ref cfg) = *config.borrow() {
                 (cfg.autotype_delay_ms, cfg.autotype_initial_delay_ms)

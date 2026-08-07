@@ -31,10 +31,16 @@ impl super::EmbeddedRdpWidget {
             let container = self.container.clone();
             let status_label = self.status_label.clone();
             let suppressed = self.clipboard_sync_suppressed.clone();
+            let config = self.config.clone();
 
             copy_btn.connect_clicked(move |_| {
                 let current_state = *state.borrow();
                 let embedded = *is_embedded.borrow();
+
+                if !super::connection::clipboard_sharing_enabled(&config) {
+                    show_status_briefly(&status_label, &i18n("Clipboard sharing is off"), 2);
+                    return;
+                }
 
                 if current_state != RdpConnectionState::Connected || !embedded {
                     tracing::debug!(
@@ -107,10 +113,19 @@ impl super::EmbeddedRdpWidget {
             #[cfg(feature = "rdp-embedded")]
             let is_ironrdp = self.is_ironrdp.clone();
             let status_label = self.status_label.clone();
+            let config = self.config.clone();
 
             paste_btn.connect_clicked(move |_| {
                 let current_state = *state.borrow();
                 let embedded = *is_embedded.borrow();
+
+                // Reading the local selection is what crashes while the upstream
+                // GTK bug is unfixed, so the profile setting has to stop this
+                // too — not only the automatic sync (issue #261).
+                if !super::connection::clipboard_sharing_enabled(&config) {
+                    show_status_briefly(&status_label, &i18n("Clipboard sharing is off"), 2);
+                    return;
+                }
 
                 if current_state != RdpConnectionState::Connected || !embedded {
                     tracing::debug!(

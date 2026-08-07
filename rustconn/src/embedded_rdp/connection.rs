@@ -97,8 +97,12 @@ pub(super) fn remove_clipboard_monitor(slot: &ClipboardMonitorSlot, only_generat
 /// only the CLIPRDR channel in `rustconn-core` and the external FreeRDP
 /// argument, so turning clipboard sharing off left the GTK-side monitor and the
 /// server→local auto-sync running (issue #261).
-#[cfg(feature = "rdp-embedded")]
-fn clipboard_sharing_enabled(config: &Rc<RefCell<Option<RdpConfig>>>) -> bool {
+///
+/// Also consulted by the toolbar Copy/Paste handlers and by autotype: while the
+/// upstream GTK bug is unfixed, reading the local selection is what crashes, so
+/// turning the setting off has to stop *every* read rather than only the
+/// automatic ones.
+pub(super) fn clipboard_sharing_enabled(config: &Rc<RefCell<Option<RdpConfig>>>) -> bool {
     config.borrow().as_ref().is_none_or(|c| c.clipboard_enabled)
 }
 
