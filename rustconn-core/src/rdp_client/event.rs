@@ -785,6 +785,19 @@ pub enum RdpClientCommand {
     /// Notify server that client clipboard has new data
     ClipboardCopy(Vec<ClipboardFormatInfo>),
 
+    /// Announce that the local clipboard changed, without supplying the data.
+    ///
+    /// Unlike [`Self::ClipboardCopy`], any payload parked for the announced
+    /// formats is dropped first, so the server cannot be served the previous
+    /// clipboard owner's content. The data itself is fetched lazily: the peer
+    /// answers with a Format Data Request, which surfaces as
+    /// [`RdpClientEvent::ClipboardDataRequest`].
+    ///
+    /// This exists so the GUI never has to read the local selection just to
+    /// announce it — on X11 that read can take down the process inside GTK
+    /// (issue #261).
+    AnnounceClipboardFormats(Vec<ClipboardFormatInfo>),
+
     /// Request clipboard data from server (triggers `initiate_paste`)
     RequestClipboardData {
         /// Format ID to request

@@ -1235,37 +1235,49 @@ impl super::EmbeddedRdpWidget {
                                     // generation before installing this one; the
                                     // slot holds a single entry (issue #261).
                                     remove_clipboard_monitor(&clipboard_monitor, None);
-                                    let handler_id = clipboard.connect_changed(move |cb| {
+                                    let handler_id = clipboard.connect_changed(move |_cb| {
                                         // Skip if this change was triggered by our own
                                         // server→client sync (Phase 2)
                                         if *suppressed.borrow() {
                                             return;
                                         }
-                                        tracing::debug!(
-                                            "[Clipboard] Local clipboard changed, \
-                                             announcing to server"
-                                        );
-                                        // Read local clipboard text and send to server
-                                        let tx_inner = tx.clone();
-                                        cb.read_text_async(
-                                            None::<&gtk4::gio::Cancellable>,
-                                            move |result| {
-                                                if let Ok(Some(text)) = result
-                                                    && let Some(ref sender) = *tx_inner.borrow()
-                                                {
-                                                    let _ = sender.send(
-                                                        RdpClientCommand::ClipboardText(
-                                                            text.to_string(),
-                                                        ),
-                                                    );
-                                                    tracing::debug!(
-                                                        chars = text.len(),
-                                                        "[Clipboard] Sent local clipboard \
-                                                         to server"
-                                                    );
-                                                }
-                                            },
-                                        );
+                                        // Announce availability only — deliberately
+                                        // NOT reading the selection here.
+                                        //
+                                        // `read_text_async` on X11 negotiates
+                                        // UTF8_STRING first but falls back to
+                                        // COMPOUND_TEXT/TEXT/STRING when that
+                                        // transfer fails, and GTK 4.22 hands the
+                                        // server-reported property type straight to
+                                        // its text-list converter without a NULL
+                                        // check. A failed property fetch reports type
+                                        // `None`, which becomes a NULL encoding, and
+                                        // the converter dereferences it on a GIO
+                                        // worker thread — killing the process
+                                        // (issue #261). This signal fires for every
+                                        // copy anywhere on the desktop, so that was a
+                                        // standing bet against the whole session.
+                                        //
+                                        // MS-RDPECLIP does not need the bytes yet: the
+                                        // peer replies with a Format Data Request,
+                                        // which arrives as ClipboardDataRequest and is
+                                        // answered by reading the clipboard then. Reads
+                                        // now happen once per paste inside the session
+                                        // instead of once per copy on the desktop.
+                                        if let Some(ref sender) = *tx.borrow() {
+                                            let _ = sender.send(
+                                                RdpClientCommand::AnnounceClipboardFormats(
+                                                    vec![
+                                                        rustconn_core::ClipboardFormatInfo::unicode_text(),
+                                                    ],
+                                                ),
+                                            );
+                                            tracing::debug!(
+                                                protocol = "rdp",
+                                                "[Clipboard] Local clipboard changed, \
+                                                 announced text format to server"
+                                            );
+                                        }
                                     });
                                     *clipboard_monitor.borrow_mut() = Some(ClipboardMonitor {
                                         clipboard: clipboard.clone(),

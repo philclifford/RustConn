@@ -262,6 +262,21 @@ pub(super) async fn process_command<W: FramedWrite>(
         RdpClientCommand::ClipboardCopy(formats) => {
             handle_clipboard_copy(active_stage, writer, formats).await;
         }
+        RdpClientCommand::AnnounceClipboardFormats(formats) => {
+            // Invalidate before announcing: on_format_data_request serves from
+            // pending_copy_data ahead of asking the GUI, so a payload parked by
+            // an earlier explicit copy would shadow the new clipboard contents
+            // exactly once (issue #261).
+            if let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>()
+                && let Some(backend) = cliprdr
+                    .downcast_backend_mut::<super::super::clipboard::RustConnClipboardBackend>()
+            {
+                for format in &formats {
+                    backend.clear_pending_format(format.id);
+                }
+            }
+            handle_clipboard_copy(active_stage, writer, formats).await;
+        }
         RdpClientCommand::RequestClipboardData { format_id } => {
             handle_clipboard_request(active_stage, writer, format_id).await;
         }

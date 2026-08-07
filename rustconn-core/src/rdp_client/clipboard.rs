@@ -151,6 +151,21 @@ impl RustConnClipboardBackend {
         self.pending_copy_data.clear();
     }
 
+    /// Drops the parked payload for `format_id`, if any.
+    ///
+    /// Used when announcing that the local clipboard has new content in a
+    /// format whose data will be supplied on demand. Whatever was parked for
+    /// that format belongs to the previous clipboard owner, and
+    /// [`Self::on_format_data_request`] answers from `pending_copy_data`
+    /// before it asks the GUI — so without this the server would be served
+    /// stale text (issue #261). Unlike [`Self::clear_pending_copy_data`] this
+    /// leaves the file-clipboard entries parked by `StoreLocalFiles` alone.
+    pub fn clear_pending_format(&mut self, format_id: u32) {
+        if self.pending_copy_data.remove(&format_id).is_some() {
+            debug!("Dropped stale pending copy data for format {format_id}");
+        }
+    }
+
     /// Sets the local file paths for client → server file transfer.
     ///
     /// Called by the GUI when files are dropped onto the RDP widget.
@@ -634,5 +649,40 @@ mod tests {
         let format = ClipboardFormatInfo::unicode_text();
         assert!(format.is_text());
         assert_eq!(format.id, ClipboardFormatInfo::UNICODE_TEXT);
+    }
+
+    /// Announcing new text must drop the parked text payload — otherwise
+    /// `on_format_data_request` serves the previous clipboard owner's content —
+    /// while leaving the file-clipboard entries intact (issue #261).
+    #[test]
+    fn clear_pending_format_only_drops_that_format() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut backend = RustConnClipboardBackend::new(tx);
+
+        backend.set_pending_copy_data(ClipboardFormatInfo::UNICODE_TEXT, b"stale".to_vec());
+        backend.set_pending_copy_data(
+            ClipboardFormatInfo::FILE_GROUP_DESCRIPTOR_W,
+            b"descriptor".to_vec(),
+        );
+
+        backend.clear_pending_format(ClipboardFormatInfo::UNICODE_TEXT);
+
+        assert!(
+            !backend
+                .pending_copy_data
+                .contains_key(&ClipboardFormatInfo::UNICODE_TEXT),
+            "stale text must not survive an announcement"
+        );
+        assert_eq!(
+            backend
+                .pending_copy_data
+                .get(&ClipboardFormatInfo::FILE_GROUP_DESCRIPTOR_W)
+                .map(Vec::as_slice),
+            Some(b"descriptor".as_slice()),
+            "a pending file descriptor is unrelated to a text announcement"
+        );
+
+        // Removing an absent format is a no-op, not a panic.
+        backend.clear_pending_format(ClipboardFormatInfo::UNICODE_TEXT);
     }
 }

@@ -5,6 +5,20 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Embedded RDP no longer reads the local clipboard just to announce it, which is what crashed the process on X11 (issue [#261](https://github.com/totoshko88/RustConn/issues/261))** — the reporter's three coredumps settle what 0.19.15 could only narrow down. All three are the same fault to the byte, and it is a NULL dereference in GTK rather than anything racy: `strcmp(NULL, "STRING")`, reached on a GIO worker thread through `_gdk_x11_display_text_property_to_utf8_list` ← `gdk_x11_text_list_converter_convert` ← a `GConverterInputStream` read ← `read_async_thread` ← `g_task_thread_pool_thread`.
+
+  The GTK path is exact. `get_selection_property()` reports type `None` when a property fetch fails; `gdkselectioninputstream-x11.c` turns that into `priv->type` *before* it checks whether any bytes arrived, and returns the stream as successful anyway; `gdk_x11_get_xatom_name_for_display()` answers NULL for the `None` atom; and `gdkclipboard-x11.c` then hands that server-derived type straight to the text-list converter with no NULL guard, where `g_intern_string(NULL)` keeps it NULL until the converter dereferences it. Reaching it needs the X11 backend, a clipboard read, and a fallback to `COMPOUND_TEXT`/`TEXT`/`STRING` — GDK tries `UTF8_STRING` first and only falls back when that transfer fails, which is why it took time to show up rather than firing on the first copy.
+
+  What made it ours is that RustConn was reading on a hair trigger. The embedded client watched the display-global clipboard and read the selection on *every* change anywhere on the desktop, purely to forward the text to the server — so every copy in any application was another roll of the dice, and 0.19.15's handler leak meant one roll per RDP session ever opened. MS-RDPECLIP never needed that: a client announces which formats it has and supplies the bytes only when the peer answers with a Format Data Request. `rustconn-core` already implemented that flow and documented it. The change handler now sends the announcement alone, and the read happens in the request handler that was already there — once per paste inside the session instead of once per copy on the desktop. The two places that still read on purpose, the Paste button and script paste, are single user-initiated actions and are unchanged.
+
+  Announcing without data needed one guard: `on_format_data_request` answers from its parked payload before it asks the GUI, so text left over from an earlier explicit copy would have been served in place of the new clipboard contents exactly once. The new `AnnounceClipboardFormats` command drops the payload for precisely the formats it announces, which is narrower than the existing bulk clear on purpose — a pending file descriptor from a drag has nothing to do with a text announcement, and a test pins that distinction.
+
+  This removes RustConn from the crashing path; it does not repair GTK. A paste inside the session still goes through `read_text_async`, so the upstream bug remains reachable, just no longer driven by ambient desktop activity. The GTK side is worth reporting upstream, where the fix is a NULL check at the hand-off or, better, failing the task when the property fetch yields no type.
+
 ## [0.19.15] - 2026-08-07
 
 ### Fixed
