@@ -439,16 +439,21 @@ pub(super) async fn establish_connection(
     // strategy when the GFX pipeline fails (issue #218).
     //
     // Fallback behavior (Req 6):
-    // - When `try_load_openh264()` returns None (library missing), the
-    //   `GraphicsPipelineClient` is created with `h264_decoder: None`. This causes
-    //   ironrdp-egfx to NOT advertise AVC codecs in capability exchange, so the
-    //   server falls back to uncompressed/RFX-progressive within the GFX channel.
     // - When the `gfx-h264` feature is disabled at compile time, this entire block
     //   is absent — no EGFX DVC is registered, and the session uses the existing
     //   RemoteFX/Legacy rendering path identically to before (Req 6 AC 2, AC 5).
     // - When `graphics_mode` is Legacy or RemoteFx, the EGFX DVC is not
     //   registered even if the feature is enabled — the session uses the
     //   RemoteFX/Legacy path without the GFX pipeline.
+    // - When OpenH264 cannot be loaded the EGFX DVC is likewise not registered.
+    //   The comment here used to claim the pipeline degrades gracefully to
+    //   "uncompressed/RFX-progressive within the GFX channel". It does not:
+    //   without a decoder `ironrdp-egfx` advertises V8 only, Windows then sends
+    //   RFX Progressive, and `ironrdp-egfx` has no progressive decoder either —
+    //   it forwards those PDUs to a handler callback and the pixels are lost.
+    //   Opening a GFX channel we cannot paint through produces exactly the
+    //   frozen desktop of issue #262, so the session stays on the RemoteFX path
+    //   instead, which works.
     #[cfg(feature = "gfx-h264")]
     let gfx_update_rx = {
         use crate::rdp_client::graphics::GraphicsMode;
@@ -458,21 +463,27 @@ pub(super) async fn establish_connection(
         );
 
         let (gfx_update_tx, gfx_update_rx) = std::sync::mpsc::channel::<GfxFrameUpdate>();
+        // Drop the sender when GFX is skipped — the receiver's try_recv() then
+        // returns Disconnected immediately, which the session loop's
+        // `while let Ok` treats as "nothing pending".
         if skip_gfx {
-            // Drop the sender — receiver's try_recv() will return Disconnected
-            // immediately, which is fine (the session loop uses `while let Ok`).
             drop(gfx_update_tx);
             tracing::info!(
                 graphics_mode = ?config.graphics_mode,
                 "EGFX pipeline skipped (graphics_mode forces Legacy/RemoteFX path)"
             );
-        } else {
-            let h264_decoder = try_load_openh264();
-            let h264_available = h264_decoder.is_some();
+        } else if let Some(h264_decoder) = try_load_openh264() {
             let handler = RustConnGfxHandler::new(gfx_update_tx, event_tx.clone());
-            let gfx_client = GraphicsPipelineClient::new(Box::new(handler), h264_decoder);
+            let gfx_client = GraphicsPipelineClient::new(Box::new(handler), Some(h264_decoder));
             drdynvc = drdynvc.with_dynamic_channel(gfx_client);
-            tracing::info!(h264_available, "EGFX pipeline registered");
+            tracing::info!("EGFX pipeline registered with H.264/AVC420 decoding");
+        } else {
+            drop(gfx_update_tx);
+            tracing::warn!(
+                reason = "openh264_unavailable",
+                "EGFX pipeline skipped — without an H.264 decoder the GFX channel \
+                 can only deliver content we cannot paint; using the RemoteFX path"
+            );
         }
         gfx_update_rx
     };

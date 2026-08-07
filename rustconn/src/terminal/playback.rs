@@ -425,6 +425,10 @@ pub fn create_playback_tab_widget(initial_entry: &RecordingEntry) -> GtkBox {
     vte.set_hexpand(true);
     vte.set_vexpand(true);
     vte.set_input_enabled(false);
+    // Disabled input does not stop VTE from mapping Backspace, and mapping it
+    // with no PTY attached aborts the process — see
+    // [`super::config::apply_erase_bindings`].
+    super::config::apply_erase_bindings(&vte);
     container.append(&vte);
 
     // Create PlaybackController and load the initial recording.

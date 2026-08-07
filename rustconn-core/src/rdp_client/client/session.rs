@@ -42,17 +42,22 @@ pub(super) async fn run_active_session(
         connection_result.desktop_size.height,
     );
 
-    // Performance monitoring: FrameStatistics tracks decode times and drop rates
+    // Performance monitoring: FrameStatistics tracks decode times and drop rates.
+    //
+    // `active_graphics_mode` is deliberately left at its default here. It used
+    // to be set from `cfg!(feature = "gfx-h264")`, i.e. from a compile-time
+    // constant, so the GUI status bar claimed "GFX + H.264" even on sessions
+    // that never negotiated the GFX channel. The real mode now comes from the
+    // EGFX capability-confirm callback as `RdpClientEvent::GraphicsModeActive`
+    // (issue #262).
+    #[cfg_attr(
+        not(feature = "gfx-h264"),
+        expect(
+            unused_mut,
+            reason = "only the gfx-h264 blit path mutates the statistics"
+        )
+    )]
     let mut frame_stats = super::super::graphics::FrameStatistics::new();
-    // Set active graphics mode based on feature availability
-    #[cfg(feature = "gfx-h264")]
-    {
-        frame_stats.active_graphics_mode = super::super::graphics::GraphicsMode::GfxH264;
-    }
-    #[cfg(not(feature = "gfx-h264"))]
-    {
-        frame_stats.active_graphics_mode = super::super::graphics::GraphicsMode::RemoteFx;
-    }
 
     // Build ActiveStage from ConnectionResult fields (ironrdp 0.17 builder pattern)
     let activation_factory = connection_result.activation_factory;
@@ -119,7 +124,6 @@ pub(super) async fn run_active_session(
                                         &mut image,
                                         &mut active_stage,
                                         &activation_factory,
-                                        &frame_stats,
                                     )
                                     .await?
                                     {
@@ -146,10 +150,6 @@ pub(super) async fn run_active_session(
     Ok(())
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "internal dispatch function — parameters are all distinct; grouping into a struct adds indirection without clarity"
-)]
 async fn handle_active_stage_output<S>(
     output: ActiveStageOutput,
     writer: &mut impl FramedWrite,
@@ -158,7 +158,6 @@ async fn handle_active_stage_output<S>(
     image: &mut DecodedImage,
     active_stage: &mut ActiveStage,
     activation_factory: &ConnectionActivationFactory,
-    frame_stats: &super::super::graphics::FrameStatistics,
 ) -> Result<bool, RdpClientError>
 where
     S: FramedRead + Unpin + Send,
@@ -245,7 +244,6 @@ where
             {
                 let _ = event_tx.send(RdpClientEvent::Rtt {
                     rtt_ms: *average_rtt_ms,
-                    active_graphics_mode: frame_stats.active_graphics_mode,
                 });
             }
             tracing::debug!(

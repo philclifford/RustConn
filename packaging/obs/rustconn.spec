@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.14
+Version:        0.19.15
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,17 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Fri Aug 07 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.15-0
+- Version bump to 0.19.15
+- Fixed embedded RDP sessions in Automatic graphics mode showing a frozen desktop (#262)
+- Fixed scrolling, window drags and solid fills silently discarded in GFX sessions (#262)
+- Fixed sessions with no OpenH264 opening a GFX channel they could not paint through (#262)
+- Fixed session status bar reporting a graphics pipeline the session was not using (#262)
+- Fixed pressing Backspace in a session killing the whole window (VTE assertion failure)
+- Fixed embedded RDP clipboard watcher leak causing coredumps (#261)
+- Improved embedded RDP rendering performance
+- Improved split view panel buttons auto-hide behind an arrow indicator
+
 * Thu Aug 06 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.14-0
 - Version bump to 0.19.14
 - Added a Local Shell button to the empty split panel for starting a scratch shell there

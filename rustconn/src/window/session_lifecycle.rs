@@ -3,8 +3,9 @@
 //! Extracted from `window/mod.rs` — sets up session logging, activity
 //! monitoring with notifications, and child-exited cleanup/reconnect logic.
 
-use super::*;
 use zeroize::Zeroizing;
+
+use super::*;
 
 /// Longest a trailing partial line is held before it is written anyway.
 ///

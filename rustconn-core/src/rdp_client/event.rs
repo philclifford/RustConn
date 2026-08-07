@@ -611,13 +611,25 @@ pub enum RdpClientEvent {
     ///
     /// Emitted periodically when the Echo virtual channel is active.
     /// The GUI can display this in the toolbar as a latency indicator.
-    /// Also carries the currently active graphics pipeline mode for
-    /// live session statistics display.
+    ///
+    /// The active graphics mode is reported separately by
+    /// [`Self::GraphicsModeActive`]; it used to travel with this event as a
+    /// compile-time constant, which meant the status bar showed "GFX + H.264"
+    /// even for sessions that never negotiated the GFX channel (issue #262).
     Rtt {
         /// Round-trip time in milliseconds
         rtt_ms: u32,
-        /// Currently active graphics pipeline mode (e.g. GfxH264, RemoteFx, Legacy)
-        active_graphics_mode: super::graphics::GraphicsMode,
+    },
+
+    /// The graphics pipeline the server actually confirmed.
+    ///
+    /// Emitted once per session from the EGFX capability-confirm callback, and
+    /// therefore only when the GFX channel really came up. Sessions that stay
+    /// on the RemoteFX/bitmap path never emit it, which is itself the signal
+    /// that no GFX pipeline is in use.
+    GraphicsModeActive {
+        /// Graphics pipeline derived from the confirmed EGFX capability set
+        mode: super::graphics::GraphicsMode,
     },
 
     /// Display Control Channel (MS-RDPEDISP) is ready for dynamic resize.
@@ -650,13 +662,32 @@ pub enum RdpClientEvent {
 
     /// GFX H.264 pipeline persistent decode failure.
     ///
-    /// Emitted when 10+ consecutive bitmap updates deliver empty data,
+    /// Emitted once when 10+ consecutive bitmap updates deliver empty data,
     /// indicating the H.264 decoder is failing persistently. The GUI may
     /// display a degraded-quality warning or suggest reconnecting with
     /// a different graphics mode.
+    ///
+    /// This covers only the "decoder ran and produced nothing" shape. Content
+    /// the pipeline cannot even attempt to decode is reported by
+    /// [`Self::GfxUnsupportedCodec`] instead.
     GfxDecodeFailure {
         /// Number of consecutive empty frames observed
         consecutive_failures: u32,
+    },
+
+    /// The server sent surface content in a codec the GFX pipeline cannot decode.
+    ///
+    /// The upstream `ironrdp-egfx` client forwards such `WireToSurface1` PDUs to
+    /// its catch-all callback instead of decoding them, so the pixels are lost.
+    /// Before this event existed the loss was completely silent: no bitmap
+    /// update ever reached the handler, so the empty-frame counter behind
+    /// [`Self::GfxDecodeFailure`] stayed at zero and the session simply looked
+    /// frozen (issue #262).
+    GfxUnsupportedCodec {
+        /// Codec the server used, as reported by `ironrdp-egfx`
+        codec: String,
+        /// Number of surface updates dropped because of it
+        dropped_frames: u32,
     },
 
     /// Server requested file contents from us (client → server file transfer).

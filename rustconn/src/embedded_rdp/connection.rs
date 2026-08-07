@@ -31,6 +31,77 @@ pub(super) enum FreerdpFailure {
     Error(String),
 }
 
+/// A live `changed` subscription on the local clipboard.
+///
+/// The `GdkClipboard` belongs to the `GdkDisplay`, not to the widget, so a
+/// handler that is never disconnected keeps firing for every clipboard change
+/// in the whole application long after the session that installed it is gone
+/// (issue #261). Each callback starts a `read_text_async`, which on X11 runs a
+/// selection conversion on a GIO worker thread, so leaked handlers multiply
+/// into concurrent conversions.
+///
+/// The clipboard object is stored next to the handler id on purpose: by the
+/// time teardown runs the drawing area may already be unrooted, and
+/// re-deriving the clipboard from the widget's display is then unreliable.
+pub(super) struct ClipboardMonitor {
+    clipboard: gtk4::gdk::Clipboard,
+    handler_id: glib::SignalHandlerId,
+    /// Connection generation that installed this monitor.
+    generation: u64,
+}
+
+/// Slot holding the local clipboard monitor of the current session, if any.
+pub(super) type ClipboardMonitorSlot = Rc<RefCell<Option<ClipboardMonitor>>>;
+
+/// Takes the local clipboard monitor out of `slot` and disconnects it.
+///
+/// `only_generation` restricts removal to a monitor installed by that
+/// connection generation. A stale polling loop must not tear down the monitor
+/// of the session that replaced it: the slot is shared across generations, so
+/// an unconditional take there would disconnect the *live* handler and silently
+/// stop local→server clipboard sync after every reconnect (issue #261).
+/// Teardown paths pass `None` to remove whatever is installed.
+pub(super) fn remove_clipboard_monitor(slot: &ClipboardMonitorSlot, only_generation: Option<u64>) {
+    // Take before disconnecting: dropping the handler's closure releases its
+    // captured `Rc`s, and holding the `RefCell` borrow across that would turn
+    // any re-entrant access into a panic.
+    let monitor = {
+        let mut guard = slot.borrow_mut();
+        if let Some(generation) = only_generation
+            && guard.as_ref().is_some_and(|m| m.generation != generation)
+        {
+            return;
+        }
+        guard.take()
+    };
+
+    if let Some(ClipboardMonitor {
+        clipboard,
+        handler_id,
+        generation,
+    }) = monitor
+    {
+        clipboard.disconnect(handler_id);
+        tracing::debug!(
+            protocol = "rdp",
+            generation,
+            "Disconnected local clipboard monitor"
+        );
+    }
+}
+
+/// Whether the profile allows clipboard sharing for this session.
+///
+/// Defaults to enabled when no config is stored, matching `RdpConfig::default`.
+/// Every automatic clipboard access has to consult this: the flag used to reach
+/// only the CLIPRDR channel in `rustconn-core` and the external FreeRDP
+/// argument, so turning clipboard sharing off left the GTK-side monitor and the
+/// server→local auto-sync running (issue #261).
+#[cfg(feature = "rdp-embedded")]
+fn clipboard_sharing_enabled(config: &Rc<RefCell<Option<RdpConfig>>>) -> bool {
+    config.borrow().as_ref().is_none_or(|c| c.clipboard_enabled)
+}
+
 // Poll background FreeRDP startup often enough to keep the UI responsive without
 // busy-looping on the GTK main thread.
 const EXTERNAL_LAUNCH_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
@@ -224,7 +295,7 @@ pub(super) struct RdpConnectionContext {
     pub client_ref: Rc<RefCell<Option<rustconn_core::rdp_client::RdpClient>>>,
     pub fallback_config: Rc<RefCell<Option<RdpConfig>>>,
     pub fallback_process: Rc<RefCell<Option<std::process::Child>>>,
-    pub clipboard_handler_id: Rc<RefCell<Option<glib::SignalHandlerId>>>,
+    pub clipboard_monitor: ClipboardMonitorSlot,
     /// Whether we already attempted a retry without GFX pipeline.
     /// Prevents infinite retry loops. (Issue #218)
     pub gfx_retry_attempted: Rc<RefCell<bool>>,
@@ -851,7 +922,7 @@ impl super::EmbeddedRdpWidget {
         let connection_generation = self.connection_generation.clone();
         #[cfg(feature = "rdp-audio")]
         let audio_player = self.audio_player.clone();
-        let clipboard_handler_id = self.clipboard_handler_id.clone();
+        let clipboard_monitor = self.clipboard_monitor.clone();
 
         // Use the struct-level suppression flag so both the Copy button handler
         // and the Phase 2 auto-sync can suppress the clipboard-changed callback.
@@ -1016,6 +1087,20 @@ impl super::EmbeddedRdpWidget {
         // fully torn down yet. (Issue #218)
         let gfx_retry_attempted = std::rc::Rc::new(std::cell::RefCell::new(false));
 
+        // Graphics pipeline shown in the status bar. Starts at the mode our
+        // advertised capabilities imply and is corrected by
+        // `GraphicsModeActive` if the EGFX channel actually comes up — which
+        // only happens for GFX sessions, so a session that stays on the
+        // RemoteFX/bitmap path keeps the initial value (issue #262).
+        let negotiated_graphics_mode = std::rc::Rc::new(std::cell::RefCell::new(
+            self.config
+                .borrow()
+                .as_ref()
+                .map_or(rustconn_core::rdp_client::GraphicsMode::Auto, |c| {
+                    c.assumed_graphics_mode()
+                }),
+        ));
+
         // Background-tab throttle counter: when the drawing area is not
         // mapped (tab in background), we skip frame processing to save CPU.
         // Lifecycle events (connect, disconnect, error) are still handled.
@@ -1039,12 +1124,9 @@ impl super::EmbeddedRdpWidget {
                     if let Some(mut c) = client_ref.borrow_mut().take() {
                         c.disconnect();
                     }
-                    // Clean up clipboard monitor
-                    if let Some(handler_id) = clipboard_handler_id.borrow_mut().take() {
-                        let display = drawing_area.display();
-                        let cb = display.clipboard();
-                        cb.disconnect(handler_id);
-                    }
+                    // Only our own monitor — the session that superseded this
+                    // generation has already installed its own (issue #261).
+                    remove_clipboard_monitor(&clipboard_monitor, Some(generation));
                     return glib::ControlFlow::Break;
                 }
 
@@ -1056,12 +1138,7 @@ impl super::EmbeddedRdpWidget {
                     }
                     *ironrdp_tx.borrow_mut() = None;
                     toolbar.set_visible(false);
-                    // Clean up clipboard monitor
-                    if let Some(handler_id) = clipboard_handler_id.borrow_mut().take() {
-                        let display = drawing_area.display();
-                        let cb = display.clipboard();
-                        cb.disconnect(handler_id);
-                    }
+                    remove_clipboard_monitor(&clipboard_monitor, Some(generation));
                     return glib::ControlFlow::Break;
                 }
 
@@ -1149,11 +1226,15 @@ impl super::EmbeddedRdpWidget {
 
                                 // Phase 3: Monitor local clipboard changes and
                                 // announce to server via cliprdr
-                                {
+                                if clipboard_sharing_enabled(&config) {
                                     let display = drawing_area.display();
                                     let clipboard = display.clipboard();
                                     let tx = ironrdp_tx.clone();
                                     let suppressed = clipboard_sync_suppressed.clone();
+                                    // Drop a monitor left behind by an earlier
+                                    // generation before installing this one; the
+                                    // slot holds a single entry (issue #261).
+                                    remove_clipboard_monitor(&clipboard_monitor, None);
                                     let handler_id = clipboard.connect_changed(move |cb| {
                                         // Skip if this change was triggered by our own
                                         // server→client sync (Phase 2)
@@ -1186,7 +1267,11 @@ impl super::EmbeddedRdpWidget {
                                             },
                                         );
                                     });
-                                    *clipboard_handler_id.borrow_mut() = Some(handler_id);
+                                    *clipboard_monitor.borrow_mut() = Some(ClipboardMonitor {
+                                        clipboard: clipboard.clone(),
+                                        handler_id,
+                                        generation,
+                                    });
                                 }
 
                                 if let Some(ref callback) = *on_state_changed.borrow() {
@@ -1209,12 +1294,7 @@ impl super::EmbeddedRdpWidget {
                             RdpClientEvent::Disconnected => {
                                 tracing::debug!(protocol = "rdp", generation, "Disconnected event");
                                 jiggler.stop();
-                                // Clean up clipboard monitor
-                                if let Some(handler_id) = clipboard_handler_id.borrow_mut().take() {
-                                    let display = drawing_area.display();
-                                    let cb = display.clipboard();
-                                    cb.disconnect(handler_id);
-                                }
+                                remove_clipboard_monitor(&clipboard_monitor, Some(generation));
                                 // Check if this polling loop is still current before firing callback
                                 if *connection_generation.borrow() == generation {
                                     *state.borrow_mut() = RdpConnectionState::Disconnected;
@@ -1269,13 +1349,18 @@ impl super::EmbeddedRdpWidget {
                                 tracing::debug!(protocol = "rdp", "Authentication required");
                             }
                             RdpClientEvent::ClipboardText(text) => {
-                                super::polling_handlers::handle_clipboard_text(
-                                    &drawing_area,
-                                    &remote_clipboard_text,
-                                    &copy_button,
-                                    &clipboard_sync_suppressed,
-                                    text,
-                                );
+                                // A server that keeps CLIPRDR open must not be
+                                // able to take ownership of the local clipboard
+                                // when the profile disables sharing (issue #261).
+                                if clipboard_sharing_enabled(&config) {
+                                    super::polling_handlers::handle_clipboard_text(
+                                        &drawing_area,
+                                        &remote_clipboard_text,
+                                        &copy_button,
+                                        &clipboard_sync_suppressed,
+                                        text,
+                                    );
+                                }
                             }
                             RdpClientEvent::ClipboardFormatsAvailable(formats) => {
                                 tracing::debug!(
@@ -1291,6 +1376,15 @@ impl super::EmbeddedRdpWidget {
                                 }
                             }
                             RdpClientEvent::ClipboardDataRequest(format) => {
+                                if !clipboard_sharing_enabled(&config) {
+                                    tracing::debug!(
+                                        protocol = "rdp",
+                                        format_id = format.id,
+                                        "Ignoring server clipboard request — \
+                                         sharing disabled for this profile"
+                                    );
+                                    continue;
+                                }
                                 tracing::debug!(
                                     format_id = format.id,
                                     "Server requests clipboard data"
@@ -1485,16 +1579,21 @@ impl super::EmbeddedRdpWidget {
                                     height,
                                 );
                             }
-                            RdpClientEvent::Rtt {
-                                rtt_ms,
-                                active_graphics_mode,
-                            } => {
+                            RdpClientEvent::Rtt { rtt_ms } => {
                                 super::polling_handlers::handle_rtt(
                                     &config,
                                     &status_label,
                                     rtt_ms,
-                                    active_graphics_mode,
+                                    *negotiated_graphics_mode.borrow(),
                                 );
+                            }
+                            RdpClientEvent::GraphicsModeActive { mode } => {
+                                tracing::info!(
+                                    protocol = "rdp",
+                                    graphics_mode = mode.display_name(),
+                                    "EGFX pipeline negotiated"
+                                );
+                                *negotiated_graphics_mode.borrow_mut() = mode;
                             }
                             RdpClientEvent::FileClipboardUnsupported => {
                                 tracing::info!(
@@ -1513,20 +1612,49 @@ impl super::EmbeddedRdpWidget {
                                 // decode (e.g. AVC444 on a misconfigured OpenH264).
                                 // Trigger immediate fallback instead of waiting for
                                 // the no-frame-watchdog timeout. (Fixes #218)
+                                //
+                                // Deliberately NOT gated on `first_frame_received`:
+                                // the GFX pipeline can lose every frame while
+                                // legacy updates or small uncompressed regions
+                                // still paint something, and one such pixel used
+                                // to latch the flag and disable every recovery
+                                // path for the rest of the session (issue #262).
+                                // The handler emits this once per failure run, so
+                                // it cannot flap.
                                 tracing::warn!(
                                     protocol = "rdp",
                                     consecutive_failures,
                                     "GFX H.264 persistent decode failure — triggering fallback"
                                 );
-                                if !*first_frame_received.borrow() {
-                                    deferred_error = Some(
-                                        "no-frame-watchdog: GFX pipeline decode failure \
-                                         (server codec incompatible with client)"
-                                            .to_string(),
-                                    );
-                                    should_break = true;
-                                    break;
-                                }
+                                deferred_error = Some(
+                                    "gfx pipeline decode failure \
+                                     (server codec incompatible with client)"
+                                        .to_string(),
+                                );
+                                should_break = true;
+                                break;
+                            }
+                            RdpClientEvent::GfxUnsupportedCodec {
+                                codec,
+                                dropped_frames,
+                            } => {
+                                // The server is sending surface content in a
+                                // codec `ironrdp-egfx` has no decoder for, so the
+                                // GFX pipeline paints nothing at all. Retry
+                                // without GFX rather than leaving the user with a
+                                // frozen desktop (issue #262).
+                                tracing::warn!(
+                                    protocol = "rdp",
+                                    codec = %codec,
+                                    dropped_frames,
+                                    "GFX pipeline cannot decode the server's codec — triggering fallback"
+                                );
+                                deferred_error = Some(format!(
+                                    "gfx unsupported codec: {codec} \
+                                     ({dropped_frames} surface updates dropped)"
+                                ));
+                                should_break = true;
+                                break;
                             }
                         }
                     }
@@ -1580,7 +1708,7 @@ impl super::EmbeddedRdpWidget {
                         client_ref: client_ref.clone(),
                         fallback_config: fallback_config.clone(),
                         fallback_process: fallback_process.clone(),
-                        clipboard_handler_id: clipboard_handler_id.clone(),
+                        clipboard_monitor: clipboard_monitor.clone(),
                         gfx_retry_attempted: gfx_retry_attempted.clone(),
                         on_reconnect: on_reconnect.clone(),
                         connection_generation: connection_generation.clone(),
@@ -1608,11 +1736,7 @@ impl super::EmbeddedRdpWidget {
         );
 
         // Clean up clipboard monitor on any error
-        if let Some(handler_id) = ctx.clipboard_handler_id.borrow_mut().take() {
-            let display = ctx.drawing_area.display();
-            let cb = display.clipboard();
-            cb.disconnect(handler_id);
-        }
+        remove_clipboard_monitor(&ctx.clipboard_monitor, Some(ctx.generation));
 
         // Decide what to do with the failure. The matching itself lives in
         // `rustconn_core::rdp_client::failure` as a pure, unit-tested function —
@@ -2075,13 +2199,7 @@ impl super::EmbeddedRdpWidget {
         if let Some(handler_id) = self.resize_handler_id.borrow_mut().take() {
             self.drawing_area.disconnect(handler_id);
         }
-        #[cfg(feature = "rdp-embedded")]
-        if let Some(handler_id) = self.clipboard_handler_id.borrow_mut().take() {
-            let display = self.drawing_area.display();
-            let clipboard = display.clipboard();
-            clipboard.disconnect(handler_id);
-            tracing::debug!(protocol = "rdp", "Disconnected local clipboard monitor");
-        }
+        remove_clipboard_monitor(&self.clipboard_monitor, None);
         if let Some(mut thread) = self.freerdp_thread.borrow_mut().take() {
             thread.shutdown();
         }
@@ -2363,6 +2481,13 @@ impl super::EmbeddedRdpWidget {
         if let Some(handler_id) = self.resize_handler_id.borrow_mut().take() {
             self.drawing_area.disconnect(handler_id);
         }
+
+        // The clipboard monitor is attached to the display-global GdkClipboard,
+        // which outlives this widget. Left connected it keeps running a
+        // selection read for every copy anywhere in the application, for the
+        // rest of the process lifetime — the path that crashed in issue #261.
+        // This runs on every teardown, including `Drop`.
+        remove_clipboard_monitor(&self.clipboard_monitor, None);
 
         // Shutdown FreeRDP thread if running
         if let Some(mut thread) = self.freerdp_thread.borrow_mut().take() {
