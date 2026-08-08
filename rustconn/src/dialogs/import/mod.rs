@@ -268,6 +268,15 @@ impl ImportDialog {
     /// and returns the import result containing connections, groups, skipped entries, and errors.
     #[must_use]
     pub fn do_import(&self, source_id: &str) -> ImportResult {
+        Self::do_import_blocking(source_id)
+    }
+
+    /// Performs the import operation on a background thread.
+    ///
+    /// This is the `Send`-safe variant used by `spawn_blocking_with_callback`.
+    /// Does not reference any GTK widgets.
+    #[must_use]
+    pub fn do_import_blocking(source_id: &str) -> ImportResult {
         match source_id {
             "ssh_config" => {
                 let importer = SshConfigImporter::new();
@@ -284,6 +293,10 @@ impl ImportDialog {
             "ansible" => {
                 let importer = AnsibleInventoryImporter::new();
                 Self::import_or_error(importer.import(), "Ansible inventory")
+            }
+            "libvirt" => {
+                let importer = LibvirtXmlImporter::new();
+                Self::import_or_error(importer.import(), "Libvirt")
             }
             "libvirt_daemon" => {
                 let importer = LibvirtDaemonImporter::new();
@@ -309,20 +322,27 @@ impl ImportDialog {
     pub fn show_results_with_source(&self, result: &ImportResult, source_name: Option<&str>) {
         let conn_count = result.connections.len().to_string();
         let group_count = result.groups.len().to_string();
-        let summary = source_name.map_or_else(
-            || {
-                i18n_f(
-                    "Successfully imported {} connection(s) and {} group(s).",
-                    &[&conn_count, &group_count],
-                )
-            },
-            |name| {
-                i18n_f(
-                    "Successfully imported {} connection(s) and {} group(s).\nConnections will be added to '{} Import' group.",
-                    &[&conn_count, &group_count, name],
-                )
-            },
-        );
+        let summary = if result.connections.is_empty() && !result.errors.is_empty() {
+            i18n_f(
+                "Import failed with {} error(s). No connections were imported.",
+                &[&result.errors.len().to_string()],
+            )
+        } else {
+            source_name.map_or_else(
+                || {
+                    i18n_f(
+                        "Successfully imported {} connection(s) and {} group(s).",
+                        &[&conn_count, &group_count],
+                    )
+                },
+                |name| {
+                    i18n_f(
+                        "Successfully imported {} connection(s) and {} group(s).\nConnections will be added to '{} Import' group.",
+                        &[&conn_count, &group_count, name],
+                    )
+                },
+            )
+        };
         self.result_label.set_text(&summary);
 
         let details = Self::format_import_details(result);
@@ -430,30 +450,50 @@ impl ImportDialog {
                 let display_name = Self::get_source_display_name(&source_id);
                 progress_label.set_text(&i18n_f("Importing from {}...", &[&display_name]));
 
-                // Perform import with progress reporting
-                let result =
-                    Self::do_import_with_progress(&source_id, &progress_bar, &progress_label);
+                // Run import on a background thread to avoid blocking the GTK
+                // main loop (file I/O, virsh subprocess, argon2 can take seconds).
+                progress_bar.pulse();
+                let progress_bar_c = progress_bar.clone();
+                let progress_label_c = progress_label.clone();
+                let result_label_c = result_label.clone();
+                let result_details_c = result_details.clone();
+                let result_cell_c = result_cell.clone();
+                let stack_c = stack.clone();
+                let btn_c = btn.clone();
+                let source_id_owned = source_id.clone();
+                crate::utils::spawn_blocking_with_callback(
+                    move || Self::do_import_blocking(&source_id_owned),
+                    move |result| {
+                        progress_bar_c.set_fraction(1.0);
+                        progress_label_c.set_text(&i18n("Import complete"));
 
-                progress_bar.set_fraction(1.0);
-                progress_label.set_text(&i18n("Import complete"));
+                        // Show results — distinguish success from failure
+                        let summary = if result.connections.is_empty() && !result.errors.is_empty()
+                        {
+                            i18n_f(
+                                "Import failed with {} error(s). No connections were imported.",
+                                &[&result.errors.len().to_string()],
+                            )
+                        } else {
+                            i18n_f(
+                                "Successfully imported {} connection(s) and {} group(s).",
+                                &[
+                                    &result.connections.len().to_string(),
+                                    &result.groups.len().to_string(),
+                                ],
+                            )
+                        };
+                        result_label_c.set_text(&summary);
 
-                // Show results using show_results() pattern
-                let summary = i18n_f(
-                    "Successfully imported {} connection(s) and {} group(s).",
-                    &[
-                        &result.connections.len().to_string(),
-                        &result.groups.len().to_string(),
-                    ],
+                        let details = Self::format_import_details(&result);
+                        result_details_c.set_text(&details);
+
+                        *result_cell_c.borrow_mut() = Some(result);
+                        stack_c.set_visible_child_name("result");
+                        btn_c.set_label(&i18n("Done"));
+                        btn_c.set_sensitive(true);
+                    },
                 );
-                result_label.set_text(&summary);
-
-                let details = Self::format_import_details(&result);
-                result_details.set_text(&details);
-
-                *result_cell.borrow_mut() = Some(result);
-                stack.set_visible_child_name("result");
-                btn.set_label(&i18n("Done"));
-                btn.set_sensitive(true);
             }
         });
 
@@ -704,35 +744,53 @@ impl ImportDialog {
                     return;
                 }
 
-                // Perform import with progress reporting
-                let result = Self::do_import_with_progress(
-                    &source_id,
-                    &progress_bar,
-                    &progress_label,
+                // Run import on a background thread to avoid blocking
+                // the GTK main loop.
+                progress_bar.pulse();
+                let progress_bar_c = progress_bar.clone();
+                let progress_label_c = progress_label.clone();
+                let result_label_c = result_label.clone();
+                let result_details_c = result_details.clone();
+                let result_cell_c = result_cell.clone();
+                let source_name_cell_c = source_name_cell.clone();
+                let stack_c = stack.clone();
+                let btn_c = btn.clone();
+                let display_name_c = display_name.clone();
+                let source_id_owned = source_id.clone();
+                crate::utils::spawn_blocking_with_callback(
+                    move || Self::do_import_blocking(&source_id_owned),
+                    move |result| {
+                        // Store source name
+                        *source_name_cell_c.borrow_mut() = display_name_c.clone();
+
+                        progress_bar_c.set_fraction(1.0);
+                        progress_label_c.set_text(&i18n("Import complete"));
+
+                        // Show results — distinguish success from failure
+                        let conn_count = result.connections.len();
+                        let group_count = result.groups.len();
+                        let summary = if conn_count == 0 && !result.errors.is_empty() {
+                            i18n_f(
+                                "Import failed with {} error(s). No connections were imported.",
+                                &[&result.errors.len().to_string()],
+                            )
+                        } else {
+                            i18n_f(
+                                "Successfully imported {} connection(s) and {} group(s).\nConnections will be added to '{} Import' group.",
+                                &[&conn_count.to_string(), &group_count.to_string(), &display_name_c],
+                            )
+                        };
+                        result_label_c.set_text(&summary);
+
+                        let details = Self::format_import_details(&result);
+                        result_details_c.set_text(&details);
+
+                        *result_cell_c.borrow_mut() = Some(result);
+                        stack_c.set_visible_child_name("result");
+                        btn_c.set_label(&i18n("Done"));
+                        btn_c.set_sensitive(true);
+                    },
                 );
-
-                // Store source name
-                *source_name_cell.borrow_mut() = display_name.clone();
-
-                progress_bar.set_fraction(1.0);
-                progress_label.set_text(&i18n("Import complete"));
-
-                // Show results using show_results_with_source() pattern
-                let conn_count = result.connections.len();
-                let group_count = result.groups.len();
-                let summary = i18n_f(
-                    "Successfully imported {} connection(s) and {} group(s).\nConnections will be added to '{} Import' group.",
-                    &[&conn_count.to_string(), &group_count.to_string(), &display_name],
-                );
-                result_label.set_text(&summary);
-
-                let details = Self::format_import_details(&result);
-                result_details.set_text(&details);
-
-                *result_cell.borrow_mut() = Some(result);
-                stack.set_visible_child_name("result");
-                btn.set_label(&i18n("Done"));
-                btn.set_sensitive(true);
             }
         });
 

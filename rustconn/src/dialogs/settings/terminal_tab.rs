@@ -681,6 +681,10 @@ pub fn collect_terminal_settings(
     close_on_clean_exit_row: &adw::SwitchRow,
     option_is_meta_row: &adw::SwitchRow,
     keep_history_on_reconnect_row: &adw::SwitchRow,
+    // NOTE: log_timestamps lives in TerminalSettings but is displayed on the
+    // Logging tab. The logging_tab `create_logging_page()` builds the switch,
+    // and the close handler passes its value here. If the setting is ever moved
+    // to LoggingSettings, update the close handler in mod.rs accordingly.
     log_timestamps: bool,
     existing_max_scrollback_on_reconnect: Option<u32>,
 ) -> TerminalSettings {

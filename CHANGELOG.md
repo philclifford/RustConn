@@ -5,6 +5,32 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.17] - 2026-08-08
+
+### Fixed
+
+- **Opening Settings panel no longer wipes in-memory KeePassXC database password (issue [#259](https://github.com/totoshko88/RustConn/issues/259))** — closing the Settings dialog (even without making any changes) triggered a full settings save cycle. Because the password entry widget is intentionally left blank for security, `collect_secret_settings()` returned `kdbx_password: None`, and `update_settings()` unconditionally overwrote the in-memory settings struct — losing the runtime-only password that was loaded at startup from the encrypted file or system keyring. Subsequent credential lookups saw `has_password=false` and failed to open the KeePass database until restart. The fix preserves all six runtime-only `SecretString` fields (`kdbx_password`, `bitwarden_password`, `bitwarden_client_id`, `bitwarden_client_secret`, `onepassword_service_account_token`, `passbolt_passphrase`) from the previous settings when the incoming settings don't provide them — protecting all vault backends, not just KeePassXC.
+
+- **OCI CLI version detection no longer shows Python tracebacks** — when the OCI CLI installation is broken (e.g. missing `oci_cli` Python module), `oci --version` emits a traceback to stderr. The version parser now detects traceback output and returns no version instead of displaying the raw error text in the Preferences panel.
+
+### Improved
+
+- **Settings dialog no longer saves to disk when nothing changed** — dirty-tracking compares collected settings against the original snapshot; closing the dialog without modifications skips the save entirely, eliminating unnecessary disk writes and reducing the surface for state-corruption bugs.
+
+- **Bitwarden Unlock and KeePass Check buttons are now asynchronous** — previously both ran blocking `std::process::Command` on the GTK main thread, freezing the UI while the CLI responded (potentially seconds for vault unlock or argon2 key derivation). They now run via `gio::spawn_blocking` with intermediate status feedback ("Unlocking…", "Checking…").
+
+- **Keyring credential saves moved to background thread** — writing passwords to the system keyring (D-Bus round-trip) previously happened synchronously inside the settings collect phase during dialog close. Saves now run asynchronously after `update_settings()` succeeds, and failures are reported via `tracing::warn` with a return value indicating success/failure.
+
+- **SSH Agent add-key failures now show an error toast** — previously the error was only logged; now users see a toast with the failure reason when `ssh-add` rejects a key (e.g. wrong passphrase, unsupported format).
+
+- **Clearer warning when system keyring is unavailable** — the status label now reads "System keyring unavailable — install libsecret (secret-tool)" instead of the previous terse message, giving users actionable guidance.
+
+- **Import dialog no longer blocks the UI during file parsing** — SSH config, Remmina, Asbru, Ansible, and libvirt imports (including `virsh` subprocess calls) now run on a background thread via `spawn_blocking_with_callback`. The progress bar pulses while the operation runs, and results appear asynchronously when complete.
+
+- **Import dialog clearly reports failure when no connections are imported** — previously a successful-looking "Successfully imported 0 connection(s)" appeared even when all entries failed. Now the result page explicitly states "Import failed with N error(s)" when the connections list is empty but errors were encountered.
+
+- **Export "Open location" no longer blocks the main loop** — `open::that` was replaced with `open::that_in_background`, preventing UI freezes when `xdg-open` is slow to respond.
+
 ## [0.19.16] - 2026-08-08
 
 ### Fixed

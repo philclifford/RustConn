@@ -1175,7 +1175,11 @@ impl ExportDialog {
         });
     }
 
-    /// Opens the output location in the file manager
+    /// Opens the output location in the file manager.
+    ///
+    /// Spawns the operation in the background so `xdg-open` doesn't block the
+    /// GTK main loop. Errors are logged but cannot easily be reported to the
+    /// user since the operation completes asynchronously.
     pub fn open_output_location(path: &std::path::Path) {
         // For directories, open the directory
         // For files, open the parent directory
@@ -1187,8 +1191,8 @@ impl ExportDialog {
                 .unwrap_or_else(|| path.to_path_buf())
         };
 
-        if let Err(e) = open::that(&dir_to_open) {
-            tracing::warn!(%e, "Failed to open output location");
-        }
+        // Spawn non-blocking so xdg-open doesn't block the GTK main loop.
+        // The JoinHandle is intentionally dropped — we fire-and-forget.
+        let _handle = open::that_in_background(&dir_to_open);
     }
 }

@@ -840,11 +840,21 @@ fn parse_version_output(command: &str, output: &str) -> Option<String> {
             }
         }
 
-        "oci" => output
-            .lines()
-            .next()
-            .map(|line| line.trim().to_string())
-            .filter(|s| !s.is_empty()),
+        "oci" => {
+            // OCI CLI prints a bare version string like "3.44.1".
+            // A broken install (missing oci_cli module) emits a Python
+            // traceback to stderr which we must not display as the version.
+            let first_line = output.lines().next().unwrap_or("").trim();
+            if first_line.is_empty()
+                || first_line.starts_with("Traceback")
+                || first_line.starts_with("Error")
+                || first_line.contains("ModuleNotFoundError")
+            {
+                None
+            } else {
+                Some(first_line.to_string())
+            }
+        }
 
         "ssm-cli" => {
             // ssm-session-client pip package

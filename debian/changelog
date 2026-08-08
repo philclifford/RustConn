@@ -1,3 +1,16 @@
+rustconn (0.19.17-1) unstable; urgency=medium
+
+  * Version bump to 0.19.17
+  * Fixed Settings panel wiping in-memory KeePassXC database password on
+    close (#259)
+  * Fixed OCI CLI version detection showing Python tracebacks
+  * Improved Settings dialog: dirty-tracking, async vault unlock/check,
+    background keyring saves, SSH agent error toast
+  * Improved Import dialog: async file parsing, clear error messaging
+  * Improved Export dialog: non-blocking open location
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Sat, 08 Aug 2026 18:00:00 +0200
+
 rustconn (0.19.16-1) unstable; urgency=medium
 
   * Version bump to 0.19.16

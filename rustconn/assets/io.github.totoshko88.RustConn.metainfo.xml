@@ -140,6 +140,18 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.17" date="2026-08-08">
+      <description>
+        <p>Version 0.19.17 - Settings stability and dialog improvements:</p>
+        <ul>
+          <li>Fixed Settings panel wiping in-memory KeePassXC database password on close (#259)</li>
+          <li>Fixed OCI CLI version detection showing Python tracebacks</li>
+          <li>Improved Settings dialog with dirty-tracking, async vault operations and background keyring saves</li>
+          <li>Improved Import dialog with background file parsing and clear error messaging</li>
+          <li>Improved Export dialog with non-blocking file manager open</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.16" date="2026-08-08">
       <description>
         <p>Version 0.19.16 - clipboard crash mitigation (issue #261):</p>

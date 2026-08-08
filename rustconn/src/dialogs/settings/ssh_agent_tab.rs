@@ -536,9 +536,17 @@ fn add_key_with_passphrase_dialog(
             }
             Err(e) => {
                 tracing::error!("Failed to add key: {e}");
-                // Log the error - toast notifications are handled by the parent dialog
-                // The user will see the key wasn't added when the list doesn't update
                 dialog_clone2.close();
+                // Show error feedback so the user knows the key wasn't added.
+                if let Some(root) = status_label_clone.root()
+                    && let Some(window) = root.downcast_ref::<gtk4::Window>()
+                {
+                    crate::toast::show_toast_on_window(
+                        window,
+                        &i18n_f("Failed to add key: {}", &[&e.to_string()]),
+                        crate::toast::ToastType::Error,
+                    );
+                }
             }
         }
     });

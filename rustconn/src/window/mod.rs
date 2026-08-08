@@ -3112,9 +3112,36 @@ impl MainWindow {
                 if let Ok(mut state_mut) = state.try_borrow_mut() {
                     let simple_sync_was = state_mut.simple_sync_enabled();
                     let simple_sync_now = settings.sync.simple_sync_enabled;
+                    // Clone secret settings for deferred keyring saves (done
+                    // async to avoid blocking the GTK main loop on D-Bus).
+                    let secrets_for_keyring = settings.secrets.clone();
                     if let Err(e) = state_mut.update_settings(settings) {
                         tracing::error!(%e, "Failed to save settings");
                     } else {
+                        // Non-blocking feedback that settings were persisted.
+                        crate::toast::show_toast_on_window(
+                            &window_clone,
+                            &crate::i18n::i18n("Settings saved"),
+                            crate::toast::ToastType::Success,
+                        );
+
+                        // Deferred keyring credential saves — run on a background
+                        // thread so D-Bus round-trips don't block the UI.
+                        glib::spawn_future_local(async move {
+                            let failures = gtk4::gio::spawn_blocking(move || {
+                                crate::dialogs::settings::save_pending_keyring_credentials(
+                                    &secrets_for_keyring,
+                                )
+                            })
+                            .await
+                            .unwrap_or(0);
+                            if failures > 0 {
+                                tracing::warn!(
+                                    failures,
+                                    "Some credentials failed to save to keyring"
+                                );
+                            }
+                        });
                         // Simple Sync just turned on: publish the current store,
                         // then pull any existing remote data on idle so the
                         // device converges immediately.
