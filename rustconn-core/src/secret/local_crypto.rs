@@ -45,9 +45,7 @@ pub(crate) const SETTINGS_HEADER_LEN: usize = 4 + 1 + SETTINGS_SALT_LEN + SETTIN
 /// undecryptable).
 pub(crate) fn get_machine_key() -> Vec<u8> {
     static CACHED_KEY: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-    CACHED_KEY
-        .get_or_init(derive_machine_key_inner)
-        .clone()
+    CACHED_KEY.get_or_init(derive_machine_key_inner).clone()
 }
 
 /// Inner implementation of machine key derivation (called once per process).
