@@ -76,6 +76,9 @@ pub fn create_logging_page() -> (
         .build();
 
     // Timestamps
+    // NOTE: This switch's value is persisted in TerminalSettings.log_timestamps
+    // (not LoggingSettings). The close handler passes it to collect_terminal_settings().
+    // See terminal_tab.rs for the corresponding comment.
     let log_timestamps_row = adw::SwitchRow::builder()
         .title(i18n("Timestamps"))
         .subtitle(i18n("Prepend [HH:MM:SS] to each line in session logs"))

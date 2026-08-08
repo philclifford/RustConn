@@ -1,4 +1,14 @@
 -------------------------------------------------------------------
+Sat Aug 08 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.17
+
+- Version bump to 0.19.17
+- Fixed Settings panel wiping in-memory KeePassXC database password on close (#259)
+- Fixed OCI CLI version detection showing Python tracebacks
+- Improved Settings dialog: dirty-tracking, async vault unlock/check, background keyring saves
+- Improved Import dialog: async file parsing, clear error messaging
+- Improved Export dialog: non-blocking open location
+
+-------------------------------------------------------------------
 Sat Aug 08 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.16
 
 - Version bump to 0.19.16

@@ -1093,6 +1093,10 @@ impl SettingsDialog {
     fn setup_close_handler(&self, external_callback: Rc<dyn Fn(Option<AppSettings>)>) {
         let settings_clone = self.settings.clone();
 
+        // Snapshot of settings at dialog-open time for dirty-tracking.
+        // Compared against the collected settings on close to skip no-op saves.
+        let original_settings_clone = Rc::new(RefCell::new(self.settings.borrow().clone()));
+
         // Terminal controls
         let font_family_entry_clone = self.font_family_entry.clone();
         let font_size_spin_clone = self.font_size_spin.clone();
@@ -1405,6 +1409,18 @@ impl SettingsDialog {
 
             // Update stored settings
             *settings_clone.borrow_mut() = new_settings.clone();
+
+            // Skip save if nothing changed (dirty-tracking). This avoids
+            // unnecessary disk writes and prevents subtle state corruption
+            // when the dialog is opened and closed without modifications.
+            // Note: PartialEq for SecretSettings intentionally excludes
+            // runtime-only SecretString fields, so this comparison focuses
+            // on persisted values only.
+            if new_settings == *original_settings_clone.borrow() {
+                tracing::debug!("Settings unchanged — skipping save");
+                external_callback(None);
+                return;
+            }
 
             // Call internal callback if set
             if let Some(ref callback) = on_save_callback {

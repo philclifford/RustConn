@@ -28,7 +28,22 @@ use self::keyring::{
 };
 use crate::i18n::i18n;
 
-/// Return type for secrets page - contains all widgets needed for dynamic visibility
+/// Return type for secrets page - contains all widgets needed for dynamic visibility.
+///
+/// **Note for `collect_secret_settings()`**: only the following fields are read during
+/// settings collection. The close handler in `mod.rs` creates a temporary instance
+/// with dummy values for the remaining display-only fields. When adding a new widget
+/// that must participate in collection, add it to the `collect_secret_settings()`
+/// function AND update the temporary instance construction in the close handler.
+///
+/// Fields used by collect: `secret_backend_dropdown`, `enable_fallback`,
+/// `kdbx_path_entry`, `kdbx_password_entry`, `kdbx_enabled_row`, `kdbx_storage_combo`,
+/// `kdbx_key_file_entry`, `kdbx_use_key_file_check`, `kdbx_use_password_check`,
+/// `bitwarden_password_entry`, `bitwarden_storage_combo`, `bitwarden_use_api_key_check`,
+/// `bitwarden_client_id_entry`, `bitwarden_client_secret_entry`,
+/// `onepassword_token_entry`, `onepassword_storage_combo`,
+/// `passbolt_passphrase_entry`, `passbolt_storage_combo`, `passbolt_server_url_entry`,
+/// `pass_store_dir_entry`.
 #[expect(dead_code, reason = "Fields kept for GTK widget lifecycle")]
 pub struct SecretsPageWidgets {
     pub page: adw::PreferencesPage,
@@ -162,7 +177,7 @@ fn make_storage_combo(
                 let revert_to = *previous_clone.borrow();
                 update_status_label(
                     &status_label,
-                    &i18n("Install libsecret-tools for keyring"),
+                    &i18n("System keyring unavailable — install libsecret (secret-tool)"),
                     "warning",
                 );
                 tracing::warn!("secret-tool not found, cannot use system keyring");
@@ -208,7 +223,7 @@ fn warn_about_unavailable_keyring(combos: &[(&adw::ComboRow, &Label)]) {
         if combo.selected() == STORAGE_KEYRING_INDEX {
             update_status_label(
                 status_label,
-                &i18n("Install libsecret-tools for keyring"),
+                &i18n("System keyring unavailable — install libsecret (secret-tool)"),
                 "warning",
             );
         }
@@ -473,81 +488,89 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                 "Bitwarden GUI: unlock button clicked"
             );
 
-            // Run unlock with password via environment variable
-            // Try --raw first, then verbose output parsing as fallback
-            let raw_result = std::process::Command::new(&bw_cmd_str)
-                .arg("unlock")
-                .arg("--passwordenv")
-                .arg("BW_PASSWORD")
-                .arg("--raw")
-                .env("BW_PASSWORD", password.as_str())
-                .output();
+            // Run unlock asynchronously to avoid blocking the GTK main loop.
+            let status_label_async = status_label.clone();
+            let button_async = button.clone();
+            let password_owned = password.to_string();
+            let password_for_keyring = password_owned.clone();
+            glib::spawn_future_local(async move {
+                let (session_result, raw_stderr) = gtk4::gio::spawn_blocking(move || {
+                    // Try --raw first, then verbose output parsing as fallback
+                    let raw_result = std::process::Command::new(&bw_cmd_str)
+                        .arg("unlock")
+                        .arg("--passwordenv")
+                        .arg("BW_PASSWORD")
+                        .arg("--raw")
+                        .env("BW_PASSWORD", &password_owned)
+                        .output();
 
-            let (session_result, raw_stderr) = match raw_result {
-                Ok(output) if output.status.success() => {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let key = stdout.trim().to_string();
-                    if key.is_empty() {
-                        (None, String::new())
-                    } else {
-                        (Some(key), String::new())
+                    let (session, stderr) = match raw_result {
+                        Ok(output) if output.status.success() => {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            let key = stdout.trim().to_string();
+                            if key.is_empty() {
+                                (None, String::new())
+                            } else {
+                                (Some(key), String::new())
+                            }
+                        }
+                        Ok(output) => {
+                            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                            (None, stderr)
+                        }
+                        Err(_) => (None, String::new()),
+                    };
+
+                    // Fallback: try without --raw and parse session key
+                    let session = session.or_else(|| {
+                        let result = std::process::Command::new(&bw_cmd_str)
+                            .arg("unlock")
+                            .arg("--passwordenv")
+                            .arg("BW_PASSWORD")
+                            .env("BW_PASSWORD", &password_owned)
+                            .output();
+                        match result {
+                            Ok(output) if output.status.success() => {
+                                let stdout = String::from_utf8_lossy(&output.stdout);
+                                extract_session_key(&stdout)
+                            }
+                            _ => None,
+                        }
+                    });
+
+                    (session, stderr)
+                })
+                .await
+                .unwrap_or((None, String::new()));
+
+                if let Some(session_key) = session_result {
+                    tracing::info!(
+                        session_key_len = session_key.len(),
+                        "Bitwarden GUI: unlock succeeded"
+                    );
+                    set_session_key(SecretString::from(session_key));
+                    update_status_label(&status_label_async, &i18n("Unlocked"), "success");
+
+                    if save_to_keyring {
+                        save_bw_password_to_keyring(&password_for_keyring);
                     }
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    (None, stderr)
-                }
-                Err(_) => (None, String::new()),
-            };
-
-            // Fallback: try without --raw and parse session key from verbose output
-            let session_result = session_result.or_else(|| {
-                let result = std::process::Command::new(&bw_cmd_str)
-                    .arg("unlock")
-                    .arg("--passwordenv")
-                    .arg("BW_PASSWORD")
-                    .env("BW_PASSWORD", password.as_str())
-                    .output();
-                match result {
-                    Ok(output) if output.status.success() => {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        extract_session_key(&stdout)
-                    }
-                    _ => None,
-                }
-            });
-
-            if let Some(session_key) = session_result {
-                tracing::info!(
-                    session_key_len = session_key.len(),
-                    "Bitwarden GUI: unlock succeeded"
-                );
-                set_session_key(SecretString::from(session_key));
-                update_status_label(&status_label, &i18n("Unlocked"), "success");
-                // Don't clear password_entry — it's a PasswordEntry (hidden),
-                // and clearing it causes the encrypted settings to keep a stale
-                // password when the user saves settings with an empty field.
-
-                // Save to keyring if checkbox is active
-                if save_to_keyring {
-                    save_bw_password_to_keyring(password.as_str());
-                }
-            } else {
-                tracing::warn!(
-                    raw_stderr = %raw_stderr,
-                    "Bitwarden GUI: unlock failed"
-                );
-                let msg = if raw_stderr.contains("Invalid master password") {
-                    i18n("Invalid password")
-                } else if raw_stderr.contains("not logged in") {
-                    i18n("Not logged in")
                 } else {
-                    i18n("Unlock failed")
-                };
-                update_status_label(&status_label, &msg, "error");
-            }
+                    tracing::warn!(
+                        raw_stderr = %raw_stderr,
+                        "Bitwarden GUI: unlock failed"
+                    );
+                    let msg = if raw_stderr.contains("Invalid master password") {
+                        i18n("Invalid password")
+                    } else if raw_stderr.contains("not logged in") {
+                        i18n("Not logged in")
+                    } else {
+                        i18n("Unlock failed")
+                    };
+                    update_status_label(&status_label_async, &msg, "error");
+                }
 
-            button.set_sensitive(true);
+                button_async.set_sensitive(true);
+            });
         });
     }
 
@@ -1309,7 +1332,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
             return;
         }
 
-        let kdbx_path = std::path::Path::new(path_text.as_str());
+        let kdbx_path = std::path::PathBuf::from(path_text.as_str());
 
         let password = if kdbx_use_password_check_clone.is_active() {
             let pwd = kdbx_password_entry_check.text();
@@ -1333,22 +1356,34 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
             None
         };
 
-        let password_secret = password.map(secrecy::SecretString::from);
+        update_status_label(&kdbx_status_label_check, &i18n("Checking..."), "dim-label");
 
-        let result = rustconn_core::secret::KeePassStatus::verify_kdbx_credentials(
-            kdbx_path,
-            password_secret.as_ref(),
-            key_file.as_deref(),
-        );
+        // Run verification asynchronously to avoid blocking the GTK main loop
+        // (KDBX key derivation with argon2 can take seconds).
+        let status_label_async = kdbx_status_label_check.clone();
+        glib::spawn_future_local(async move {
+            let result = gtk4::gio::spawn_blocking(move || {
+                let password_secret = password.map(secrecy::SecretString::from);
+                rustconn_core::secret::KeePassStatus::verify_kdbx_credentials(
+                    &kdbx_path,
+                    password_secret.as_ref(),
+                    key_file.as_deref(),
+                )
+            })
+            .await;
 
-        match result {
-            Ok(()) => {
-                update_status_label(&kdbx_status_label_check, &i18n("Connected"), "success");
+            match result {
+                Ok(Ok(())) => {
+                    update_status_label(&status_label_async, &i18n("Connected"), "success");
+                }
+                Ok(Err(e)) => {
+                    update_status_label(&status_label_async, &e.to_string(), "error");
+                }
+                Err(_join_err) => {
+                    update_status_label(&status_label_async, &i18n("Verification failed"), "error");
+                }
             }
-            Err(e) => {
-                update_status_label(&kdbx_status_label_check, &e.to_string(), "error");
-            }
-        }
+        });
     });
 
     let keepassxc_status_container = GtkBox::new(Orientation::Vertical, 6);
@@ -2153,32 +2188,11 @@ pub fn collect_secret_settings(
         CredentialStorage::SystemKeyring | CredentialStorage::None => (None, None),
     };
 
-    // Save credentials to keyring when SystemKeyring storage is selected
+    // Keyring saves are deferred — performed asynchronously after the dialog
+    // closes to avoid blocking the GTK main loop (D-Bus round-trip). The caller
+    // should invoke `save_pending_keyring_credentials()` after processing the
+    // collected settings.
     let kdbx_storage = storage_combo_value(&widgets.kdbx_storage_combo);
-    if bitwarden_storage == CredentialStorage::SystemKeyring {
-        let pw = widgets.bitwarden_password_entry.text();
-        if !pw.is_empty() {
-            save_bw_password_to_keyring(&pw);
-        }
-    }
-    if onepassword_storage == CredentialStorage::SystemKeyring {
-        let token = widgets.onepassword_token_entry.text();
-        if !token.is_empty() {
-            save_op_token_to_keyring(&token);
-        }
-    }
-    if passbolt_storage == CredentialStorage::SystemKeyring {
-        let pp = widgets.passbolt_passphrase_entry.text();
-        if !pp.is_empty() {
-            save_pb_passphrase_to_keyring(&pp);
-        }
-    }
-    if kdbx_storage == CredentialStorage::SystemKeyring && kdbx_use_password {
-        let pw = widgets.kdbx_password_entry.text();
-        if !pw.is_empty() {
-            save_kdbx_password_to_keyring(&pw);
-        }
-    }
 
     SecretSettings {
         preferred_backend,
@@ -2223,4 +2237,43 @@ pub fn collect_secret_settings(
             }
         },
     }
+}
+
+/// Saves credentials to the system keyring based on the storage choices in
+/// the given [`SecretSettings`]. Call this **asynchronously** after collecting
+/// settings (e.g. via `glib::spawn_future_local` + `gio::spawn_blocking`) to
+/// avoid blocking the GTK main loop.
+///
+/// Returns the number of failed keyring writes (0 = all ok).
+pub fn save_pending_keyring_credentials(settings: &SecretSettings) -> u32 {
+    use secrecy::ExposeSecret;
+    let mut failures = 0u32;
+
+    if settings.kdbx_save_to_keyring
+        && settings.kdbx_use_password
+        && let Some(ref pw) = settings.kdbx_password
+        && !save_kdbx_password_to_keyring(pw.expose_secret())
+    {
+        failures += 1;
+    }
+    if settings.bitwarden_save_to_keyring
+        && let Some(ref pw) = settings.bitwarden_password
+        && !save_bw_password_to_keyring(pw.expose_secret())
+    {
+        failures += 1;
+    }
+    if settings.onepassword_save_to_keyring
+        && let Some(ref token) = settings.onepassword_service_account_token
+        && !save_op_token_to_keyring(token.expose_secret())
+    {
+        failures += 1;
+    }
+    if settings.passbolt_save_to_keyring
+        && let Some(ref pp) = settings.passbolt_passphrase
+        && !save_pb_passphrase_to_keyring(pp.expose_secret())
+    {
+        failures += 1;
+    }
+
+    failures
 }

@@ -1283,6 +1283,37 @@ impl AppState {
             self.mark_simple_sync_dirty();
         }
 
+        // Preserve runtime-only secret fields (#[serde(skip)]) that the
+        // Settings dialog does not collect (password entries are intentionally
+        // left blank for security). Without this, closing the dialog would
+        // wipe the in-memory passwords loaded at startup, breaking vault
+        // access until restart (issue #259).
+        if settings.secrets.kdbx_password.is_none() {
+            settings.secrets.kdbx_password = self.settings.secrets.kdbx_password.clone();
+        }
+        if settings.secrets.bitwarden_password.is_none() {
+            settings.secrets.bitwarden_password = self.settings.secrets.bitwarden_password.clone();
+        }
+        if settings.secrets.bitwarden_client_id.is_none() {
+            settings.secrets.bitwarden_client_id =
+                self.settings.secrets.bitwarden_client_id.clone();
+        }
+        if settings.secrets.bitwarden_client_secret.is_none() {
+            settings.secrets.bitwarden_client_secret =
+                self.settings.secrets.bitwarden_client_secret.clone();
+        }
+        if settings.secrets.onepassword_service_account_token.is_none() {
+            settings.secrets.onepassword_service_account_token = self
+                .settings
+                .secrets
+                .onepassword_service_account_token
+                .clone();
+        }
+        if settings.secrets.passbolt_passphrase.is_none() {
+            settings.secrets.passbolt_passphrase =
+                self.settings.secrets.passbolt_passphrase.clone();
+        }
+
         self.settings = settings;
         Ok(())
     }
