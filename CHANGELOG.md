@@ -5,7 +5,7 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.19.16] - 2026-08-08
 
 ### Fixed
 
@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   All of them now check the same setting, so switching Clipboard off is a complete escape hatch until the GTK fix reaches distributions. Pressing the buttons with sharing off reports "Clipboard sharing is off" in the session status area rather than failing silently — the alternative, hiding the buttons, would have hidden them for connections whose configuration has not loaded yet.
 
   Two routes deliberately remain, because neither is gated by a clipboard setting and neither can be closed without removing working features: the string drop targets on the sidebar and split-view panels reach the same GTK converter through `gdkdrop-x11.c`, and a paste performed inside the remote session still asks the client for data. Both are user-initiated rather than ambient. The file drop target on the session view was checked and is not affected: it accepts `GdkFileList`, which negotiates `text/uri-list` and never enters the text-list converter.
+
+### Dependencies
+
+- **Updated**: thiserror 2.0.19→2.0.20, aws-lc-rs 1.17.3→1.18.0, wasm-bindgen 0.2.126→0.2.127, js-sys/web-sys 0.3.103→0.3.104, wide 1.5.0→1.6.1, yuv 0.8.16→0.8.17
 
 ## [0.19.15] - 2026-08-07
 

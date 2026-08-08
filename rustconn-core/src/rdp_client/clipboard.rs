@@ -146,11 +146,6 @@ impl RustConnClipboardBackend {
         self.pending_copy_data.insert(format_id, data);
     }
 
-    /// Clears all pending copy data
-    pub fn clear_pending_copy_data(&mut self) {
-        self.pending_copy_data.clear();
-    }
-
     /// Drops the parked payload for `format_id`, if any.
     ///
     /// Used when announcing that the local clipboard has new content in a
@@ -158,8 +153,8 @@ impl RustConnClipboardBackend {
     /// that format belongs to the previous clipboard owner, and
     /// [`Self::on_format_data_request`] answers from `pending_copy_data`
     /// before it asks the GUI — so without this the server would be served
-    /// stale text (issue #261). Unlike [`Self::clear_pending_copy_data`] this
-    /// leaves the file-clipboard entries parked by `StoreLocalFiles` alone.
+    /// stale text (issue #261). Only the announced format is cleared — the
+    /// file-clipboard entries parked by `StoreLocalFiles` are left alone.
     pub fn clear_pending_format(&mut self, format_id: u32) {
         if self.pending_copy_data.remove(&format_id).is_some() {
             debug!("Dropped stale pending copy data for format {format_id}");

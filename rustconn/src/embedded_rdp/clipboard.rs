@@ -168,9 +168,11 @@ impl super::EmbeddedRdpWidget {
                                             text.to_string(),
                                         ));
 
-                                        // Step 2: After a short delay (let the server process
-                                        // the format list + data request), send Ctrl+V to
-                                        // actually paste into the active window.
+                                        // Step 2: Send Ctrl+V after the server has processed
+                                        // the Format List PDU and replied with Format List
+                                        // Response. 150 ms is enough for one CLIPRDR round-trip
+                                        // over localhost/LAN; the server won't paste stale data
+                                        // because it already received ClipboardText above.
                                         let tx_paste = tx.clone();
                                         glib::timeout_add_local_once(
                                             std::time::Duration::from_millis(150),
