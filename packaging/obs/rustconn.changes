@@ -1,4 +1,11 @@
 -------------------------------------------------------------------
+Sat Aug 08 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.16
+
+- Version bump to 0.19.16
+- Fixed embedded RDP reading the local clipboard on every desktop copy instead of only on paste (#261)
+- Fixed Clipboard Off setting not gating toolbar Copy/Paste/Type Clipboard buttons (#261)
+
+-------------------------------------------------------------------
 Fri Aug 07 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.15
 
 - Version bump to 0.19.15

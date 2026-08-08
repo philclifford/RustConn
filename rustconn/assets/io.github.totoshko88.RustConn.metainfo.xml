@@ -140,6 +140,15 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.16" date="2026-08-08">
+      <description>
+        <p>Version 0.19.16 - clipboard crash mitigation (issue #261):</p>
+        <ul>
+          <li>Fixed embedded RDP reading the local clipboard on every desktop copy instead of only on paste</li>
+          <li>Fixed Clipboard Off setting not gating toolbar Copy, Paste and Type Clipboard buttons</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.15" date="2026-08-07">
       <description>
         <p>Version 0.19.15 - embedded RDP graphics pipeline fixes, VTE crash fix, clipboard leak fix:</p>

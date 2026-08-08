@@ -1,3 +1,13 @@
+rustconn (0.19.16-1) unstable; urgency=medium
+
+  * Version bump to 0.19.16
+  * Fixed embedded RDP reading the local clipboard on every desktop copy
+    instead of only when the server requests a paste (#261)
+  * Fixed Clipboard Off setting not gating toolbar Copy, Paste and
+    Type Clipboard buttons (#261)
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Sat, 08 Aug 2026 12:00:00 +0200
+
 rustconn (0.19.15-1) unstable; urgency=medium
 
   * Version bump to 0.19.15

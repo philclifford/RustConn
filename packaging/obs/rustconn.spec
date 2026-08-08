@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.15
+Version:        0.19.16
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,11 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Sat Aug 08 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.16-0
+- Version bump to 0.19.16
+- Fixed embedded RDP reading local clipboard on every desktop copy instead of only on paste (#261)
+- Fixed Clipboard Off setting not gating toolbar Copy/Paste/Type Clipboard buttons (#261)
+
 * Fri Aug 07 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.15-0
 - Version bump to 0.19.15
 - Fixed embedded RDP sessions in Automatic graphics mode showing a frozen desktop (#262)

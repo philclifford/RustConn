@@ -31,10 +31,16 @@ impl super::EmbeddedRdpWidget {
             let container = self.container.clone();
             let status_label = self.status_label.clone();
             let suppressed = self.clipboard_sync_suppressed.clone();
+            let config = self.config.clone();
 
             copy_btn.connect_clicked(move |_| {
                 let current_state = *state.borrow();
                 let embedded = *is_embedded.borrow();
+
+                if !super::connection::clipboard_sharing_enabled(&config) {
+                    show_status_briefly(&status_label, &i18n("Clipboard sharing is off"), 2);
+                    return;
+                }
 
                 if current_state != RdpConnectionState::Connected || !embedded {
                     tracing::debug!(
@@ -107,10 +113,19 @@ impl super::EmbeddedRdpWidget {
             #[cfg(feature = "rdp-embedded")]
             let is_ironrdp = self.is_ironrdp.clone();
             let status_label = self.status_label.clone();
+            let config = self.config.clone();
 
             paste_btn.connect_clicked(move |_| {
                 let current_state = *state.borrow();
                 let embedded = *is_embedded.borrow();
+
+                // Reading the local selection is what crashes while the upstream
+                // GTK bug is unfixed, so the profile setting has to stop this
+                // too — not only the automatic sync (issue #261).
+                if !super::connection::clipboard_sharing_enabled(&config) {
+                    show_status_briefly(&status_label, &i18n("Clipboard sharing is off"), 2);
+                    return;
+                }
 
                 if current_state != RdpConnectionState::Connected || !embedded {
                     tracing::debug!(
@@ -153,9 +168,11 @@ impl super::EmbeddedRdpWidget {
                                             text.to_string(),
                                         ));
 
-                                        // Step 2: After a short delay (let the server process
-                                        // the format list + data request), send Ctrl+V to
-                                        // actually paste into the active window.
+                                        // Step 2: Send Ctrl+V after the server has processed
+                                        // the Format List PDU and replied with Format List
+                                        // Response. 150 ms is enough for one CLIPRDR round-trip
+                                        // over localhost/LAN; the server won't paste stale data
+                                        // because it already received ClipboardText above.
                                         let tx_paste = tx.clone();
                                         glib::timeout_add_local_once(
                                             std::time::Duration::from_millis(150),
