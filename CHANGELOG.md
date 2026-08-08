@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OCI CLI version detection no longer shows Python tracebacks** — when the OCI CLI installation is broken (e.g. missing `oci_cli` Python module), `oci --version` emits a traceback to stderr. The version parser now detects traceback output and returns no version instead of displaying the raw error text in the Preferences panel.
 
+- **Encrypted-file backend no longer fails under parallel test execution** — the machine-key derivation (`get_machine_key`) now uses a process-wide `OnceLock` cache. Previously, concurrent first-time callers could each generate a different random key file, with the last writer winning and earlier encryptions becoming undecryptable. This also protects production use when multiple async tasks trigger credential operations simultaneously at first startup.
+
 ### Improved
 
 - **Settings dialog no longer saves to disk when nothing changed** — dirty-tracking compares collected settings against the original snapshot; closing the dialog without modifications skips the save entirely, eliminating unnecessary disk writes and reducing the surface for state-corruption bugs.

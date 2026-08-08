@@ -37,7 +37,21 @@ pub(crate) const SETTINGS_HEADER_LEN: usize = 4 + 1 + SETTINGS_SALT_LEN + SETTIN
 /// Uses an app-specific key file, `/etc/machine-id`, or returns empty.
 /// In a Flatpak sandbox `/etc/machine-id` is inaccessible, so we first try an
 /// app-specific key file stored in the XDG data directory.
+///
+/// The result is cached in a process-wide `OnceLock` so the key is stable for
+/// the lifetime of the process, avoiding race conditions when the key file is
+/// first generated (parallel threads would otherwise each generate a different
+/// UUID, with the last writer winning and earlier encryptions becoming
+/// undecryptable).
 pub(crate) fn get_machine_key() -> Vec<u8> {
+    static CACHED_KEY: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    CACHED_KEY
+        .get_or_init(derive_machine_key_inner)
+        .clone()
+}
+
+/// Inner implementation of machine key derivation (called once per process).
+fn derive_machine_key_inner() -> Vec<u8> {
     /// Key length type for HKDF output (32 bytes = 256 bits)
     struct HkdfKeyLen;
     impl ring::hkdf::KeyType for HkdfKeyLen {
