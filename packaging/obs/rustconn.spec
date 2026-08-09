@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.18
+Version:        0.19.19
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,17 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Sun Aug 09 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.19-0
+- Fixed: Deleting a connection now removes its credential from the password vault (#263)
+- Fixed: Renaming a connection in the configuration panel now updates the vault entry (#263)
+- Fixed: Credentials of connections outside any group were missed by vault cleanup and migration
+- Fixed: System Keyring entries now visible in KDE Wallet, item label uses / instead of : (#264)
+- Fixed: Moving a connection between groups no longer orphans its keyring entry (#264)
+- Fixed: Deleting a group with a vault password no longer leaves a mangled orphan entry in KeePass
+- Fixed: macOS Keychain credentials were stored where the resolver never looked
+- Improved: Keyring credential retrieval wipes its intermediate plaintext buffers
+- Changed: Saved interface language applied only during startup, before any thread exists (RUSTSEC-2026-0244)
+
 * Sun Aug 09 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.18-0
 - Fixed: Renaming a connection now updates the credential entry in the vault (#263)
 - Fixed: System Keyring password collision for same-named connections in different groups (#264)

@@ -12,6 +12,23 @@
 #   release with the constant-time fix.
 #   Last reviewed: 2026-07-29
 #   Next review: when ironrdp, sspi, or picky publishes a new major version.
+#
+# - RUSTSEC-2026-0244: gettext-rs 0.7.7 `setlocale` is unsound when called from a
+#   multi-threaded program. Fixed in 0.8.0 by marking it `unsafe` — which this
+#   crate cannot call: `unsafe_code = "forbid"` in rustconn/Cargo.toml plus a
+#   crate-boundary guard that rejects unsafe outside `rustconn-*-sys`.
+#   Mitigated at the call sites instead. `TextDomain::init` (the other affected
+#   function) is not used at all, and all four `setlocale` calls are reachable
+#   only from `i18n::init()` and the private `i18n::apply_language_setlocale()`,
+#   both invoked from `main()` before the tracing subscriber, GTK or any tokio
+#   runtime exist — i.e. while the process is still single-threaded, which is the
+#   condition the advisory itself names as safe. The runtime call site in the GTK
+#   `activate` handler was removed in 0.19.19 precisely to establish this.
+#   Upgrade path: move the `setlocale` call into a dedicated
+#   `rustconn-locale-sys` crate where unsafe is sanctioned, then take 0.8.
+#   Last reviewed: 2026-08-09
+#   Next review: when `rustconn-locale-sys` lands, or if any `setlocale` call
+#   site appears outside `main()`.
 
 [advisories]
-ignore = ["RUSTSEC-2023-0071"]
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0244"]

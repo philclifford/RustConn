@@ -77,6 +77,139 @@ impl AppState {
         self.connection_manager.restore_group(id)
     }
 
+    /// Permanently removes a soft-deleted connection and its vault credential.
+    ///
+    /// Runs when the Undo window for the deletion closes. Until 0.19.19 nothing
+    /// ever called [`empty_trash`](Self::empty_trash) from the GUI, so vault
+    /// credentials outlived every deleted connection (issue #263).
+    ///
+    /// A no-op when the ID is no longer in the trash — which is exactly what
+    /// happens after the user hits Undo, because `restore_connection` takes the
+    /// entry out of the trash before the toast dismisses. The restored
+    /// connection therefore keeps its password.
+    pub fn purge_deleted_connection(&mut self, id: Uuid) {
+        let Some(conn) = self.connection_manager.get_trash_connection(id).cloned() else {
+            return;
+        };
+        self.spawn_trashed_credential_cleanup(std::slice::from_ref(&conn), &[]);
+        if let Err(e) = self.connection_manager.purge_trash_connection(id) {
+            tracing::warn!(connection = %id, error = %e, "Failed to purge trashed connection");
+        }
+    }
+
+    /// Permanently removes a soft-deleted group, its subtree, and their vault
+    /// credentials.
+    ///
+    /// A cascade delete moves the group, its descendant groups and all their
+    /// connections into the trash, so the whole subtree is purged together —
+    /// otherwise the connections would stay in the trash forever with live
+    /// credentials. A no-op when the group is no longer in the trash.
+    pub fn purge_deleted_group(&mut self, id: Uuid) {
+        if self.connection_manager.get_trash_group(id).is_none() {
+            return;
+        }
+
+        let trashed_groups: Vec<ConnectionGroup> = self
+            .connection_manager
+            .list_trash_groups()
+            .into_iter()
+            .cloned()
+            .collect();
+        let subtree_ids = rustconn_core::models::collect_descendant_group_ids(id, &trashed_groups);
+
+        let trashed_conns: Vec<Connection> = self
+            .connection_manager
+            .list_trash_connections()
+            .into_iter()
+            .filter(|c| c.group_id.is_some_and(|gid| subtree_ids.contains(&gid)))
+            .cloned()
+            .collect();
+        let subtree_groups: Vec<ConnectionGroup> = trashed_groups
+            .iter()
+            .filter(|g| subtree_ids.contains(&g.id))
+            .cloned()
+            .collect();
+
+        self.spawn_trashed_credential_cleanup(&trashed_conns, &subtree_groups);
+
+        for conn_id in trashed_conns.iter().map(|c| c.id) {
+            if let Err(e) = self.connection_manager.purge_trash_connection(conn_id) {
+                tracing::warn!(connection = %conn_id, error = %e, "Failed to purge trashed connection");
+            }
+        }
+        for group_id in &subtree_ids {
+            if let Err(e) = self.connection_manager.purge_trash_group(*group_id) {
+                tracing::warn!(group = %group_id, error = %e, "Failed to purge trashed group");
+            }
+        }
+    }
+
+    /// Deletes vault credentials for trashed items on a background thread.
+    ///
+    /// Vault deletion spawns `keepassxc-cli` or makes D-Bus round-trips, so it
+    /// must not run on the GTK main thread. Failures are logged only: the trash
+    /// entry is going away regardless, and a stale vault entry is recoverable by
+    /// hand while a blocked purge is not.
+    fn spawn_trashed_credential_cleanup(
+        &self,
+        connections: &[Connection],
+        groups: &[ConnectionGroup],
+    ) {
+        use rustconn_core::models::PasswordSource;
+
+        let vault_conns: Vec<Connection> = connections
+            .iter()
+            .filter(|c| c.password_source == PasswordSource::Vault)
+            .cloned()
+            .collect();
+        let vault_groups: Vec<ConnectionGroup> = groups
+            .iter()
+            .filter(|g| g.password_source.as_ref() == Some(&PasswordSource::Vault))
+            .cloned()
+            .collect();
+
+        if vault_conns.is_empty() && vault_groups.is_empty() {
+            return;
+        }
+
+        // The hierarchy used to rebuild lookup keys has to include the trashed
+        // groups: a cascade delete moves the parent group into the trash too, and
+        // resolving the path against live groups alone would yield an empty group
+        // path and therefore the wrong key.
+        let mut hierarchy = self.connection_manager.list_groups_owned();
+        hierarchy.extend(
+            self.connection_manager
+                .list_trash_groups()
+                .into_iter()
+                .cloned(),
+        );
+        let settings = self.settings.clone();
+
+        crate::utils::spawn_blocking_with_callback(
+            move || {
+                for conn in &vault_conns {
+                    if let Err(e) = delete_vault_credential(&settings, &hierarchy, conn) {
+                        tracing::warn!(
+                            connection_name = %conn.name,
+                            error = %e,
+                            "Failed to clean up vault credential on permanent delete"
+                        );
+                    }
+                }
+                for group in &vault_groups {
+                    if let Err(e) = delete_group_vault_credential(&settings, &hierarchy, group) {
+                        tracing::warn!(
+                            group_name = %group.name,
+                            error = %e,
+                            "Failed to clean up group vault credential on permanent delete"
+                        );
+                    }
+                }
+            },
+            |()| {},
+        );
+    }
+
     /// Permanently empties the trash, cleaning up vault credentials first.
     ///
     /// Connections and groups with `PasswordSource::Vault` have their

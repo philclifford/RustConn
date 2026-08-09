@@ -445,7 +445,15 @@ fn perform_bulk_delete(
                 .or_else(|_| state_mut.delete_group(*id));
 
             match delete_result {
-                Ok(()) => success_count += 1,
+                Ok(()) => {
+                    success_count += 1;
+                    // Bulk delete offers no Undo, so the deletion is permanent
+                    // right away: purge the trash entry and its vault credential
+                    // instead of leaving the credential behind (issue #263).
+                    // Whichever purge does not match the item's kind is a no-op.
+                    state_mut.purge_deleted_connection(*id);
+                    state_mut.purge_deleted_group(*id);
+                }
                 Err(e) => failures.push(format!("{id}: {e}")),
             }
         }

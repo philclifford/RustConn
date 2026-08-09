@@ -47,17 +47,36 @@ pub fn init() {
 ///
 /// The re-exec happens before GTK or tokio start, so it is safe.
 /// A sentinel env var (`_RUSTCONN_LANG_SET`) prevents infinite re-exec loops.
+///
+/// # Thread safety
+///
+/// This is the **only** place that applies a locale after [`init`], and it must
+/// stay that way: `setlocale` mutates process-global locale state with no
+/// synchronisation, so it is only sound while the process is still
+/// single-threaded (RUSTSEC-2026-0244). Every path below therefore performs its
+/// `setlocale` here, called from `main()` before GTK, tokio or the tracing
+/// subscriber exist. Applying a locale later — for example from the GTK
+/// `activate` handler, where the GIO worker thread is already running — would
+/// reintroduce the unsoundness.
 pub fn apply_language_from_config() {
     use std::os::unix::process::CommandExt;
 
     let lang = read_language_from_config().unwrap_or_default();
     if lang.is_empty() || lang == "system" {
+        // `init()` already applied the system locale with
+        // `setlocale(LC_ALL, "")` and bound the domain, and `LC_ALL` covers
+        // `LC_MESSAGES`. Re-applying the system locale here would be a no-op.
         return;
     }
 
-    // Check if LANGUAGE is already set correctly (e.g. after re-exec
-    // or if the user/desktop set it). If so, nothing to do.
+    // LANGUAGE is already correct — normally because this is the re-execed
+    // child, or because the desktop set it. The env var alone is not enough:
+    // gettext ignores LANGUAGE when LC_MESSAGES resolves to "C", which is what
+    // happens in a Flatpak sandbox when the host locale is not installed
+    // (issue #158). So the locale still has to be applied — and it is applied
+    // here, in main(), rather than later from the GTK activate handler.
     if std::env::var("LANGUAGE").ok().as_deref() == Some(lang.as_str()) {
+        apply_language_setlocale(&lang);
         return;
     }
 
@@ -361,11 +380,18 @@ fn lang_to_locale(lang: &str) -> String {
 
 /// Applies a language override using `setlocale` only (best effort).
 ///
-/// This is the runtime fallback used when `set_var` is unavailable.
-/// It works when the target locale is installed on the system.
-/// For full gettext support (including uninstalled locales), the
-/// `LANGUAGE` env var must be set before process start — see
-/// [`apply_language_from_config`] which handles this via re-exec.
+/// It works when the target locale is installed on the system. For full gettext
+/// support (including uninstalled locales), the `LANGUAGE` env var must be set
+/// before process start — see [`apply_language_from_config`], which handles that
+/// via re-exec. This function is still needed alongside `LANGUAGE`, because
+/// gettext ignores `LANGUAGE` when `LC_MESSAGES` resolves to `"C"` (issue #158).
+///
+/// # Safety-adjacent invariant
+///
+/// Callable only from [`apply_language_from_config`], which runs in `main()`
+/// before any thread is spawned. `setlocale` writes process-global locale state
+/// without synchronisation, so calling this once other threads exist is unsound
+/// (RUSTSEC-2026-0244). Keep it private and keep the single call site.
 fn apply_language_setlocale(lang: &str) {
     if lang == "system" || lang.is_empty() {
         gettextrs::setlocale(gettextrs::LocaleCategory::LcMessages, "");
@@ -398,18 +424,15 @@ fn apply_language_setlocale(lang: &str) {
     let _ = gettextrs::textdomain(GETTEXT_DOMAIN);
 }
 
-/// Applies a language override by re-initializing gettext with the given locale.
-///
-/// Pass `"system"` to revert to system locale auto-detection.
-///
-/// At runtime (e.g. from the Settings dialog), this uses `setlocale` only.
-/// The `LANGUAGE` env var cannot be changed without `unsafe` in Rust 2024,
-/// so full locale switching (especially for locales not installed on the
-/// system) requires an application restart. The setting is persisted to
-/// `config.toml` and applied at next startup via [`apply_language_from_config`].
-///
-/// Note: already-rendered GTK labels are not updated — a restart is always
-/// needed for full UI translation.
-pub fn apply_language(lang: &str) {
-    apply_language_setlocale(lang);
-}
+// A public `apply_language()` used to exist here so the GTK `activate` handler
+// could re-apply the saved language after the app state was built. It was
+// removed in 0.19.19: by that point the GIO worker thread is running, and
+// `setlocale` is unsound once the process is multi-threaded
+// (RUSTSEC-2026-0244). It was also redundant — `apply_language_from_config()`
+// now applies the locale on every path from `main()`, before any thread starts,
+// including the case that call was there to rescue (LANGUAGE set but
+// LC_MESSAGES stuck at "C" inside a Flatpak sandbox, issue #158).
+//
+// Changing the language from the Settings dialog still only persists the value
+// to `config.toml`; it takes effect on the next start. That was already true —
+// the old runtime call could not retranslate already-rendered GTK labels.
