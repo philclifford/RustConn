@@ -50,7 +50,7 @@ shell-words = "1"
 nix = { version = "0.31", features = ["signal", "process"] }
 # PTY creation, sizing and controlling-terminal setup for every session's
 # child. Lives in its own crate because it holds the workspace's only `unsafe`.
-rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.19.17" }
+rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.19.18" }
 # WebKitGTK 6.0 bindings for embedded web browser (Linux only)
 webkit6 = { version = "0.6", optional = true }
 
