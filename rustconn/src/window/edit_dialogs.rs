@@ -149,6 +149,9 @@ pub fn edit_selected_connection(
         let state_clone = state.clone();
         let sidebar_clone = sidebar.clone();
         let window_clone = window.clone();
+        // The pre-edit connection, needed to work out whether the edit moved the
+        // credential's vault key.
+        let old_conn = conn.clone();
         dialog.run(move |result| {
             if let Some(dialog_result) = result {
                 let updated_conn = dialog_result.connection;
@@ -161,6 +164,7 @@ pub fn edit_selected_connection(
                     let conn_username = updated_conn.username.clone();
                     let password_source = updated_conn.password_source.clone();
                     let protocol = updated_conn.protocol;
+                    let new_conn = updated_conn.clone();
 
                     match state_mut.update_connection(id, updated_conn) {
                         Ok(()) => {
@@ -183,6 +187,63 @@ pub fn edit_selected_connection(
                                     &username,
                                     &pwd,
                                     id,
+                                );
+
+                                // The typed password went to the new key; if the
+                                // edit moved the key, the entry under the previous
+                                // one is now a stale orphan. Safe to run alongside
+                                // the save above precisely because the keys differ.
+                                if crate::state::vault_key_changed_by_edit(
+                                    &settings, &groups, &groups, &old_conn, &new_conn,
+                                ) {
+                                    let settings = settings.clone();
+                                    let groups = groups.clone();
+                                    let old_conn = old_conn.clone();
+                                    crate::utils::spawn_blocking_with_callback(
+                                        move || {
+                                            crate::state::delete_vault_credential(
+                                                &settings, &groups, &old_conn,
+                                            )
+                                        },
+                                        |result: Result<(), String>| {
+                                            if let Err(e) = result {
+                                                tracing::warn!(
+                                                    error = %e,
+                                                    "Failed to remove stale vault entry after edit"
+                                                );
+                                            }
+                                        },
+                                    );
+                                }
+                            } else if password_source == PasswordSource::Vault {
+                                // No new password typed, so the existing entry has
+                                // to follow the connection. The dialog can change
+                                // the name, the group and the protocol in one save,
+                                // and every one of those is part of the vault key
+                                // (issue #263). When a password *was* typed the
+                                // branch above already wrote it under the new key,
+                                // so migrating on top of that would be redundant.
+                                let settings = state_mut.settings().clone();
+                                let groups: Vec<_> = state_mut.list_groups_owned();
+                                let old_conn = old_conn.clone();
+
+                                crate::utils::spawn_blocking_with_callback(
+                                    move || {
+                                        crate::state::migrate_vault_credential_for_edit(
+                                            &settings, &groups, &groups, &old_conn, &new_conn,
+                                        )
+                                    },
+                                    |result: Result<(), String>| {
+                                        if let Err(e) = result {
+                                            tracing::warn!(
+                                                error = %e,
+                                                "Failed to migrate vault entry after edit"
+                                            );
+                                            crate::toast::show_error_toast_on_active_window(
+                                                &i18n_f("Failed to update vault entry: {}", &[&e]),
+                                            );
+                                        }
+                                    },
                                 );
                             }
 

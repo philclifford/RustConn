@@ -714,6 +714,53 @@ impl ConnectionManager {
         self.trash_groups.values().map(|(g, _)| g).collect()
     }
 
+    /// Returns a trashed connection by ID, if it is in the trash.
+    ///
+    /// Callers need the stored connection to derive its vault lookup key before
+    /// the trash entry is purged.
+    #[must_use]
+    pub fn get_trash_connection(&self, id: Uuid) -> Option<&Connection> {
+        self.trash_connections.get(&id).map(|(c, _)| c)
+    }
+
+    /// Returns a trashed group by ID, if it is in the trash.
+    #[must_use]
+    pub fn get_trash_group(&self, id: Uuid) -> Option<&ConnectionGroup> {
+        self.trash_groups.get(&id).map(|(g, _)| g)
+    }
+
+    /// Permanently removes one connection from the trash.
+    ///
+    /// Returns `true` when an entry was removed, `false` when the ID was not in
+    /// the trash (already restored or already purged).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if persistence fails.
+    pub fn purge_trash_connection(&mut self, id: Uuid) -> ConfigResult<bool> {
+        if self.trash_connections.remove(&id).is_none() {
+            return Ok(false);
+        }
+        self.persist_trash()?;
+        Ok(true)
+    }
+
+    /// Permanently removes one group from the trash.
+    ///
+    /// Returns `true` when an entry was removed, `false` when the ID was not in
+    /// the trash.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if persistence fails.
+    pub fn purge_trash_group(&mut self, id: Uuid) -> ConfigResult<bool> {
+        if self.trash_groups.remove(&id).is_none() {
+            return Ok(false);
+        }
+        self.persist_trash()?;
+        Ok(true)
+    }
+
     /// Permanently deletes all items in trash
     ///
     /// # Errors
@@ -1833,6 +1880,84 @@ mod tests {
         assert_eq!(conn.name, "Test Server");
         assert_eq!(conn.host, "example.com");
         assert_eq!(conn.port, 22);
+    }
+
+    #[tokio::test]
+    async fn purge_trash_connection_removes_only_the_named_entry() {
+        let (mut manager, _temp) = create_test_manager();
+
+        let keep = manager
+            .create_connection(
+                "Keep".to_string(),
+                "keep.example.com".to_string(),
+                22,
+                ProtocolConfig::Ssh(SshConfig::default()),
+            )
+            .unwrap();
+        let purge = manager
+            .create_connection(
+                "Purge".to_string(),
+                "purge.example.com".to_string(),
+                22,
+                ProtocolConfig::Ssh(SshConfig::default()),
+            )
+            .unwrap();
+
+        manager.delete_connection(keep).unwrap();
+        manager.delete_connection(purge).unwrap();
+        assert_eq!(manager.list_trash_connections().len(), 2);
+
+        // The purge needs the stored connection to derive its vault key.
+        assert_eq!(
+            manager.get_trash_connection(purge).map(|c| c.name.as_str()),
+            Some("Purge")
+        );
+
+        assert!(manager.purge_trash_connection(purge).unwrap());
+        assert!(manager.get_trash_connection(purge).is_none());
+        assert!(manager.get_trash_connection(keep).is_some());
+
+        // Restoring the untouched entry must still work.
+        manager.restore_connection(keep).unwrap();
+        assert!(manager.get_connection(keep).is_some());
+    }
+
+    #[tokio::test]
+    async fn purge_trash_connection_is_a_no_op_after_restore() {
+        // This is the Undo path: the entry is out of the trash by the time the
+        // toast dismisses, so the purge must not fail or touch anything.
+        let (mut manager, _temp) = create_test_manager();
+
+        let id = manager
+            .create_connection(
+                "Test Server".to_string(),
+                "example.com".to_string(),
+                22,
+                ProtocolConfig::Ssh(SshConfig::default()),
+            )
+            .unwrap();
+
+        manager.delete_connection(id).unwrap();
+        manager.restore_connection(id).unwrap();
+
+        assert!(!manager.purge_trash_connection(id).unwrap());
+        assert!(manager.get_connection(id).is_some());
+    }
+
+    #[tokio::test]
+    async fn purge_trash_group_removes_only_the_named_entry() {
+        let (mut manager, _temp) = create_test_manager();
+
+        let group_id = manager.create_group("Doomed".to_string()).unwrap();
+        manager.delete_group(group_id).unwrap();
+
+        assert_eq!(
+            manager.get_trash_group(group_id).map(|g| g.name.as_str()),
+            Some("Doomed")
+        );
+        assert!(manager.purge_trash_group(group_id).unwrap());
+        assert!(manager.get_trash_group(group_id).is_none());
+        assert!(!manager.purge_trash_group(group_id).unwrap());
     }
 
     #[tokio::test]

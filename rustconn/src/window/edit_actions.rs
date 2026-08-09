@@ -341,6 +341,38 @@ impl MainWindow {
         });
         window.add_action(&undo_delete_action);
 
+        // Purge-deleted action — fired when the Undo toast for a deletion
+        // dismisses without Undo having been used. This is what makes a delete
+        // permanent and removes the credential from the password vault; the
+        // trash itself is only the undo buffer (issue #263).
+        let purge_deleted_action =
+            gio::SimpleAction::new("purge-deleted", Some(glib::VariantTy::STRING));
+        let state_clone = state.clone();
+        purge_deleted_action.connect_activate(move |_, param| {
+            if let Some(param) = param
+                && let Some(param_str) = param.get::<String>()
+            {
+                // Format: "type:uuid"
+                let Some((item_type, id_str)) = param_str.split_once(':') else {
+                    return;
+                };
+                let Ok(id) = Uuid::parse_str(id_str) else {
+                    return;
+                };
+
+                // try_borrow_mut: the purge is best-effort cleanup, so a busy
+                // state is simply skipped rather than risking a BorrowMutError.
+                if let Ok(mut state_mut) = state_clone.try_borrow_mut() {
+                    match item_type {
+                        "connection" => state_mut.purge_deleted_connection(id),
+                        "group" => state_mut.purge_deleted_group(id),
+                        _ => {}
+                    }
+                }
+            }
+        });
+        window.add_action(&purge_deleted_action);
+
         // Retry connect action — retries a failed connection from toast button
         let retry_action = gio::SimpleAction::new("retry-connect", Some(glib::VariantTy::STRING));
         let state_clone = state.clone();

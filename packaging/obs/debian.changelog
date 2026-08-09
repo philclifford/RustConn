@@ -1,3 +1,27 @@
+rustconn (0.19.19-1) unstable; urgency=medium
+
+  * Version bump to 0.19.19
+  * Fixed: Deleting a connection now removes its credential from the
+    password vault (#263)
+  * Fixed: Renaming a connection in the configuration panel now updates
+    the vault entry (#263)
+  * Fixed: Credentials of connections outside any group were missed by
+    vault cleanup and migration
+  * Fixed: System Keyring entries are now visible in KDE Wallet — the
+    item label uses / instead of : as separator (#264)
+  * Fixed: Moving a connection between groups no longer orphans its
+    keyring entry (#264)
+  * Fixed: Deleting a group with a vault password no longer leaves a
+    mangled orphan entry in KeePass
+  * Fixed: macOS Keychain credentials were stored where the resolver
+    never looked
+  * Improved: Keyring credential retrieval wipes its intermediate
+    plaintext buffers
+  * Changed: Saved interface language is now applied only during startup,
+    before any thread exists (RUSTSEC-2026-0244 mitigation)
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Sun, 09 Aug 2026 20:00:00 +0200
+
 rustconn (0.19.18-1) unstable; urgency=medium
 
   * Version bump to 0.19.18

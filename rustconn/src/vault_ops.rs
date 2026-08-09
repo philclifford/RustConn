@@ -395,147 +395,178 @@ pub fn save_group_password_to_vault(
 
 /// Renames a credential in the configured vault backend when a connection
 /// is renamed.
+///
+/// Thin wrapper over [`migrate_vault_credential_for_edit`]; `protocol_str` is
+/// accepted for call-site compatibility but the protocol is derived from
+/// `updated_conn` so that a caller cannot pass one that disagrees with it.
+///
+/// # Errors
+///
+/// Returns a human-readable error string if the backend rejects the migration.
 pub fn rename_vault_credential(
     settings: &rustconn_core::config::AppSettings,
     groups: &[rustconn_core::models::ConnectionGroup],
     updated_conn: &rustconn_core::models::Connection,
     old_name: &str,
-    protocol_str: &str,
+    _protocol_str: &str,
 ) -> Result<(), String> {
-    if settings.secrets.kdbx_enabled
+    let mut old_conn = updated_conn.clone();
+    old_conn.name = old_name.to_string();
+    migrate_vault_credential_for_edit(settings, groups, groups, &old_conn, updated_conn)
+}
+
+/// Where a connection's credential currently lives and where it must end up.
+///
+/// `old_keys` is ordered most-current-format first; the migration walks it and
+/// uses the first key that yields a credential, so entries written by earlier
+/// releases are picked up rather than orphaned.
+#[derive(Debug, PartialEq, Eq)]
+struct VaultKeyMigration {
+    old_keys: Vec<String>,
+    new_key: String,
+    is_keepass: bool,
+}
+
+/// Computes the key migration for a connection edit, or `None` when the edit
+/// cannot have changed the lookup key.
+///
+/// Kept separate from the I/O so the key derivation — the part that has been
+/// wrong in several different ways — is unit-testable without a live vault.
+fn plan_vault_key_migration(
+    settings: &rustconn_core::config::AppSettings,
+    old_groups: &[rustconn_core::models::ConnectionGroup],
+    new_groups: &[rustconn_core::models::ConnectionGroup],
+    old_conn: &rustconn_core::models::Connection,
+    new_conn: &rustconn_core::models::Connection,
+) -> Option<VaultKeyMigration> {
+    use rustconn_core::config::SecretBackendType;
+
+    let old_protocol = old_conn
+        .protocol_config
+        .protocol_type()
+        .as_str()
+        .to_lowercase();
+    let new_protocol = new_conn
+        .protocol_config
+        .protocol_type()
+        .as_str()
+        .to_lowercase();
+
+    let is_keepass = settings.secrets.kdbx_enabled
         && matches!(
             settings.secrets.preferred_backend,
-            rustconn_core::config::SecretBackendType::KeePassXc
-                | rustconn_core::config::SecretBackendType::KdbxFile
-        )
-    {
-        // KeePass — rename hierarchical entry
-        let mut old_conn = updated_conn.clone();
-        old_conn.name = old_name.to_string();
-        let old_base = rustconn_core::secret::KeePassHierarchy::build_entry_path(&old_conn, groups);
+            SecretBackendType::KeePassXc | SecretBackendType::KdbxFile
+        );
+
+    let (old_keys, new_key) = if is_keepass {
+        let old_base =
+            rustconn_core::secret::KeePassHierarchy::build_entry_path(old_conn, old_groups);
         let new_base =
-            rustconn_core::secret::KeePassHierarchy::build_entry_path(updated_conn, groups);
-        let old_key = format!("{old_base} ({protocol_str})");
-        let new_key = format!("{new_base} ({protocol_str})");
-
-        if old_key == new_key {
-            return Ok(());
-        }
-
-        if let Some(kdbx_path) = settings.secrets.kdbx_path.as_ref() {
-            let key_file = settings.secrets.kdbx_key_file.clone();
-            rustconn_core::secret::KeePassStatus::rename_entry_in_kdbx(
-                std::path::Path::new(kdbx_path),
-                settings.secrets.kdbx_password.as_ref(),
-                key_file.as_ref().map(std::path::Path::new),
-                &old_key,
-                &new_key,
-            )
-            .map_err(|e| format!("{e}"))
-        } else {
-            Ok(())
-        }
+            rustconn_core::secret::KeePassHierarchy::build_entry_path(new_conn, new_groups);
+        (
+            vec![format!("{old_base} ({old_protocol})")],
+            format!("{new_base} ({new_protocol})"),
+        )
     } else {
-        // Non-KeePass backend — rename flat key using the correct format per backend
-        use rustconn_core::config::SecretBackendType;
-
         let backend_type = select_backend_for_load(&settings.secrets);
+        let old_keys = vault_keys_for_connection(old_groups, old_conn, &old_protocol, backend_type);
+        let new_key = vault_keys_for_connection(new_groups, new_conn, &new_protocol, backend_type)
+            .into_iter()
+            .next()?;
+        (old_keys, new_key)
+    };
 
-        // Build old/new keys based on backend key format
-        let (old_key, new_key, legacy_old_key) = match backend_type {
-            SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain => {
-                // LibSecret/Keychain uses hierarchical "RustConn/{group}/{name} ({protocol})" format.
-                // Build group path from connection's group hierarchy.
-                let group_path = updated_conn.group_id.map(|gid| {
-                    rustconn_core::secret::KeePassHierarchy::resolve_group_path(gid, groups)
-                        .join("/")
-                });
-                let old_name_sanitized = old_name.replace('/', "-");
-                let new_name_sanitized = updated_conn.name.replace('/', "-");
-                let old_suffix = format!("{old_name_sanitized} ({protocol_str})");
-                let new_suffix = format!("{new_name_sanitized} ({protocol_str})");
-                let new_key = match group_path.as_deref() {
-                    Some(p) if !p.is_empty() => format!("RustConn/{p}/{new_suffix}"),
-                    _ => format!("RustConn/{new_suffix}"),
-                };
-                // Try hierarchical old key first, then legacy flat key
-                let old_key_hierarchical = match group_path.as_deref() {
-                    Some(p) if !p.is_empty() => format!("RustConn/{p}/{old_suffix}"),
-                    _ => format!("RustConn/{old_suffix}"),
-                };
-                let old_key_legacy = format!("{old_name_sanitized} ({protocol_str})");
-                // Use hierarchical old key; if not found, resolver will try legacy during retrieval
-                let old_key = old_key_hierarchical;
-                (old_key, new_key, Some(old_key_legacy))
-            }
-            SecretBackendType::Bitwarden
-            | SecretBackendType::OnePassword
-            | SecretBackendType::Passbolt
-            | SecretBackendType::Pass => {
-                // These backends use "rustconn/{name}" format
-                let old_identifier = if old_name.trim().is_empty() {
-                    &updated_conn.host
-                } else {
-                    old_name
-                };
-                let new_identifier = if updated_conn.name.trim().is_empty() {
-                    &updated_conn.host
-                } else {
-                    &updated_conn.name
-                };
-                let old_key = format!("rustconn/{old_identifier}");
-                let new_key = format!("rustconn/{new_identifier}");
-                (old_key, new_key, None)
-            }
-            SecretBackendType::EncryptedFile => {
-                // EncryptedFile uses the same "rustconn/{name}" flat key format.
-                // (Flat-key; correct, not a 2.5 placeholder.)
-                let old_identifier = if old_name.trim().is_empty() {
-                    &updated_conn.host
-                } else {
-                    old_name
-                };
-                let new_identifier = if updated_conn.name.trim().is_empty() {
-                    &updated_conn.host
-                } else {
-                    &updated_conn.name
-                };
-                let old_key = format!("rustconn/{old_identifier}");
-                let new_key = format!("rustconn/{new_identifier}");
-                (old_key, new_key, None)
-            }
-            SecretBackendType::KeePassXc | SecretBackendType::KdbxFile => {
-                // Should not reach here — handled above
-                return Ok(());
-            }
+    if old_keys.first() == Some(&new_key) {
+        return None;
+    }
+
+    Some(VaultKeyMigration {
+        old_keys,
+        new_key,
+        is_keepass,
+    })
+}
+
+/// Returns whether an edit moved the connection's vault lookup key.
+///
+/// Lets a caller that has just written a freshly typed password under the new
+/// key decide whether the entry under the previous key is now stale. Returns
+/// `false` when the key is unchanged, where deleting the old entry would delete
+/// the credential that was just saved.
+#[must_use]
+pub fn vault_key_changed_by_edit(
+    settings: &rustconn_core::config::AppSettings,
+    old_groups: &[rustconn_core::models::ConnectionGroup],
+    new_groups: &[rustconn_core::models::ConnectionGroup],
+    old_conn: &rustconn_core::models::Connection,
+    new_conn: &rustconn_core::models::Connection,
+) -> bool {
+    plan_vault_key_migration(settings, old_groups, new_groups, old_conn, new_conn).is_some()
+}
+
+/// Migrates a connection's vault credential after an edit that changed its
+/// lookup key.
+///
+/// Covers a rename, a move to another group, a protocol change, or any
+/// combination of the three in a single save — the connection edit dialog can
+/// change all three at once, and until 0.19.19 that path performed no migration
+/// at all, so editing the name in the configuration panel silently stranded the
+/// credential under the old key (issue #263).
+///
+/// `old_groups` and `new_groups` are separate so a group rename, which changes
+/// the path without changing the connection, can reuse this. Pass the same slice
+/// twice when the hierarchy is unchanged.
+///
+/// The `SecretBackend` trait has no rename operation, so for every backend
+/// except KeePass the move is retrieve → store under the new key → delete the
+/// old. The delete only runs once the store has succeeded, so a failure leaves
+/// the credential readable under the old key rather than losing it.
+///
+/// # Errors
+///
+/// Returns a human-readable error string if the backend rejects the migration.
+pub fn migrate_vault_credential_for_edit(
+    settings: &rustconn_core::config::AppSettings,
+    old_groups: &[rustconn_core::models::ConnectionGroup],
+    new_groups: &[rustconn_core::models::ConnectionGroup],
+    old_conn: &rustconn_core::models::Connection,
+    new_conn: &rustconn_core::models::Connection,
+) -> Result<(), String> {
+    let Some(plan) = plan_vault_key_migration(settings, old_groups, new_groups, old_conn, new_conn)
+    else {
+        return Ok(());
+    };
+
+    if plan.is_keepass {
+        let Some(kdbx_path) = settings.secrets.kdbx_path.as_ref() else {
+            return Ok(());
         };
+        let old_key = plan.old_keys.first().map_or("", String::as_str);
+        tracing::info!(%old_key, new_key = %plan.new_key, "Migrating KeePass entry after edit");
+        let key_file = settings.secrets.kdbx_key_file.clone();
+        return rustconn_core::secret::KeePassStatus::rename_entry_in_kdbx(
+            std::path::Path::new(kdbx_path),
+            settings.secrets.kdbx_password.as_ref(),
+            key_file.as_ref().map(std::path::Path::new),
+            old_key,
+            &plan.new_key,
+        )
+        .map_err(|e| format!("{e}"));
+    }
 
-        if old_key == new_key {
+    tracing::info!(new_key = %plan.new_key, "Migrating vault entry after edit");
+    let secret_settings = settings.secrets.clone();
+    for old_key in &plan.old_keys {
+        if *old_key == plan.new_key {
+            continue;
+        }
+        if let Ok(Some(creds)) = dispatch_vault_op(&secret_settings, old_key, VaultOp::Retrieve) {
+            dispatch_vault_op(&secret_settings, &plan.new_key, VaultOp::Store(&creds))?;
+            let _ = dispatch_vault_op(&secret_settings, old_key, VaultOp::Delete);
             return Ok(());
         }
-
-        let secret_settings = settings.secrets.clone();
-        if let Ok(Some(creds)) = dispatch_vault_op(&secret_settings, &old_key, VaultOp::Retrieve) {
-            dispatch_vault_op(&secret_settings, &new_key, VaultOp::Store(&creds))?;
-            let _ = dispatch_vault_op(&secret_settings, &old_key, VaultOp::Delete);
-            // Also clean up legacy key if different from primary old key
-            if let Some(ref legacy) = legacy_old_key
-                && *legacy != old_key
-            {
-                let _ = dispatch_vault_op(&secret_settings, legacy, VaultOp::Delete);
-            }
-        } else if let Some(ref legacy) = legacy_old_key
-            && *legacy != old_key
-        {
-            // Try retrieving from legacy key format
-            if let Ok(Some(creds)) = dispatch_vault_op(&secret_settings, legacy, VaultOp::Retrieve)
-            {
-                dispatch_vault_op(&secret_settings, &new_key, VaultOp::Store(&creds))?;
-                let _ = dispatch_vault_op(&secret_settings, legacy, VaultOp::Delete);
-            }
-        }
-        Ok(())
     }
+    Ok(())
 }
 
 /// Renames a vault credential when a connection is moved to a different group.
@@ -544,54 +575,27 @@ pub fn rename_vault_credential(
 /// a connection changes the lookup key. This function renames the old entry to
 /// the new path so the password remains accessible.
 ///
-/// For non-KeePass backends (libsecret, Bitwarden, etc.), the lookup key uses
-/// `name (protocol)` without group info, so no rename is needed.
+/// LibSecret and the macOS Keychain also embed the group path in their key
+/// (since 0.19.18, issue #264), so they are migrated the same way — via
+/// retrieve/store/delete, since the backend trait has no rename. Bitwarden,
+/// 1Password, Passbolt, pass and the encrypted file use `rustconn/{name}`,
+/// which a group move does not change, so they need no migration.
+///
+/// Thin wrapper over [`migrate_vault_credential_for_edit`]; `protocol_str` is
+/// accepted for call-site compatibility but the protocol is derived from the
+/// connections themselves.
+///
+/// # Errors
+///
+/// Returns a human-readable error string if the backend rejects the migration.
 pub fn rename_vault_credential_for_move(
     settings: &rustconn_core::config::AppSettings,
     groups: &[rustconn_core::models::ConnectionGroup],
     old_conn: &rustconn_core::models::Connection,
     new_conn: &rustconn_core::models::Connection,
-    protocol_str: &str,
+    _protocol_str: &str,
 ) -> Result<(), String> {
-    // Only KeePass backends use group hierarchy in the entry path
-    if settings.secrets.kdbx_enabled
-        && matches!(
-            settings.secrets.preferred_backend,
-            rustconn_core::config::SecretBackendType::KeePassXc
-                | rustconn_core::config::SecretBackendType::KdbxFile
-        )
-    {
-        let old_base = rustconn_core::secret::KeePassHierarchy::build_entry_path(old_conn, groups);
-        let new_base = rustconn_core::secret::KeePassHierarchy::build_entry_path(new_conn, groups);
-        let old_key = format!("{old_base} ({protocol_str})");
-        let new_key = format!("{new_base} ({protocol_str})");
-
-        if old_key == new_key {
-            return Ok(());
-        }
-
-        tracing::info!(
-            %old_key, %new_key,
-            "Migrating KeePass entry after group move"
-        );
-
-        if let Some(kdbx_path) = settings.secrets.kdbx_path.as_ref() {
-            let key_file = settings.secrets.kdbx_key_file.clone();
-            rustconn_core::secret::KeePassStatus::rename_entry_in_kdbx(
-                std::path::Path::new(kdbx_path),
-                settings.secrets.kdbx_password.as_ref(),
-                key_file.as_ref().map(std::path::Path::new),
-                &old_key,
-                &new_key,
-            )
-            .map_err(|e| format!("{e}"))
-        } else {
-            Ok(())
-        }
-    } else {
-        // Non-KeePass backends use flat keys without group info — no rename needed
-        Ok(())
-    }
+    migrate_vault_credential_for_edit(settings, groups, groups, old_conn, new_conn)
 }
 
 /// Migrates all KeePass vault entries affected by a group rename or move.
@@ -601,8 +605,11 @@ pub fn rename_vault_credential_for_move(
 /// 1. The group's own credential (if `password_source == Vault`)
 /// 2. All connections in the group (and descendant groups) with `password_source == Vault`
 ///
-/// Non-KeePass backends use flat keys without group hierarchy, so no migration
-/// is needed for them.
+/// LibSecret and the macOS Keychain embed the group path in the connection key
+/// too (since 0.19.18, issue #264), so their connection entries are migrated as
+/// well. Their group credentials are keyed by group UUID, which a rename does
+/// not change. Bitwarden, 1Password, Passbolt, pass and the encrypted file use
+/// flat `rustconn/{name}` keys and need no migration.
 pub fn migrate_vault_entries_on_group_change(
     settings: &rustconn_core::config::AppSettings,
     old_groups: &[rustconn_core::models::ConnectionGroup],
@@ -610,21 +617,135 @@ pub fn migrate_vault_entries_on_group_change(
     connections: &[rustconn_core::models::Connection],
     changed_group_id: uuid::Uuid,
 ) {
-    // Only KeePass backends use group hierarchy in entry paths
-    if !settings.secrets.kdbx_enabled
-        || !matches!(
+    use rustconn_core::config::SecretBackendType;
+
+    let is_keepass = settings.secrets.kdbx_enabled
+        && matches!(
             settings.secrets.preferred_backend,
-            rustconn_core::config::SecretBackendType::KeePassXc
-                | rustconn_core::config::SecretBackendType::KdbxFile
-        )
-    {
+            SecretBackendType::KeePassXc | SecretBackendType::KdbxFile
+        );
+
+    if is_keepass {
+        let Some(kdbx_path) = settings.secrets.kdbx_path.clone() else {
+            return;
+        };
+        migrate_keepass_entries_on_group_change(
+            settings,
+            old_groups,
+            new_groups,
+            connections,
+            changed_group_id,
+            kdbx_path,
+        );
         return;
     }
 
-    let Some(kdbx_path) = settings.secrets.kdbx_path.clone() else {
-        return;
-    };
+    let backend_type = select_backend_for_load(&settings.secrets);
+    if matches!(
+        backend_type,
+        SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain
+    ) {
+        migrate_keyring_entries_on_group_change(
+            settings,
+            old_groups,
+            new_groups,
+            connections,
+            changed_group_id,
+            backend_type,
+        );
+    }
+}
 
+/// Migrates keyring connection entries whose key embeds a renamed group path.
+///
+/// The `SecretBackend` trait has no rename, so each entry is moved by
+/// retrieve → store under the new key → delete the old key. Group credentials
+/// are keyed by group UUID and are deliberately left alone.
+fn migrate_keyring_entries_on_group_change(
+    settings: &rustconn_core::config::AppSettings,
+    old_groups: &[rustconn_core::models::ConnectionGroup],
+    new_groups: &[rustconn_core::models::ConnectionGroup],
+    connections: &[rustconn_core::models::Connection],
+    changed_group_id: uuid::Uuid,
+    backend_type: rustconn_core::config::SecretBackendType,
+) {
+    let affected_group_ids =
+        rustconn_core::models::collect_descendant_group_ids(changed_group_id, new_groups);
+
+    let mut moves: Vec<(Vec<String>, String)> = Vec::new();
+    for conn in connections {
+        if conn.password_source != rustconn_core::models::PasswordSource::Vault {
+            continue;
+        }
+        let Some(group_id) = conn.group_id else {
+            continue;
+        };
+        if !affected_group_ids.contains(&group_id) {
+            continue;
+        }
+
+        let protocol_str = conn.protocol_config.protocol_type().as_str().to_lowercase();
+        let old_keys = vault_keys_for_connection(old_groups, conn, &protocol_str, backend_type);
+        let new_keys = vault_keys_for_connection(new_groups, conn, &protocol_str, backend_type);
+        let Some(new_key) = new_keys.first().cloned() else {
+            continue;
+        };
+        if old_keys.first() == Some(&new_key) {
+            continue;
+        }
+        moves.push((old_keys, new_key));
+    }
+
+    if moves.is_empty() {
+        return;
+    }
+
+    let secret_settings = settings.secrets.clone();
+    crate::utils::spawn_blocking_with_callback(
+        move || {
+            for (old_keys, new_key) in &moves {
+                tracing::info!(%new_key, "Migrating keyring entry after group change");
+                for old_key in old_keys {
+                    if old_key == new_key {
+                        continue;
+                    }
+                    if let Ok(Some(creds)) =
+                        dispatch_vault_op(&secret_settings, old_key, VaultOp::Retrieve)
+                    {
+                        if let Err(e) =
+                            dispatch_vault_op(&secret_settings, new_key, VaultOp::Store(&creds))
+                        {
+                            tracing::error!(
+                                %new_key,
+                                error = %e,
+                                "Failed to store keyring entry under new group path"
+                            );
+                        } else {
+                            let _ = dispatch_vault_op(&secret_settings, old_key, VaultOp::Delete);
+                        }
+                        break;
+                    }
+                }
+            }
+            Ok::<(), String>(())
+        },
+        |result: Result<(), String>| {
+            if let Err(e) = result {
+                tracing::error!(error = %e, "Failed to migrate keyring entries after group change");
+            }
+        },
+    );
+}
+
+/// Migrates KDBX entry paths for a renamed or re-parented group.
+fn migrate_keepass_entries_on_group_change(
+    settings: &rustconn_core::config::AppSettings,
+    old_groups: &[rustconn_core::models::ConnectionGroup],
+    new_groups: &[rustconn_core::models::ConnectionGroup],
+    connections: &[rustconn_core::models::Connection],
+    changed_group_id: uuid::Uuid,
+    kdbx_path: std::path::PathBuf,
+) {
     // Collect all group IDs in the subtree rooted at changed_group_id
     let affected_group_ids =
         rustconn_core::models::collect_descendant_group_ids(changed_group_id, new_groups);
@@ -1068,13 +1189,108 @@ pub fn resolve_global_variables(
     vars
 }
 
+/// Builds every vault lookup key a connection's credentials may live under on a
+/// non-KeePass backend, most-current format first.
+///
+/// The first entry is the key the current code stores under; the rest are
+/// formats written by earlier releases, kept so that cleanup and fallback
+/// retrieval still find them.
+///
+/// For LibSecret and the macOS Keychain the current key embeds the group path
+/// (`RustConn/{group}/{name} ({protocol})`) so same-named connections in
+/// different groups no longer collide (issue #264). Deleting by the flat
+/// `{name} ({protocol})` key alone therefore matched nothing and silently left
+/// the keyring item behind (issue #263) — the attribute search in
+/// `LibSecretBackend::delete_value` finds zero items and reports success.
+///
+/// The legacy name-keyed formats are deliberately included even though two
+/// same-named connections in different groups map onto the same legacy key, so
+/// cleaning up one can remove an entry the other still resolves through. That is
+/// acceptable because a shared legacy key means the two connections were already
+/// sharing a single stored password — which is precisely the collision reported
+/// in issue #264 — so there is no distinct credential to lose. Once either
+/// connection has been resolved on 0.19.18 or later, its credential lives under
+/// its own group-scoped key and is unaffected.
+fn vault_keys_for_connection(
+    groups: &[rustconn_core::models::ConnectionGroup],
+    connection: &rustconn_core::models::Connection,
+    protocol_str: &str,
+    backend_type: rustconn_core::config::SecretBackendType,
+) -> Vec<String> {
+    use rustconn_core::config::SecretBackendType;
+
+    let mut keys = Vec::new();
+
+    if matches!(
+        backend_type,
+        SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain
+    ) {
+        // Always `Some`, empty for an ungrouped connection — this mirrors
+        // `save_password_to_vault`, which passes `Some("")` in that case so the
+        // key still carries the `RustConn/` prefix. Passing `None` here instead
+        // would yield the bare legacy key and miss the real entry.
+        let group_path = Some(
+            connection
+                .group_id
+                .map(|gid| {
+                    rustconn_core::secret::KeePassHierarchy::resolve_group_path(gid, groups)
+                        .join("/")
+                })
+                .unwrap_or_default(),
+        );
+        // Primary: exactly what `save_password_to_vault` writes.
+        keys.push(generate_store_key_with_group(
+            &connection.name,
+            &connection.host,
+            protocol_str,
+            backend_type,
+            group_path.as_deref(),
+        ));
+        // The resolver builds the same shape but additionally runs the name
+        // through `sanitize_imported_value`, so an imported name with trailing
+        // escape sequences can land under a second key. Read-time migration
+        // writes that variant, so cleanup has to cover it too.
+        keys.push(
+            rustconn_core::secret::CredentialResolver::generate_keyring_key_with_hierarchy(
+                connection, groups,
+            ),
+        );
+        // Pre-0.19.18 flat key, before the group path was part of the key.
+        keys.push(rustconn_core::secret::CredentialResolver::generate_keyring_key(connection));
+        // Pre-0.19.19 macOS Keychain key: the store path wrote the flat
+        // `rustconn/{name}` format while the resolver looked for the
+        // hierarchical one, so entries can still exist under it.
+        let identifier = if connection.name.trim().is_empty() {
+            &connection.host
+        } else {
+            &connection.name
+        };
+        keys.push(format!("rustconn/{identifier}"));
+    } else {
+        keys.push(generate_store_key(
+            &connection.name,
+            &connection.host,
+            protocol_str,
+            backend_type,
+        ));
+    }
+
+    // Oldest format: the connection UUID.
+    keys.push(connection.id.to_string());
+
+    keys.dedup();
+    keys
+}
+
 /// Deletes a connection's vault credentials from the configured backend.
 ///
 /// For KeePass backends, deletes the hierarchical entry. For flat backends,
-/// deletes by the standard lookup key format.
+/// every key format from [`vault_keys_for_connection`] is deleted so that
+/// entries written by earlier releases do not survive the connection.
 ///
-/// This is called during permanent deletion (empty trash) — not during
-/// soft-delete to trash, so that restore works without re-entering passwords.
+/// This runs on permanent deletion — either when the undo window for a deleted
+/// connection closes, or when the trash is emptied — never on the soft-delete
+/// itself, so that Undo restores a connection with its password intact.
 pub fn delete_vault_credential(
     settings: &rustconn_core::config::AppSettings,
     groups: &[rustconn_core::models::ConnectionGroup],
@@ -1123,15 +1339,26 @@ pub fn delete_vault_credential(
             }
         }
         _ => {
-            let backend_type = select_backend_for_load(&settings.secrets);
-            let lookup_key = generate_store_key(
-                &connection.name,
-                &connection.host,
-                &protocol_str,
-                backend_type,
-            );
-            dispatch_vault_op(&settings.secrets, &lookup_key, VaultOp::Delete)?;
-            Ok(())
+            // Delete every key format this connection may have been stored
+            // under. Best-effort per key: a backend that does not hold one of
+            // the legacy keys must not abort cleanup of the others, but a
+            // failure on the primary key is still reported.
+            let keys = vault_keys_for_connection(groups, connection, &protocol_str, backend_type);
+            let mut primary_result = Ok(());
+            for (index, key) in keys.iter().enumerate() {
+                let result = dispatch_vault_op(&settings.secrets, key, VaultOp::Delete).map(|_| ());
+                if let Err(ref e) = result {
+                    tracing::debug!(
+                        lookup_key = %key,
+                        error = %e,
+                        "Vault credential delete failed for one key format"
+                    );
+                }
+                if index == 0 {
+                    primary_result = result;
+                }
+            }
+            primary_result
         }
     }
 }
@@ -1162,14 +1389,14 @@ pub fn delete_group_vault_credential(
                 let key_file = settings.secrets.kdbx_key_file.clone();
                 let kdbx = std::path::Path::new(kdbx_path);
                 let key = key_file.as_ref().map(std::path::Path::new);
-                rustconn_core::secret::KeePassStatus::save_password_to_kdbx(
+                // Actually remove the entry. Overwriting it with an empty
+                // username/password (the previous behaviour) left a visible
+                // orphan entry in the user's database after the group was gone.
+                rustconn_core::secret::KeePassStatus::delete_entry_from_kdbx(
                     kdbx,
                     settings.secrets.kdbx_password.as_ref(),
                     key,
                     &group_path,
-                    "",
-                    "",
-                    None,
                 )
                 .map_err(|e| format!("{e}"))
             } else {
@@ -1264,15 +1491,20 @@ pub fn copy_vault_credential(
             }
         }
         _ => {
-            let backend_type = select_backend_for_load(&settings.secrets);
-            let old_key =
-                generate_store_key(&old_conn.name, &old_conn.host, &protocol_str, backend_type);
-            let new_key =
-                generate_store_key(&new_conn.name, &new_conn.host, &protocol_str, backend_type);
+            // Both keys must account for the group path on LibSecret/Keychain,
+            // otherwise a paste into another group reads nothing and writes the
+            // copy where the resolver will never look for it (issue #264).
+            let old_keys = vault_keys_for_connection(groups, old_conn, &protocol_str, backend_type);
+            let new_keys = vault_keys_for_connection(groups, new_conn, &protocol_str, backend_type);
 
-            if let Some(creds) = dispatch_vault_op(&settings.secrets, &old_key, VaultOp::Retrieve)?
-            {
-                dispatch_vault_op(&settings.secrets, &new_key, VaultOp::Store(&creds))?;
+            for old_key in &old_keys {
+                if let Some(creds) =
+                    dispatch_vault_op(&settings.secrets, old_key, VaultOp::Retrieve)?
+                {
+                    let new_key = new_keys.first().map_or(old_key.as_str(), String::as_str);
+                    dispatch_vault_op(&settings.secrets, new_key, VaultOp::Store(&creds))?;
+                    break;
+                }
             }
             Ok(())
         }
@@ -1493,11 +1725,17 @@ pub fn generate_store_key(
     generate_store_key_with_group(conn_name, conn_host, protocol_str, backend_type, None)
 }
 
-/// Generates a store key that includes the group path for LibSecret backends.
+/// Generates a store key that includes the group path for keyring backends.
 ///
 /// `group_path` is the `/`-separated group hierarchy (e.g. `"Production/Web"`).
-/// When provided and the backend is LibSecret, the key is
+/// When provided and the backend is LibSecret or the macOS Keychain, the key is
 /// `"RustConn/{group_path}/{name} ({protocol})"`.
+///
+/// The macOS Keychain is included because `CredentialResolver` resolves it
+/// through the same hierarchical keyring path as LibSecret
+/// (`resolve_from_keyring_hierarchical`). Storing it under the flat
+/// `rustconn/{name}` key, as this function did until 0.19.19, meant the resolver
+/// never looked where the credential had been written.
 pub fn generate_store_key_with_group(
     conn_name: &str,
     conn_host: &str,
@@ -1507,7 +1745,10 @@ pub fn generate_store_key_with_group(
 ) -> String {
     use rustconn_core::config::SecretBackendType;
 
-    if backend_type == SecretBackendType::LibSecret {
+    if matches!(
+        backend_type,
+        SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain
+    ) {
         let name = conn_name.trim().replace('/', "-");
         let suffix = format!("{name} ({protocol_str})");
         match group_path {
@@ -1530,6 +1771,7 @@ pub fn generate_store_key_with_group(
 #[cfg(test)]
 mod tests {
     use rustconn_core::config::{SecretBackendType, SecretSettings};
+    use rustconn_core::models::{Connection, ConnectionGroup};
 
     use super::*;
 
@@ -1653,5 +1895,260 @@ mod tests {
     fn store_key_pass_format() {
         let key = generate_store_key("DB Server", "db.local", "ssh", SecretBackendType::Pass);
         assert_eq!(key, "rustconn/DB Server");
+    }
+
+    #[test]
+    fn store_key_macos_keychain_is_hierarchical_like_libsecret() {
+        // The resolver reads the Keychain through the hierarchical keyring path,
+        // so the store key must match it rather than the flat "rustconn/{name}".
+        let key = generate_store_key_with_group(
+            "admin",
+            "10.0.0.1",
+            "ssh",
+            SecretBackendType::MacOsKeychain,
+            Some("oracle"),
+        );
+        assert_eq!(key, "RustConn/oracle/admin (ssh)");
+    }
+
+    // ── vault_keys_for_connection ────────────────────────────────────
+
+    fn ssh_connection(name: &str, group_id: Option<uuid::Uuid>) -> Connection {
+        let mut conn = Connection::new(
+            name.to_string(),
+            "10.0.0.1".to_string(),
+            22,
+            rustconn_core::models::ProtocolConfig::Ssh(rustconn_core::models::SshConfig::default()),
+        );
+        conn.group_id = group_id;
+        conn
+    }
+
+    #[test]
+    fn keyring_keys_lead_with_the_group_scoped_key() {
+        // Deleting by the flat key alone left the keyring item behind (#263),
+        // because the item is stored under the group-scoped key (#264).
+        let group = ConnectionGroup::new("oracle".to_string());
+        let conn = ssh_connection("admin", Some(group.id));
+        let keys = vault_keys_for_connection(
+            std::slice::from_ref(&group),
+            &conn,
+            "ssh",
+            SecretBackendType::LibSecret,
+        );
+
+        assert_eq!(
+            keys.first().map(String::as_str),
+            Some("RustConn/oracle/admin (ssh)")
+        );
+        assert!(
+            keys.iter().any(|k| k == "admin (ssh)"),
+            "legacy flat key must stay in the cleanup set: {keys:?}"
+        );
+        assert!(
+            keys.iter().any(|k| *k == conn.id.to_string()),
+            "UUID key must stay in the cleanup set: {keys:?}"
+        );
+    }
+
+    #[test]
+    fn keyring_keys_differ_between_groups_for_the_same_name() {
+        // The collision from issue #264: two "admin" connections in different
+        // groups must never share a primary key.
+        let oracle = ConnectionGroup::new("oracle".to_string());
+        let pve = ConnectionGroup::new("pve".to_string());
+        let groups = vec![oracle.clone(), pve.clone()];
+
+        let in_oracle = ssh_connection("admin", Some(oracle.id));
+        let in_pve = ssh_connection("admin", Some(pve.id));
+
+        let oracle_key =
+            vault_keys_for_connection(&groups, &in_oracle, "ssh", SecretBackendType::LibSecret);
+        let pve_key =
+            vault_keys_for_connection(&groups, &in_pve, "ssh", SecretBackendType::LibSecret);
+
+        assert_eq!(
+            oracle_key.first().map(String::as_str),
+            Some("RustConn/oracle/admin (ssh)")
+        );
+        assert_eq!(
+            pve_key.first().map(String::as_str),
+            Some("RustConn/pve/admin (ssh)")
+        );
+        assert_ne!(oracle_key.first(), pve_key.first());
+    }
+
+    #[test]
+    fn flat_backend_keys_use_the_rustconn_prefix() {
+        let conn = ssh_connection("admin", None);
+        let keys = vault_keys_for_connection(&[], &conn, "ssh", SecretBackendType::Bitwarden);
+        assert_eq!(keys.first().map(String::as_str), Some("rustconn/admin"));
+    }
+
+    // ── plan_vault_key_migration ─────────────────────────────────────
+
+    fn app_settings(backend: SecretBackendType) -> rustconn_core::config::AppSettings {
+        rustconn_core::config::AppSettings {
+            secrets: default_secret_settings(backend),
+            ..Default::default()
+        }
+    }
+
+    fn keepass_app_settings() -> rustconn_core::config::AppSettings {
+        rustconn_core::config::AppSettings {
+            secrets: SecretSettings {
+                preferred_backend: SecretBackendType::KeePassXc,
+                kdbx_enabled: true,
+                kdbx_path: Some("/tmp/does-not-need-to-exist.kdbx".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn plan_migration_is_none_when_the_edit_changed_nothing_in_the_key() {
+        let settings = app_settings(SecretBackendType::LibSecret);
+        let conn = ssh_connection("admin", None);
+        // A description or tag edit leaves the key alone.
+        let mut edited = conn.clone();
+        edited.description = Some("touched".to_string());
+
+        assert!(plan_vault_key_migration(&settings, &[], &[], &conn, &edited).is_none());
+    }
+
+    #[test]
+    fn plan_migration_detects_a_rename() {
+        let settings = app_settings(SecretBackendType::LibSecret);
+        let group = ConnectionGroup::new("oracle".to_string());
+        let old = ssh_connection("admin", Some(group.id));
+        let mut new = old.clone();
+        new.name = "dba".to_string();
+
+        let groups = std::slice::from_ref(&group);
+        let plan = plan_vault_key_migration(&settings, groups, groups, &old, &new).unwrap();
+
+        assert_eq!(plan.new_key, "RustConn/oracle/dba (ssh)");
+        assert_eq!(
+            plan.old_keys.first().map(String::as_str),
+            Some("RustConn/oracle/admin (ssh)")
+        );
+        assert!(!plan.is_keepass);
+    }
+
+    #[test]
+    fn plan_migration_detects_a_group_change() {
+        let settings = app_settings(SecretBackendType::LibSecret);
+        let oracle = ConnectionGroup::new("oracle".to_string());
+        let pve = ConnectionGroup::new("pve".to_string());
+        let groups = vec![oracle.clone(), pve.clone()];
+
+        let old = ssh_connection("admin", Some(oracle.id));
+        let mut new = old.clone();
+        new.group_id = Some(pve.id);
+
+        let plan = plan_vault_key_migration(&settings, &groups, &groups, &old, &new).unwrap();
+
+        assert_eq!(plan.new_key, "RustConn/pve/admin (ssh)");
+        assert_eq!(
+            plan.old_keys.first().map(String::as_str),
+            Some("RustConn/oracle/admin (ssh)")
+        );
+    }
+
+    #[test]
+    fn plan_migration_detects_a_protocol_change() {
+        // The protocol is part of the key suffix, and neither pre-0.19.19 helper
+        // could express a protocol change — both used one protocol string for the
+        // old and the new key.
+        let settings = app_settings(SecretBackendType::LibSecret);
+        let old = ssh_connection("admin", None);
+        let mut new = old.clone();
+        new.protocol_config =
+            rustconn_core::models::ProtocolConfig::Rdp(rustconn_core::models::RdpConfig::default());
+
+        let plan = plan_vault_key_migration(&settings, &[], &[], &old, &new).unwrap();
+
+        assert_eq!(plan.new_key, "RustConn/admin (rdp)");
+        assert_eq!(
+            plan.old_keys.first().map(String::as_str),
+            Some("RustConn/admin (ssh)")
+        );
+    }
+
+    #[test]
+    fn plan_migration_handles_name_group_and_protocol_at_once() {
+        // The connection edit dialog rebuilds the whole connection, so a single
+        // save can change all three.
+        let settings = app_settings(SecretBackendType::LibSecret);
+        let oracle = ConnectionGroup::new("oracle".to_string());
+        let pve = ConnectionGroup::new("pve".to_string());
+        let groups = vec![oracle.clone(), pve.clone()];
+
+        let old = ssh_connection("admin", Some(oracle.id));
+        let mut new = old.clone();
+        new.name = "dba".to_string();
+        new.group_id = Some(pve.id);
+        new.protocol_config =
+            rustconn_core::models::ProtocolConfig::Rdp(rustconn_core::models::RdpConfig::default());
+
+        let plan = plan_vault_key_migration(&settings, &groups, &groups, &old, &new).unwrap();
+
+        assert_eq!(plan.new_key, "RustConn/pve/dba (rdp)");
+        assert_eq!(
+            plan.old_keys.first().map(String::as_str),
+            Some("RustConn/oracle/admin (ssh)")
+        );
+    }
+
+    #[test]
+    fn plan_migration_keepass_uses_hierarchical_entry_paths() {
+        let settings = keepass_app_settings();
+        let group = ConnectionGroup::new("oracle".to_string());
+        let old = ssh_connection("admin", Some(group.id));
+        let mut new = old.clone();
+        new.name = "dba".to_string();
+
+        let groups = std::slice::from_ref(&group);
+        let plan = plan_vault_key_migration(&settings, groups, groups, &old, &new).unwrap();
+
+        assert!(plan.is_keepass);
+        assert_eq!(plan.new_key, "RustConn/oracle/dba (ssh)");
+        assert_eq!(
+            plan.old_keys.first().map(String::as_str),
+            Some("RustConn/oracle/admin (ssh)")
+        );
+    }
+
+    #[test]
+    fn plan_migration_flat_backend_ignores_a_group_change() {
+        // Bitwarden and friends key on the name alone, so moving between groups
+        // cannot move the entry.
+        let settings = app_settings(SecretBackendType::Bitwarden);
+        let oracle = ConnectionGroup::new("oracle".to_string());
+        let pve = ConnectionGroup::new("pve".to_string());
+        let groups = vec![oracle.clone(), pve.clone()];
+
+        let old = ssh_connection("admin", Some(oracle.id));
+        let mut new = old.clone();
+        new.group_id = Some(pve.id);
+
+        assert!(plan_vault_key_migration(&settings, &groups, &groups, &old, &new).is_none());
+    }
+
+    #[test]
+    fn plan_migration_flat_backend_detects_a_rename() {
+        let settings = app_settings(SecretBackendType::Bitwarden);
+        let old = ssh_connection("admin", None);
+        let mut new = old.clone();
+        new.name = "dba".to_string();
+
+        let plan = plan_vault_key_migration(&settings, &[], &[], &old, &new).unwrap();
+
+        assert_eq!(plan.new_key, "rustconn/dba");
+        assert_eq!(
+            plan.old_keys.first().map(String::as_str),
+            Some("rustconn/admin")
+        );
     }
 }

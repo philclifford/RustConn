@@ -253,8 +253,11 @@ fn build_ui(app: &adw::Application, tray_manager: SharedTrayManager) {
     // Apply saved color scheme from settings
     apply_saved_color_scheme(&state);
 
-    // Apply saved language from settings
-    apply_saved_language(&state);
+    // NOTE: the saved language is deliberately NOT applied here. `setlocale` is
+    // unsound once the process is multi-threaded (RUSTSEC-2026-0244), and by the
+    // time `activate` runs the GIO worker thread is up. `i18n::init()` and
+    // `i18n::apply_language_from_config()` both run in `main()` before any
+    // thread exists and already cover every case this call used to.
 
     // Create main window with state
     let window = MainWindow::new(app, state.clone());
@@ -1613,13 +1616,6 @@ fn apply_saved_color_scheme(state: &SharedAppState) {
     let color_scheme = with_state(state, |s| s.settings().ui.color_scheme);
 
     apply_color_scheme(color_scheme);
-}
-
-/// Applies the saved language from settings to gettext
-fn apply_saved_language(state: &SharedAppState) {
-    let language = with_state(state, |s| s.settings().ui.language.clone());
-
-    crate::i18n::apply_language(&language);
 }
 
 /// Installs a capture-phase key controller that makes application accelerators
