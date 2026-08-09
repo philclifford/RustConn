@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.17
+Version:        0.19.18
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,12 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Sun Aug 09 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.18-0
+- Fixed: Renaming a connection now updates the credential entry in the vault (#263)
+- Fixed: System Keyring password collision for same-named connections in different groups (#264)
+- Fixed: KeePass database password keyring entry now namespaced with RustConn prefix (#265)
+- Changed: System Keyring credentials transparently migrated to new hierarchical key format
+
 * Sat Aug 08 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.17-1
 - Fixed: Settings panel no longer wipes in-memory KeePassXC password (#259)
 - Fixed: OCI CLI version detection no longer shows Python tracebacks

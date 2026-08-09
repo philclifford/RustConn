@@ -60,22 +60,59 @@ impl CredentialResolver {
         format!("rustconn/{identifier}")
     }
 
-    /// Generates a lookup key for libsecret/keyring storage
+    /// Generates a lookup key for libsecret/keyring storage (legacy flat format)
     ///
-    /// The key format is: `{name} ({protocol})` matching the format used
-    /// by `resolve_from_keyring` for consistent store/retrieve behavior.
+    /// The key format is: `{name} ({protocol})` — the pre-0.19.18 format.
+    /// Kept for backward-compatible fallback lookups.
     ///
     /// # Arguments
     /// * `connection` - The connection to generate a key for
     ///
     /// # Returns
-    /// A string key suitable for keyring entry lookup
+    /// A string key suitable for keyring entry lookup (legacy format)
     #[must_use]
     pub fn generate_keyring_key(connection: &Connection) -> String {
         let protocol = connection.protocol_config.protocol_type();
         let name =
             crate::import::sanitize_imported_value(&connection.name.trim().replace('/', "-"));
         format!("{} ({})", name, protocol.as_str().to_lowercase())
+    }
+
+    /// Generates a hierarchical lookup key for libsecret/keyring storage.
+    ///
+    /// The key format is: `RustConn/{group_path}/{name} ({protocol})`
+    /// For connections without a group: `RustConn/{name} ({protocol})`
+    ///
+    /// This format:
+    /// - Prevents collisions between same-named connections in different groups
+    /// - Uses `/` as separator for KDE Wallet folder hierarchy compatibility
+    /// - Prefixes with `RustConn` for namespace clarity
+    ///
+    /// # Arguments
+    /// * `connection` - The connection to generate a key for
+    /// * `groups` - All available connection groups for hierarchy resolution
+    ///
+    /// # Returns
+    /// A string key suitable for keyring entry lookup
+    #[must_use]
+    pub fn generate_keyring_key_with_hierarchy(
+        connection: &Connection,
+        groups: &[ConnectionGroup],
+    ) -> String {
+        let protocol = connection.protocol_config.protocol_type();
+        let name =
+            crate::import::sanitize_imported_value(&connection.name.trim().replace('/', "-"));
+        let suffix = format!("{name} ({})", protocol.as_str().to_lowercase());
+
+        let mut path_parts = vec!["RustConn".to_string()];
+
+        if let Some(group_id) = connection.group_id {
+            let group_path = KeePassHierarchy::resolve_group_path(group_id, groups);
+            path_parts.extend(group_path);
+        }
+
+        path_parts.push(suffix);
+        path_parts.join("/")
     }
 
     /// Resolves credentials for a connection
@@ -242,6 +279,47 @@ impl CredentialResolver {
         // Fall back to legacy UUID-based key for backward compatibility
         let connection_id = connection.id.to_string();
         self.secret_manager.retrieve(&connection_id).await
+    }
+
+    /// Resolves credentials from system keyring using hierarchical key format.
+    ///
+    /// Tries lookup keys in order:
+    /// 1. New hierarchical: `RustConn/{group_path}/{name} ({protocol})`
+    /// 2. Legacy flat: `{name} ({protocol})`
+    /// 3. Legacy UUID-based key
+    ///
+    /// When found under a legacy key, the credential is transparently migrated
+    /// to the new hierarchical key for future lookups.
+    async fn resolve_from_keyring_hierarchical(
+        &self,
+        connection: &Connection,
+        groups: &[ConnectionGroup],
+    ) -> SecretResult<Option<Credentials>> {
+        // 1. Try new hierarchical format first
+        let hierarchical_key = Self::generate_keyring_key_with_hierarchy(connection, groups);
+        if let Some(creds) = self.secret_manager.retrieve(&hierarchical_key).await? {
+            return Ok(Some(creds));
+        }
+
+        // 2. Try legacy flat format: "{name} ({protocol})"
+        let legacy_key = Self::generate_keyring_key(connection);
+        if let Some(creds) = self.secret_manager.retrieve(&legacy_key).await? {
+            // Migrate to new format transparently
+            let _ = self.secret_manager.store(&hierarchical_key, &creds).await;
+            let _ = self.secret_manager.delete(&legacy_key).await;
+            return Ok(Some(creds));
+        }
+
+        // 3. Fall back to legacy UUID-based key
+        let connection_id = connection.id.to_string();
+        if let Some(creds) = self.secret_manager.retrieve(&connection_id).await? {
+            // Migrate to new format transparently
+            let _ = self.secret_manager.store(&hierarchical_key, &creds).await;
+            let _ = self.secret_manager.delete(&connection_id).await;
+            return Ok(Some(creds));
+        }
+
+        Ok(None)
     }
 
     /// Resolves credentials from Bitwarden vault
@@ -619,7 +697,7 @@ impl CredentialResolver {
                 self.secret_manager.store(&lookup_key, credentials).await
             }
             SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain => {
-                let lookup_key = Self::generate_keyring_key(connection);
+                let lookup_key = Self::generate_keyring_key_with_hierarchy(connection, groups);
                 self.secret_manager.store(&lookup_key, credentials).await
             }
             SecretBackendType::Bitwarden
@@ -879,7 +957,8 @@ impl CredentialResolver {
                     .await
             }
             SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain => {
-                self.resolve_from_keyring(connection).await
+                self.resolve_from_keyring_hierarchical(connection, groups)
+                    .await
             }
             SecretBackendType::Bitwarden => self.resolve_from_bitwarden(connection).await,
             SecretBackendType::OnePassword => self.resolve_from_onepassword(connection).await,
@@ -903,7 +982,9 @@ impl CredentialResolver {
         if !self.settings.kdbx_enabled {
             // `KeePass` not enabled, try fallback if allowed
             if self.settings.enable_fallback {
-                return self.resolve_from_keyring(connection).await;
+                return self
+                    .resolve_from_keyring_hierarchical(connection, groups)
+                    .await;
             }
             return Ok(None);
         }
@@ -925,7 +1006,8 @@ impl CredentialResolver {
 
         // `KeePass` lookup failed, try fallback if enabled
         if self.settings.enable_fallback {
-            self.resolve_from_keyring(connection).await
+            self.resolve_from_keyring_hierarchical(connection, groups)
+                .await
         } else {
             Ok(None)
         }
@@ -951,8 +1033,9 @@ impl CredentialResolver {
             }
         }
 
-        // Fall back to keyring
-        self.resolve_from_keyring(connection).await
+        // Fall back to keyring (with hierarchical key + legacy fallback)
+        self.resolve_from_keyring_hierarchical(connection, groups)
+            .await
     }
 
     /// Deletes credentials for a connection using hierarchical path.
@@ -1070,14 +1153,30 @@ impl CredentialResolver {
                         }
                     }
                     SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain => {
-                        // LibSecret/Keychain uses "{name} ({protocol})" format
-                        let old_key = Self::generate_keyring_key(&old_connection);
-                        let new_key = Self::generate_keyring_key(connection);
-                        if old_key != new_key
-                            && let Some(creds) = self.secret_manager.retrieve(&old_key).await?
-                        {
-                            self.secret_manager.store(&new_key, &creds).await?;
-                            let _ = self.secret_manager.delete(&old_key).await;
+                        // LibSecret/Keychain uses hierarchical "RustConn/{group}/{name} ({protocol})" format.
+                        // Also check the legacy flat key for migration.
+                        let old_key =
+                            Self::generate_keyring_key_with_hierarchy(&old_connection, groups);
+                        let new_key = Self::generate_keyring_key_with_hierarchy(connection, groups);
+                        if old_key != new_key {
+                            // Try new hierarchical key first, then legacy flat key
+                            let creds =
+                                if let Some(c) = self.secret_manager.retrieve(&old_key).await? {
+                                    Some(c)
+                                } else {
+                                    // Fallback: try legacy flat key format
+                                    let legacy_key = Self::generate_keyring_key(&old_connection);
+                                    self.secret_manager.retrieve(&legacy_key).await?
+                                };
+                            if let Some(creds) = creds {
+                                self.secret_manager.store(&new_key, &creds).await?;
+                                // Delete both old keys (hierarchical and legacy) to clean up
+                                let _ = self.secret_manager.delete(&old_key).await;
+                                let legacy_key = Self::generate_keyring_key(&old_connection);
+                                if legacy_key != old_key {
+                                    let _ = self.secret_manager.delete(&legacy_key).await;
+                                }
+                            }
                         }
                     }
                     SecretBackendType::Bitwarden

@@ -1,4 +1,13 @@
 -------------------------------------------------------------------
+Sun Aug 09 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.18
+
+- Version bump to 0.19.18
+- Fixed: Renaming a connection now updates the credential entry in the vault (#263)
+- Fixed: System Keyring password collision for same-named connections in different groups (#264)
+- Fixed: KeePass database password keyring entry now namespaced with RustConn prefix (#265)
+- Changed: System Keyring credentials transparently migrated to new hierarchical key format
+
+-------------------------------------------------------------------
 Sat Aug 08 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.17
 
 - Version bump to 0.19.17

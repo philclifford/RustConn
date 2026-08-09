@@ -140,6 +140,17 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.18" date="2026-08-09">
+      <description>
+        <p>Version 0.19.18 - Secret backend credential management fixes:</p>
+        <ul>
+          <li>Fixed: Renaming a connection now updates the credential entry in the password vault (#263)</li>
+          <li>Fixed: System Keyring password collision for same-named connections in different groups (#264)</li>
+          <li>Fixed: KeePass database password keyring entry now namespaced with RustConn prefix (#265)</li>
+          <li>System Keyring credentials transparently migrated to new hierarchical key format on first access</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.17" date="2026-08-08">
       <description>
         <p>Version 0.19.17 - Settings stability and dialog improvements:</p>

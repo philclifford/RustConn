@@ -174,6 +174,48 @@ impl AppState {
         // Update existing connections
         for (conn_id, sync_conn) in &merge_result.connections_to_update {
             if let Some(existing) = self.connection_manager.get_connection(*conn_id) {
+                // Detect name change and migrate credential entry in the secret
+                // backend so the password remains accessible under the new
+                // name-based key (issue #263).
+                if existing.name != sync_conn.name
+                    && existing.password_source == rustconn_core::models::PasswordSource::Vault
+                {
+                    let old_name = existing.name.clone();
+                    let settings = self.settings.clone();
+                    let groups: Vec<ConnectionGroup> = self
+                        .connection_manager
+                        .list_groups()
+                        .into_iter()
+                        .cloned()
+                        .collect();
+                    let mut updated_conn = existing.clone();
+                    updated_conn.name = sync_conn.name.clone();
+                    let protocol_str = existing
+                        .protocol_config
+                        .protocol_type()
+                        .as_str()
+                        .to_lowercase();
+                    crate::utils::spawn_blocking_with_callback(
+                        move || {
+                            crate::vault_ops::rename_vault_credential(
+                                &settings,
+                                &groups,
+                                &updated_conn,
+                                &old_name,
+                                &protocol_str,
+                            )
+                        },
+                        |result| {
+                            if let Err(e) = result {
+                                tracing::error!(
+                                    error = %e,
+                                    "Group Sync: credential rename failed after connection name change"
+                                );
+                            }
+                        },
+                    );
+                }
+
                 let mut updated = existing.clone();
                 rustconn_core::sync::group_export::apply_sync_connection_update(
                     &mut updated,
@@ -554,6 +596,44 @@ impl AppState {
                 }
                 SyncEntityType::Connection => {
                     if let Some(c) = remote.connections.iter().find(|c| c.id == action.id) {
+                        // Detect name change and migrate credential entry in
+                        // the secret backend so the password remains accessible
+                        // under the new name-based key (issue #263).
+                        if let Some(local) = self.connection_manager.get_connection(action.id)
+                            && local.name != c.name
+                            && local.password_source == rustconn_core::models::PasswordSource::Vault
+                        {
+                            let old_name = local.name.clone();
+                            let settings = self.settings.clone();
+                            let groups: Vec<ConnectionGroup> = self
+                                .connection_manager
+                                .list_groups()
+                                .into_iter()
+                                .cloned()
+                                .collect();
+                            let updated_conn = c.clone();
+                            let protocol_str =
+                                c.protocol_config.protocol_type().as_str().to_lowercase();
+                            crate::utils::spawn_blocking_with_callback(
+                                move || {
+                                    crate::vault_ops::rename_vault_credential(
+                                        &settings,
+                                        &groups,
+                                        &updated_conn,
+                                        &old_name,
+                                        &protocol_str,
+                                    )
+                                },
+                                |result| {
+                                    if let Err(e) = result {
+                                        tracing::error!(
+                                            error = %e,
+                                            "Simple Sync: credential rename failed after connection name change"
+                                        );
+                                    }
+                                },
+                            );
+                        }
                         match self
                             .connection_manager
                             .update_connection(action.id, c.clone())
