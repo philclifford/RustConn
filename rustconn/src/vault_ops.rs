@@ -239,11 +239,17 @@ pub fn save_password_to_vault(
         // Use the same key format that the resolver expects for each backend,
         // so that store and resolve are consistent.
         let backend_type = select_backend_for_load(&settings.secrets);
-        // For LibSecret, include group path to prevent name collisions (issue #264)
-        let group_path = conn.and_then(|c| {
-            c.group_id.map(|gid| {
-                rustconn_core::secret::KeePassHierarchy::resolve_group_path(gid, groups).join("/")
-            })
+        // For LibSecret, include group path to prevent name collisions (issue #264).
+        // When a connection exists, always use the "RustConn/" prefix (matching
+        // the resolver's generate_keyring_key_with_hierarchy); when no connection
+        // is available (e.g. quick-connect), fall back to the flat legacy format.
+        let group_path: Option<String> = conn.map(|c| {
+            c.group_id
+                .map(|gid| {
+                    rustconn_core::secret::KeePassHierarchy::resolve_group_path(gid, groups)
+                        .join("/")
+                })
+                .unwrap_or_default()
         });
         let lookup_key = generate_store_key_with_group(
             conn_name,
@@ -1506,7 +1512,8 @@ pub fn generate_store_key_with_group(
         let suffix = format!("{name} ({protocol_str})");
         match group_path {
             Some(path) if !path.is_empty() => format!("RustConn/{path}/{suffix}"),
-            _ => format!("RustConn/{suffix}"),
+            Some(_) => format!("RustConn/{suffix}"),
+            None => suffix,
         }
     } else {
         // All other backends: "rustconn/{identifier}" — matches generate_lookup_key
