@@ -239,7 +239,19 @@ pub fn save_password_to_vault(
         // Use the same key format that the resolver expects for each backend,
         // so that store and resolve are consistent.
         let backend_type = select_backend_for_load(&settings.secrets);
-        let lookup_key = generate_store_key(conn_name, conn_host, &protocol_str, backend_type);
+        // For LibSecret, include group path to prevent name collisions (issue #264)
+        let group_path = conn.and_then(|c| {
+            c.group_id.map(|gid| {
+                rustconn_core::secret::KeePassHierarchy::resolve_group_path(gid, groups).join("/")
+            })
+        });
+        let lookup_key = generate_store_key_with_group(
+            conn_name,
+            conn_host,
+            &protocol_str,
+            backend_type,
+            group_path.as_deref(),
+        );
         tracing::debug!(
             %lookup_key,
             ?backend_type,
@@ -424,12 +436,31 @@ pub fn rename_vault_credential(
         let backend_type = select_backend_for_load(&settings.secrets);
 
         // Build old/new keys based on backend key format
-        let (old_key, new_key) = match backend_type {
+        let (old_key, new_key, legacy_old_key) = match backend_type {
             SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain => {
-                // LibSecret/Keychain uses "{name} ({protocol})" format
-                let old_key = format!("{} ({protocol_str})", old_name.replace('/', "-"));
-                let new_key = format!("{} ({protocol_str})", updated_conn.name.replace('/', "-"));
-                (old_key, new_key)
+                // LibSecret/Keychain uses hierarchical "RustConn/{group}/{name} ({protocol})" format.
+                // Build group path from connection's group hierarchy.
+                let group_path = updated_conn.group_id.map(|gid| {
+                    rustconn_core::secret::KeePassHierarchy::resolve_group_path(gid, groups)
+                        .join("/")
+                });
+                let old_name_sanitized = old_name.replace('/', "-");
+                let new_name_sanitized = updated_conn.name.replace('/', "-");
+                let old_suffix = format!("{old_name_sanitized} ({protocol_str})");
+                let new_suffix = format!("{new_name_sanitized} ({protocol_str})");
+                let new_key = match group_path.as_deref() {
+                    Some(p) if !p.is_empty() => format!("RustConn/{p}/{new_suffix}"),
+                    _ => format!("RustConn/{new_suffix}"),
+                };
+                // Try hierarchical old key first, then legacy flat key
+                let old_key_hierarchical = match group_path.as_deref() {
+                    Some(p) if !p.is_empty() => format!("RustConn/{p}/{old_suffix}"),
+                    _ => format!("RustConn/{old_suffix}"),
+                };
+                let old_key_legacy = format!("{old_name_sanitized} ({protocol_str})");
+                // Use hierarchical old key; if not found, resolver will try legacy during retrieval
+                let old_key = old_key_hierarchical;
+                (old_key, new_key, Some(old_key_legacy))
             }
             SecretBackendType::Bitwarden
             | SecretBackendType::OnePassword
@@ -448,7 +479,7 @@ pub fn rename_vault_credential(
                 };
                 let old_key = format!("rustconn/{old_identifier}");
                 let new_key = format!("rustconn/{new_identifier}");
-                (old_key, new_key)
+                (old_key, new_key, None)
             }
             SecretBackendType::EncryptedFile => {
                 // EncryptedFile uses the same "rustconn/{name}" flat key format.
@@ -465,7 +496,7 @@ pub fn rename_vault_credential(
                 };
                 let old_key = format!("rustconn/{old_identifier}");
                 let new_key = format!("rustconn/{new_identifier}");
-                (old_key, new_key)
+                (old_key, new_key, None)
             }
             SecretBackendType::KeePassXc | SecretBackendType::KdbxFile => {
                 // Should not reach here — handled above
@@ -481,6 +512,21 @@ pub fn rename_vault_credential(
         if let Ok(Some(creds)) = dispatch_vault_op(&secret_settings, &old_key, VaultOp::Retrieve) {
             dispatch_vault_op(&secret_settings, &new_key, VaultOp::Store(&creds))?;
             let _ = dispatch_vault_op(&secret_settings, &old_key, VaultOp::Delete);
+            // Also clean up legacy key if different from primary old key
+            if let Some(ref legacy) = legacy_old_key
+                && *legacy != old_key
+            {
+                let _ = dispatch_vault_op(&secret_settings, legacy, VaultOp::Delete);
+            }
+        } else if let Some(ref legacy) = legacy_old_key
+            && *legacy != old_key
+        {
+            // Try retrieving from legacy key format
+            if let Ok(Some(creds)) = dispatch_vault_op(&secret_settings, legacy, VaultOp::Retrieve)
+            {
+                dispatch_vault_op(&secret_settings, &new_key, VaultOp::Store(&creds))?;
+                let _ = dispatch_vault_op(&secret_settings, legacy, VaultOp::Delete);
+            }
         }
         Ok(())
     }
@@ -1420,9 +1466,12 @@ pub fn select_backend_for_load(
 
 /// Generates the correct store key for a connection based on the backend type.
 ///
-/// LibSecret uses `"{name} ({protocol})"` format (matching
-/// [`CredentialResolver::generate_keyring_key`]), while all other backends use
-/// `"rustconn/{name}"` (matching [`CredentialResolver::generate_lookup_key`]).
+/// LibSecret uses hierarchical `"RustConn/{group_path}/{name} ({protocol})"` format
+/// when `group_path` is provided (matching
+/// [`CredentialResolver::generate_keyring_key_with_hierarchy`]), or falls back to
+/// `"{name} ({protocol})"` for backward compatibility when no group path is given.
+/// All other backends use `"rustconn/{name}"` (matching
+/// [`CredentialResolver::generate_lookup_key`]).
 ///
 /// When `conn_name` is empty, falls back to `conn_host` for non-LibSecret
 /// backends, matching the resolver's `generate_lookup_key` behavior.
@@ -1435,12 +1484,30 @@ pub fn generate_store_key(
     protocol_str: &str,
     backend_type: rustconn_core::config::SecretBackendType,
 ) -> String {
+    generate_store_key_with_group(conn_name, conn_host, protocol_str, backend_type, None)
+}
+
+/// Generates a store key that includes the group path for LibSecret backends.
+///
+/// `group_path` is the `/`-separated group hierarchy (e.g. `"Production/Web"`).
+/// When provided and the backend is LibSecret, the key is
+/// `"RustConn/{group_path}/{name} ({protocol})"`.
+pub fn generate_store_key_with_group(
+    conn_name: &str,
+    conn_host: &str,
+    protocol_str: &str,
+    backend_type: rustconn_core::config::SecretBackendType,
+    group_path: Option<&str>,
+) -> String {
     use rustconn_core::config::SecretBackendType;
 
     if backend_type == SecretBackendType::LibSecret {
-        // LibSecret format: "{name} ({protocol})" — matches generate_keyring_key
         let name = conn_name.trim().replace('/', "-");
-        format!("{name} ({protocol_str})")
+        let suffix = format!("{name} ({protocol_str})");
+        match group_path {
+            Some(path) if !path.is_empty() => format!("RustConn/{path}/{suffix}"),
+            _ => format!("RustConn/{suffix}"),
+        }
     } else {
         // All other backends: "rustconn/{identifier}" — matches generate_lookup_key
         // Falls back to host when name is empty, same as CredentialResolver

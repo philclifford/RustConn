@@ -213,17 +213,30 @@ impl ConnectionDialog {
             };
 
             // Flat lookup key — must match the format used by
-            // `generate_store_key` so that store and retrieve are consistent.
-            // LibSecret uses "{name} ({protocol})", while Bitwarden and other
-            // backends use "rustconn/{name}".
+            // `generate_store_key_with_group` so that store and retrieve are consistent.
+            // LibSecret uses "RustConn/{group}/{name} ({protocol})", while Bitwarden
+            // and other backends use "rustconn/{name}".
             let flat_lookup_key = {
                 let backend_type =
                     crate::state::select_backend_for_load(&secret_settings);
-                crate::state::generate_store_key(
+                let selected_group_idx = group_dropdown.selected() as usize;
+                let groups_data_ref = groups_data.borrow();
+                let group_id = if selected_group_idx < groups_data_ref.len() {
+                    groups_data_ref[selected_group_idx].0
+                } else {
+                    None
+                };
+                drop(groups_data_ref);
+                let group_path = group_id.map(|gid| {
+                    rustconn_core::secret::KeePassHierarchy::resolve_group_path(gid, &groups)
+                        .join("/")
+                });
+                crate::state::generate_store_key_with_group(
                     &conn_name,
                     &conn_host,
                     protocol_suffix,
                     backend_type,
+                    group_path.as_deref(),
                 )
             };
 
@@ -562,11 +575,24 @@ impl ConnectionDialog {
 
             let flat_lookup_key = {
                 let backend_type = crate::state::select_backend_for_load(&secret_settings);
-                crate::state::generate_store_key(
+                let selected_group_idx = group_dropdown.selected() as usize;
+                let groups_data_ref = groups_data.borrow();
+                let group_id = if selected_group_idx < groups_data_ref.len() {
+                    groups_data_ref[selected_group_idx].0
+                } else {
+                    None
+                };
+                drop(groups_data_ref);
+                let group_path = group_id.map(|gid| {
+                    rustconn_core::secret::KeePassHierarchy::resolve_group_path(gid, &groups)
+                        .join("/")
+                });
+                crate::state::generate_store_key_with_group(
                     &conn_name,
                     &conn_host,
                     protocol_suffix,
                     backend_type,
+                    group_path.as_deref(),
                 )
             };
 

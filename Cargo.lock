@@ -5118,7 +5118,7 @@ dependencies = [
 
 [[package]]
 name = "rustconn"
-version = "0.19.17"
+version = "0.19.18"
 dependencies = [
  "async-channel",
  "chrono",
@@ -5155,7 +5155,7 @@ dependencies = [
 
 [[package]]
 name = "rustconn-cli"
-version = "0.19.17"
+version = "0.19.18"
 dependencies = [
  "chrono",
  "clap",
@@ -5177,7 +5177,7 @@ dependencies = [
 
 [[package]]
 name = "rustconn-core"
-version = "0.19.17"
+version = "0.19.18"
 dependencies = [
  "aes 0.9.2",
  "ar",
@@ -5237,7 +5237,7 @@ dependencies = [
 
 [[package]]
 name = "rustconn-pty-sys"
-version = "0.19.17"
+version = "0.19.18"
 dependencies = [
  "libc",
  "nix",

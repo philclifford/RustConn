@@ -387,6 +387,12 @@ pub fn rename_selected_item(
                                     |result: Result<(), String>| {
                                         if let Err(e) = result {
                                             tracing::warn!("Failed to rename vault entry: {}", e);
+                                            crate::toast::show_error_toast_on_active_window(
+                                                &crate::i18n::i18n_f(
+                                                    "Failed to rename vault entry: {}",
+                                                    &[&e],
+                                                ),
+                                            );
                                         }
                                     },
                                 );

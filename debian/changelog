@@ -1,3 +1,17 @@
+rustconn (0.19.18-1) unstable; urgency=medium
+
+  * Version bump to 0.19.18
+  * Fixed: Renaming a connection now updates the credential entry in
+    the password vault (#263)
+  * Fixed: System Keyring password collision for same-named connections
+    in different groups (#264)
+  * Fixed: KeePass database password keyring entry now namespaced with
+    RustConn prefix (#265)
+  * Changed: System Keyring credentials transparently migrated to new
+    hierarchical key format on first access
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Sun, 09 Aug 2026 18:00:00 +0200
+
 rustconn (0.19.17-1) unstable; urgency=medium
 
   * Version bump to 0.19.17

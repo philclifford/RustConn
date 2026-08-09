@@ -5,6 +5,20 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.18] - 2026-08-09
+
+### Fixed
+
+- **Renaming a connection now updates the credential entry in the password vault (issue [#263](https://github.com/totoshko88/RustConn/issues/263))** — when a connection was renamed, the rename logic for the secret backend already existed but failures were silently logged with `tracing::warn`, leaving the user unaware that KeePassXC (or any other vault) rejected the operation. The rename callback now shows an error toast so the user can take action (e.g. unlock the database or rename manually). Additionally, the Cloud Sync apply paths (both Simple Sync and Group Sync) did not trigger credential rename when a synced connection arrived with a new name — the local vault entry stayed under the old name-based key and subsequent password lookups failed. Both `apply_simple_sync_result` and `apply_group_merge_result` now detect name changes on incoming connection updates and migrate the vault entry before persisting the rename.
+
+- **System Keyring: password collision for same-named connections in different groups (issue [#264](https://github.com/totoshko88/RustConn/issues/264))** — the libsecret/keyring backend stored credentials under a flat key `"{name} ({protocol})"`, which meant two connections named "admin" in different groups (e.g. `oracle/admin` and `pve/admin`) would overwrite each other's password. The keyring key format is now hierarchical: `"RustConn/{group_path}/{name} ({protocol})"` (e.g. `"RustConn/oracle/admin (ssh)"`). This also uses `/` as the path separator, which allows KDE Wallet to map entries into visual folder hierarchies. Existing credentials stored under the old flat key are transparently migrated on first retrieval.
+
+- **KeePass database password in keyring no longer uses a generic entry name (issue [#265](https://github.com/totoshko88/RustConn/issues/265))** — the keyring entry for the KDBX unlock password was stored under the generic key `"kdbx-password"` with label `"KeePass Database Password"`, which could collide with other applications. The key is now `"rustconn/kdbx-password"` and the label is `"RustConn: KeePass Database Password"`. Existing entries are transparently migrated on first retrieval.
+
+### Changed
+
+- **System Keyring credential keys are migrated on first access** — credentials stored under the pre-0.19.18 flat key format (`"admin (ssh)"`) are automatically found via fallback lookup and re-stored under the new hierarchical key (`"RustConn/group/admin (ssh)"`). The migration is transparent and requires no user action. **Note:** downgrading to a version older than 0.19.18 after migration will require re-entering passwords, since older versions do not know the new key format.
+
 ## [0.19.17] - 2026-08-08
 
 ### Fixed
