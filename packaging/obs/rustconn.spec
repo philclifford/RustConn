@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.20
+Version:        0.19.21
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,13 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Tue Aug 11 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.21-0
+- Version bump to 0.19.21
+- Fixed: RustConn did not start at all on Fedora 44 — the setlocale guard
+  required exactly one live thread and aborted the process at startup (#271)
+- Changed: the thread-count clause of the setlocale contract is documented as
+  a judgement rather than a proof (#267)
+
 * Tue Aug 11 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.20-0
 - Added: SSH/MOSH connections can choose what Backspace and Delete send (#271)
 - Fixed: Saving Preferences threw away the Backspace/Delete choice on a live session (#271)

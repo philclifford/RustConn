@@ -17,8 +17,11 @@
 # be listed here. It was dropped when the advisory was resolved (issue #267)
 # rather than at some release boundary, so no version is named: gettext-rs 0.8
 # marks `setlocale` `unsafe`, and the only call sits in `rustconn-locale-sys`
-# behind a guard that refuses to run once a second thread exists or once the
-# startup window is sealed. Do not re-add the ignore.
+# behind a guard that refuses to run once the thread count has grown past the
+# baseline sampled on the first call, or once the startup window is sealed. The
+# baseline rather than a literal "one thread" because shared-library ELF
+# constructors legitimately spawn threads before `main()` on some distributions
+# (issue #271). Do not re-add the ignore.
 
 [advisories]
 ignore = ["RUSTSEC-2023-0071"]

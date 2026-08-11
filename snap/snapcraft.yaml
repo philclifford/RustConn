@@ -1,6 +1,6 @@
 name: rustconn
 base: core24
-version: '0.19.20'
+version: '0.19.21'
 title: RustConn
 summary: Manage remote connections easily
 description: |

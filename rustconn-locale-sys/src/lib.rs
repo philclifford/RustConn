@@ -49,9 +49,17 @@
 //!
 //! Enforced on Linux only:
 //!
-//! * **Thread count** — `/proc/self/task` is counted, and more than one live
-//!   thread is refused. No other platform is asked, macOS included, even though
-//!   RustConn ships macOS builds: obtaining the count there means
+//! * **Thread count growth** — `/proc/self/task` is counted on the first
+//!   admitted call to establish a *baseline*. Subsequent calls refuse if the
+//!   count has grown beyond that baseline, which means RustConn's own code
+//!   spawned a thread between calls. The baseline tolerates threads that
+//!   already exist when `main()` starts — shared-library constructors
+//!   (OpenSSL's DRBG jitter thread, p11-kit, GLib) legitimately create threads
+//!   during ELF `.init_array` execution before `main()` is entered
+//!   ([#271 comment](https://github.com/totoshko88/RustConn/issues/271#issuecomment-5258089991),
+//!   observed on Fedora 44 with glibc 2.43 / OpenSSL 3.5).
+//!   No other platform is asked, macOS included, even though RustConn ships
+//!   macOS builds: obtaining the count there means
 //!   `proc_pidinfo(PROC_PIDTASKINFO)` or `task_threads()`, which would add a
 //!   second `unsafe` block and a hand-transcribed C struct layout to the crate
 //!   whose entire purpose is to keep the unsafe surface small — and no CI job
@@ -88,8 +96,14 @@ pub use gettextrs::LocaleCategory;
 enum Refusal {
     /// The startup window was closed by [`seal_locale`].
     Sealed,
-    /// Another thread already exists, so the call would race it.
-    MultiThreaded(usize),
+    /// The thread count grew beyond the baseline, meaning RustConn spawned a
+    /// thread between calls to [`init_locale`].
+    ThreadCountGrew {
+        /// Thread count observed on the first admitted call.
+        baseline: usize,
+        /// Thread count observed on this (refused) call.
+        current: usize,
+    },
     /// An earlier call came from a different thread.
     ForeignThread,
 }
@@ -102,11 +116,11 @@ impl Refusal {
                  Applying a locale later is unsound (RUSTSEC-2026-0244) — persist the \
                  setting and let it take effect on the next start instead."
                 .to_string(),
-            Self::MultiThreaded(count) => format!(
-                "setlocale in a process with {count} threads: it writes global locale \
-                 state without synchronisation, which is unsound once a second thread \
-                 exists (RUSTSEC-2026-0244). Move this call earlier in main(), before \
-                 GTK, tokio and the tracing subscriber start."
+            Self::ThreadCountGrew { baseline, current } => format!(
+                "setlocale refused: thread count grew from {baseline} (at first call) \
+                 to {current}. A new thread was spawned between locale calls, making \
+                 setlocale unsound (RUSTSEC-2026-0244). Move this call earlier in \
+                 main(), before GTK, tokio and the tracing subscriber start."
             ),
             Self::ForeignThread => "setlocale from a different thread than the earlier calls: \
                  the startup locale must be applied entirely from the main thread \
@@ -125,6 +139,15 @@ impl Refusal {
 struct StartupGuard {
     sealed: AtomicBool,
     first_caller: OnceLock<ThreadId>,
+    /// Thread count observed on the first admitted call.
+    ///
+    /// A shared library's ELF constructor can spawn a thread before `main()`
+    /// is entered, so "the process has exactly one thread" is not a state an
+    /// application can arrange (issue #271). The guard records whatever it
+    /// finds on the first call and refuses only when the count *grows* past
+    /// it — that is the case the call site controls: a thread this program
+    /// started between two `init_locale` calls.
+    baseline_threads: OnceLock<usize>,
 }
 
 impl StartupGuard {
@@ -132,6 +155,7 @@ impl StartupGuard {
         Self {
             sealed: AtomicBool::new(false),
             first_caller: OnceLock::new(),
+            baseline_threads: OnceLock::new(),
         }
     }
 
@@ -144,14 +168,18 @@ impl StartupGuard {
         if self.sealed.load(Ordering::Acquire) {
             return Err(Refusal::Sealed);
         }
-        // Checked before the thread identity, because "a second thread exists"
-        // is the precondition the advisory is actually about: the first caller
-        // spawning a thread and then calling again is just as unsound as a
-        // second thread calling.
-        if let Some(count) = live_threads
-            && count > 1
-        {
-            return Err(Refusal::MultiThreaded(count));
+        // Thread-count check: refuse if the count grew beyond the baseline
+        // established on the first call. This catches application-spawned
+        // threads (tokio, GTK/GIO workers) while tolerating pre-existing
+        // threads from shared-library constructors.
+        if let Some(count) = live_threads {
+            let baseline = *self.baseline_threads.get_or_init(|| count);
+            if count > baseline {
+                return Err(Refusal::ThreadCountGrew {
+                    baseline,
+                    current: count,
+                });
+            }
         }
         if *self.first_caller.get_or_init(|| current) != current {
             return Err(Refusal::ForeignThread);
@@ -216,9 +244,9 @@ fn live_thread_count() -> Option<usize> {
 /// Panics if one of the *checked* clauses of the contract described at the
 /// [crate] level is violated: the call comes from a different thread than
 /// earlier calls, [`seal_locale`] has already run, or — on Linux, where the
-/// count is available — the process already has more than one thread. Also
-/// panics if `locale` contains an interior NUL byte, which cannot be passed to
-/// C.
+/// count is available — the thread count grew beyond the baseline established
+/// on the first call (meaning application code spawned a thread). Also panics
+/// if `locale` contains an interior NUL byte, which cannot be passed to C.
 #[must_use = "a None means the locale did not apply; at minimum say why it is being ignored"]
 pub fn init_locale(category: LocaleCategory, locale: &str) -> Option<String> {
     if let Err(refusal) = GUARD.admit(std::thread::current().id(), live_thread_count()) {
@@ -232,14 +260,31 @@ pub fn init_locale(category: LocaleCategory, locale: &str) -> Option<String> {
     //
     //  * the startup window is still open — `seal_locale` has not run;
     //  * this is the thread that made every earlier call;
-    //  * on Linux, and only there, `/proc/self/task` reported a single live
-    //    thread, so no other thread exists to race. Elsewhere — macOS — that
-    //    count is unavailable and the absence of a second thread is *not*
-    //    verified here; it follows from the call site instead. Both callers
-    //    (`rustconn::i18n::init` and `rustconn::i18n::apply_language_from_config`)
-    //    run from `main()` before GTK, GIO, tokio or the tracing subscriber
-    //    start, and any call that appeared later would come from one of those
-    //    threads and be refused by the thread-identity check above.
+    //  * on Linux, and only there, `/proc/self/task` reported a thread count
+    //    that has not grown beyond the baseline established on the first call.
+    //
+    //    Threads that already existed at that first call are tolerated rather
+    //    than refused, and this is the one clause that is a judgement rather
+    //    than a proof. A shared library's ELF constructor can spawn a thread
+    //    before `main()` is entered — observed on Fedora 44 (issue #271) — and
+    //    such a thread is not reachable from here to inspect: whether it reads
+    //    locale state is not something this crate can establish. What it can
+    //    establish is that nothing *this program* started is running, which is
+    //    the case the call site controls and the case a regression would
+    //    create. Treating an unavoidable, pre-`main()` library thread as a
+    //    hard error made the guard refuse a correct call site and abort at
+    //    startup, which is a worse outcome than the residual risk: the two
+    //    calls happen within a few statements of each other at the top of
+    //    `main()`, so the window in which anything could observe half-replaced
+    //    locale state is as small as the program can make it.
+    //
+    //    Elsewhere — macOS — that count is unavailable and the absence of a
+    //    new thread is *not* verified here; it follows from the call site
+    //    instead. Both callers (`rustconn::i18n::init` and
+    //    `rustconn::i18n::apply_language_from_config`) run from `main()` before
+    //    GTK, GIO, tokio or the tracing subscriber start, and any call that
+    //    appeared later would come from one of those threads and be refused by
+    //    the thread-identity check above.
     //
     // Upstream additionally asks that no POSIX signal handler be enabled yet.
     // That clause is not checked — it is not checkable, since the Rust runtime
@@ -293,15 +338,59 @@ mod tests {
         assert_eq!(guard.admit(me, Some(1)), Ok(()));
     }
 
-    /// Contract test (M-UNSAFE): the check that makes the `unsafe` call sound.
-    /// A second live thread is refused, which is precisely the situation
-    /// RUSTSEC-2026-0244 describes.
+    /// Pre-existing threads from shared-library constructors are tolerated:
+    /// the first call establishes a baseline, and the same count on
+    /// subsequent calls is fine (issue #271 — Fedora 44).
     #[test]
-    fn refuses_once_a_second_thread_exists() {
+    fn admits_when_library_threads_exist_at_baseline() {
         let guard = StartupGuard::new();
         let me = std::thread::current().id();
 
-        assert_eq!(guard.admit(me, Some(2)), Err(Refusal::MultiThreaded(2)));
+        // Simulate a process that starts with 2 threads (e.g. OpenSSL DRBG)
+        assert_eq!(guard.admit(me, Some(2)), Ok(()));
+        // Subsequent call with same count — still fine
+        assert_eq!(guard.admit(me, Some(2)), Ok(()));
+        // Even if the count dips (a library thread exited), that is fine too
+        assert_eq!(guard.admit(me, Some(1)), Ok(()));
+    }
+
+    /// Contract test (M-UNSAFE): the check that makes the `unsafe` call sound.
+    /// A thread count that *grows* beyond the baseline is refused — this means
+    /// application code spawned a thread between calls.
+    #[test]
+    fn refuses_when_thread_count_grows_beyond_baseline() {
+        let guard = StartupGuard::new();
+        let me = std::thread::current().id();
+
+        // Baseline: 1 thread
+        assert_eq!(guard.admit(me, Some(1)), Ok(()));
+        // Now a second thread appeared — refused
+        assert_eq!(
+            guard.admit(me, Some(2)),
+            Err(Refusal::ThreadCountGrew {
+                baseline: 1,
+                current: 2
+            })
+        );
+    }
+
+    /// Even with a higher baseline, growth is still detected.
+    #[test]
+    fn refuses_growth_from_elevated_baseline() {
+        let guard = StartupGuard::new();
+        let me = std::thread::current().id();
+
+        // Baseline: 3 threads (library constructors)
+        assert_eq!(guard.admit(me, Some(3)), Ok(()));
+        assert_eq!(guard.admit(me, Some(3)), Ok(()));
+        // Growth beyond baseline
+        assert_eq!(
+            guard.admit(me, Some(4)),
+            Err(Refusal::ThreadCountGrew {
+                baseline: 3,
+                current: 4
+            })
+        );
     }
 
     /// A call from a thread other than the first caller is refused even if the
@@ -436,7 +525,10 @@ mod tests {
     fn refusals_explain_themselves() {
         for refusal in [
             Refusal::Sealed,
-            Refusal::MultiThreaded(4),
+            Refusal::ThreadCountGrew {
+                baseline: 1,
+                current: 4,
+            },
             Refusal::ForeignThread,
         ] {
             let text = refusal.describe();

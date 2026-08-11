@@ -28,8 +28,13 @@ yanked = "warn"
 # be ignored here. It was removed from this list when the advisory was actually
 # resolved (issue #267), which is why no version is named: it is fixed rather
 # than accepted. gettext-rs is on 0.8, where `setlocale` is `unsafe`, and the
-# call lives in `rustconn-locale-sys` behind a guard that refuses to run it once
-# a second thread exists or once the startup window is sealed. Do not re-add the
+# call lives in `rustconn-locale-sys` behind a guard that refuses to run once
+# the thread count has grown past the baseline sampled on the first call, or
+# once the startup window is sealed. The baseline rather than a literal "one
+# thread" because shared-library ELF constructors legitimately spawn threads
+# before `main()` is entered on some distributions (issue #271). What makes the
+# call sound is the call site — `main()`, ahead of GTK/tokio/tracing; the guard
+# is defence-in-depth against that ordering regressing. Do not re-add the
 # ignore — if this advisory reappears, something regressed.
 ignore = [
     "RUSTSEC-2023-0071",
