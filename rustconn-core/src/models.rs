@@ -28,16 +28,16 @@ pub use group::{ConnectionGroup, collect_descendant_group_ids};
 pub use highlight::HighlightRule;
 pub use history::{ConnectionHistoryEntry, ConnectionStatistics, HistorySettings};
 pub use protocol::{
-    AwsSsmConfig, AzureBastionConfig, AzureSshConfig, BoundaryConfig, CloudflareAccessConfig,
-    GcpIapConfig, GenericZeroTrustConfig, HoopDevConfig, KubernetesConfig, MoshConfig,
-    MoshPredictMode, OciBastionConfig, PortForward, PortForwardDirection, ProtocolConfig,
-    ProtocolType, RdpAudioMode, RdpClientMode, RdpConfig, RdpGateway, RdpPerformanceMode,
-    RdpSecurityLayer, Resolution, ScaleOverride, SerialBaudRate, SerialConfig, SerialDataBits,
-    SerialFlowControl, SerialParity, SerialStopBits, SharedFolder, SpiceConfig,
-    SpiceImageCompression, SshAuthMethod, SshConfig, SshKeySource, TailscaleSshConfig,
-    TeleportConfig, TelnetBackspaceSends, TelnetConfig, TelnetDeleteSends, VncClientMode,
-    VncConfig, VncPerformanceMode, WebBrowserMode, WebConfig, ZeroTrustConfig, ZeroTrustProvider,
-    ZeroTrustProviderConfig, build_remote_app_freerdp_args,
+    AwsSsmConfig, AzureBastionConfig, AzureSshConfig, BackspaceSends, BoundaryConfig,
+    CloudflareAccessConfig, DeleteSends, GcpIapConfig, GenericZeroTrustConfig, HoopDevConfig,
+    KubernetesConfig, MoshConfig, MoshPredictMode, OciBastionConfig, PortForward,
+    PortForwardDirection, ProtocolConfig, ProtocolType, RdpAudioMode, RdpClientMode, RdpConfig,
+    RdpGateway, RdpPerformanceMode, RdpSecurityLayer, Resolution, ScaleOverride, SerialBaudRate,
+    SerialConfig, SerialDataBits, SerialFlowControl, SerialParity, SerialStopBits, SharedFolder,
+    SpiceConfig, SpiceImageCompression, SshAuthMethod, SshConfig, SshKeySource, TailscaleSshConfig,
+    TeleportConfig, TelnetConfig, VncClientMode, VncConfig, VncPerformanceMode, WebBrowserMode,
+    WebConfig, ZeroTrustConfig, ZeroTrustProvider, ZeroTrustProviderConfig,
+    build_remote_app_freerdp_args,
 };
 pub use smart_folder::SmartFolder;
 pub use snippet::{ScriptDelivery, Snippet, SnippetTarget, SnippetVariable};

@@ -479,6 +479,8 @@ impl AsbruImporter {
                         verbose: false,
                         mptcp: false,
                         remote_path: None,
+                        // Ásbrú has no equivalent erase-key setting to carry over.
+                        ..Default::default()
                     }),
                     22u16,
                 )

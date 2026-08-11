@@ -42,6 +42,7 @@ pub fn sample_ssh_connection_with_key() -> Connection {
         verbose: false,
         mptcp: false,
         remote_path: None,
+        ..Default::default()
     };
 
     let mut conn = Connection::new(
@@ -85,6 +86,7 @@ pub fn sample_ssh_connection_custom_port() -> Connection {
         verbose: false,
         mptcp: false,
         remote_path: None,
+        ..Default::default()
     };
 
     let mut conn = Connection::new(
@@ -126,6 +128,7 @@ pub fn sample_ssh_connection_with_proxy() -> Connection {
         verbose: false,
         mptcp: false,
         remote_path: None,
+        ..Default::default()
     };
 
     let mut conn = Connection::new(

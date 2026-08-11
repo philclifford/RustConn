@@ -6,10 +6,15 @@
 //! object element names follow the scripting object model: `RoyalSSHConnection`
 //! for terminal connections, `RoyalRDSConnection` (formerly
 //! `RoyalTerminalServicesConnection`) for RDP and `RoyalVNCConnection` for VNC.
-//! `.rtsz` may be a ZIP container around that XML, which is unpacked here.
+//! A terminal object is SSH or Telnet depending on its own `ConnectionType`
+//! field. `.rtsz` may be a ZIP container around that XML, which is unpacked
+//! here.
 //!
-//! Passwords are stored encrypted inside the document, so only usernames and
-//! domains are imported; such connections are marked as "prompt for password".
+//! Passwords cannot be imported. Royal TS never writes them in clear text: a
+//! document without an encryption password has them encrypted under a static
+//! key, and one with a password under that password. Only usernames and
+//! domains are read, and the affected connections are marked as "prompt for
+//! password" with a warning on the import result.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -19,11 +24,11 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 use uuid::Uuid;
 
-use super::traits::{ImportResult, ImportSource, SkippedEntry, read_import_bytes};
+use super::traits::{ImportResult, ImportSource, ImportWarning, SkippedEntry, read_import_bytes};
 use crate::error::ImportError;
 use crate::models::{
     Connection, ConnectionGroup, PasswordSource, ProtocolConfig, RdpConfig, SshAuthMethod,
-    SshConfig, VncConfig,
+    SshConfig, TelnetConfig, VncConfig,
 };
 
 /// An all-zero GUID, used by Royal TS for "no object assigned".
@@ -39,21 +44,47 @@ const MAX_CREDENTIAL_INHERITANCE_DEPTH: usize = 32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RoyalProtocol {
     Ssh,
+    Telnet,
     Rdp,
     Vnc,
 }
 
 impl RoyalProtocol {
     /// Returns the protocol for a Royal TS object element name.
+    ///
+    /// Matched case insensitively: the element name is the .NET type name of
+    /// the object, and its casing has drifted between document versions.
     fn from_element(name: &str) -> Option<Self> {
-        match name {
-            "RoyalSSHConnection" => Some(Self::Ssh),
+        match name.to_ascii_lowercase().as_str() {
+            // The Terminal object covers SSH, Telnet, RAW, rlogin and serial;
+            // its own `ConnectionType` field picks one. See terminal_protocol.
+            "royalsshconnection" => Some(Self::Ssh),
             // RoyalRDSConnection is the current name, RoyalTerminalServicesConnection
             // the legacy one; RoyalRDPConnection is written by older RustConn exports.
-            "RoyalRDSConnection" | "RoyalTerminalServicesConnection" | "RoyalRDPConnection" => {
+            "royalrdsconnection" | "royalterminalservicesconnection" | "royalrdpconnection" => {
                 Some(Self::Rdp)
             }
-            "RoyalVNCConnection" => Some(Self::Vnc),
+            "royalvncconnection" => Some(Self::Vnc),
+            _ => None,
+        }
+    }
+
+    /// Resolves the `ConnectionType` field of a Terminal connection object.
+    ///
+    /// Royal TS writes `identifier;Display Name` (`ssh;SSH`,
+    /// `telnet;Telnet`), and the identifier selects the wire protocol. RAW,
+    /// rlogin and serial have no RustConn equivalent and return `None`, which
+    /// leaves the connection on the object's default protocol.
+    fn terminal_protocol(value: &str) -> Option<Self> {
+        match value
+            .split(';')
+            .next()?
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "ssh" => Some(Self::Ssh),
+            "telnet" => Some(Self::Telnet),
             _ => None,
         }
     }
@@ -62,6 +93,7 @@ impl RoyalProtocol {
     const fn default_port(self) -> u16 {
         match self {
             Self::Ssh => 22,
+            Self::Telnet => 23,
             Self::Rdp => 3389,
             Self::Vnc => 5900,
         }
@@ -109,6 +141,14 @@ struct ConnectionData {
     credential: CredentialRef,
     /// Path to private key file
     private_key_path: Option<String>,
+    /// Protocol selected by the object's own `ConnectionType` field, which
+    /// overrides the one implied by the element name.
+    protocol_override: Option<RoyalProtocol>,
+    /// Whether the object carried an encrypted password of its own.
+    ///
+    /// The blob itself is unreadable, but its presence is the only evidence
+    /// that this connection had a password at all.
+    has_encrypted_password: bool,
 }
 
 /// Royal TS folder data
@@ -235,6 +275,9 @@ impl RoyalTsImporter {
                 Ok(Event::End(e)) => {
                     let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                     if let Some(protocol) = RoyalProtocol::from_element(&name) {
+                        // A Terminal object's ConnectionType wins over the
+                        // protocol implied by the element name.
+                        let protocol = current_connection.protocol_override.unwrap_or(protocol);
                         connections.push((protocol, current_connection.clone()));
                         object = Context::None;
                     } else if name == "RoyalFolder" {
@@ -356,6 +399,20 @@ impl RoyalTsImporter {
             }
         }
 
+        // Royal TS never stores a password in clear text: without a document
+        // password it encrypts them under a static key, with one under that
+        // password. Neither is readable here, so say so instead of leaving the
+        // user to discover the empty password on the first connect.
+        if result
+            .connections
+            .iter()
+            .any(|connection| connection.password_source == PasswordSource::Prompt)
+        {
+            result.add_warning(ImportWarning::PasswordsEncrypted {
+                source_name: "Royal TS",
+            });
+        }
+
         result
     }
 
@@ -415,7 +472,7 @@ impl RoyalTsImporter {
     ) {
         // RDS connections store the port in RDPPort, VNC in Port or VNCPort.
         let is_port_field = match protocol {
-            RoyalProtocol::Ssh => field == "Port",
+            RoyalProtocol::Ssh | RoyalProtocol::Telnet => field == "Port",
             RoyalProtocol::Rdp => field == "Port" || field == "RDPPort",
             RoyalProtocol::Vnc => field == "Port" || field == "VNCPort",
         };
@@ -429,7 +486,21 @@ impl RoyalTsImporter {
         match field {
             "Name" => conn.name = value.to_string(),
             "URI" => conn.uri = Some(value.to_string()),
+            // The target host under one of the alternative keys Royal TS and
+            // third-party exporters use; URI wins when both are present.
+            "ComputerName" | "HostName" | "Host" if conn.uri.is_none() => {
+                conn.uri = Some(value.to_string());
+            }
+            // Only the Terminal object carries a meaningful ConnectionType.
+            "ConnectionType" if protocol == RoyalProtocol::Ssh => {
+                conn.protocol_override = RoyalProtocol::terminal_protocol(value);
+            }
             "ParentID" => conn.parent_id = Some(value.to_string()),
+            // The blob is encrypted, so only its presence is usable: it proves
+            // the object had a password even when no credential object resolves.
+            "Password" | "CredentialPassword" | "PasswordSecure" => {
+                conn.has_encrypted_password = true;
+            }
             "PrivateKeyFile" | "KeyFilePath" | "PrivateKeyPath" if !value.is_empty() => {
                 conn.private_key_path = Some(value.to_string());
             }
@@ -618,6 +689,7 @@ impl RoyalTsImporter {
                     ..Default::default()
                 })
             }
+            RoyalProtocol::Telnet => ProtocolConfig::Telnet(TelnetConfig::default()),
             RoyalProtocol::Rdp => ProtocolConfig::Rdp(RdpConfig::default()),
             RoyalProtocol::Vnc => ProtocolConfig::Vnc(VncConfig::default()),
         };
@@ -630,8 +702,14 @@ impl RoyalTsImporter {
             if protocol == RoyalProtocol::Rdp {
                 connection.domain.clone_from(&resolved.domain);
             }
-            // Royal TS keeps passwords encrypted in the document, so they
-            // cannot be imported - ask the user on connect instead.
+        }
+
+        // Royal TS keeps passwords encrypted in the document, so they cannot be
+        // imported - ask the user on connect instead. An object carrying its own
+        // encrypted <Password> needs this as much as one pointing at a
+        // credential object: it had a password, and leaving password_source at
+        // the default would neither supply one nor ask for one.
+        if credentials.is_some() || conn.has_encrypted_password {
             connection.password_source = PasswordSource::Prompt;
         }
 
@@ -1131,6 +1209,198 @@ mod tests {
             "reason should name the object type: {}",
             result.skipped[0].reason
         );
+    }
+
+    /// A Royal TS Terminal object is SSH or Telnet depending on its own
+    /// `ConnectionType` field; Telnet used to be imported as SSH on port 22.
+    #[test]
+    fn terminal_connection_type_selects_telnet() {
+        let importer = RoyalTsImporter::new();
+        let content = r#"<?xml version="1.0" encoding="utf-8"?>
+<RTSZDocument>
+  <RoyalSSHConnection>
+    <ID>t1</ID>
+    <Name>Switch</Name>
+    <URI>switch.example.com</URI>
+    <ConnectionType>telnet;Telnet</ConnectionType>
+  </RoyalSSHConnection>
+  <RoyalSSHConnection>
+    <ID>t2</ID>
+    <Name>Console</Name>
+    <URI>console.example.com</URI>
+    <ConnectionType>telnet;Telnet</ConnectionType>
+    <Port>2323</Port>
+  </RoyalSSHConnection>
+  <RoyalSSHConnection>
+    <ID>t3</ID>
+    <Name>Shell</Name>
+    <URI>shell.example.com</URI>
+    <ConnectionType>ssh;SSH</ConnectionType>
+  </RoyalSSHConnection>
+  <RoyalSSHConnection>
+    <ID>t4</ID>
+    <Name>Serial</Name>
+    <URI>serial.example.com</URI>
+    <ConnectionType>serial;Serial Port</ConnectionType>
+  </RoyalSSHConnection>
+</RTSZDocument>"#;
+
+        let result = importer.parse_xml(content, "test.rtsz");
+        assert_eq!(result.connections.len(), 4, "{:?}", result.skipped);
+
+        let switch = &result.connections[0];
+        assert!(matches!(switch.protocol_config, ProtocolConfig::Telnet(_)));
+        assert_eq!(switch.port, 23, "Telnet defaults to 23, not 22");
+
+        let console = &result.connections[1];
+        assert!(matches!(console.protocol_config, ProtocolConfig::Telnet(_)));
+        assert_eq!(console.port, 2323, "an explicit Port still wins");
+
+        assert!(matches!(
+            result.connections[2].protocol_config,
+            ProtocolConfig::Ssh(_)
+        ));
+        // A type RustConn has no protocol for stays on the object's default.
+        assert!(matches!(
+            result.connections[3].protocol_config,
+            ProtocolConfig::Ssh(_)
+        ));
+    }
+
+    #[test]
+    fn matches_object_elements_case_insensitively() {
+        let importer = RoyalTsImporter::new();
+        let content = r#"<?xml version="1.0" encoding="utf-8"?>
+<RTSZDocument>
+  <RoyalRdsConnection>
+    <Name>Server</Name>
+    <URI>ts.example.com</URI>
+  </RoyalRdsConnection>
+  <RoyalVncConnection>
+    <Name>Desktop</Name>
+    <URI>vnc.example.com</URI>
+  </RoyalVncConnection>
+</RTSZDocument>"#;
+
+        let result = importer.parse_xml(content, "test.rtsz");
+        assert_eq!(result.connections.len(), 2, "{:?}", result.skipped);
+        assert!(matches!(
+            result.connections[0].protocol_config,
+            ProtocolConfig::Rdp(_)
+        ));
+        assert!(matches!(
+            result.connections[1].protocol_config,
+            ProtocolConfig::Vnc(_)
+        ));
+    }
+
+    /// An object whose target host is under an alternative key was skipped as
+    /// "Missing host"; `URI` still wins when both are present.
+    #[test]
+    fn accepts_alternative_host_fields() {
+        let importer = RoyalTsImporter::new();
+        let content = r#"<?xml version="1.0" encoding="utf-8"?>
+<RTSZDocument>
+  <RoyalRDSConnection>
+    <Name>By computer name</Name>
+    <ComputerName>host1.example.com</ComputerName>
+  </RoyalRDSConnection>
+  <RoyalVNCConnection>
+    <Name>By host name</Name>
+    <HostName>host2.example.com</HostName>
+  </RoyalVNCConnection>
+  <RoyalRDSConnection>
+    <Name>Both</Name>
+    <ComputerName>ignored.example.com</ComputerName>
+    <URI>preferred.example.com</URI>
+  </RoyalRDSConnection>
+</RTSZDocument>"#;
+
+        let result = importer.parse_xml(content, "test.rtsz");
+        assert_eq!(result.connections.len(), 3, "{:?}", result.skipped);
+        assert_eq!(result.connections[0].host, "host1.example.com");
+        assert_eq!(result.connections[1].host, "host2.example.com");
+        assert_eq!(result.connections[2].host, "preferred.example.com");
+    }
+
+    /// Royal TS encrypts passwords inside the document, so the import has to
+    /// say why the connections have none.
+    #[test]
+    fn warns_that_passwords_cannot_be_imported() {
+        let importer = RoyalTsImporter::new();
+        let content = r#"<?xml version="1.0" encoding="utf-8"?>
+<RTSZDocument>
+  <RoyalCredential>
+    <ID>cred1</ID>
+    <Name>Root</Name>
+    <UserName>root</UserName>
+  </RoyalCredential>
+  <RoyalSSHConnection>
+    <Name>Server</Name>
+    <URI>server.example.com</URI>
+    <CredentialId>cred1</CredentialId>
+  </RoyalSSHConnection>
+</RTSZDocument>"#;
+
+        let result = importer.parse_xml(content, "test.rtsz");
+        assert_eq!(
+            result.connections[0].password_source,
+            PasswordSource::Prompt
+        );
+        assert_eq!(
+            result.warnings,
+            vec![ImportWarning::PasswordsEncrypted {
+                source_name: "Royal TS"
+            }]
+        );
+    }
+
+    /// A connection carrying its own encrypted `<Password>` and no credential
+    /// object used to import with `PasswordSource::None`: no password, and no
+    /// prompt either, so connecting failed with nothing on screen explaining
+    /// why. The encrypted blob is unreadable, but its presence is proof the
+    /// object had a password, which is all the warning needs.
+    #[test]
+    fn warns_about_inline_encrypted_password_without_credential_object() {
+        let importer = RoyalTsImporter::new();
+        let content = r#"<?xml version="1.0" encoding="utf-8"?>
+<RTSZDocument>
+  <RoyalSSHConnection>
+    <Name>Server</Name>
+    <URI>server.example.com</URI>
+    <Password>0x01AABBCCDDEEFF</Password>
+  </RoyalSSHConnection>
+</RTSZDocument>"#;
+
+        let result = importer.parse_xml(content, "test.rtsz");
+        assert_eq!(result.connections.len(), 1, "{:?}", result.skipped);
+        assert_eq!(
+            result.connections[0].password_source,
+            PasswordSource::Prompt,
+            "an object that had a password must ask for one on connect"
+        );
+        assert_eq!(
+            result.warnings,
+            vec![ImportWarning::PasswordsEncrypted {
+                source_name: "Royal TS"
+            }]
+        );
+    }
+
+    #[test]
+    fn does_not_warn_when_no_credentials_were_found() {
+        let importer = RoyalTsImporter::new();
+        let content = r#"<?xml version="1.0" encoding="utf-8"?>
+<RTSZDocument>
+  <RoyalSSHConnection>
+    <Name>Server</Name>
+    <URI>server.example.com</URI>
+  </RoyalSSHConnection>
+</RTSZDocument>"#;
+
+        let result = importer.parse_xml(content, "test.rtsz");
+        assert_eq!(result.connections.len(), 1);
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
     }
 
     #[test]

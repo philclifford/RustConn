@@ -174,15 +174,15 @@ pub use import::{
 };
 pub use mc_ssh::{McSshEnv, cleanup_mc_ssh_env, prepare_mc_ssh_env};
 pub use models::{
-    Connection, ConnectionGroup, ConnectionHistoryEntry, ConnectionStatistics, ConnectionTemplate,
-    Credentials, CustomProperty, DynamicConnectionEntry, DynamicFolderConfig, DynamicFolderResult,
-    HighlightRule, HistorySettings, KubernetesConfig, MoshConfig, MoshPredictMode, PasswordSource,
-    PortForward, PortForwardDirection, PropertyType, ProtocolConfig, ProtocolType, RdpAudioMode,
-    RdpConfig, RdpGateway, Resolution, ScaleOverride, SerialBaudRate, SerialConfig, SerialDataBits,
-    SerialFlowControl, SerialParity, SerialStopBits, Snippet, SnippetTarget, SnippetVariable,
-    SpiceConfig, SpiceImageCompression, SshAuthMethod, SshConfig, SshKeySource, StandaloneTunnel,
-    TelnetBackspaceSends, TelnetConfig, TelnetDeleteSends, TemplateError, TunnelStatus, VncConfig,
-    WindowGeometry, WindowMode, WorkspaceEntry, WorkspaceProfile, WorkspaceSplitLayout,
+    BackspaceSends, Connection, ConnectionGroup, ConnectionHistoryEntry, ConnectionStatistics,
+    ConnectionTemplate, Credentials, CustomProperty, DeleteSends, DynamicConnectionEntry,
+    DynamicFolderConfig, DynamicFolderResult, HighlightRule, HistorySettings, KubernetesConfig,
+    MoshConfig, MoshPredictMode, PasswordSource, PortForward, PortForwardDirection, PropertyType,
+    ProtocolConfig, ProtocolType, RdpAudioMode, RdpConfig, RdpGateway, Resolution, ScaleOverride,
+    SerialBaudRate, SerialConfig, SerialDataBits, SerialFlowControl, SerialParity, SerialStopBits,
+    Snippet, SnippetTarget, SnippetVariable, SpiceConfig, SpiceImageCompression, SshAuthMethod,
+    SshConfig, SshKeySource, StandaloneTunnel, TelnetConfig, TemplateError, TunnelStatus,
+    VncConfig, WindowGeometry, WindowMode, WorkspaceEntry, WorkspaceProfile, WorkspaceSplitLayout,
     collect_descendant_group_ids, group_templates_by_protocol,
 };
 pub use monitoring::{

@@ -480,6 +480,42 @@ impl PartialEq for SecretSettings {
 
 impl Eq for SecretSettings {}
 
+/// System-keyring entries orphaned by a settings change.
+///
+/// Produced by [`SecretSettings::keyring_revocations`]; each flag marks a
+/// credential whose backend no longer stores it in the system keyring, so the
+/// stale entry has to be removed. Kept as a plain flag record rather than a set
+/// so the caller can name each keyring key explicitly.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one independent flag per keyring entry; a set would hide which key is meant"
+)]
+pub struct KeyringRevocations {
+    /// The KeePass database password entry is stale.
+    pub kdbx_password: bool,
+    /// The Bitwarden master password entry is stale.
+    pub bitwarden_password: bool,
+    /// The Bitwarden API `client_id` / `client_secret` entries are stale.
+    pub bitwarden_api_credentials: bool,
+    /// The 1Password service account token entry is stale.
+    pub onepassword_token: bool,
+    /// The Passbolt GPG passphrase entry is stale.
+    pub passbolt_passphrase: bool,
+}
+
+impl KeyringRevocations {
+    /// Reports whether anything needs revoking at all.
+    #[must_use]
+    pub const fn any(&self) -> bool {
+        self.kdbx_password
+            || self.bitwarden_password
+            || self.bitwarden_api_credentials
+            || self.onepassword_token
+            || self.passbolt_passphrase
+    }
+}
+
 /// Secret backend type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -904,6 +940,233 @@ impl SecretSettings {
                 self.passbolt_save_to_keyring = true;
                 self.passbolt_passphrase_encrypted = None;
             }
+        }
+    }
+
+    /// Reports whether `self` carries a runtime secret that `previous` lacks.
+    ///
+    /// The runtime `SecretString` fields are `#[serde(skip)]` and deliberately
+    /// excluded from [`PartialEq`], so a password freshly typed into the
+    /// Settings dialog looks like "nothing changed" to the dirty check that
+    /// decides whether the save path runs at all. For a keyring-backed backend
+    /// that save is the only thing that ever reaches the keyring, so the typed
+    /// password would be dropped on dialog close (issue #272).
+    ///
+    /// Only values that are *newly present or different* count. A field left
+    /// `None` is never a change: the dialog intentionally leaves password
+    /// entries it could not load empty, and an untouched open/close round trip
+    /// must stay a no-op.
+    #[must_use]
+    pub fn has_new_runtime_secret(&self, previous: &Self) -> bool {
+        fn is_new(current: Option<&SecretString>, previous: Option<&SecretString>) -> bool {
+            use secrecy::ExposeSecret;
+            current.is_some_and(|current| {
+                previous.is_none_or(|previous| previous.expose_secret() != current.expose_secret())
+            })
+        }
+
+        is_new(self.kdbx_password.as_ref(), previous.kdbx_password.as_ref())
+            || is_new(
+                self.bitwarden_password.as_ref(),
+                previous.bitwarden_password.as_ref(),
+            )
+            || is_new(
+                self.bitwarden_client_id.as_ref(),
+                previous.bitwarden_client_id.as_ref(),
+            )
+            || is_new(
+                self.bitwarden_client_secret.as_ref(),
+                previous.bitwarden_client_secret.as_ref(),
+            )
+            || is_new(
+                self.onepassword_service_account_token.as_ref(),
+                previous.onepassword_service_account_token.as_ref(),
+            )
+            || is_new(
+                self.passbolt_passphrase.as_ref(),
+                previous.passbolt_passphrase.as_ref(),
+            )
+    }
+
+    /// Applies every backend's storage choice to its persisted blob.
+    ///
+    /// One rule, identical for all four backends:
+    /// [`CredentialStorage::SystemKeyring`] makes the keyring the persistence
+    /// layer, so no encrypted blob is written — duplicating the secret on disk
+    /// would contradict the user's explicit choice (issue #272);
+    /// [`CredentialStorage::EncryptedFile`] encrypts whatever runtime secret was
+    /// collected and otherwise leaves the blob already on disk alone;
+    /// [`CredentialStorage::None`] clears both copies.
+    ///
+    /// Meant to run immediately before the settings are written to disk.
+    /// Clearing a runtime secret here is safe for the GUI caller: it restores
+    /// runtime-only fields from the previous settings afterwards, so the session
+    /// keeps working while nothing lands on disk.
+    pub fn apply_storage_persistence(&mut self) {
+        // Read every choice up front — the per-backend steps below mutate the
+        // very blobs the `*_storage()` helpers derive their answer from.
+        let kdbx = self.kdbx_storage();
+        let bitwarden = self.bitwarden_storage();
+        let onepassword = self.onepassword_storage();
+        let passbolt = self.passbolt_storage();
+
+        self.apply_kdbx_persistence(kdbx);
+        self.apply_bitwarden_persistence(bitwarden);
+        self.apply_onepassword_persistence(onepassword);
+        self.apply_passbolt_persistence(passbolt);
+    }
+
+    /// KDBX half of [`Self::apply_storage_persistence`].
+    fn apply_kdbx_persistence(&mut self, storage: CredentialStorage) {
+        if !self.kdbx_enabled {
+            self.clear_password();
+            return;
+        }
+        match storage {
+            CredentialStorage::None => self.clear_password(),
+            CredentialStorage::EncryptedFile => {
+                if self.kdbx_password.is_some() {
+                    self.encrypt_password();
+                }
+            }
+            CredentialStorage::SystemKeyring => self.kdbx_password_encrypted = None,
+        }
+    }
+
+    /// Bitwarden half of [`Self::apply_storage_persistence`], covering both the
+    /// master password and the API key pair.
+    fn apply_bitwarden_persistence(&mut self, storage: CredentialStorage) {
+        match storage {
+            CredentialStorage::None => self.clear_bitwarden_password(),
+            CredentialStorage::EncryptedFile => {
+                if self.bitwarden_password.is_some() {
+                    self.encrypt_bitwarden_password();
+                }
+            }
+            CredentialStorage::SystemKeyring => self.bitwarden_password_encrypted = None,
+        }
+
+        // The API key pair has no selector of its own — "Save master password"
+        // is the only storage choice the Bitwarden section offers, so the
+        // keyring case follows it and the credentials go to the keyring instead
+        // of to disk. `EncryptedFile` and `None` deliberately keep encrypting:
+        // an API key is an *alternative* to the master password, and users who
+        // authenticate with one while leaving the selector at its "Don't save"
+        // default still expect it to survive a restart.
+        if self.bitwarden_use_api_key {
+            if storage == CredentialStorage::SystemKeyring {
+                self.bitwarden_client_id_encrypted = None;
+                self.bitwarden_client_secret_encrypted = None;
+            } else if self.bitwarden_client_id.is_some() || self.bitwarden_client_secret.is_some() {
+                self.encrypt_bitwarden_api_credentials();
+            }
+        }
+    }
+
+    /// 1Password half of [`Self::apply_storage_persistence`].
+    fn apply_onepassword_persistence(&mut self, storage: CredentialStorage) {
+        match storage {
+            CredentialStorage::None => {
+                self.onepassword_service_account_token = None;
+                self.onepassword_service_account_token_encrypted = None;
+            }
+            CredentialStorage::EncryptedFile => {
+                if self.onepassword_service_account_token.is_some() {
+                    self.encrypt_onepassword_token();
+                }
+            }
+            CredentialStorage::SystemKeyring => {
+                self.onepassword_service_account_token_encrypted = None;
+            }
+        }
+    }
+
+    /// Passbolt half of [`Self::apply_storage_persistence`].
+    fn apply_passbolt_persistence(&mut self, storage: CredentialStorage) {
+        match storage {
+            CredentialStorage::None => {
+                self.passbolt_passphrase = None;
+                self.passbolt_passphrase_encrypted = None;
+            }
+            CredentialStorage::EncryptedFile => {
+                if self.passbolt_passphrase.is_some() {
+                    self.encrypt_passbolt_passphrase();
+                }
+            }
+            CredentialStorage::SystemKeyring => self.passbolt_passphrase_encrypted = None,
+        }
+    }
+
+    /// Carries runtime secrets the dialog could not collect over from
+    /// `previous`, so changing the storage mode alone never strands a secret.
+    ///
+    /// Only [`CredentialStorage::SystemKeyring`] needs this. There the runtime
+    /// `SecretString` is the *only* copy that ever reaches the keyring, and the
+    /// dialog leaves a password entry blank whenever the keyring could not
+    /// pre-fill it. Migrating "Encrypted file" → "System keyring" without
+    /// retyping therefore used to drop the blob from disk *and* write nothing to
+    /// the keyring, so the password was gone at the next restart. The
+    /// encrypted-file choice keeps its own blob, and "Don't save" is a request
+    /// for no persistence at all, so neither is touched.
+    pub fn carry_over_runtime_secrets(&mut self, previous: &Self) {
+        if self.kdbx_enabled
+            && self.kdbx_use_password
+            && self.kdbx_storage() == CredentialStorage::SystemKeyring
+            && self.kdbx_password.is_none()
+        {
+            self.kdbx_password = previous.kdbx_password.clone();
+        }
+
+        if self.bitwarden_storage() == CredentialStorage::SystemKeyring {
+            if self.bitwarden_password.is_none() {
+                self.bitwarden_password = previous.bitwarden_password.clone();
+            }
+            if self.bitwarden_use_api_key {
+                if self.bitwarden_client_id.is_none() {
+                    self.bitwarden_client_id = previous.bitwarden_client_id.clone();
+                }
+                if self.bitwarden_client_secret.is_none() {
+                    self.bitwarden_client_secret = previous.bitwarden_client_secret.clone();
+                }
+            }
+        }
+
+        if self.onepassword_storage() == CredentialStorage::SystemKeyring
+            && self.onepassword_service_account_token.is_none()
+        {
+            self.onepassword_service_account_token =
+                previous.onepassword_service_account_token.clone();
+        }
+
+        if self.passbolt_storage() == CredentialStorage::SystemKeyring
+            && self.passbolt_passphrase.is_none()
+        {
+            self.passbolt_passphrase = previous.passbolt_passphrase.clone();
+        }
+    }
+
+    /// Reports which system-keyring entries the move from `previous` to `self`
+    /// has orphaned.
+    ///
+    /// Switching a backend away from "System keyring" (or turning the backend
+    /// off) used to leave its keyring entry behind forever, so there was no way
+    /// to revoke a stored secret — the mirror image of the leak issue #272
+    /// fixed. Emptying a password entry deliberately does *not* count: a blank
+    /// field means "I did not retype it", not "delete it".
+    #[must_use]
+    pub fn keyring_revocations(&self, previous: &Self) -> KeyringRevocations {
+        let bitwarden_left_keyring = previous.bitwarden_save_to_keyring
+            && !(self.bitwarden_save_to_keyring && self.bitwarden_use_api_key);
+        KeyringRevocations {
+            kdbx_password: previous.kdbx_save_to_keyring
+                && !(self.kdbx_save_to_keyring && self.kdbx_enabled && self.kdbx_use_password),
+            bitwarden_password: previous.bitwarden_save_to_keyring
+                && !self.bitwarden_save_to_keyring,
+            bitwarden_api_credentials: previous.bitwarden_use_api_key && bitwarden_left_keyring,
+            onepassword_token: previous.onepassword_save_to_keyring
+                && !self.onepassword_save_to_keyring,
+            passbolt_passphrase: previous.passbolt_save_to_keyring
+                && !self.passbolt_save_to_keyring,
         }
     }
 

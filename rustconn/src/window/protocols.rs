@@ -1467,6 +1467,11 @@ pub fn reconnect_generic_vte_in_place(
             let cmd_msg = format_command_message(&command.join(" "));
             notebook.display_output(session_id, &format!("{conn_msg}\r\n{cmd_msg}\r\n\r\n"));
 
+            // Re-assert the erase mode (issue #271): a reconnect spawns into the
+            // same terminal, and nothing else restores it after a VTE reset.
+            let (backspace_sends, delete_sends) = conn.protocol_config.erase_modes();
+            notebook.set_erase_mode(session_id, backspace_sends, delete_sends);
+
             // Mosh uses direct exec (no shell wrapper needed)
             let argv: Vec<&str> = command.iter().map(String::as_str).collect();
             notebook.spawn_command(session_id, &argv, None, None, None);
@@ -1674,8 +1679,8 @@ fn start_telnet_connection_internal(
         } else {
             (
                 Vec::new(),
-                rustconn_core::models::TelnetBackspaceSends::Automatic,
-                rustconn_core::models::TelnetDeleteSends::Automatic,
+                rustconn_core::models::BackspaceSends::Automatic,
+                rustconn_core::models::DeleteSends::Automatic,
             )
         };
 
@@ -2529,6 +2534,15 @@ fn start_mosh_connection_internal(
     let cmd_msg = format_command_message(&mosh_command);
     let feedback = format!("{conn_msg}\r\n{cmd_msg}\r\n\r\n");
     notebook.display_output(session_id, &feedback);
+
+    // Backspace/Delete bytes this host expects (issue #271). MOSH draws into a
+    // VTE widget like SSH and Telnet do, so the setting applies to the widget
+    // rather than to the command line — and after the tab's terminal settings,
+    // which would otherwise reinstall the defaults over it.
+    {
+        let (backspace_sends, delete_sends) = conn.protocol_config.erase_modes();
+        notebook.set_erase_mode(session_id, backspace_sends, delete_sends);
+    }
 
     // Spawn mosh — uses exec (no shell wrapper needed)
     let argv: Vec<&str> = command.iter().map(String::as_str).collect();

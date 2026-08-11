@@ -8,8 +8,9 @@ use std::path::PathBuf;
 
 use proptest::prelude::*;
 use rustconn_core::{
-    ConfigManager, Connection, ConnectionManager, ProtocolConfig, RdpConfig, RdpGateway,
-    Resolution, SshAuthMethod, SshConfig, SshKeySource, TelnetConfig, VncConfig,
+    BackspaceSends, ConfigManager, Connection, ConnectionManager, DeleteSends, ProtocolConfig,
+    RdpConfig, RdpGateway, Resolution, SshAuthMethod, SshConfig, SshKeySource, TelnetConfig,
+    VncConfig,
 };
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -70,6 +71,16 @@ fn arb_custom_options() -> impl Strategy<Value = HashMap<String, String>> {
     prop::collection::hash_map("[A-Za-z]{1,20}", "[a-zA-Z0-9]{1,10}", 0..3)
 }
 
+// Strategy for what the Backspace key sends (issue #271)
+fn arb_backspace_sends() -> impl Strategy<Value = BackspaceSends> {
+    prop::sample::select(BackspaceSends::all())
+}
+
+// Strategy for what the Delete key sends (issue #271)
+fn arb_delete_sends() -> impl Strategy<Value = DeleteSends> {
+    prop::sample::select(DeleteSends::all())
+}
+
 // Strategy for SSH config
 fn arb_ssh_config() -> impl Strategy<Value = SshConfig> {
     (
@@ -79,6 +90,8 @@ fn arb_ssh_config() -> impl Strategy<Value = SshConfig> {
         any::<bool>(),
         arb_custom_options(),
         arb_optional_string(),
+        arb_backspace_sends(),
+        arb_delete_sends(),
     )
         .prop_map(
             |(
@@ -88,6 +101,8 @@ fn arb_ssh_config() -> impl Strategy<Value = SshConfig> {
                 use_control_master,
                 custom_options,
                 startup_command,
+                backspace_sends,
+                delete_sends,
             )| {
                 SshConfig {
                     auth_method,
@@ -113,6 +128,8 @@ fn arb_ssh_config() -> impl Strategy<Value = SshConfig> {
                     verbose: false,
                     mptcp: false,
                     remote_path: None,
+                    backspace_sends,
+                    delete_sends,
                 }
             },
         )

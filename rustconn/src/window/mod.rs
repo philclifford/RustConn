@@ -3077,6 +3077,14 @@ impl MainWindow {
                                 .and_then(|c| c.theme_override.clone())
                         },
                     );
+                    // Same story for the per-connection Backspace/Delete bytes:
+                    // apply_settings reinstalled the global erase bindings over
+                    // them (issue #271).
+                    notebook.reapply_erase_modes(|connection_id| {
+                        state_ref
+                            .get_connection(connection_id)
+                            .map(|c| c.protocol_config.erase_modes())
+                    });
                 }
 
                 // Apply protocol tab coloring setting
@@ -3113,7 +3121,11 @@ impl MainWindow {
                     let simple_sync_was = state_mut.simple_sync_enabled();
                     let simple_sync_now = settings.sync.simple_sync_enabled;
                     // Clone secret settings for deferred keyring saves (done
-                    // async to avoid blocking the GTK main loop on D-Bus).
+                    // async to avoid blocking the GTK main loop on D-Bus). The
+                    // settings in force before this save are needed too, so the
+                    // deferred pass can tell which keyring entries the new
+                    // choices have made stale.
+                    let secrets_before_save = state_mut.settings().secrets.clone();
                     let secrets_for_keyring = settings.secrets.clone();
                     if let Err(e) = state_mut.update_settings(settings) {
                         tracing::error!(%e, "Failed to save settings");
@@ -3127,18 +3139,40 @@ impl MainWindow {
 
                         // Deferred keyring credential saves — run on a background
                         // thread so D-Bus round-trips don't block the UI.
+                        let window_for_keyring = window_clone.clone();
                         glib::spawn_future_local(async move {
-                            let failures = gtk4::gio::spawn_blocking(move || {
+                            let outcome = gtk4::gio::spawn_blocking(move || {
                                 crate::dialogs::settings::save_pending_keyring_credentials(
+                                    &secrets_before_save,
                                     &secrets_for_keyring,
                                 )
                             })
                             .await
-                            .unwrap_or(0);
-                            if failures > 0 {
+                            .unwrap_or_default();
+                            if outcome.write_failures > 0 {
                                 tracing::warn!(
-                                    failures,
+                                    write_failures = outcome.write_failures,
                                     "Some credentials failed to save to keyring"
+                                );
+                                // Data-loss risk: with the keyring selected there
+                                // is no encrypted blob on disk, so a credential
+                                // that never reached the keyring exists in memory
+                                // only and is gone after a restart. The "Settings
+                                // saved" toast has already fired, so this needs a
+                                // blocking AlertDialog the user must acknowledge
+                                // (GNOME HIG error-feedback rule).
+                                crate::alert::show_error(
+                                    &window_for_keyring,
+                                    &crate::i18n::i18n("Credentials Not Saved to Keyring"),
+                                    &crate::i18n::i18n(
+                                        "The system keyring did not accept the credentials, so they are kept for this session only and will be gone after a restart. Check that your keyring service is running and unlocked, then save the settings again.",
+                                    ),
+                                );
+                            }
+                            if outcome.revoke_failures > 0 {
+                                tracing::warn!(
+                                    revoke_failures = outcome.revoke_failures,
+                                    "Some stale keyring entries could not be removed"
                                 );
                             }
                         });

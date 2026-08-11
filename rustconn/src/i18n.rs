@@ -23,8 +23,28 @@ pub const GETTEXT_DOMAIN: &str = "rustconn";
 /// Must be called once at startup before any translatable strings are used.
 /// Sets up the locale, text domain, and locale directory.
 pub fn init() {
-    // Set locale from environment
-    gettextrs::setlocale(gettextrs::LocaleCategory::LcAll, "");
+    // Set locale from environment.
+    //
+    // Routed through `rustconn-locale-sys` because `setlocale` is `unsafe` and
+    // sound only while the process is single-threaded (RUSTSEC-2026-0244). That
+    // crate checks the precondition and panics if it no longer holds, so the
+    // requirement "call this first in `main()`" is enforced rather than assumed.
+    //
+    // The applied locale is dropped rather than reported, deliberately:
+    //
+    //  * there is nowhere to report it to. This runs as the first statement of
+    //    `main()`, which is the whole point — the tracing subscriber is
+    //    installed several statements later, so a `warn!` here is swallowed.
+    //  * `None` is not an error state we can act on. It means the locale named
+    //    by the environment is not installed, which is routine in a Flatpak
+    //    sandbox (the runtime ships only the host language, issue #158). The
+    //    previous locale stays in effect, gettext falls back to the untranslated
+    //    strings, and the user sees English — visible without a log line.
+    //  * where the outcome *is* actionable — a specific language configured by
+    //    the user — it is checked: `apply_language_setlocale` below inspects the
+    //    result and falls back to the system locale.
+    let _startup_locale =
+        rustconn_locale_sys::init_locale(rustconn_locale_sys::LocaleCategory::LcAll, "");
 
     // Bind text domain to locale directory
     // In Flatpak: /app/share/locale
@@ -54,11 +74,29 @@ pub fn init() {
 /// stay that way: `setlocale` mutates process-global locale state with no
 /// synchronisation, so it is only sound while the process is still
 /// single-threaded (RUSTSEC-2026-0244). Every path below therefore performs its
-/// `setlocale` here, called from `main()` before GTK, tokio or the tracing
+/// locale change here, called from `main()` before GTK, tokio or the tracing
 /// subscriber exist. Applying a locale later — for example from the GTK
 /// `activate` handler, where the GIO worker thread is already running — would
 /// reintroduce the unsoundness.
+///
+/// On return the locale is sealed, so that "later" is a panic during
+/// development rather than memory corruption in the field. The only path that
+/// does not seal is the successful re-exec, which replaces the process image and
+/// starts this sequence over in the child.
 pub fn apply_language_from_config() {
+    apply_configured_language();
+
+    // The startup locale is final. Nothing in the rest of the process lifetime
+    // may change it — the Settings dialog only persists the choice for the next
+    // start — so close the window `rustconn-locale-sys` guards.
+    rustconn_locale_sys::seal_locale();
+}
+
+/// Applies the configured language, re-execing if that is the only way.
+///
+/// Split from [`apply_language_from_config`] so that every one of its early
+/// returns is followed by the seal, without repeating the call five times.
+fn apply_configured_language() {
     use std::os::unix::process::CommandExt;
 
     let lang = read_language_from_config().unwrap_or_default();
@@ -388,17 +426,43 @@ fn lang_to_locale(lang: &str) -> String {
 ///
 /// # Safety-adjacent invariant
 ///
-/// Callable only from [`apply_language_from_config`], which runs in `main()`
+/// Callable only from [`apply_configured_language`], which runs in `main()`
 /// before any thread is spawned. `setlocale` writes process-global locale state
 /// without synchronisation, so calling this once other threads exist is unsound
-/// (RUSTSEC-2026-0244). Keep it private and keep the single call site.
+/// (RUSTSEC-2026-0244). [`rustconn_locale_sys::init_locale`] checks that and
+/// panics rather than proceeding, but keep it private and keep the single call
+/// site anyway: a panic at startup is still a broken build.
 fn apply_language_setlocale(lang: &str) {
+    use rustconn_locale_sys::{LocaleCategory, init_locale};
+
+    /// Applies the environment's `LC_MESSAGES`, reporting a failure.
+    ///
+    /// This is the last resort on every path through
+    /// [`apply_language_setlocale`], so unlike the startup call in [`init`] the
+    /// outcome is worth a line: if even the inherited locale cannot be applied,
+    /// `LC_MESSAGES` keeps whatever it had and gettext may serve untranslated
+    /// strings (issue #158).
+    ///
+    /// Best effort, like the other `tracing` calls in this module: `main()`
+    /// installs the subscriber after `apply_language_from_config()`, so the
+    /// record is only seen if that order ever changes. Locale setup has to run
+    /// first — it is single-threaded-only — so the alternative is not reporting
+    /// at all.
+    fn apply_system_messages_locale() {
+        if init_locale(LocaleCategory::LcMessages, "").is_none() {
+            tracing::warn!(
+                "setlocale(LC_MESSAGES, \"\") failed: the locale named by the environment \
+                 is not installed. Keeping the previous LC_MESSAGES; menus and messages \
+                 may stay untranslated."
+            );
+        }
+    }
+
     if lang == "system" || lang.is_empty() {
-        gettextrs::setlocale(gettextrs::LocaleCategory::LcMessages, "");
+        apply_system_messages_locale();
     } else {
         let full_locale = lang_to_locale(lang);
-        let result =
-            gettextrs::setlocale(gettextrs::LocaleCategory::LcMessages, full_locale.as_str());
+        let result = init_locale(LocaleCategory::LcMessages, full_locale.as_str());
         if result.is_none() {
             tracing::info!(
                 lang,
@@ -410,7 +474,7 @@ fn apply_language_setlocale(lang: &str) {
             // not installed, which would leave LC_MESSAGES=C and disable
             // gettext's LANGUAGE lookup entirely (issue #158). The system
             // locale inherited from the host is guaranteed to exist.
-            gettextrs::setlocale(gettextrs::LocaleCategory::LcMessages, "");
+            apply_system_messages_locale();
         }
     }
 
@@ -432,6 +496,10 @@ fn apply_language_setlocale(lang: &str) {
 // now applies the locale on every path from `main()`, before any thread starts,
 // including the case that call was there to rescue (LANGUAGE set but
 // LC_MESSAGES stuck at "C" inside a Flatpak sandbox, issue #158).
+//
+// Re-adding it would now panic on the first run instead of quietly corrupting
+// locale state: `setlocale` lives behind `rustconn_locale_sys::init_locale`, and
+// the locale is sealed at the end of `apply_language_from_config()`.
 //
 // Changing the language from the Settings dialog still only persists the value
 // to `config.toml`; it takes effect on the next start. That was already true —

@@ -74,6 +74,7 @@ fn arb_ssh_config() -> impl Strategy<Value = SshConfig> {
                     keep_alive_count_max: None,
                     verbose: false,
                     mptcp,
+                    ..Default::default()
                 }
             },
         )
@@ -870,6 +871,7 @@ fn arb_ssh_config_with_identities_only() -> impl Strategy<Value = SshConfig> {
                     keep_alive_count_max: None,
                     verbose: false,
                     mptcp: false,
+                    ..Default::default()
                 }
             },
         )
@@ -914,6 +916,7 @@ fn arb_ssh_config_with_agent_fingerprint() -> impl Strategy<Value = SshConfig> {
                 keep_alive_count_max: None,
                 verbose: false,
                 mptcp: false,
+                ..Default::default()
             }
         })
 }
@@ -1078,6 +1081,7 @@ fn arb_ssh_config_with_file_key_source() -> impl Strategy<Value = SshConfig> {
                     keep_alive_count_max: None,
                     verbose: false,
                     mptcp: false,
+                    ..Default::default()
                 }
             },
         )
@@ -1121,6 +1125,7 @@ fn arb_ssh_config_with_agent_key_source() -> impl Strategy<Value = SshConfig> {
                     keep_alive_count_max: None,
                     verbose: false,
                     mptcp: false,
+                    ..Default::default()
                 }
             },
         )
@@ -1712,6 +1717,7 @@ fn arb_ssh_config_with_port_forwards() -> impl Strategy<Value = SshConfig> {
             verbose: false,
             mptcp: false,
             remote_path: None,
+            ..Default::default()
         })
 }
 
@@ -1772,6 +1778,7 @@ proptest! {
             ssh_agent_socket: None,
             keep_alive_interval: None,
             keep_alive_count_max: None, verbose: false, mptcp: false,
+            ..Default::default()
         };
         let args = config.build_command_args();
 

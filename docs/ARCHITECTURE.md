@@ -1,6 +1,6 @@
 # RustConn Architecture Guide
 
-**Version 0.19.19** | Last updated: August 2026
+**Version 0.19.20** | Last updated: August 2026
 
 This document describes the internal architecture of RustConn for contributors and maintainers.
 
@@ -9,24 +9,25 @@ This document describes the internal architecture of RustConn for contributors a
 RustConn is a four-crate Cargo workspace (Rust 2024 edition) with strict separation of concerns:
 
 ```
-rustconn/           # GTK4 GUI application
-rustconn-core/      # Business logic library (GUI-free)
-rustconn-cli/       # Command-line interface
-rustconn-pty-sys/   # Isolated FFI helper (macOS PTY controlling terminal)
+rustconn/            # GTK4 GUI application
+rustconn-core/       # Business logic library (GUI-free)
+rustconn-cli/        # Command-line interface
+rustconn-pty-sys/    # Isolated FFI helper (PTY + controlling terminal)
+rustconn-locale-sys/ # Isolated FFI helper (startup setlocale)
 ```
 
 ### Dependency Graph
 
 ```
-┌─────────────┐     ┌─────────────────┐     ┌────────────────────┐
-│ rustconn    │────▶│  rustconn-core  │     │  rustconn-pty-sys  │
-│ (GUI)       │──┐  │  (Library)      │     │  (FFI, libc only)  │
-└─────────────┘  │  └─────────────────┘     └────────────────────┘
-                 │          ▲                        ▲
-┌─────────────┐  │          │                        │
+┌─────────────┐     ┌─────────────────┐     ┌──────────────────────┐
+│ rustconn    │────▶│  rustconn-core  │     │  rustconn-pty-sys    │
+│ (GUI)       │──┐  │  (Library)      │     │  rustconn-locale-sys │
+└─────────────┘  │  └─────────────────┘     │  (FFI, no GUI)       │
+                 │          ▲               └──────────────────────┘
+┌─────────────┐  │          │                        ▲
 │ rustconn-cli│──┼──────────┘                        │
 │ (CLI)       │  └───────────────────────────────────┘
-└─────────────┘   (rustconn → rustconn-pty-sys, macOS PTY only)
+└─────────────┘   (only rustconn depends on the -sys crates)
 ```
 
 ### Crate Boundaries
@@ -37,6 +38,7 @@ rustconn-pty-sys/   # Isolated FFI helper (macOS PTY controlling terminal)
 | `rustconn` | GTK4 UI, dialogs, terminal integration, embedded/external session presentation | Owns `gtk4`, `vte4`, `libadwaita`, and enables core integration features when needed |
 | `rustconn-cli` | Headless management CLI: config, connections, import/export, list/show, simple operations | CLI/runtime dependencies plus `rustconn-core`; client launch and secret-management stay behind explicit features — NO GTK |
 | `rustconn-pty-sys` | FFI helper: give a spawned child its PTY slave as a controlling terminal (`setsid` + `TIOCSCTTY`) for the macOS native PTY ([#175](https://github.com/totoshko88/RustConn/issues/175)) | `libc` only — NO GTK |
+| `rustconn-locale-sys` | FFI helper: the startup `setlocale` call, refused once the process has a second thread or the startup window is sealed ([#267](https://github.com/totoshko88/RustConn/issues/267)) | `gettext-rs` only — NO GTK |
 
 **Decision Rule:** "Does this code need GTK widgets?" → No → `rustconn-core` / Yes → `rustconn`
 
@@ -74,18 +76,35 @@ not require their runtime dependencies in the default feature set.
 
 ### The `unsafe` Exception
 
-The workspace sets `unsafe_code = "forbid"` in every crate **except** `rustconn-pty-sys`.
-That crate is the single sanctioned location for `unsafe`, following the M-UNSAFE
-guideline (isolate FFI in a small `-sys` crate with a documented safety contract)
-instead of relaxing the lint in the main crates. It exposes a handful of safe
-functions covering PTY creation (`open_pty_pair`), sizing (`pty_set_winsize`),
-readiness waiting (`pty_wait_readable`), close-on-exec descriptor duplication
-(`dup_fd`) and controlling-terminal setup (`set_controlling_terminal`, a
-`pre_exec` hook calling only async-signal-safe `libc` functions). Reading and
-writing the descriptor is deliberately *not* there: callers turn the master into
-a `std::fs::File`, so no session data passes through any `unsafe` code. See
-`rustconn-pty-sys/src/lib.rs` and its consumers,
-`rustconn/src/terminal/pty_spawn.rs` and `rustconn/src/terminal/pty_relay.rs`.
+The workspace sets `unsafe_code = "forbid"` in every crate **except** the
+`rustconn-*-sys` helpers. Each of them is a sanctioned location for `unsafe`,
+following the M-UNSAFE guideline (isolate FFI in a small `-sys` crate with a
+documented safety contract) instead of relaxing the lint in the main crates. New
+FFI gets a new `-sys` crate; it never earns an exception where the caller lives.
+
+`rustconn-pty-sys` exposes a handful of safe functions covering PTY creation
+(`open_pty_pair`), sizing (`pty_set_winsize`), readiness waiting
+(`pty_wait_readable`), close-on-exec descriptor duplication (`dup_fd`) and
+controlling-terminal setup (`set_controlling_terminal`, a `pre_exec` hook calling
+only async-signal-safe `libc` functions). Reading and writing the descriptor is
+deliberately *not* there: callers turn the master into a `std::fs::File`, so no
+session data passes through any `unsafe` code. See `rustconn-pty-sys/src/lib.rs`
+and its consumers, `rustconn/src/terminal/pty_spawn.rs` and
+`rustconn/src/terminal/pty_relay.rs`.
+
+`rustconn-locale-sys` wraps the one gettext call that cannot be safe.
+`setlocale(3)` replaces process-global locale state and reads the environment
+without synchronisation, so it is sound only while the process is still
+single-threaded — the unsoundness behind RUSTSEC-2026-0244, which is why
+`gettext-rs` 0.8 marks it `unsafe`. The crate's `init_locale` enforces that
+precondition rather than documenting it: it refuses to run if the process already
+has a second thread (counted from `/proc/self/task` on Linux), if an earlier call
+came from another thread, or after `seal_locale()` has closed the startup window.
+`rustconn/src/i18n.rs` is the only consumer, and it seals the locale at the end
+of `apply_language_from_config()`, so a `setlocale` call added to a running
+application panics during development instead of corrupting memory in the field.
+Everything else in the gettext API is safe and is called from `rustconn`
+directly.
 
 ### Who Owns a Session's PTY
 

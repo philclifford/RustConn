@@ -780,7 +780,13 @@ impl ExportDialog {
         // List warnings
         if !result.warnings.is_empty() {
             details.push('\n');
-            let _ = writeln!(details, "{} ({}):", i18n("Warnings"), result.warnings.len());
+            // Same msgid as the import dialog's warnings section — one concept,
+            // one string for translators.
+            let _ = writeln!(
+                details,
+                "{}",
+                i18n_f("Warnings ({}):", &[&result.warnings.len().to_string()])
+            );
             for warning in &result.warnings {
                 let _ = writeln!(details, "  • {warning}");
             }

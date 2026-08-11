@@ -13,6 +13,7 @@ use adw::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{Box as GtkBox, Button, CheckButton, DropDown, Entry, Label, Orientation, StringList};
 use libadwaita as adw;
+use rustconn_core::models::{BackspaceSends, DeleteSends};
 use rustconn_core::sftp::{SocketPathValidation, validate_socket_path};
 
 use super::protocol_layout::ProtocolLayoutBuilder;
@@ -48,6 +49,15 @@ pub struct SshOptionsWidgets {
     pub mptcp: CheckButton,
     pub startup_entry: Entry,
     pub options_entry: Entry,
+    /// Keyboard group holding the two erase dropdowns (issue #271).
+    ///
+    /// Exposed so the protocol dropdown can hide it: the SSH page is shared with
+    /// SFTP and MOSH, and only SFTP has no terminal that honours the choice.
+    pub keyboard_group: adw::PreferencesGroup,
+    /// What the Backspace key sends to this host (issue #271)
+    pub backspace_dropdown: DropDown,
+    /// What the Delete key sends to this host (issue #271)
+    pub delete_dropdown: DropDown,
     /// MOSH settings group (hidden by default, shown when protocol is MOSH)
     pub mosh_group: adw::PreferencesGroup,
     pub mosh_port_range_entry: Entry,
@@ -112,6 +122,10 @@ pub fn create_ssh_options() -> SshOptionsWidgets {
     ) = create_session_group();
     content.append(&session_group);
 
+    // === Keyboard Group ===
+    let (keyboard_group, backspace_dropdown, delete_dropdown) = create_keyboard_group();
+    content.append(&keyboard_group);
+
     // === MOSH Settings Group (hidden by default, shown when protocol is MOSH) ===
     let mosh_group = adw::PreferencesGroup::builder()
         .title(i18n("MOSH Settings"))
@@ -172,6 +186,9 @@ pub fn create_ssh_options() -> SshOptionsWidgets {
         mptcp,
         startup_entry,
         options_entry,
+        keyboard_group,
+        backspace_dropdown,
+        delete_dropdown,
         mosh_group,
         mosh_port_range_entry,
         mosh_predict_dropdown,
@@ -690,6 +707,63 @@ fn create_session_group() -> (
         ssh_pkcs11_entry,
         ssh_remote_path_entry,
     )
+}
+
+/// Creates the Keyboard preferences group
+///
+/// Names what Backspace and Delete send to this host. Network appliances and
+/// older Unix systems commonly expect `^H` where the default sends `^?`, and
+/// cannot be reconfigured from their end (issue
+/// [#271](https://github.com/totoshko88/RustConn/issues/271)) — the same switch
+/// the Telnet panel already offers.
+fn create_keyboard_group() -> (adw::PreferencesGroup, DropDown, DropDown) {
+    let keyboard_group = adw::PreferencesGroup::builder()
+        .title(i18n("Keyboard"))
+        .description(i18n(
+            "Change what these keys send when the host does not accept the defaults",
+        ))
+        .build();
+
+    let backspace_dropdown = erase_dropdown(
+        BackspaceSends::all()
+            .iter()
+            .map(|mode| i18n(mode.display_name())),
+    );
+    let backspace_row = adw::ActionRow::builder()
+        .title(i18n("Backspace sends"))
+        .subtitle(i18n("What the Backspace key sends to the remote"))
+        .build();
+    backspace_row.add_suffix(&backspace_dropdown);
+    backspace_row.set_activatable_widget(Some(&backspace_dropdown));
+    keyboard_group.add(&backspace_row);
+
+    let delete_dropdown = erase_dropdown(
+        DeleteSends::all()
+            .iter()
+            .map(|mode| i18n(mode.display_name())),
+    );
+    let delete_row = adw::ActionRow::builder()
+        .title(i18n("Delete sends"))
+        .subtitle(i18n("What the Delete key sends to the remote"))
+        .build();
+    delete_row.add_suffix(&delete_dropdown);
+    delete_row.set_activatable_widget(Some(&delete_dropdown));
+    keyboard_group.add(&delete_row);
+
+    (keyboard_group, backspace_dropdown, delete_dropdown)
+}
+
+/// Builds an erase-mode dropdown from already-translated option labels.
+///
+/// The order the labels arrive in is the order `from_index()` expects, so the
+/// selected index maps straight back onto the model enum.
+fn erase_dropdown(labels: impl Iterator<Item = String>) -> DropDown {
+    let labels: Vec<String> = labels.collect();
+    let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+    DropDown::builder()
+        .model(&StringList::new(&refs))
+        .selected(0)
+        .build()
 }
 
 /// Creates the Port Forwarding preferences group

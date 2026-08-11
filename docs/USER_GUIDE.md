@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.19.19** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.19.20** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -487,11 +487,11 @@ Protocol-specific options are configured in the connection dialog's protocol tab
 
 | Protocol | Options |
 |----------|---------|
-| SSH | Auth method (password, publickey, keyboard-interactive, agent, security-key/FIDO2), key source (default/file/agent), PKCS#11 provider (hardware token/smart card), proxy jump (Jump Host), ProxyJump, IdentitiesOnly, ControlMaster, agent forwarding, Waypipe (Wayland forwarding), X11 forwarding, compression, startup command, verbose mode, custom SSH options, port forwarding (local/remote/dynamic) |
+| SSH | Auth method (password, publickey, keyboard-interactive, agent, security-key/FIDO2), key source (default/file/agent), PKCS#11 provider (hardware token/smart card), proxy jump (Jump Host), ProxyJump, IdentitiesOnly, ControlMaster, agent forwarding, Waypipe (Wayland forwarding), X11 forwarding, compression, startup command, verbose mode, backspace/delete key behavior, custom SSH options, port forwarding (local/remote/dynamic) |
 | RDP | Client mode (embedded/external), performance mode (quality/balanced/speed), resolution, color depth, display scale override, audio redirection, RDP gateway (host, port, username), keyboard layout, disable NLA, clipboard sharing, shared folders, mouse jiggler (prevent idle disconnect, configurable interval 10–600s), autotype (send text as keystrokes, configurable inter-character and initial delay), custom FreeRDP arguments |
 | VNC | Client mode (embedded/external), performance mode (quality/balanced/speed), encoding (Auto/Tight/ZRLE/Hextile/Raw/CopyRect), compression level, quality level, display scale override, view-only mode, scaling, clipboard sharing, custom arguments |
 | SPICE | TLS encryption, CA certificate (with inline validation), skip certificate verification, USB redirection, clipboard sharing, image compression (Auto/Off/GLZ/LZ/QUIC), proxy URL, shared folders |
-| MOSH | Predict mode (Adaptive/Always/Never), SSH port, UDP port range, server binary path, custom arguments |
+| MOSH | Predict mode (Adaptive/Always/Never), SSH port, UDP port range, server binary path, backspace/delete key behavior, custom arguments |
 | Telnet | Custom arguments, backspace key behavior, delete key behavior |
 | Serial | Device path, baud rate, data bits, stop bits, parity, flow control, custom picocom arguments |
 | Kubernetes | Kubeconfig path, context, namespace, pod, container, shell, busybox mode, busybox image, custom kubectl arguments |
@@ -552,6 +552,26 @@ The SSH tab in the connection dialog contains session-level toggles that control
 4. Click **Save**
 
 All toggles are off by default. They can be combined freely — for example, enabling both Agent Forwarding and Compression at the same time adds `-A -C` to the SSH command.
+
+#### Backspace and Delete Behavior
+
+Network appliances and older Unix systems often disagree with the code RustConn sends when you press Backspace: instead of erasing, they echo `^?` or beep, and the remote side offers no way to fix it. The **Keyboard** group sets what each key sends for that connection.
+
+| Setting | Sends | Use when |
+|---------|-------|----------|
+| Automatic | Backspace: `^?` (`0x7F`), Delete: `\e[3~` | Default — correct for Linux, BSD and macOS hosts |
+| Backspace (^H) | `0x08` | The host expects `Ctrl+H` as its erase character (switches, routers, embedded systems) |
+| Delete (^?) | `0x7F` | The host expects `Ctrl+?` — useful when assigned to the Delete key |
+
+**Configure:**
+1. Edit an SSH connection → **Protocol** tab
+2. Scroll to the **Keyboard** group
+3. Pick what **Backspace sends** and what **Delete sends**
+4. Click **Save**
+
+The setting belongs to the terminal, not to the `ssh` command, so it takes effect from the next connect onwards without changing the arguments RustConn passes to SSH. It then stays in force for the life of the session: reconnecting in place keeps it, and so does saving Settings → Terminal, which reinstalls the global key bindings over open terminals and used to drop the per-connection choice back to Automatic. Existing connections keep the previous behavior — Automatic.
+
+Telnet and MOSH have the same **Keyboard** group in their own protocol tabs, since all three draw into the same terminal widget. SFTP does not: an SFTP connection opens a file manager or `mc` rather than a terminal, so there is nothing for the setting to apply to. An SFTP connection created from a converted SSH connection keeps whatever value it had stored, it is simply not shown or used.
 
 #### Custom Options
 
@@ -1030,6 +1050,7 @@ MOSH (Mobile Shell) provides a roaming, always-on terminal session that survives
 | Port Range | UDP port range for MOSH session (e.g., `60000:60010`) | System default |
 | Predict Mode | Local echo prediction: Adaptive, Always, Never | Adaptive |
 | Server Binary | Path to `mosh-server` on the remote host (optional) | Auto-detect |
+| Backspace sends / Delete sends | What each key sends to the remote — see [Backspace and Delete Behavior](#backspace-and-delete-behavior) | Automatic |
 | Custom Arguments | Additional arguments passed to `mosh` | — |
 
 **Requirements:**
@@ -2636,7 +2657,7 @@ Back up your entire RustConn configuration as a single ZIP archive.
 - Remmina profiles
 - Asbru-CM configuration
 - Ansible inventory (INI/YAML)
-- Royal TS / Royal TSX (`.rtsz`, `.rtsx`)
+- Royal TS / Royal TSX (`.rtsz`, `.rtsx` — passwords stay in Royal TS, see below)
 - MobaXterm sessions (.mxtsessions)
 - SecureCRT sessions (.ini directory)
 - Remote Desktop Manager (JSON)
@@ -2664,7 +2685,7 @@ Double-click source to start import immediately.
 | Remmina | `~/.local/share/remmina/` | — | SSH, RDP, VNC, SFTP | One `.remmina` per connection |
 | Asbru-CM | `~/.config/pac/` | YAML file | SSH, VNC, RDP | Variables converted to `${VAR}` |
 | Ansible | `/etc/ansible/hosts` | INI/YAML file | SSH | Groups preserved |
-| Royal TS / Royal TSX | — | `.rtsz` (compressed) or `.rtsx` file | SSH, RDP, VNC | Folder hierarchy → groups; usernames inherited from folder credentials |
+| Royal TS / Royal TSX | — | `.rtsz` (compressed) or `.rtsx` file | SSH, Telnet, RDP, VNC | Folder hierarchy → groups; usernames inherited from folder credentials; passwords cannot be imported (encrypted in the document) |
 | MobaXterm | — | `.mxtsessions` | SSH, RDP, VNC, Telnet, Serial | INI-based sessions |
 | SecureCRT | `~/.vandyke/Config/Sessions/` | Directory or `.ini` | SSH, Telnet, RDP, VNC | Folder hierarchy → groups |
 | Remote Desktop Manager | — | JSON file | SSH, RDP, VNC, Telnet | Devolutions JSON export; `Group` paths → groups |
@@ -2773,12 +2794,20 @@ xdg-mime default io.github.totoshko88.RustConn.desktop application/x-virt-viewer
 1. In Royal TS: **File > Export > Royal TS Document (.rtsz)** — `.rtsx` works as well
 2. **File > Import > Royal TS** → select file → Import (folder structure preserved as groups)
 
-SSH, RDP (`RoyalRDSConnection`) and VNC connections are imported; every other object type
-(web page, file transfer, TeamViewer, ...) is listed as skipped. Usernames and domains come
-from the connection, from an assigned credential, or are inherited from the parent folder.
-Passwords are kept encrypted inside the document and cannot be imported, so those
-connections are set to prompt for the password. An encrypted or lockdown document cannot be
-read at all.
+SSH, Telnet, RDP (`RoyalRDSConnection`) and VNC connections are imported; every other object
+type (web page, file transfer, TeamViewer, ...) is listed as skipped. A Royal TS Terminal
+object is imported as SSH or Telnet according to its own connection type, on port 22 or 23
+unless the document sets one. Usernames and domains come from the connection, from an
+assigned credential, or are inherited from the parent folder. An encrypted or lockdown
+document cannot be read at all.
+
+**Passwords cannot be imported.** This is a property of the format, not a missing feature:
+Royal TS never writes a password in clear text. A document you protected with an encryption
+password has its passwords encrypted under that password, and a document without one has
+them encrypted under a key built into Royal TS. Neither is readable from outside the
+application, so every affected connection is set to prompt for its password and the import
+result says so. Enter each password once on the first connect and let RustConn store it in
+your vault, or copy the passwords across through your password manager.
 
 #### From Remote Desktop Manager
 
@@ -2789,6 +2818,25 @@ read at all.
 Folders are taken from the `Group` path of each entry, credentials from the entry itself or
 from a linked `Credential` entry, and any entry type RustConn does not support is listed as
 skipped together with its RDM type.
+
+RDM lets add-ons contribute their own entry fields and serializes them inconsistently between
+data-source types, so the importer accepts any scalar shape a field may arrive in: a
+connection type or a port written as a bare integer (`"ConnectionType": 25`, `"Port": 3389`)
+as readily as a quoted one, and a flag as `0`/`1` or `"true"`. A single entry the importer
+still cannot read is reported in the skipped list instead of aborting the import — under its
+name when it has one, and under its position (`Connection #3`) when it does not. A `Port`
+value that is not a usable port (zero, negative, fractional, or above 65535) is reported as
+a warning and the protocol default is used. A blank `ConnectionType` is reported as skipped
+rather than guessed at; an absent one still means RDP, which is RDM's own default.
+
+Besides the usual `{"Connections": [...]}` export, a bare array of entries and a single entry
+copied with **Clipboard > Copy** are also accepted. A JSON file with neither a `Connections`
+nor a `Folders` array — and no `ConnectionType` marking it as a copied entry — is rejected
+with a parse error telling you which RDM export to produce. That includes files that look
+plausible, such as an inventory of `{"Name": ..., "Host": ...}` objects: importing one of
+those as a single connection would be a worse answer than saying it is not an RDM export.
+An export whose list is empty (`{"Connections": []}`) is still valid and imports zero
+connections.
 
 #### From SSH Config
 

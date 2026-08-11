@@ -51,6 +51,7 @@ fn arb_ssh_config_with_key() -> impl Strategy<Value = SshConfig> {
         verbose: false,
         mptcp: false,
         remote_path: None,
+        ..Default::default()
     })
 }
 

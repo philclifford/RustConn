@@ -14,7 +14,8 @@ Communication language: Ukrainian.
 | `rustconn-core` | Domain logic: models, config, CRUD managers, import/export, protocol data, credential abstractions | **FORBIDDEN**: gtk4, adw, vte4. Default features stay headless/empty. Embedded clients, GFX, RD Gateway, and host keyring are optional features only. |
 | `rustconn-cli` | Headless management over core data | Only rustconn-core. Default features stay minimal; client launch and secret-management paths are optional. |
 | `rustconn` | GTK4/libadwaita GUI, dialogs, embedded/external session presentation | May import GUI crates and enable core integration features |
-| `rustconn-pty-sys` | Isolated FFI helper (macOS PTY controlling terminal, `setsid`+`TIOCSCTTY`) | **Only** sanctioned `unsafe` location (M-UNSAFE); `libc` only, no gtk4/adw/vte4 |
+| `rustconn-pty-sys` | Isolated FFI helper (macOS PTY controlling terminal, `setsid`+`TIOCSCTTY`) | Sanctioned `unsafe` location (M-UNSAFE); `libc` only, no gtk4/adw/vte4 |
+| `rustconn-locale-sys` | Isolated FFI helper: the startup `setlocale` call, guarded so it cannot run once a second thread exists (RUSTSEC-2026-0244) | Sanctioned `unsafe` location (M-UNSAFE); `gettext-rs` only, no gtk4/adw/vte4 |
 
 ### Codex Target Split
 
@@ -52,7 +53,7 @@ Before writing any code, stop at the first rung that holds:
 
 ## Absolute Rules
 
-- `unsafe_code = "forbid"` in all crates **except** `rustconn-pty-sys` — the single sanctioned FFI location (M-UNSAFE). Never write `unsafe` anywhere else.
+- `unsafe_code = "forbid"` in all crates **except** the `rustconn-*-sys` FFI crates (`rustconn-pty-sys`, `rustconn-locale-sys`) — the sanctioned FFI locations (M-UNSAFE). Never write `unsafe` anywhere else; new FFI gets its own `rustconn-*-sys` crate rather than an exception in an existing crate.
 - Passwords/keys → `secrecy::SecretString`, never plain String
 - Intermediate `expose_secret().to_string()` → wrap in `zeroize::Zeroizing::new()`
 - Errors → `thiserror::Error`, never `unwrap()`/`expect()`
@@ -82,11 +83,11 @@ For quick single-file validation → `getDiagnostics`.
 
 The hardest-to-reverse invariants are now enforced automatically by the
 `crate-boundary-guard` preToolUse hook (it denies the write if a `.rs` change
-adds GUI imports to `rustconn-core`/`rustconn-cli`, or `unsafe` outside
-`rustconn-pty-sys`). Still verify them yourself BEFORE writing — the hook is a
-safety net, not an excuse to skip thinking:
+adds GUI imports to `rustconn-core`/`rustconn-cli`, or `unsafe` outside a
+`rustconn-*-sys` crate). Still verify them yourself BEFORE writing — the hook is
+a safety net, not an excuse to skip thinking:
 - **Crate boundary**: `rustconn-core/` and `rustconn-cli/` must NOT contain `use gtk4`, `use adw`, `use vte4`, `gtk4::`, `adw::`, `vte4::`. Move GUI code to `rustconn/`. *(hook-enforced)*
-- **No unsafe**: never write `unsafe {`, `unsafe fn`, `unsafe impl`, `unsafe trait` — **except** in `rustconn-pty-sys` (the sole sanctioned FFI crate, M-UNSAFE). New `unsafe` outside it is forbidden. *(hook-enforced)*
+- **No unsafe**: never write `unsafe {`, `unsafe fn`, `unsafe impl`, `unsafe trait` — **except** in a `rustconn-*-sys` crate (`rustconn-pty-sys`, `rustconn-locale-sys`; M-UNSAFE). New `unsafe` outside them is forbidden — it gets its own `-sys` crate instead. *(hook-enforced)*
 
 After writing `.rs` files in `rustconn/src/`, verify (these stay mental — caught later by clippy + the `post-session-diagnostics` agentStop hook, not pre-write):
 - **i18n**: all user-facing strings (`.set_label()`, `.set_title()`, `.set_tooltip_text()`, `Button::with_label()`) wrapped in `i18n()` or `i18n_f()`. Ignore: tracing, CSS, icons, action names.
@@ -110,7 +111,7 @@ A task is done ONLY when all hold — this is the finish line for `/goal` loops 
 
 1. `cargo clippy --all-targets` → 0 warnings
 2. `cargo test --workspace` green (or the targeted tests for the change)
-3. Crate boundaries intact (no gtk4/adw/vte4 in core/cli, no `unsafe` outside `rustconn-pty-sys`)
+3. Crate boundaries intact (no gtk4/adw/vte4 in core/cli, no `unsafe` outside the `rustconn-*-sys` crates)
 4. New user-facing strings wrapped in `i18n()`/`i18n_f()` + POT updated (`bash po/update-pot.sh`)
 5. No debug leftovers (`dbg!`/`todo!`/`println!`/`eprintln!`)
 

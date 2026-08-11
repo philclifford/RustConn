@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use secrecy::SecretString;
 
-use super::traits::{ImportResult, ImportSource, SkippedEntry, read_import_file};
+use super::traits::{ImportResult, ImportSource, ImportWarning, SkippedEntry, read_import_file};
 use crate::error::ImportError;
 use crate::models::{
     Connection, Credentials, PasswordSource, ProtocolConfig, SpiceConfig, VncConfig,
@@ -103,10 +103,9 @@ impl VirtViewerImporter {
                         // immediately (critical for Proxmox VE short-lived tickets).
                         match save_inline_pem_cert(ca, source_path) {
                             Ok(saved_path) => {
-                                result.record_warning(format!(
-                                    "Inline CA certificate saved to {}",
-                                    saved_path.display()
-                                ));
+                                result.add_warning(ImportWarning::InlineCaCertificateSaved {
+                                    path: saved_path.clone(),
+                                });
                                 Some(saved_path)
                             }
                             Err(reason) => {
@@ -439,8 +438,9 @@ ca=-----BEGIN CERTIFICATE-----\\nMIIFake...\\n-----END CERTIFICATE-----
             result
                 .warnings
                 .iter()
-                .any(|w| w.contains("Inline CA certificate saved")),
-            "Expected a warning about saved CA certificate"
+                .any(|w| matches!(w, ImportWarning::InlineCaCertificateSaved { .. })),
+            "Expected a warning about saved CA certificate: {:?}",
+            result.warnings
         );
         // Verify the saved file exists and contains decoded PEM
         if let ProtocolConfig::Spice(ref s) = conn.protocol_config {

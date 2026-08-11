@@ -1232,25 +1232,14 @@ impl AppState {
 
     /// Updates and saves settings
     pub fn update_settings(&mut self, mut settings: AppSettings) -> Result<(), String> {
-        // Encrypt KDBX password before saving if integration is enabled
-        if settings.secrets.kdbx_enabled && settings.secrets.kdbx_password.is_some() {
-            settings.secrets.encrypt_password();
-        } else if !settings.secrets.kdbx_enabled {
-            // Clear encrypted password if integration is disabled
-            settings.secrets.clear_password();
-        }
-
-        // Encrypt Bitwarden password before saving if present
-        if settings.secrets.bitwarden_password.is_some() {
-            settings.secrets.encrypt_bitwarden_password();
-        }
-
-        // Encrypt Bitwarden API credentials before saving if present
-        if settings.secrets.bitwarden_client_id.is_some()
-            || settings.secrets.bitwarden_client_secret.is_some()
-        {
-            settings.secrets.encrypt_bitwarden_api_credentials();
-        }
+        // Turn each backend's storage choice into what actually lands on disk.
+        // "System keyring" makes the keyring the persistence layer, so an
+        // encrypted blob would duplicate the secret on disk against the user's
+        // explicit choice — the runtime password is kept in memory only and
+        // written to the keyring by the Settings dialog (issue #272). Until
+        // 0.19.19 only KDBX honoured that; the rule now lives in one pure,
+        // test-covered method so it stays symmetric across all four backends.
+        settings.secrets.apply_storage_persistence();
 
         self.config_manager
             .save_settings(&settings)

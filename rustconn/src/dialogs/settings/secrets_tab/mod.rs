@@ -3,7 +3,7 @@
 mod detection;
 mod keyring;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -22,11 +22,90 @@ use self::detection::{
     read_passbolt_server_url_sync,
 };
 use self::keyring::{
-    get_bw_password_from_keyring, get_kdbx_password_from_keyring, get_op_token_from_keyring,
-    get_pb_passphrase_from_keyring, save_bw_password_to_keyring, save_kdbx_password_to_keyring,
+    delete_bw_api_credentials_from_keyring, delete_bw_password_from_keyring,
+    delete_kdbx_password_from_keyring, delete_op_token_from_keyring,
+    delete_pb_passphrase_from_keyring, get_bw_password_from_keyring,
+    get_kdbx_password_from_keyring, get_op_token_from_keyring, get_pb_passphrase_from_keyring,
+    save_bw_api_credentials_to_keyring, save_bw_password_to_keyring, save_kdbx_password_to_keyring,
     save_op_token_to_keyring, save_pb_passphrase_to_keyring,
 };
 use crate::i18n::i18n;
+
+/// Which backends the system keyring could **not** supply a secret for when the
+/// dialog opened.
+///
+/// A flag stays `true` while the backend's storage choice is "System keyring"
+/// but the lookup came back empty — the keyring is *known* to be missing that
+/// secret, usually because an earlier write failed (D-Bus down, or KWallet
+/// slower than the keyring module's 5-second save timeout).
+///
+/// This is what makes a retry possible. `SecretSettings::has_new_runtime_secret`
+/// only counts a secret that is newly present or *different*, so retyping the
+/// same password after a failed write looked like "nothing changed" and the save
+/// — and with it the keyring write — was skipped. See [`Self::needs_write`].
+#[derive(Debug, Clone, Copy, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one independent flag per backend; a set would hide which backend is meant"
+)]
+pub struct KeyringGaps {
+    /// The KeePass database password is not in the keyring.
+    pub kdbx: bool,
+    /// The Bitwarden master password is not in the keyring.
+    pub bitwarden: bool,
+    /// The 1Password service account token is not in the keyring.
+    pub onepassword: bool,
+    /// The Passbolt GPG passphrase is not in the keyring.
+    pub passbolt: bool,
+}
+
+impl KeyringGaps {
+    /// Seeds the gaps pessimistically from a saved configuration.
+    ///
+    /// Every backend that selected the keyring starts out "missing"; the async
+    /// loaders clear their flag once a lookup actually returns a value.
+    fn from_settings(settings: &SecretSettings) -> Self {
+        Self {
+            kdbx: settings.kdbx_save_to_keyring,
+            bitwarden: settings.bitwarden_save_to_keyring,
+            onepassword: settings.onepassword_save_to_keyring,
+            passbolt: settings.passbolt_save_to_keyring,
+        }
+    }
+
+    /// Clears one backend's gap in a shared cell after a lookup returned a
+    /// value. Takes the whole [`Cell`] because [`Self`] is `Copy`, so there is
+    /// no borrow to hold across the GTK callback that calls this.
+    fn resolve(cell: &Cell<Self>, mark: fn(&mut Self)) {
+        let mut gaps = cell.get();
+        mark(&mut gaps);
+        cell.set(gaps);
+    }
+
+    /// Reports whether a collected secret still has to be written even though
+    /// the persisted fields and the runtime comparison both say "unchanged".
+    ///
+    /// True only when the keyring is the selected persistence layer, the keyring
+    /// is known not to hold the secret, and the dialog actually collected one. A
+    /// blank entry never qualifies, so an untouched open/close round trip on a
+    /// healthy keyring stays a no-op.
+    #[must_use]
+    pub fn needs_write(self, collected: &SecretSettings) -> bool {
+        (self.kdbx
+            && collected.kdbx_save_to_keyring
+            && collected.kdbx_use_password
+            && collected.kdbx_password.is_some())
+            || (self.bitwarden
+                && collected.bitwarden_save_to_keyring
+                && collected.bitwarden_password.is_some())
+            || (self.onepassword
+                && collected.onepassword_save_to_keyring
+                && collected.onepassword_service_account_token.is_some())
+            || (self.passbolt
+                && collected.passbolt_save_to_keyring
+                && collected.passbolt_passphrase.is_some())
+    }
+}
 
 /// Return type for secrets page - contains all widgets needed for dynamic visibility.
 ///
@@ -98,6 +177,12 @@ pub struct SecretsPageWidgets {
     pub onepassword_storage_combo: adw::ComboRow,
     /// Cached result of `which secret-tool` (populated by background detection)
     pub secret_tool_available: Rc<RefCell<Option<bool>>>,
+    /// Backends whose keyring lookup came back empty at dialog-open time.
+    ///
+    /// Seeded by [`load_secret_settings`] and cleared per backend by the async
+    /// keyring loaders. Read by the dialog's dirty check so a retyped secret can
+    /// retry a keyring write that silently failed.
+    pub keyring_gaps: Rc<Cell<KeyringGaps>>,
     /// Detected 1Password CLI command path (updated async)
     pub onepassword_cmd: Rc<RefCell<String>>,
     // Pass widgets
@@ -326,6 +411,12 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     // Cached secret-tool availability — populated by background detection thread.
     // `None` = not yet checked, `Some(true/false)` = result known.
     let secret_tool_available: Rc<RefCell<Option<bool>>> = Rc::new(RefCell::new(None));
+
+    // Which backends the keyring could not supply a secret for. Seeded from the
+    // saved configuration by `load_secret_settings` and cleared below whenever a
+    // lookup actually returns a value, so the dialog's dirty check can tell
+    // "the keyring already holds this" from "the keyring never got it".
+    let keyring_gaps: Rc<Cell<KeyringGaps>> = Rc::new(Cell::new(KeyringGaps::default()));
 
     // Track whether async detection has completed
     let detection_complete: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
@@ -1068,6 +1159,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     let op_status_label_switch = onepassword_status_label.clone();
     let pb_passphrase_entry_switch = passbolt_passphrase_entry.clone();
     let kdbx_password_entry_switch = kdbx_password_entry.clone();
+    let keyring_gaps_switch = keyring_gaps.clone();
     secret_backend_dropdown.connect_selected_notify(move |dropdown| {
         let selected = dropdown.selected();
         // Show Bitwarden group only when Bitwarden is selected (index 2)
@@ -1134,6 +1226,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
             2 => {
                 // Bitwarden selected — trigger auto-unlock from keyring
                 let status_label = bw_status_label_switch.clone();
+                let gaps = keyring_gaps_switch.clone();
                 glib::spawn_future_local(async move {
                     let result = gtk4::gio::spawn_blocking(move || {
                         use secrecy::ExposeSecret;
@@ -1168,6 +1261,9 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                     .ok()
                     .flatten();
                     if let Some((text, css, session_key)) = result {
+                        // A result at all means the keyring did hold the master
+                        // password (the blocking step bails out otherwise).
+                        KeyringGaps::resolve(&gaps, |g| g.bitwarden = false);
                         if let Some(key) = session_key {
                             set_session_key(SecretString::from(key));
                         }
@@ -1179,6 +1275,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                 // 1Password selected — load token from keyring
                 let token_entry = op_token_entry_switch.clone();
                 let status_label = op_status_label_switch.clone();
+                let gaps = keyring_gaps_switch.clone();
                 glib::spawn_future_local(async move {
                     let token = gtk4::gio::spawn_blocking(get_op_token_from_keyring)
                         .await
@@ -1186,6 +1283,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                         .flatten();
                     if let Some(token) = token {
                         use secrecy::ExposeSecret;
+                        KeyringGaps::resolve(&gaps, |g| g.onepassword = false);
                         token_entry.set_text(token.expose_secret());
                         update_status_label(
                             &status_label,
@@ -1198,6 +1296,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
             4 => {
                 // Passbolt selected — load passphrase from keyring
                 let passphrase_entry = pb_passphrase_entry_switch.clone();
+                let gaps = keyring_gaps_switch.clone();
                 glib::spawn_future_local(async move {
                     let passphrase = gtk4::gio::spawn_blocking(get_pb_passphrase_from_keyring)
                         .await
@@ -1205,6 +1304,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                         .flatten();
                     if let Some(passphrase) = passphrase {
                         use secrecy::ExposeSecret;
+                        KeyringGaps::resolve(&gaps, |g| g.passbolt = false);
                         passphrase_entry.set_text(passphrase.expose_secret());
                     }
                 });
@@ -1212,6 +1312,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
             0 => {
                 // KeePassXC selected — load password from keyring
                 let password_entry = kdbx_password_entry_switch.clone();
+                let gaps = keyring_gaps_switch.clone();
                 glib::spawn_future_local(async move {
                     let password = gtk4::gio::spawn_blocking(get_kdbx_password_from_keyring)
                         .await
@@ -1219,6 +1320,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                         .flatten();
                     if let Some(password) = password {
                         use secrecy::ExposeSecret;
+                        KeyringGaps::resolve(&gaps, |g| g.kdbx = false);
                         password_entry.set_text(password.expose_secret());
                     }
                 });
@@ -1596,6 +1698,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         onepassword_token_entry,
         onepassword_storage_combo,
         secret_tool_available,
+        keyring_gaps,
         onepassword_cmd,
         pass_group,
         pass_store_dir_entry,
@@ -1715,6 +1818,41 @@ pub fn load_secret_settings(widgets: &SecretsPageWidgets, settings: &SecretSetti
             .onepassword_token_entry
             .set_text(token.expose_secret());
     }
+
+    // Pre-fill the remaining password entries from the runtime secrets the app
+    // already holds, the way the 1Password token and Bitwarden API fields above
+    // always have. Without it a blank entry made a storage-mode change destroy
+    // the secret: switching "Encrypted file" → "System keyring" dropped the blob
+    // from disk and wrote nothing to the keyring, so the password was gone at the
+    // next restart. The async keyring loaders below overwrite these with the
+    // keyring's own copy when they find one.
+    if let Some(ref password) = settings.kdbx_password {
+        use secrecy::ExposeSecret;
+        widgets
+            .kdbx_password_entry
+            .set_text(password.expose_secret());
+    }
+    if let Some(ref password) = settings.bitwarden_password {
+        use secrecy::ExposeSecret;
+        widgets
+            .bitwarden_password_entry
+            .set_text(password.expose_secret());
+    }
+    if let Some(ref passphrase) = settings.passbolt_passphrase {
+        use secrecy::ExposeSecret;
+        widgets
+            .passbolt_passphrase_entry
+            .set_text(passphrase.expose_secret());
+    }
+
+    // Assume every keyring-backed backend is missing its secret until a lookup
+    // below proves otherwise. The dirty check reads this so a secret retyped
+    // after a failed keyring write still counts as something to save (a value
+    // identical to the one in memory is invisible to `has_new_runtime_secret`).
+    widgets
+        .keyring_gaps
+        .set(KeyringGaps::from_settings(settings));
+
     set_storage_combo_value(
         &widgets.onepassword_storage_combo,
         settings.onepassword_storage(),
@@ -1813,6 +1951,7 @@ fn load_bitwarden_credentials_from_keyring(
         return;
     }
     let status_label = widgets.bitwarden_status_label.clone();
+    let gaps = widgets.keyring_gaps.clone();
     tracing::debug!("Scheduling Bitwarden auto-unlock from keyring (async)");
     glib::spawn_future_local({
         let status_label = status_label.clone();
@@ -1868,6 +2007,9 @@ fn load_bitwarden_credentials_from_keyring(
             );
 
             if let Some((text, css, session_key)) = result {
+                // A result at all means the keyring did hold the master password
+                // — the blocking step returns `None` when the lookup is empty.
+                KeyringGaps::resolve(&gaps, |g| g.bitwarden = false);
                 if let Some(key) = session_key {
                     set_session_key(SecretString::from(key));
                     tracing::info!("Bitwarden auto-unlocked from keyring");
@@ -1888,6 +2030,7 @@ fn load_onepassword_credentials_from_keyring(
     }
     let token_entry = widgets.onepassword_token_entry.clone();
     let status_label = widgets.onepassword_status_label.clone();
+    let gaps = widgets.keyring_gaps.clone();
     tracing::debug!("Scheduling 1Password token auto-load from keyring (async)");
     glib::spawn_future_local(async move {
         let t_op = std::time::Instant::now();
@@ -1903,6 +2046,7 @@ fn load_onepassword_credentials_from_keyring(
         if let Some(token) = token {
             use secrecy::ExposeSecret;
             tracing::debug!("1Password token loaded from keyring");
+            KeyringGaps::resolve(&gaps, |g| g.onepassword = false);
             token_entry.set_text(token.expose_secret());
             update_status_label(&status_label, &i18n("Token loaded from keyring"), "success");
             tracing::info!("1Password token set from keyring");
@@ -1918,6 +2062,7 @@ fn load_passbolt_credentials_from_keyring(widgets: &SecretsPageWidgets, settings
         return;
     }
     let passphrase_entry = widgets.passbolt_passphrase_entry.clone();
+    let gaps = widgets.keyring_gaps.clone();
     tracing::debug!("Scheduling Passbolt passphrase auto-load (async)");
     glib::spawn_future_local(async move {
         let t_pb = std::time::Instant::now();
@@ -1933,6 +2078,7 @@ fn load_passbolt_credentials_from_keyring(widgets: &SecretsPageWidgets, settings
         if let Some(passphrase) = passphrase {
             use secrecy::ExposeSecret;
             tracing::debug!("Passbolt passphrase loaded from keyring");
+            KeyringGaps::resolve(&gaps, |g| g.passbolt = false);
             passphrase_entry.set_text(passphrase.expose_secret());
             tracing::info!("Passbolt passphrase restored from keyring");
         } else {
@@ -1947,6 +2093,7 @@ fn load_kdbx_credentials_from_keyring(widgets: &SecretsPageWidgets, settings: &S
         return;
     }
     let password_entry = widgets.kdbx_password_entry.clone();
+    let gaps = widgets.keyring_gaps.clone();
     tracing::debug!("Scheduling KDBX password auto-load (async)");
     glib::spawn_future_local(async move {
         let t_kdbx = std::time::Instant::now();
@@ -1962,6 +2109,7 @@ fn load_kdbx_credentials_from_keyring(widgets: &SecretsPageWidgets, settings: &S
         if let Some(password) = password {
             use secrecy::ExposeSecret;
             tracing::debug!("KDBX password loaded from keyring");
+            KeyringGaps::resolve(&gaps, |g| g.kdbx = false);
             password_entry.set_text(password.expose_secret());
             tracing::info!("KDBX password restored from keyring");
         } else {
@@ -2037,7 +2185,26 @@ pub fn collect_secret_settings(
                     (Some(password), encrypted)
                 }
             }
-            // For System keyring, None, or password authentication turned off:
+            // System keyring: the collected password is the *runtime* copy.
+            // `kdbx_password` is `#[serde(skip)]`, so carrying it here never
+            // writes the secret to disk — it is what
+            // `save_pending_keyring_credentials()` hands to the keyring, and it
+            // lets the database unlock without waiting for a restart. Returning
+            // `None` here (0.19.17–0.19.19) meant the deferred keyring save had
+            // nothing to store and silently did nothing (issue #272).
+            // Still no encrypted blob: the keyring is the persistence layer.
+            CredentialStorage::SystemKeyring if kdbx_use_password => {
+                let password_text = widgets.kdbx_password_entry.text();
+                if password_text.is_empty() {
+                    (None, None)
+                } else {
+                    (
+                        Some(secrecy::SecretString::new(password_text.to_string().into())),
+                        None,
+                    )
+                }
+            }
+            // For None storage, or password authentication turned off:
             // never write an encrypted blob.
             CredentialStorage::EncryptedFile
             | CredentialStorage::SystemKeyring
@@ -2072,7 +2239,21 @@ pub fn collect_secret_settings(
                 (Some(password), encrypted)
             }
         }
-        CredentialStorage::SystemKeyring | CredentialStorage::None => (None, None),
+        // Same shape as the KDBX keyring branch: carry the typed password as
+        // the runtime-only copy so the deferred keyring save has something to
+        // store, and write no blob (issue #272).
+        CredentialStorage::SystemKeyring => {
+            let password_text = widgets.bitwarden_password_entry.text();
+            if password_text.is_empty() {
+                (None, None)
+            } else {
+                (
+                    Some(secrecy::SecretString::new(password_text.to_string().into())),
+                    None,
+                )
+            }
+        }
+        CredentialStorage::None => (None, None),
     };
 
     // Collect Bitwarden API key settings
@@ -2082,23 +2263,32 @@ pub fn collect_secret_settings(
     let (bitwarden_client_id, bitwarden_client_id_encrypted) = if bitwarden_use_api_key {
         let client_id_text = widgets.bitwarden_client_id_entry.text();
         if client_id_text.is_empty() {
-            // Keep existing encrypted value if field is empty
+            // Keep existing encrypted value if field is empty — unless the
+            // keyring is the persistence layer, where no blob belongs on disk.
             (
                 None,
+                if bitwarden_save_to_keyring {
+                    None
+                } else {
+                    settings
+                        .borrow()
+                        .secrets
+                        .bitwarden_client_id_encrypted
+                        .clone()
+                },
+            )
+        } else {
+            let client_id = secrecy::SecretString::new(client_id_text.to_string().into());
+            let encrypted = if bitwarden_save_to_keyring {
+                None
+            } else {
                 settings
                     .borrow()
                     .secrets
                     .bitwarden_client_id_encrypted
-                    .clone(),
-            )
-        } else {
-            let client_id = secrecy::SecretString::new(client_id_text.to_string().into());
-            let encrypted = settings
-                .borrow()
-                .secrets
-                .bitwarden_client_id_encrypted
-                .clone()
-                .or_else(|| Some("encrypted_client_id_placeholder".to_string()));
+                    .clone()
+                    .or_else(|| Some("encrypted_client_id_placeholder".to_string()))
+            };
             (Some(client_id), encrypted)
         }
     } else {
@@ -2108,23 +2298,32 @@ pub fn collect_secret_settings(
     let (bitwarden_client_secret, bitwarden_client_secret_encrypted) = if bitwarden_use_api_key {
         let client_secret_text = widgets.bitwarden_client_secret_entry.text();
         if client_secret_text.is_empty() {
-            // Keep existing encrypted value if field is empty
+            // Keep existing encrypted value if field is empty — unless the
+            // keyring is the persistence layer.
             (
                 None,
+                if bitwarden_save_to_keyring {
+                    None
+                } else {
+                    settings
+                        .borrow()
+                        .secrets
+                        .bitwarden_client_secret_encrypted
+                        .clone()
+                },
+            )
+        } else {
+            let client_secret = secrecy::SecretString::new(client_secret_text.to_string().into());
+            let encrypted = if bitwarden_save_to_keyring {
+                None
+            } else {
                 settings
                     .borrow()
                     .secrets
                     .bitwarden_client_secret_encrypted
-                    .clone(),
-            )
-        } else {
-            let client_secret = secrecy::SecretString::new(client_secret_text.to_string().into());
-            let encrypted = settings
-                .borrow()
-                .secrets
-                .bitwarden_client_secret_encrypted
-                .clone()
-                .or_else(|| Some("encrypted_client_secret_placeholder".to_string()));
+                    .clone()
+                    .or_else(|| Some("encrypted_client_secret_placeholder".to_string()))
+            };
             (Some(client_secret), encrypted)
         }
     } else {
@@ -2157,7 +2356,20 @@ pub fn collect_secret_settings(
                     (Some(token), encrypted)
                 }
             }
-            CredentialStorage::SystemKeyring | CredentialStorage::None => (None, None),
+            // Runtime-only copy for the deferred keyring save, no blob on disk
+            // — same shape as the KDBX keyring branch (issue #272).
+            CredentialStorage::SystemKeyring => {
+                let token_text = widgets.onepassword_token_entry.text();
+                if token_text.is_empty() {
+                    (None, None)
+                } else {
+                    (
+                        Some(secrecy::SecretString::new(token_text.to_string().into())),
+                        None,
+                    )
+                }
+            }
+            CredentialStorage::None => (None, None),
         };
 
     // Collect Passbolt passphrase
@@ -2185,7 +2397,22 @@ pub fn collect_secret_settings(
                 (Some(passphrase), encrypted)
             }
         }
-        CredentialStorage::SystemKeyring | CredentialStorage::None => (None, None),
+        // Runtime-only copy for the deferred keyring save, no blob on disk —
+        // same shape as the KDBX keyring branch (issue #272).
+        CredentialStorage::SystemKeyring => {
+            let passphrase_text = widgets.passbolt_passphrase_entry.text();
+            if passphrase_text.is_empty() {
+                (None, None)
+            } else {
+                (
+                    Some(secrecy::SecretString::new(
+                        passphrase_text.to_string().into(),
+                    )),
+                    None,
+                )
+            }
+        }
+        CredentialStorage::None => (None, None),
     };
 
     // Keyring saves are deferred — performed asynchronously after the dialog
@@ -2194,7 +2421,7 @@ pub fn collect_secret_settings(
     // collected settings.
     let kdbx_storage = storage_combo_value(&widgets.kdbx_storage_combo);
 
-    SecretSettings {
+    let mut collected = SecretSettings {
         preferred_backend,
         enable_fallback: widgets.enable_fallback.is_active(),
         kdbx_path,
@@ -2236,44 +2463,118 @@ pub fn collect_secret_settings(
                 Some(std::path::PathBuf::from(path_text.as_str()))
             }
         },
+    };
+
+    // A password entry the keyring could not pre-fill stays blank, so switching
+    // storage to "System keyring" without retyping would collect no secret at
+    // all — the blob is dropped from disk and nothing reaches the keyring, and
+    // the password is gone at the next restart. Take the runtime copy the app
+    // already holds instead. Blank still means "I did not retype it", never
+    // "delete it".
+    {
+        let current = settings.borrow();
+        collected.carry_over_runtime_secrets(&current.secrets);
     }
+
+    collected
+}
+
+/// Outcome of the deferred keyring writes and revocations.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct KeyringSaveOutcome {
+    /// Credentials that could not be written to the system keyring.
+    ///
+    /// Non-zero means the secret exists in memory only and will be gone after a
+    /// restart, so the user has to be told (issue #272 follow-up).
+    pub write_failures: u32,
+    /// Stale keyring entries that could not be removed.
+    pub revoke_failures: u32,
 }
 
 /// Saves credentials to the system keyring based on the storage choices in
-/// the given [`SecretSettings`]. Call this **asynchronously** after collecting
-/// settings (e.g. via `glib::spawn_future_local` + `gio::spawn_blocking`) to
-/// avoid blocking the GTK main loop.
+/// `current`, and revokes entries that `current` no longer stores there
+/// (compared against `previous`, the settings in force before the save).
 ///
-/// Returns the number of failed keyring writes (0 = all ok).
-pub fn save_pending_keyring_credentials(settings: &SecretSettings) -> u32 {
+/// Call this **asynchronously** after collecting settings (e.g. via
+/// `glib::spawn_future_local` + `gio::spawn_blocking`) to avoid blocking the GTK
+/// main loop.
+pub fn save_pending_keyring_credentials(
+    previous: &SecretSettings,
+    current: &SecretSettings,
+) -> KeyringSaveOutcome {
     use secrecy::ExposeSecret;
-    let mut failures = 0u32;
+    let mut outcome = KeyringSaveOutcome::default();
 
-    if settings.kdbx_save_to_keyring
-        && settings.kdbx_use_password
-        && let Some(ref pw) = settings.kdbx_password
+    if current.kdbx_save_to_keyring
+        && current.kdbx_use_password
+        && let Some(ref pw) = current.kdbx_password
         && !save_kdbx_password_to_keyring(pw.expose_secret())
     {
-        failures += 1;
+        outcome.write_failures += 1;
     }
-    if settings.bitwarden_save_to_keyring
-        && let Some(ref pw) = settings.bitwarden_password
+    if current.bitwarden_save_to_keyring
+        && let Some(ref pw) = current.bitwarden_password
         && !save_bw_password_to_keyring(pw.expose_secret())
     {
-        failures += 1;
+        outcome.write_failures += 1;
     }
-    if settings.onepassword_save_to_keyring
-        && let Some(ref token) = settings.onepassword_service_account_token
+    // The API key pair follows the Bitwarden storage choice: with the keyring
+    // selected no encrypted blob is written to disk, so the keyring is the only
+    // place these can live.
+    if current.bitwarden_save_to_keyring
+        && current.bitwarden_use_api_key
+        && let (Some(id), Some(secret)) = (
+            current.bitwarden_client_id.as_ref(),
+            current.bitwarden_client_secret.as_ref(),
+        )
+        && !save_bw_api_credentials_to_keyring(id, secret)
+    {
+        outcome.write_failures += 1;
+    }
+    if current.onepassword_save_to_keyring
+        && let Some(ref token) = current.onepassword_service_account_token
         && !save_op_token_to_keyring(token.expose_secret())
     {
-        failures += 1;
+        outcome.write_failures += 1;
     }
-    if settings.passbolt_save_to_keyring
-        && let Some(ref pp) = settings.passbolt_passphrase
+    if current.passbolt_save_to_keyring
+        && let Some(ref pp) = current.passbolt_passphrase
         && !save_pb_passphrase_to_keyring(pp.expose_secret())
     {
-        failures += 1;
+        outcome.write_failures += 1;
     }
 
+    outcome.revoke_failures = revoke_stale_keyring_credentials(previous, current);
+
+    outcome
+}
+
+/// Removes keyring entries whose backend no longer stores its secret there.
+///
+/// Returns the number of deletions that failed. Switching a backend to
+/// "Encrypted file" / "Don't save" (or turning it off) previously left the
+/// keyring entry behind forever, so a stored secret could never be revoked.
+fn revoke_stale_keyring_credentials(previous: &SecretSettings, current: &SecretSettings) -> u32 {
+    let revocations = current.keyring_revocations(previous);
+    if !revocations.any() {
+        return 0;
+    }
+
+    let mut failures = 0u32;
+    if revocations.kdbx_password && !delete_kdbx_password_from_keyring() {
+        failures += 1;
+    }
+    if revocations.bitwarden_password && !delete_bw_password_from_keyring() {
+        failures += 1;
+    }
+    if revocations.bitwarden_api_credentials && !delete_bw_api_credentials_from_keyring() {
+        failures += 1;
+    }
+    if revocations.onepassword_token && !delete_op_token_from_keyring() {
+        failures += 1;
+    }
+    if revocations.passbolt_passphrase && !delete_pb_passphrase_from_keyring() {
+        failures += 1;
+    }
     failures
 }

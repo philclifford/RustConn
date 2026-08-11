@@ -264,9 +264,12 @@ proptest! {
                 let _ = std::fs::remove_file(path);
             }
         }
-        // A warning should mention the saved path
+        // A warning should name the saved path
         prop_assert!(
-            result.warnings.iter().any(|w| w.contains("Inline CA certificate saved")),
+            result.warnings.iter().any(|w| matches!(
+                w,
+                rustconn_core::import::ImportWarning::InlineCaCertificateSaved { .. }
+            )),
             "Expected warning about saved CA certificate"
         );
     }

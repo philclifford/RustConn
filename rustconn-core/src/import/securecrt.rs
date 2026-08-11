@@ -271,6 +271,8 @@ impl SecureCrtImporter {
                     verbose: false,
                     mptcp: false,
                     remote_path: None,
+                    // SecureCRT's emulation settings are not imported.
+                    ..Default::default()
                 };
 
                 let mut conn = Connection::new(

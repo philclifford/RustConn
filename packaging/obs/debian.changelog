@@ -1,3 +1,40 @@
+rustconn (0.19.20-1) unstable; urgency=medium
+
+  * Version bump to 0.19.20
+  * Added: SSH/MOSH connections can choose what Backspace and Delete
+    send (#271)
+  * Fixed: Saving Preferences threw away the Backspace/Delete choice on
+    a live session (#271)
+  * Fixed: SFTP connections offered a Keyboard group that did nothing
+    and could overwrite the stored value (#271)
+  * Fixed: RDM JSON import still aborted on an integer field, and one
+    bad entry cost the whole file (#234)
+  * Fixed: Royal TS Telnet sessions were imported as SSH on port 22
+    (#234)
+  * Fixed: Royal TS import gave no hint why connections came in without
+    a password (#234)
+  * Fixed: Import warnings were permanently English (#234)
+  * Fixed: An import that produced nothing claimed success (#234)
+  * Fixed: KeePass database password was never written to the system
+    keyring (#272)
+  * Fixed: Re-entering a vault password in Settings was discarded as
+    no change (#272)
+  * Fixed: Bitwarden, 1Password and Passbolt had the same keyring hole
+    as KeePass (#272)
+  * Fixed: 1Password and Passbolt wrote a placeholder literal to disk
+    (#272)
+  * Fixed: Moving a secret from encrypted file to system keyring
+    destroyed it (#272)
+  * Fixed: Turning a backend off left the old keyring entry behind
+    (#272)
+  * Fixed: A failed keyring write was a log line under a Settings saved
+    toast (#272)
+  * Changed: RUSTSEC-2026-0244 resolved via new rustconn-locale-sys
+    crate (#267)
+  * Dependencies: gettext-rs 0.7.7→0.8.0
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Mon, 11 Aug 2026 12:00:00 +0200
+
 rustconn (0.19.19-1) unstable; urgency=medium
 
   * Version bump to 0.19.19

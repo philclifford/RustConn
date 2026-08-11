@@ -1,6 +1,6 @@
 # AI-Assisted Development Architecture
 
-**Version 0.19.19** | Last updated: August 2026
+**Version 0.19.20** | Last updated: August 2026
 
 This document describes the Kiro AI agent infrastructure used to automate
 development workflows, enforce architectural constraints, and streamline the
@@ -95,7 +95,7 @@ is the canonical source.
 | Hook | Scope | Action |
 |------|-------|--------|
 | `pre-commit-checks` | shell commands | Before `git commit`/`push`: `fmt` + `clippy` must pass |
-| `crate-boundary-guard` | write tools (`.rs`) | Deny writes that add GUI imports to `rustconn-core`/`rustconn-cli`, or `unsafe` outside `rustconn-pty-sys` |
+| `crate-boundary-guard` | write tools (`.rs`) | Deny writes that add GUI imports to `rustconn-core`/`rustconn-cli`, or `unsafe` outside a `rustconn-*-sys` crate |
 
 ### `userTriggered` — manual buttons
 | Hook | Action |

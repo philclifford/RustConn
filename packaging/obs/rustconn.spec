@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.19
+Version:        0.19.20
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,17 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Mon Aug 11 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.20-0
+- Added: SSH/MOSH connections can choose what Backspace and Delete send (#271)
+- Fixed: Saving Preferences threw away the Backspace/Delete choice on a live session (#271)
+- Fixed: RDM JSON import still aborted on an integer field, one bad entry cost the whole file (#234)
+- Fixed: Royal TS Telnet sessions were imported as SSH on port 22 (#234)
+- Fixed: KeePass database password was never written to the system keyring (#272)
+- Fixed: Bitwarden, 1Password and Passbolt had the same keyring hole as KeePass (#272)
+- Fixed: Moving a secret from encrypted file to system keyring destroyed it (#272)
+- Changed: RUSTSEC-2026-0244 resolved via new rustconn-locale-sys crate (#267)
+- Dependencies: gettext-rs 0.7.7→0.8.0
+
 * Sun Aug 09 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.19-0
 - Fixed: Deleting a connection now removes its credential from the password vault (#263)
 - Fixed: Renaming a connection in the configuration panel now updates the vault entry (#263)
