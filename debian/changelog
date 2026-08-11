@@ -1,3 +1,14 @@
+rustconn (0.19.21-1) unstable; urgency=medium
+
+  * Version bump to 0.19.21
+  * Fixed: RustConn did not start at all on Fedora 44 — the setlocale
+    guard required exactly one live thread, a state an application
+    cannot arrange, and aborted the process at startup (#271)
+  * Changed: the thread-count clause of the setlocale contract is
+    documented as a judgement rather than a proof (#267)
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Tue, 11 Aug 2026 23:26:05 +0300
+
 rustconn (0.19.20-1) unstable; urgency=medium
 
   * Version bump to 0.19.20

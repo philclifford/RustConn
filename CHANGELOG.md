@@ -5,6 +5,18 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.21] - 2026-08-11
+
+### Fixed
+
+- **RustConn did not start at all on Fedora 44: the `setlocale` guard aborted the process (issue [#271](https://github.com/totoshko88/RustConn/issues/271#issuecomment-5258089991))** — 0.19.20 shipped the `rustconn-locale-sys` startup guard described below, and on Fedora 44 Workstation it refused the very first call and panicked before the window ever appeared: `setlocale in a process with 2 threads`. The guard required the process to have exactly one live thread, which is a state an application cannot actually arrange. A shared library's ELF constructor runs before `main()` is entered and may spawn a thread there — Fedora 44 pairs glibc 2.43 with OpenSSL 3.5, and a constructor-spawned thread is present by the time the first statement of `main()` runs. So the check was not catching a `setlocale` call that had drifted out of the startup window; it was reporting a precondition the platform had already made unattainable, and turning it into a hard abort. The guard now samples the thread count on its first call and treats that as the baseline, refusing only when the count *grows* past it. That is the condition the call site actually controls — a thread this program started between the two `init_locale` calls, which is what a regression in `main()`'s ordering would look like — while a library thread that was there before `main()` no longer stops the application from starting. `Refusal::MultiThreaded` becomes `Refusal::ThreadCountGrew { baseline, current }`, so the panic message now names both numbers instead of only the total.
+
+  Not Fedora-specific despite being reported there. Nothing in the mechanism is: any distribution whose shared libraries spawn a thread from an ELF constructor reaches the same abort, and that is a property of the installed libraries rather than of the distribution. Fedora 44 is where the combination landed first; a rolling release picking up the same OpenSSL or p11-kit would follow, as would any system with an `LD_PRELOAD` library that starts a thread.
+
+### Changed
+
+- **The thread-count clause of the `setlocale` contract is documented as a judgement, not a proof (issue [#267](https://github.com/totoshko88/RustConn/issues/267))** — 0.19.20's notes in `deny.toml`, `.cargo/audit.toml` and the crate docs all said the guard "refuses to run once a second thread exists". That is no longer what it does, and the notes would have been read as describing current behaviour. They now describe the baseline rule and say why it is a baseline. The SAFETY comment in `init_locale` is explicit that this is the one clause the crate cannot establish by inspection: a pre-`main()` library thread is not reachable from there, so whether it reads locale state is unknown, and tolerating it is a deliberate trade against aborting at startup on a correct call site. What makes the call sound remains the call site — `main()`, ahead of GTK, tokio and the tracing subscriber — with the guard as defence-in-depth against that ordering regressing, which is what the 0.19.20 note already said and the code now matches.
+
 ## [0.19.20] - 2026-08-11
 
 ### Added

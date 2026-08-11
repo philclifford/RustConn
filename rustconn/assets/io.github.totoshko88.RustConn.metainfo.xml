@@ -140,6 +140,16 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.21" date="2026-08-11">
+      <description>
+        <p>Version 0.19.21 - startup fix for the setlocale guard:</p>
+        <ul>
+          <li>Fixed: RustConn did not start at all on Fedora 44 — the setlocale guard required exactly one live thread, a state an application cannot arrange, and aborted the process before the window appeared (#271)</li>
+          <li>Fixed: the guard now samples the thread count on its first call and refuses only when the count grows past that baseline, so a thread spawned by a shared library before main() no longer blocks startup (#271)</li>
+          <li>Changed: the thread-count clause of the setlocale contract is documented as a judgement rather than a proof (#267)</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.20" date="2026-08-11">
       <description>
         <p>Version 0.19.20 - SSH/MOSH keyboard control, import robustness, keyring reliability:</p>
