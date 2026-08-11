@@ -278,7 +278,7 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
-* Mon Aug 11 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.20-0
+* Tue Aug 11 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.20-0
 - Added: SSH/MOSH connections can choose what Backspace and Delete send (#271)
 - Fixed: Saving Preferences threw away the Backspace/Delete choice on a live session (#271)
 - Fixed: RDM JSON import still aborted on an integer field, one bad entry cost the whole file (#234)

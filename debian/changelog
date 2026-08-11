@@ -33,7 +33,7 @@ rustconn (0.19.20-1) unstable; urgency=medium
     crate (#267)
   * Dependencies: gettext-rs 0.7.7→0.8.0
 
- -- Anton Isaiev <totoshko88@gmail.com>  Mon, 11 Aug 2026 12:00:00 +0200
+ -- Anton Isaiev <totoshko88@gmail.com>  Tue, 11 Aug 2026 12:00:00 +0200
 
 rustconn (0.19.19-1) unstable; urgency=medium
 

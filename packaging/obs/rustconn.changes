@@ -1,5 +1,5 @@
 -------------------------------------------------------------------
-Mon Aug 11 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.20
+Tue Aug 11 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.20
 
 - Version bump to 0.19.20
 - Added: SSH/MOSH connections can choose what Backspace and Delete send (#271)
