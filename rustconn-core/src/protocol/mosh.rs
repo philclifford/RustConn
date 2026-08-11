@@ -172,6 +172,7 @@ mod tests {
             server_binary: Some("/usr/local/bin/mosh-server".to_string()),
             predict_mode: MoshPredictMode::Always,
             custom_args: vec![],
+            ..MoshConfig::default()
         };
         let connection = create_mosh_connection(config);
         let cmd = protocol.build_command(&connection).unwrap();

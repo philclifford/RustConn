@@ -10,7 +10,7 @@
 //! to all dialog widgets and provides `validate()` and `build_connection()` methods
 //! to produce a `ConnectionDialogResult` from the current widget state.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -22,13 +22,13 @@ use libadwaita as adw;
 use rustconn_core::activity_monitor::{ActivityMonitorConfig, MonitorMode};
 use rustconn_core::automation::{ConnectionTask, ExpectRule, TaskCondition};
 use rustconn_core::models::{
-    AwsSsmConfig, AzureBastionConfig, AzureSshConfig, BoundaryConfig, CloudflareAccessConfig,
-    Connection, ConnectionThemeOverride, CustomProperty, GcpIapConfig, GenericZeroTrustConfig,
-    HighlightRule, HoopDevConfig, OciBastionConfig, PasswordSource, ProtocolConfig, RdpAudioMode,
-    RdpClientMode, RdpConfig, RdpPerformanceMode, Resolution, ScaleOverride, SharedFolder,
-    SpiceConfig, SpiceImageCompression, SshAuthMethod, SshConfig, SshKeySource, TailscaleSshConfig,
-    TeleportConfig, VncClientMode, VncConfig, VncPerformanceMode, ZeroTrustConfig,
-    ZeroTrustProvider, ZeroTrustProviderConfig,
+    AwsSsmConfig, AzureBastionConfig, AzureSshConfig, BackspaceSends, BoundaryConfig,
+    CloudflareAccessConfig, Connection, ConnectionThemeOverride, CustomProperty, DeleteSends,
+    GcpIapConfig, GenericZeroTrustConfig, HighlightRule, HoopDevConfig, OciBastionConfig,
+    PasswordSource, ProtocolConfig, RdpAudioMode, RdpClientMode, RdpConfig, RdpPerformanceMode,
+    Resolution, ScaleOverride, SharedFolder, SpiceConfig, SpiceImageCompression, SshAuthMethod,
+    SshConfig, SshKeySource, TailscaleSshConfig, TeleportConfig, VncClientMode, VncConfig,
+    VncPerformanceMode, ZeroTrustConfig, ZeroTrustProvider, ZeroTrustProviderConfig,
 };
 use rustconn_core::session::LogConfig;
 use rustconn_core::variables::Variable;
@@ -79,6 +79,11 @@ pub(super) struct ConnectionDialogData<'a> {
     pub ssh_mptcp: &'a CheckButton,
     pub ssh_startup_entry: &'a Entry,
     pub ssh_options_entry: &'a Entry,
+    pub ssh_backspace_dropdown: &'a DropDown,
+    pub ssh_delete_dropdown: &'a DropDown,
+    /// Erase modes the edited connection was loaded with, used for SFTP only —
+    /// see `ConnectionDialog::sftp_erase_modes` (issue #271).
+    pub sftp_erase_modes: &'a Rc<Cell<(BackspaceSends, DeleteSends)>>,
     pub ssh_agent_socket_entry: &'a adw::EntryRow,
     pub ssh_pkcs11_entry: &'a adw::EntryRow,
     pub ssh_remote_path_entry: &'a adw::EntryRow,
@@ -908,7 +913,7 @@ impl ConnectionDialogData<'_> {
             4 => Some(ProtocolConfig::ZeroTrust(self.build_zerotrust_config())),
             5 => Some(ProtocolConfig::Telnet(self.build_telnet_config())),
             6 => Some(ProtocolConfig::Serial(self.build_serial_config())),
-            7 => Some(ProtocolConfig::Sftp(self.build_ssh_config())),
+            7 => Some(ProtocolConfig::Sftp(self.build_sftp_config())),
             8 => Some(ProtocolConfig::Kubernetes(self.build_kubernetes_config())),
             9 => Some(ProtocolConfig::Mosh(self.build_mosh_config())),
             10 => Some(ProtocolConfig::Web(self.build_web_config())),
@@ -1076,12 +1081,11 @@ impl ConnectionDialogData<'_> {
                 .map(String::from)
                 .collect()
         };
-        let backspace_sends = rustconn_core::models::TelnetBackspaceSends::from_index(
+        let backspace_sends = rustconn_core::models::BackspaceSends::from_index(
             self.telnet_backspace_dropdown.selected(),
         );
-        let delete_sends = rustconn_core::models::TelnetDeleteSends::from_index(
-            self.telnet_delete_dropdown.selected(),
-        );
+        let delete_sends =
+            rustconn_core::models::DeleteSends::from_index(self.telnet_delete_dropdown.selected());
         rustconn_core::models::TelnetConfig {
             custom_args,
             backspace_sends,
@@ -1225,6 +1229,11 @@ impl ConnectionDialogData<'_> {
             server_binary,
             predict_mode,
             custom_args: Vec::new(),
+            // MOSH shares the SSH page's Keyboard group, so the choice was
+            // visible while MOSH was selected and belongs in MoshConfig — before
+            // issue #271's follow-up it was read here by nobody and dropped.
+            backspace_sends: BackspaceSends::from_index(self.ssh_backspace_dropdown.selected()),
+            delete_sends: DeleteSends::from_index(self.ssh_delete_dropdown.selected()),
         }
     }
 
@@ -1444,6 +1453,24 @@ impl ConnectionDialogData<'_> {
             keep_alive_interval,
             keep_alive_count_max,
             remote_path,
+            backspace_sends: BackspaceSends::from_index(self.ssh_backspace_dropdown.selected()),
+            delete_sends: DeleteSends::from_index(self.ssh_delete_dropdown.selected()),
+        }
+    }
+
+    /// Builds the SFTP configuration, which is an [`SshConfig`] with the erase
+    /// modes taken from the connection rather than from the dropdowns.
+    ///
+    /// SFTP opens an `mc` file-manager tab that never applies the choice, so the
+    /// editor hides the Keyboard group while SFTP is selected. The shared
+    /// dropdowns may then be showing something the user set on the SSH or MOSH
+    /// page, which must not be written here (issue #271).
+    fn build_sftp_config(&self) -> SshConfig {
+        let (backspace_sends, delete_sends) = self.sftp_erase_modes.get();
+        SshConfig {
+            backspace_sends,
+            delete_sends,
+            ..self.build_ssh_config()
         }
     }
 

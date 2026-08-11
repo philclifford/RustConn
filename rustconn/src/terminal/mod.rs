@@ -31,7 +31,7 @@ use gtk4::prelude::*;
 use gtk4::{Box as GtkBox, Orientation, Widget, gio, glib};
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use rustconn_core::models::AutomationConfig;
+use rustconn_core::models::{AutomationConfig, BackspaceSends, DeleteSends};
 use rustconn_core::terminal_themes::TerminalTheme;
 pub use types::{SessionWidgetStorage, TerminalSession};
 use uuid::Uuid;
@@ -1759,6 +1759,16 @@ fn push_sandbox_cli_config(env_vec: &mut Vec<Zeroizing<String>>) {
 
 impl TerminalNotebook {
     /// Spawns an SSH command in the terminal
+    ///
+    /// Unlike [`Self::spawn_telnet`], this does **not** apply the connection's
+    /// erase mode: every caller must call [`Self::set_erase_mode`] itself with
+    /// `conn.protocol_config.erase_modes()` before spawning, or the session
+    /// silently falls back to the global defaults (issue
+    /// [#271](https://github.com/totoshko88/RustConn/issues/271)). The two
+    /// bytes are not parameters here because this signature is already at the
+    /// point where the project's argument limit is waived below, and one of the
+    /// callers (Quick Connect in `window::edit_dialogs`) has no stored
+    /// connection to read them from — it wants the defaults.
     #[expect(
         clippy::too_many_arguments,
         reason = "function parameters mirror upstream API or struct fields 1:1; bundling into a struct only restates the field list"
@@ -1887,53 +1897,39 @@ impl TerminalNotebook {
         self.spawn_command(session_id, &argv, extra_env, None, ssh_agent_socket)
     }
 
+    /// Points a session's Backspace and Delete keys at the configured bytes.
+    ///
+    /// Applies to the session's live VTE widget, so it has to run after the tab
+    /// exists and after [`config::configure_terminal_with_settings`] has
+    /// installed the defaults — see [`config::apply_erase_mode`]. Re-applying it
+    /// on every spawn is what keeps the choice in force across a reconnect into
+    /// the same terminal. A session that has already gone away is ignored.
+    pub fn set_erase_mode(
+        &self,
+        session_id: Uuid,
+        backspace_sends: BackspaceSends,
+        delete_sends: DeleteSends,
+    ) {
+        if let Some(terminal) = self.terminals.borrow().get(&session_id) {
+            config::apply_erase_mode(terminal, backspace_sends, delete_sends);
+        }
+    }
+
     /// Spawns a Telnet command in the terminal
     ///
     /// Supports configurable backspace/delete key behavior via VTE
     /// `EraseBinding`. Settings are applied directly on the terminal
     /// widget before spawning the telnet process.
-    ///
-    /// `Automatic` resolves to the same pair as every other session gets from
-    /// [`config::apply_erase_bindings`] rather than to `EraseBinding::Auto`:
-    /// VTE has no PTY of ours to read a `VERASE` from, and asking it to look
-    /// aborts the process.
     pub fn spawn_telnet(
         &self,
         session_id: Uuid,
         host: &str,
         port: u16,
         extra_args: &[&str],
-        backspace_sends: rustconn_core::models::TelnetBackspaceSends,
-        delete_sends: rustconn_core::models::TelnetDeleteSends,
+        backspace_sends: BackspaceSends,
+        delete_sends: DeleteSends,
     ) -> bool {
-        use rustconn_core::models::{TelnetBackspaceSends, TelnetDeleteSends};
-        use vte4::EraseBinding;
-
-        // Apply keyboard bindings directly on the VTE terminal
-        if let Some(terminal) = self.terminals.borrow().get(&session_id) {
-            match backspace_sends {
-                TelnetBackspaceSends::Automatic => {
-                    terminal.set_backspace_binding(EraseBinding::AsciiDelete);
-                }
-                TelnetBackspaceSends::Backspace => {
-                    terminal.set_backspace_binding(EraseBinding::AsciiBackspace);
-                }
-                TelnetBackspaceSends::Delete => {
-                    terminal.set_backspace_binding(EraseBinding::AsciiDelete);
-                }
-            }
-            match delete_sends {
-                TelnetDeleteSends::Automatic => {
-                    terminal.set_delete_binding(EraseBinding::DeleteSequence);
-                }
-                TelnetDeleteSends::Backspace => {
-                    terminal.set_delete_binding(EraseBinding::AsciiBackspace);
-                }
-                TelnetDeleteSends::Delete => {
-                    terminal.set_delete_binding(EraseBinding::AsciiDelete);
-                }
-            }
-        }
+        self.set_erase_mode(session_id, backspace_sends, delete_sends);
 
         // Spawn telnet directly — no shell wrapper needed
         let mut argv = vec!["telnet"];
@@ -3276,6 +3272,36 @@ impl TerminalNotebook {
         }
     }
 
+    /// Re-applies per-connection erase modes after global settings change.
+    ///
+    /// [`Self::apply_settings`] runs every live terminal back through
+    /// [`config::configure_terminal_with_settings`], which reinstalls the global
+    /// defaults — so saving anything in Preferences → Terminal used to silently
+    /// put Backspace back to `^?` on a session that had asked for `^H`, until it
+    /// was reconnected (issue
+    /// [#271](https://github.com/totoshko88/RustConn/issues/271)). Call this
+    /// straight after `apply_settings`, exactly as
+    /// [`Self::reapply_theme_overrides`] is called for the same reason.
+    ///
+    /// A session whose connection has since been deleted, or whose protocol has
+    /// no such setting, is re-set to the defaults rather than skipped: its
+    /// terminal has just been overwritten too, and the defaults are what it
+    /// should be showing.
+    pub fn reapply_erase_modes<F>(&self, get_erase_modes: F)
+    where
+        F: Fn(Uuid) -> Option<(BackspaceSends, DeleteSends)>,
+    {
+        let terminals = self.terminals.borrow();
+        let session_info = self.session_info.borrow();
+        for (session_id, terminal) in terminals.iter() {
+            let (backspace_sends, delete_sends) = session_info
+                .get(session_id)
+                .and_then(|info| get_erase_modes(info.connection_id))
+                .unwrap_or_default();
+            config::apply_erase_mode(terminal, backspace_sends, delete_sends);
+        }
+    }
+
     /// Re-applies per-connection theme overrides after global settings change.
     ///
     /// When global terminal settings are applied, they overwrite any
@@ -4171,6 +4197,42 @@ mod vte_contract_tests {
                 "{key} is left as {binding:?}: with no PTY, vte 0.84 aborts \
                  while resolving that ({OPT_IN})"
             );
+        }
+    }
+
+    /// A per-connection erase mode may not reintroduce the abort either.
+    ///
+    /// `Automatic` is the tempting place to hand the decision back to VTE, and
+    /// the option exists for hosts whose users press Backspace constantly, so
+    /// every combination offered by the connection editor (issue
+    /// [#271](https://github.com/totoshko88/RustConn/issues/271)) is checked
+    /// against the same rule as the defaults above.
+    #[test]
+    #[ignore = "initialises GTK: needs a display and its own process"]
+    fn configured_erase_modes_are_never_left_to_vte() {
+        use rustconn_core::models::{BackspaceSends, DeleteSends};
+
+        if gtk4::init().is_err() {
+            return;
+        }
+        let terminal = super::Terminal::new();
+        assert!(terminal.pty().is_none(), "no PTY is the point of this test");
+
+        for backspace in BackspaceSends::all() {
+            for delete in DeleteSends::all() {
+                super::config::apply_erase_mode(&terminal, *backspace, *delete);
+
+                for (key, binding) in [
+                    ("Backspace", terminal.backspace_binding()),
+                    ("Delete", terminal.delete_binding()),
+                ] {
+                    assert!(
+                        !matches!(binding, vte4::EraseBinding::Auto | vte4::EraseBinding::Tty),
+                        "{backspace:?}/{delete:?} leaves {key} as {binding:?}: \
+                         with no PTY, vte 0.84 aborts while resolving that ({OPT_IN})"
+                    );
+                }
+            }
         }
     }
 

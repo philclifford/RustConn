@@ -1155,6 +1155,9 @@ impl SettingsDialog {
         let onepassword_storage_combo_clone =
             self.secrets_widgets.onepassword_storage_combo.clone();
         let pass_store_dir_entry_clone = self.secrets_widgets.pass_store_dir_entry.clone();
+        // Which backends the keyring could not supply a secret for when the
+        // dialog opened — part of the dirty check below.
+        let keyring_gaps_clone = self.secrets_widgets.keyring_gaps.clone();
 
         // UI controls
         let color_scheme_box_clone = self.color_scheme_box.clone();
@@ -1297,6 +1300,7 @@ impl SettingsDialog {
                 onepassword_token_entry: onepassword_token_entry_clone.clone(),
                 onepassword_storage_combo: onepassword_storage_combo_clone.clone(),
                 secret_tool_available: Rc::new(RefCell::new(None)), // dummy, не використовується при збиранні
+                keyring_gaps: keyring_gaps_clone.clone(), // not read by collect; kept truthful
                 pass_group: adw::PreferencesGroup::new(), // dummy, не використовується при збиранні
                 pass_store_dir_entry: pass_store_dir_entry_clone.clone(),
                 pass_store_dir_browse_button: Button::new(), // dummy, не використовується при збиранні
@@ -1415,8 +1419,26 @@ impl SettingsDialog {
             // when the dialog is opened and closed without modifications.
             // Note: PartialEq for SecretSettings intentionally excludes
             // runtime-only SecretString fields, so this comparison focuses
-            // on persisted values only.
-            if new_settings == *original_settings_clone.borrow() {
+            // on persisted values only — a newly typed vault password is
+            // therefore checked separately. It never lands on disk, but it is
+            // the only copy of a keyring-backed secret and the save path is
+            // what hands it to the keyring and to the secret manager
+            // (issue #272).
+            // A secret that is *supposed* to live in the keyring but is known
+            // not to be there also counts as dirty, even when it is byte-for-byte
+            // what the snapshot holds. Otherwise a keyring write that failed
+            // silently (D-Bus down, KWallet past the save timeout) could never be
+            // retried: retyping the same password looks like no change at all, so
+            // the save — and the keyring write with it — was skipped.
+            let unchanged = {
+                let original = original_settings_clone.borrow();
+                !new_settings
+                    .secrets
+                    .has_new_runtime_secret(&original.secrets)
+                    && !keyring_gaps_clone.get().needs_write(&new_settings.secrets)
+                    && new_settings == *original
+            };
+            if unchanged {
                 tracing::debug!("Settings unchanged — skipping save");
                 external_callback(None);
                 return;

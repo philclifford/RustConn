@@ -19,8 +19,8 @@ use gtk4::{
 };
 use libadwaita as adw;
 use rustconn_core::import::{
-    AnsibleInventoryImporter, AsbruImporter, ImportResult, ImportSource, LibvirtDaemonImporter,
-    LibvirtXmlImporter, RemminaImporter, SshConfigImporter,
+    AnsibleInventoryImporter, AsbruImporter, ImportResult, ImportSource, ImportWarning,
+    LibvirtDaemonImporter, LibvirtXmlImporter, RemminaImporter, SshConfigImporter,
 };
 use rustconn_core::progress::LocalProgressReporter;
 
@@ -320,33 +320,110 @@ impl ImportDialog {
     ///
     /// Displays a summary including the source name if provided.
     pub fn show_results_with_source(&self, result: &ImportResult, source_name: Option<&str>) {
-        let conn_count = result.connections.len().to_string();
-        let group_count = result.groups.len().to_string();
-        let summary = if result.connections.is_empty() && !result.errors.is_empty() {
-            i18n_f(
-                "Import failed with {} error(s). No connections were imported.",
-                &[&result.errors.len().to_string()],
-            )
-        } else {
-            source_name.map_or_else(
-                || {
-                    i18n_f(
-                        "Successfully imported {} connection(s) and {} group(s).",
-                        &[&conn_count, &group_count],
-                    )
-                },
-                |name| {
-                    i18n_f(
-                        "Successfully imported {} connection(s) and {} group(s).\nConnections will be added to '{} Import' group.",
-                        &[&conn_count, &group_count, name],
-                    )
-                },
-            )
-        };
-        self.result_label.set_text(&summary);
+        self.result_label
+            .set_text(&Self::format_summary(result, source_name));
 
         let details = Self::format_import_details(result);
         self.result_details.set_text(&details);
+    }
+
+    /// Formats the one-line verdict shown above the import details.
+    ///
+    /// `source_name` names the group the connections land in, when known.
+    /// Split out of `show_results_with_source` so the wording is decided by a
+    /// pure function that the unit tests can reach without a display.
+    #[must_use]
+    pub fn format_summary(result: &ImportResult, source_name: Option<&str>) -> String {
+        if result.connections.is_empty() && !result.errors.is_empty() {
+            return i18n_f(
+                "Import failed with {} error(s). No connections were imported.",
+                &[&result.errors.len().to_string()],
+            );
+        }
+
+        // Nothing arrived and nothing failed, so neither the success nor the
+        // failure wording is true. Saying "Successfully imported 0
+        // connection(s)" above a list of warnings is what made the result page
+        // contradict itself.
+        if result.connections.is_empty() && result.groups.is_empty() && !result.warnings.is_empty()
+        {
+            return i18n_f(
+                "Nothing was imported. See the {} warning(s) below.",
+                &[&result.warnings.len().to_string()],
+            );
+        }
+
+        let conn_count = result.connections.len().to_string();
+        let group_count = result.groups.len().to_string();
+        source_name.map_or_else(
+            || {
+                i18n_f(
+                    "Successfully imported {} connection(s) and {} group(s).",
+                    &[&conn_count, &group_count],
+                )
+            },
+            |name| {
+                i18n_f(
+                    "Successfully imported {} connection(s) and {} group(s).\nConnections will be added to '{} Import' group.",
+                    &[&conn_count, &group_count, name],
+                )
+            },
+        )
+    }
+
+    /// Translates one warning produced by `rustconn-core` into display text.
+    ///
+    /// `rustconn-core` is GUI-free and carries no i18n, so it hands the dialog
+    /// a typed reason and the msgid literals live here, where `xgettext` can
+    /// extract them. Every literal must stay byte-identical to
+    /// `ImportWarning::message()` in `rustconn-core`.
+    #[must_use]
+    pub fn format_warning(warning: &ImportWarning) -> String {
+        match warning {
+            ImportWarning::PasswordsEncrypted { source_name } => i18n_f(
+                "Passwords were not imported: {} keeps them encrypted inside the document. The affected connections ask for a password on connect.",
+                &[source_name],
+            ),
+            ImportWarning::InlineCaCertificateSaved { path } => i18n_f(
+                "Inline CA certificate saved to {}",
+                &[&path.display().to_string()],
+            ),
+            ImportWarning::ConnectionAutomation {
+                connection_name,
+                task_count,
+                expect_rule_count,
+            } => i18n_f(
+                "Connection '{}' has {} automation task(s) and {} expect rule(s) — review before running",
+                &[
+                    connection_name,
+                    &task_count.to_string(),
+                    &expect_rule_count.to_string(),
+                ],
+            ),
+            ImportWarning::PortIgnored {
+                connection_name,
+                rejected_port,
+                port,
+            } => i18n_f(
+                "Connection '{}': ignored unusable Port '{}', using port {}",
+                &[connection_name, rejected_port, &port.to_string()],
+            ),
+            ImportWarning::CloudSyncImportMode => {
+                i18n("Imported as Cloud Sync group (Import mode). Use Sync Now to keep it updated.")
+            }
+            ImportWarning::TemplatesNotImported { count } => i18n_f(
+                "{} template(s) skipped (not supported in batch import)",
+                &[&count.to_string()],
+            ),
+            ImportWarning::ClustersNotImported { count } => i18n_f(
+                "{} cluster(s) skipped (not supported in batch import)",
+                &[&count.to_string()],
+            ),
+            ImportWarning::VariablesNotImported { count } => i18n_f(
+                "{} variable(s) skipped (not supported in batch import)",
+                &[&count.to_string()],
+            ),
+        }
     }
 
     /// Formats import result details into a displayable string
@@ -374,6 +451,19 @@ impl ImportDialog {
             );
             for skipped in &result.skipped {
                 let _ = writeln!(details, "  • {}: {}", skipped.identifier, skipped.reason);
+            }
+            details.push('\n');
+        }
+
+        // List warnings about limitations of the source format
+        if !result.warnings.is_empty() {
+            let _ = writeln!(
+                details,
+                "{}",
+                i18n_f("Warnings ({}):", &[&result.warnings.len().to_string()])
+            );
+            for warning in &result.warnings {
+                let _ = writeln!(details, "  • {}", Self::format_warning(warning));
             }
             details.push('\n');
         }
@@ -468,22 +558,7 @@ impl ImportDialog {
                         progress_label_c.set_text(&i18n("Import complete"));
 
                         // Show results — distinguish success from failure
-                        let summary = if result.connections.is_empty() && !result.errors.is_empty()
-                        {
-                            i18n_f(
-                                "Import failed with {} error(s). No connections were imported.",
-                                &[&result.errors.len().to_string()],
-                            )
-                        } else {
-                            i18n_f(
-                                "Successfully imported {} connection(s) and {} group(s).",
-                                &[
-                                    &result.connections.len().to_string(),
-                                    &result.groups.len().to_string(),
-                                ],
-                            )
-                        };
-                        result_label_c.set_text(&summary);
+                        result_label_c.set_text(&Self::format_summary(&result, None));
 
                         let details = Self::format_import_details(&result);
                         result_details_c.set_text(&details);
@@ -543,16 +618,14 @@ impl ImportDialog {
             }
 
             // Get selected source using get_selected_source() pattern
-            let source_id = source_list
-                .selected_row()
-                .and_then(|row| {
-                    let name = row.widget_name();
-                    if name.is_empty() {
-                        None
-                    } else {
-                        Some(name.to_string())
-                    }
-                });
+            let source_id = source_list.selected_row().and_then(|row| {
+                let name = row.widget_name();
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(name.to_string())
+                }
+            });
 
             if let Some(source_id) = source_id {
                 // Show progress page
@@ -767,20 +840,8 @@ impl ImportDialog {
                         progress_label_c.set_text(&i18n("Import complete"));
 
                         // Show results — distinguish success from failure
-                        let conn_count = result.connections.len();
-                        let group_count = result.groups.len();
-                        let summary = if conn_count == 0 && !result.errors.is_empty() {
-                            i18n_f(
-                                "Import failed with {} error(s). No connections were imported.",
-                                &[&result.errors.len().to_string()],
-                            )
-                        } else {
-                            i18n_f(
-                                "Successfully imported {} connection(s) and {} group(s).\nConnections will be added to '{} Import' group.",
-                                &[&conn_count.to_string(), &group_count.to_string(), &display_name_c],
-                            )
-                        };
-                        result_label_c.set_text(&summary);
+                        result_label_c
+                            .set_text(&Self::format_summary(&result, Some(&display_name_c)));
 
                         let details = Self::format_import_details(&result);
                         result_details_c.set_text(&details);
@@ -996,5 +1057,199 @@ impl ImportDialog {
         // Report completion
         reporter.report(1, 1, &i18n("Import complete"));
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use rustconn_core::error::ImportError;
+    use rustconn_core::import::{ImportResult, ImportWarning, SkippedEntry};
+    use rustconn_core::models::{Connection, ProtocolConfig, SshConfig};
+
+    use super::ImportDialog;
+
+    // `format_import_details` and `format_summary` are pure `&ImportResult ->
+    // String` functions, so none of these tests initialise GTK. `i18n()` with
+    // no bound text domain returns the msgid, which is what the assertions
+    // below compare against.
+
+    fn ssh_connection(name: &str, host: &str, port: u16) -> Connection {
+        Connection::new(
+            name.to_string(),
+            host.to_string(),
+            port,
+            ProtocolConfig::Ssh(SshConfig::default()),
+        )
+    }
+
+    fn parse_error(reason: &str) -> ImportError {
+        ImportError::ParseError {
+            source_name: "Royal TS".to_string(),
+            reason: reason.to_string(),
+        }
+    }
+
+    #[test]
+    fn details_list_imported_connections() {
+        let mut result = ImportResult::new();
+        result.add_connection(ssh_connection("web01", "web01.example.com", 22));
+        result.add_connection(ssh_connection("db01", "db01.example.com", 2222));
+
+        let details = ImportDialog::format_import_details(&result);
+        assert!(details.contains("Imported connections:"), "{details}");
+        assert!(
+            details.contains("• web01 (web01.example.com:22)"),
+            "{details}"
+        );
+        assert!(
+            details.contains("• db01 (db01.example.com:2222)"),
+            "{details}"
+        );
+        assert!(!details.contains("Warnings ("), "{details}");
+        assert!(!details.contains("Errors ("), "{details}");
+        assert!(!details.contains("No connections found"), "{details}");
+
+        assert_eq!(
+            ImportDialog::format_summary(&result, None),
+            "Successfully imported 2 connection(s) and 0 group(s)."
+        );
+    }
+
+    /// A result with nothing but warnings used to be summarised as
+    /// "Successfully imported 0 connection(s) and 0 group(s)." above the very
+    /// warnings explaining that nothing arrived.
+    #[test]
+    fn warnings_only_summary_agrees_with_the_details() {
+        let mut result = ImportResult::new();
+        result.add_warning(ImportWarning::PasswordsEncrypted {
+            source_name: "Royal TS",
+        });
+
+        let summary = ImportDialog::format_summary(&result, Some("Royal TS"));
+        assert!(!summary.contains("Successfully imported"), "{summary}");
+        assert!(!summary.contains("Import failed"), "{summary}");
+        assert_eq!(summary, "Nothing was imported. See the 1 warning(s) below.");
+
+        let details = ImportDialog::format_import_details(&result);
+        assert!(details.contains("Warnings (1):"), "{details}");
+        assert!(
+            details.contains("Passwords were not imported: Royal TS keeps them encrypted"),
+            "{details}"
+        );
+        // The details are not empty, so the "nothing found" fallback must not
+        // fire and contradict the warning list.
+        assert!(!details.contains("No connections found"), "{details}");
+    }
+
+    #[test]
+    fn details_list_warnings_and_errors_together() {
+        let mut result = ImportResult::new();
+        result.add_warning(ImportWarning::InlineCaCertificateSaved {
+            path: PathBuf::from("/tmp/ca-0123.pem"),
+        });
+        result.add_error(parse_error("unexpected end of document"));
+
+        let details = ImportDialog::format_import_details(&result);
+        assert!(details.contains("Warnings (1):"), "{details}");
+        assert!(
+            details.contains("• Inline CA certificate saved to /tmp/ca-0123.pem"),
+            "{details}"
+        );
+        assert!(details.contains("Errors (1):"), "{details}");
+        assert!(details.contains("unexpected end of document"), "{details}");
+
+        // An error outranks a warning: the import still failed.
+        assert_eq!(
+            ImportDialog::format_summary(&result, None),
+            "Import failed with 1 error(s). No connections were imported."
+        );
+    }
+
+    #[test]
+    fn details_sections_keep_a_fixed_order() {
+        let mut result = ImportResult::new();
+        result.add_connection(ssh_connection("web01", "web01.example.com", 22));
+        result.add_skipped(SkippedEntry::new("no-host", "Missing host"));
+        result.add_warning(ImportWarning::TemplatesNotImported { count: 3 });
+        result.add_error(parse_error("truncated"));
+
+        let details = ImportDialog::format_import_details(&result);
+        let offset = |needle: &str| {
+            details
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing section {needle} in:\n{details}"))
+        };
+
+        let connections = offset("Imported connections:");
+        let skipped = offset("Skipped 1 entries:");
+        let warnings = offset("Warnings (1):");
+        let errors = offset("Errors (1):");
+
+        assert!(
+            connections < skipped && skipped < warnings && warnings < errors,
+            "sections must read connections, skipped, warnings, errors:\n{details}"
+        );
+        assert!(
+            details.contains("• 3 template(s) skipped (not supported in batch import)"),
+            "{details}"
+        );
+    }
+
+    #[test]
+    fn empty_result_falls_back_to_the_nothing_found_message() {
+        let result = ImportResult::new();
+
+        assert_eq!(
+            ImportDialog::format_import_details(&result),
+            "No connections found in the selected source."
+        );
+        // Nothing at all still reads as a zero-count success. Left as-is:
+        // the details already say nothing was found, and only the
+        // warnings-only case was reported as self-contradictory.
+        assert_eq!(
+            ImportDialog::format_summary(&result, None),
+            "Successfully imported 0 connection(s) and 0 group(s)."
+        );
+    }
+
+    /// Every literal in `format_warning` must match `ImportWarning::message()`
+    /// byte for byte, or `xgettext` extracts a msgid the dialog never looks up
+    /// and the warning stays untranslated forever. Untranslated `i18n_f`
+    /// substitutes placeholders exactly like the core `Display` impl, so
+    /// equality here is the check.
+    #[test]
+    fn warning_literals_match_the_core_msgids() {
+        let warnings = [
+            ImportWarning::PasswordsEncrypted {
+                source_name: "Royal TS",
+            },
+            ImportWarning::InlineCaCertificateSaved {
+                path: PathBuf::from("/tmp/ca.pem"),
+            },
+            ImportWarning::ConnectionAutomation {
+                connection_name: "web01".to_string(),
+                task_count: 2,
+                expect_rule_count: 1,
+            },
+            ImportWarning::PortIgnored {
+                connection_name: "typo".to_string(),
+                rejected_port: "70000".to_string(),
+                port: 22,
+            },
+            ImportWarning::CloudSyncImportMode,
+            ImportWarning::TemplatesNotImported { count: 1 },
+            ImportWarning::ClustersNotImported { count: 2 },
+            ImportWarning::VariablesNotImported { count: 3 },
+        ];
+
+        for warning in &warnings {
+            assert_eq!(
+                ImportDialog::format_warning(warning),
+                warning.to_string(),
+                "dialog literal drifted from the core msgid for {warning:?}"
+            );
+        }
     }
 }

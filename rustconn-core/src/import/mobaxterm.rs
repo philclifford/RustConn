@@ -353,6 +353,8 @@ impl MobaXtermImporter {
             verbose: false,
             mptcp: false,
             remote_path: None,
+            // MobaXterm has no equivalent erase-key setting to carry over.
+            ..Default::default()
         };
 
         let mut connection = Connection::new(

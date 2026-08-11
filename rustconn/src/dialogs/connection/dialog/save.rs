@@ -7,7 +7,7 @@
     reason = "module-wide override for legacy code; refactored case by case"
 )]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -15,7 +15,9 @@ use gtk4::prelude::*;
 use gtk4::{Button, CheckButton, ColorDialogButton, DropDown, Entry, SpinButton, TextView};
 use libadwaita as adw;
 use rustconn_core::automation::ExpectRule;
-use rustconn_core::models::{CustomProperty, HighlightRule, SharedFolder};
+use rustconn_core::models::{
+    BackspaceSends, CustomProperty, DeleteSends, HighlightRule, SharedFolder,
+};
 use uuid::Uuid;
 
 use super::{ConnectionDialog, LocalVariableRow};
@@ -69,6 +71,9 @@ impl ConnectionDialog {
         ssh_mptcp: &CheckButton,
         ssh_startup_entry: &Entry,
         ssh_options_entry: &Entry,
+        ssh_backspace_dropdown: &DropDown,
+        ssh_delete_dropdown: &DropDown,
+        sftp_erase_modes: &Rc<Cell<(BackspaceSends, DeleteSends)>>,
         ssh_agent_socket_entry: &adw::EntryRow,
         ssh_pkcs11_entry: &adw::EntryRow,
         ssh_remote_path_entry: &adw::EntryRow,
@@ -269,6 +274,9 @@ impl ConnectionDialog {
         let ssh_mptcp = ssh_mptcp.clone();
         let ssh_startup_entry = ssh_startup_entry.clone();
         let ssh_options_entry = ssh_options_entry.clone();
+        let ssh_backspace_dropdown = ssh_backspace_dropdown.clone();
+        let ssh_delete_dropdown = ssh_delete_dropdown.clone();
+        let sftp_erase_modes = Rc::clone(sftp_erase_modes);
         let ssh_agent_socket_entry = ssh_agent_socket_entry.clone();
         let ssh_pkcs11_entry = ssh_pkcs11_entry.clone();
         let ssh_remote_path_entry = ssh_remote_path_entry.clone();
@@ -482,6 +490,9 @@ impl ConnectionDialog {
                 ssh_mptcp: &ssh_mptcp,
                 ssh_startup_entry: &ssh_startup_entry,
                 ssh_options_entry: &ssh_options_entry,
+                ssh_backspace_dropdown: &ssh_backspace_dropdown,
+                ssh_delete_dropdown: &ssh_delete_dropdown,
+                sftp_erase_modes: &sftp_erase_modes,
                 ssh_agent_socket_entry: &ssh_agent_socket_entry,
                 ssh_pkcs11_entry: &ssh_pkcs11_entry,
                 ssh_remote_path_entry: &ssh_remote_path_entry,

@@ -354,6 +354,8 @@ impl SshConfigImporter {
             verbose: false,
             mptcp: false,
             remote_path: None,
+            // Nothing in ssh_config(5) describes what Backspace/Delete send.
+            ..Default::default()
         };
 
         // Create connection

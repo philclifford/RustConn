@@ -7,7 +7,7 @@ use adw::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{Box as GtkBox, DropDown, Entry, StringList};
 use libadwaita as adw;
-use rustconn_core::models::{TelnetBackspaceSends, TelnetDeleteSends};
+use rustconn_core::models::{BackspaceSends, DeleteSends};
 
 use super::protocol_layout::ProtocolLayoutBuilder;
 use super::widgets::EntryRowBuilder;
@@ -58,7 +58,7 @@ pub fn create_telnet_options() -> TelnetOptionsWidgets {
 
     // Backspace sends dropdown
     let backspace_model = StringList::new(
-        &TelnetBackspaceSends::all()
+        &BackspaceSends::all()
             .iter()
             .map(|m| i18n(m.display_name()))
             .collect::<Vec<_>>()
@@ -80,7 +80,7 @@ pub fn create_telnet_options() -> TelnetOptionsWidgets {
 
     // Delete sends dropdown
     let delete_model = StringList::new(
-        &TelnetDeleteSends::all()
+        &DeleteSends::all()
             .iter()
             .map(|m| i18n(m.display_name()))
             .collect::<Vec<_>>()

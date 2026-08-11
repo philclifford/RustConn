@@ -33,6 +33,9 @@ fn arb_mosh_config() -> impl Strategy<Value = MoshConfig> {
                 server_binary,
                 predict_mode,
                 custom_args,
+                // Erase modes (issue #271) are covered by the unit tests in
+                // models::protocol; this strategy only needs them to compile.
+                ..MoshConfig::default()
             },
         )
 }

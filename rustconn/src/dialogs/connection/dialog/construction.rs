@@ -68,6 +68,8 @@ pub(super) struct GeneralFields {
     pub domain_label: Label,
     /// MOSH-specific settings group
     pub mosh_settings_group: adw::PreferencesGroup,
+    /// Keyboard group on the SSH page, hidden for SFTP (issue #271)
+    pub ssh_keyboard_group: adw::PreferencesGroup,
 }
 
 impl ConnectionDialog {
@@ -342,6 +344,11 @@ impl ConnectionDialog {
         fields
             .mosh_settings_group
             .set_visible(protocol_id == "mosh");
+        // The Keyboard group lives on the SSH page, which SFTP and MOSH share.
+        // MOSH is a terminal protocol and honours the choice; SFTP opens an `mc`
+        // file-manager tab that never applies it, so offering it there would be
+        // a dead control (issue #271).
+        fields.ssh_keyboard_group.set_visible(protocol_id != "sftp");
     }
 
     /// Returns the default port for a protocol

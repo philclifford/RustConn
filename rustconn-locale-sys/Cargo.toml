@@ -1,0 +1,30 @@
+[package]
+name = "rustconn-locale-sys"
+description = "Isolated FFI helper for RustConn's startup locale: a guarded, single-threaded-only wrapper around setlocale(3)."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# `setlocale` is `unsafe` as of 0.8.0 (RUSTSEC-2026-0244). Calling it is this
+# crate's entire reason to exist; the safe remainder of the gettext API
+# (bindtextdomain, textdomain, gettext, ngettext) is used directly by rustconn.
+gettext-rs = { workspace = true }
+
+# Deliberately the only dependency. In particular there is no `libc`: the
+# startup guard's thread count is Linux-only, read from /proc/self/task with
+# std alone. Implementing it on macOS (proc_pidinfo(PROC_PIDTASKINFO) or
+# task_threads) would add libc plus a second unsafe block to the crate whose job
+# is to keep the unsafe surface small, and no CI job builds macOS. If that
+# tradeoff is ever revisited, update the crate docs ("What is checked, and what
+# is not") and the SAFETY comment in `init_locale` in the same change — they
+# both state the limitation.
+
+# This crate is one of the sanctioned locations for `unsafe` in the workspace
+# (see rust-pragmatic-guidelines.md, M-UNSAFE: isolate FFI in a small -sys
+# crate). It therefore does NOT opt into `[workspace.lints]`
+# (unsafe_code = "forbid") and instead explicitly allows unsafe here.
+[lints.rust]
+unsafe_code = "allow"

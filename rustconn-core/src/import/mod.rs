@@ -79,6 +79,7 @@ pub use royalts::RoyalTsImporter;
 pub use securecrt::SecureCrtImporter;
 pub use ssh_config::SshConfigImporter;
 pub use traits::{
-    ImportResult, ImportSource, ImportStatistics, SkippedEntry, SkippedField, SkippedFieldReason,
+    ImportResult, ImportSource, ImportStatistics, ImportWarning, SkippedEntry, SkippedField,
+    SkippedFieldReason,
 };
 pub use vv::VirtViewerImporter;

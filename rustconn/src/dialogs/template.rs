@@ -2414,6 +2414,9 @@ impl TemplateDialog {
             verbose: false,
             mptcp: false,
             remote_path: None,
+            // The template editor exposes no keyboard settings; connections
+            // created from a template keep the default erase mode (issue #271).
+            ..Default::default()
         };
 
         if !custom_options_text.is_empty() {

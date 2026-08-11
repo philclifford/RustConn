@@ -140,6 +140,29 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.20" date="2026-08-11">
+      <description>
+        <p>Version 0.19.20 - SSH/MOSH keyboard control, import robustness, keyring reliability:</p>
+        <ul>
+          <li>Added: SSH/MOSH connections can choose what Backspace and Delete send (#271)</li>
+          <li>Fixed: Saving Preferences threw away the Backspace/Delete choice on a live session (#271)</li>
+          <li>Fixed: SFTP connections offered a Keyboard group that did nothing (#271)</li>
+          <li>Fixed: RDM JSON import still aborted on an integer field, one bad entry cost the whole file (#234)</li>
+          <li>Fixed: Royal TS Telnet sessions were imported as SSH on port 22 (#234)</li>
+          <li>Fixed: Royal TS import gave no hint why connections came in without a password (#234)</li>
+          <li>Fixed: Import warnings were permanently English (#234)</li>
+          <li>Fixed: An import that produced nothing claimed success (#234)</li>
+          <li>Fixed: KeePass database password was never written to the system keyring (#272)</li>
+          <li>Fixed: Re-entering a vault password in Settings was discarded as no change (#272)</li>
+          <li>Fixed: Bitwarden, 1Password and Passbolt had the same keyring hole as KeePass (#272)</li>
+          <li>Fixed: 1Password and Passbolt wrote a placeholder literal to disk (#272)</li>
+          <li>Fixed: Moving a secret from encrypted file to system keyring destroyed it (#272)</li>
+          <li>Fixed: Turning a backend off left the old keyring entry behind (#272)</li>
+          <li>Fixed: A failed keyring write was a log line under a Settings saved toast (#272)</li>
+          <li>Changed: RUSTSEC-2026-0244 resolved via new rustconn-locale-sys crate (#267)</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.19" date="2026-08-09">
       <description>
         <p>Version 0.19.19 - vault credential lifecycle fixes:</p>

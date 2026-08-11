@@ -40,6 +40,24 @@ fn jump_host_askpass_script() -> Option<std::path::PathBuf> {
     jump_host_askpass_script_for_env(JUMP_HOST_PW_ENV)
 }
 
+/// Points the session's Backspace and Delete keys at what this host expects.
+///
+/// The bytes are a property of the VTE widget rather than of the `ssh` command,
+/// so this runs against the live session instead of adding arguments. The pair
+/// itself comes from [`rustconn_core::ProtocolConfig::erase_modes`], the single
+/// mapping shared with Telnet, MOSH and the Preferences re-apply pass, so a
+/// connection that is not a terminal protocol — or never changed the setting —
+/// gets the same defaults as before (issue
+/// [#271](https://github.com/totoshko88/RustConn/issues/271)).
+fn apply_ssh_erase_mode(
+    notebook: &SharedNotebook,
+    session_id: Uuid,
+    conn: &rustconn_core::Connection,
+) {
+    let (backspace_sends, delete_sends) = conn.protocol_config.erase_modes();
+    notebook.set_erase_mode(session_id, backspace_sends, delete_sends);
+}
+
 /// Parses a jump-host string (`[user@]host[:port]`) and returns `(host, port)`
 /// for `ssh_control_path()`. Handles IPv6 in brackets.
 fn parse_jump_host_for_control(jump_host: &str) -> (String, u16) {
@@ -1085,6 +1103,10 @@ fn start_ssh_connection_internal(
             rustconn_core::ProtocolConfig::Ssh(cfg) => cfg.startup_command.as_deref(),
             _ => None,
         };
+        // Backspace/Delete bytes this host expects (issue #271). Applied to the
+        // widget, not the command line, and after the tab's terminal settings —
+        // see TerminalNotebook::set_erase_mode.
+        apply_ssh_erase_mode(notebook, session_id, conn);
         // Jump host passwords (issue #191/#203) travel in obscure env vars read
         // by per-hop SSH_ASKPASS helpers wired into ProxyCommand. Zeroized once
         // the VTE spawn has consumed the environment.
@@ -1461,6 +1483,9 @@ pub fn reconnect_ssh_in_place(
             rustconn_core::ProtocolConfig::Ssh(cfg) => cfg.startup_command.as_deref(),
             _ => None,
         };
+        // Re-assert the erase mode (issue #271): a reconnect spawns into the
+        // same terminal, and nothing else restores it after a VTE reset.
+        apply_ssh_erase_mode(notebook, session_id, &conn);
         // Jump host passwords (issue #191/#203) — see start_ssh_connection_internal.
         let jump_host_env: Vec<zeroize::Zeroizing<String>> = jump_host_passwords
             .iter()

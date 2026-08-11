@@ -7,7 +7,7 @@ use std::rc::Rc;
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
 use rustconn_core::config::TerminalSettings;
-use rustconn_core::models::ConnectionThemeOverride;
+use rustconn_core::models::{BackspaceSends, ConnectionThemeOverride, DeleteSends};
 use rustconn_core::terminal_themes::{Color, TerminalTheme};
 use vte4::prelude::*;
 use vte4::{CursorBlinkMode, CursorShape, EraseBinding, Terminal};
@@ -98,8 +98,62 @@ pub fn configure_terminal_with_settings(terminal: &Terminal, settings: &Terminal
 /// Applies to every terminal RustConn shows, including read-only ones: key
 /// mapping happens before VTE checks whether input is enabled.
 pub fn apply_erase_bindings(terminal: &Terminal) {
-    terminal.set_backspace_binding(EraseBinding::AsciiDelete);
-    terminal.set_delete_binding(EraseBinding::DeleteSequence);
+    terminal.set_backspace_binding(DEFAULT_BACKSPACE_BINDING);
+    terminal.set_delete_binding(DEFAULT_DELETE_BINDING);
+}
+
+/// Backspace sends DEL (`0x7f`) — the value VTE would resolve `VERASE` to on
+/// the PTY `openpty` hands us, and what a remote `stty erase` agrees with.
+const DEFAULT_BACKSPACE_BINDING: EraseBinding = EraseBinding::AsciiDelete;
+
+/// Delete sends the VT220 sequence `\e[3~` — VTE's own fallback for the key.
+const DEFAULT_DELETE_BINDING: EraseBinding = EraseBinding::DeleteSequence;
+
+/// Overrides the erase bindings with a connection's own choice.
+///
+/// Some remote sides do not accept the defaults [`apply_erase_bindings`]
+/// installs: network appliances and older Unix hosts expect `^H` from
+/// Backspace and cannot be told otherwise from their end (issue
+/// [#271](https://github.com/totoshko88/RustConn/issues/271)). Telnet and SSH
+/// sessions therefore let the connection name the byte.
+///
+/// `Automatic` reproduces [`apply_erase_bindings`] rather than handing
+/// `EraseBinding::Auto` back to VTE — see that function for why asking VTE to
+/// work it out aborts the process. Call this *after*
+/// [`configure_terminal_with_settings`], which would otherwise overwrite the
+/// per-connection choice with the defaults.
+pub fn apply_erase_mode(terminal: &Terminal, backspace: BackspaceSends, delete: DeleteSends) {
+    let (backspace_binding, delete_binding) = erase_bindings_for(backspace, delete);
+    terminal.set_backspace_binding(backspace_binding);
+    terminal.set_delete_binding(delete_binding);
+}
+
+/// Decides which VTE bindings a connection's erase choice means.
+///
+/// Split out of [`apply_erase_mode`] so the decision can be asserted without a
+/// `Terminal`, which needs a display: the whole point of naming the bindings is
+/// that neither `Auto` nor `Tty` may ever come out of here (see
+/// [`apply_erase_bindings`] for why that aborts the process), and a test that
+/// only runs on a developer's desktop does not hold that line.
+#[must_use]
+pub const fn erase_bindings_for(
+    backspace: BackspaceSends,
+    delete: DeleteSends,
+) -> (EraseBinding, EraseBinding) {
+    let backspace_binding = match backspace {
+        // `Delete` resolves to the same byte `Automatic` does today, so the two
+        // are indistinguishable in a session — deliberately. Keeping `Delete` a
+        // named choice pins DEL for the connections that asked for it by name,
+        // so if the meaning of `Automatic` ever changes they do not move with it.
+        BackspaceSends::Automatic | BackspaceSends::Delete => EraseBinding::AsciiDelete,
+        BackspaceSends::Backspace => EraseBinding::AsciiBackspace,
+    };
+    let delete_binding = match delete {
+        DeleteSends::Automatic => EraseBinding::DeleteSequence,
+        DeleteSends::Backspace => EraseBinding::AsciiBackspace,
+        DeleteSends::Delete => EraseBinding::AsciiDelete,
+    };
+    (backspace_binding, delete_binding)
 }
 
 /// Automatically copies selected text to the clipboard when the user
@@ -542,4 +596,59 @@ fn setup_macos_option_key_handler(terminal: &Terminal) {
         glib::Propagation::Proceed
     });
     terminal.add_controller(controller);
+}
+
+#[cfg(test)]
+mod erase_binding_tests {
+    use super::{
+        BackspaceSends, DEFAULT_BACKSPACE_BINDING, DEFAULT_DELETE_BINDING, DeleteSends,
+        EraseBinding, erase_bindings_for,
+    };
+
+    /// `Automatic` means "what RustConn installs by default". Pinned here so the
+    /// two cannot drift: a connection left on `Automatic` must behave exactly as
+    /// one that never had the setting.
+    #[test]
+    fn automatic_matches_the_global_defaults() {
+        assert_eq!(
+            erase_bindings_for(BackspaceSends::Automatic, DeleteSends::Automatic),
+            (DEFAULT_BACKSPACE_BINDING, DEFAULT_DELETE_BINDING)
+        );
+    }
+
+    /// VTE resolves `Auto`/`Tty` by reading `VERASE` from a PTY it does not own,
+    /// which aborts the process. No combination may produce either.
+    #[test]
+    fn no_combination_leaves_the_binding_to_vte() {
+        for backspace in BackspaceSends::all() {
+            for delete in DeleteSends::all() {
+                let (backspace_binding, delete_binding) = erase_bindings_for(*backspace, *delete);
+                assert!(
+                    !matches!(backspace_binding, EraseBinding::Auto | EraseBinding::Tty),
+                    "backspace {backspace:?} left the binding to VTE"
+                );
+                assert!(
+                    !matches!(delete_binding, EraseBinding::Auto | EraseBinding::Tty),
+                    "delete {delete:?} left the binding to VTE"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn backspace_choice_selects_the_named_byte() {
+        let (control_h, _) = erase_bindings_for(BackspaceSends::Backspace, DeleteSends::Automatic);
+        assert_eq!(control_h, EraseBinding::AsciiBackspace);
+        // `Delete` is the same byte as `Automatic` today — see erase_bindings_for.
+        let (del, _) = erase_bindings_for(BackspaceSends::Delete, DeleteSends::Automatic);
+        assert_eq!(del, EraseBinding::AsciiDelete);
+    }
+
+    #[test]
+    fn delete_choice_selects_the_named_byte() {
+        let (_, control_h) = erase_bindings_for(BackspaceSends::Automatic, DeleteSends::Backspace);
+        assert_eq!(control_h, EraseBinding::AsciiBackspace);
+        let (_, del) = erase_bindings_for(BackspaceSends::Automatic, DeleteSends::Delete);
+        assert_eq!(del, EraseBinding::AsciiDelete);
+    }
 }

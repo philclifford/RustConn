@@ -13,9 +13,9 @@ use gtk4::{
 use rustconn_core::export::NativeExport;
 use rustconn_core::import::{
     AnsibleInventoryImporter, AsbruImporter, CsvImporter, CsvParseOptions, ImportResult,
-    ImportSource, LibvirtDaemonImporter, LibvirtXmlImporter, MobaXtermImporter, RdmImporter,
-    RdpFileImporter, RemminaImporter, RoyalTsImporter, SecureCrtImporter, SshConfigImporter,
-    VirtViewerImporter,
+    ImportSource, ImportWarning, LibvirtDaemonImporter, LibvirtXmlImporter, MobaXtermImporter,
+    RdmImporter, RdpFileImporter, RemminaImporter, RoyalTsImporter, SecureCrtImporter,
+    SshConfigImporter, VirtViewerImporter,
 };
 
 use super::ImportDialog;
@@ -657,9 +657,7 @@ impl ImportDialog {
                                             credentials: std::collections::HashMap::new(),
                                             snippets: Vec::new(),
                                             smart_folders: Vec::new(),
-                                            warnings: vec![i18n(
-                                                "Imported as Cloud Sync group (Import mode). Use Sync Now to keep it updated.",
-                                            )],
+                                            warnings: vec![ImportWarning::CloudSyncImportMode],
                                         };
 
                                         let filename = path.file_name().map_or_else(
@@ -1547,22 +1545,19 @@ impl ImportDialog {
                     Ok(native_export) => {
                         let mut warnings = Vec::new();
                         if !native_export.templates.is_empty() {
-                            warnings.push(format!(
-                                "{} template(s) skipped (not supported in batch import)",
-                                native_export.templates.len()
-                            ));
+                            warnings.push(ImportWarning::TemplatesNotImported {
+                                count: native_export.templates.len(),
+                            });
                         }
                         if !native_export.clusters.is_empty() {
-                            warnings.push(format!(
-                                "{} cluster(s) skipped (not supported in batch import)",
-                                native_export.clusters.len()
-                            ));
+                            warnings.push(ImportWarning::ClustersNotImported {
+                                count: native_export.clusters.len(),
+                            });
                         }
                         if !native_export.variables.is_empty() {
-                            warnings.push(format!(
-                                "{} variable(s) skipped (not supported in batch import)",
-                                native_export.variables.len()
-                            ));
+                            warnings.push(ImportWarning::VariablesNotImported {
+                                count: native_export.variables.len(),
+                            });
                         }
                         ImportResult {
                             connections: native_export.connections,

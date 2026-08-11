@@ -5,7 +5,7 @@ description: "Збирає всі відкладені спрощення (`// p
 
 Harvest the ponytail debt ledger for RustConn. Steps:
 
-1. Run `grep -rn 'ponytail:' --include='*.rs' rustconn-core/src rustconn-cli/src rustconn/src rustconn-pty-sys/src` to find every intentional simplification marker.
+1. Run `grep -rn 'ponytail:' --include='*.rs' rustconn-core/src rustconn-cli/src rustconn/src rustconn-pty-sys/src rustconn-locale-sys/src` to find every intentional simplification marker.
 
 2. For each hit, present: file:line, the crate, the stated ceiling, and the upgrade path from the comment.
 

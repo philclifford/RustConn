@@ -3,6 +3,7 @@
 //! These tests verify that importers can handle real-world data files
 //! and edge cases correctly.
 
+use rustconn_core::error::ImportError;
 use rustconn_core::import::{
     AsbruImporter, RdmImporter, RemminaImporter, RoyalTsImporter, SshConfigImporter,
 };
@@ -669,9 +670,20 @@ fn test_importers_handle_empty_input() {
     // All importers should handle empty input gracefully
 
     let rdm_importer = RdmImporter::new();
-    let rdm_result = rdm_importer
+    // `{}` is not an empty RDM export, it is not an RDM export at all: it names
+    // neither Connections nor Folders. Accepting it made picking the wrong file
+    // look like a successful import of nothing, so it is now a parse error.
+    let rdm_error = rdm_importer
         .import_from_content("{}")
-        .expect("Should handle empty JSON");
+        .expect_err("an object without Connections or Folders is not an export");
+    assert!(
+        matches!(rdm_error, ImportError::ParseError { .. }),
+        "expected a parse error, got {rdm_error:?}"
+    );
+    // A genuinely empty export is still an export and imports as nothing.
+    let rdm_result = rdm_importer
+        .import_from_content(r#"{"Connections": []}"#)
+        .expect("Should handle an empty RDM export");
     assert!(rdm_result.connections.is_empty());
     assert!(rdm_result.groups.is_empty());
 

@@ -228,6 +228,11 @@ impl ConnectionDialog {
                 self.protocol_dropdown.set_selected(7); // SFTP
                 self.protocol_stack.set_visible_child_name("ssh");
                 self.set_ssh_config(ssh);
+                // The Keyboard group is hidden for SFTP, so remember what was
+                // stored and write that back on save instead of the shared
+                // dropdowns (issue #271).
+                self.sftp_erase_modes
+                    .set((ssh.backspace_sends, ssh.delete_sends));
                 self.update_ssh_inherit_subtitle(conn.group_id);
             }
             ProtocolConfig::Kubernetes(k8s) => {
@@ -960,6 +965,12 @@ impl ConnectionDialog {
             self.ssh_startup_entry.set_text(cmd);
         }
 
+        // Load keyboard erase settings (issue #271)
+        self.ssh_backspace_dropdown
+            .set_selected(ssh.backspace_sends.index());
+        self.ssh_delete_dropdown
+            .set_selected(ssh.delete_sends.index());
+
         // Load per-connection SSH agent socket
         if let Some(ref socket) = ssh.ssh_agent_socket {
             self.ssh_agent_socket_entry.set_text(socket);
@@ -1502,6 +1513,13 @@ impl ConnectionDialog {
         if let Some(ref server_binary) = mosh.server_binary {
             self.mosh_server_binary_entry.set_text(server_binary);
         }
+        // The Keyboard group is a shared widget on the SSH page, so a MOSH
+        // connection has to seed it from `MoshConfig` — otherwise it would still
+        // be showing whatever the last SSH connection asked for (issue #271).
+        self.ssh_backspace_dropdown
+            .set_selected(mosh.backspace_sends.index());
+        self.ssh_delete_dropdown
+            .set_selected(mosh.delete_sends.index());
     }
 
     pub(super) fn set_web_config(&self, web: &rustconn_core::models::WebConfig) {

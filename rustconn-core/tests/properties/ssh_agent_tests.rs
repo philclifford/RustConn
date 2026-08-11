@@ -396,6 +396,7 @@ proptest! {
             compression: false,
             custom_options: std::collections::HashMap::new(),
             startup_command: None, jump_host_id: None, port_forwards: Vec::new(), waypipe: false, ssh_agent_socket: None, keep_alive_interval: None, keep_alive_count_max: None, verbose: false, mptcp: false, remote_path: None,
+            ..Default::default()
         };
 
         // Create connection
@@ -466,6 +467,7 @@ proptest! {
             compression: false,
             custom_options: std::collections::HashMap::new(),
             startup_command: None, jump_host_id: None, port_forwards: Vec::new(), waypipe: false, ssh_agent_socket: None, keep_alive_interval: None, keep_alive_count_max: None, verbose: false, mptcp: false, remote_path: None,
+            ..Default::default()
         };
 
         let connection = Connection::new(

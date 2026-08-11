@@ -12,7 +12,7 @@ name = "rustconn"
 path = "src/main.rs"
 
 [dependencies]
-rustconn-core = { path = "../rustconn-core", version = "0.19.19", default-features = false }
+rustconn-core = { path = "../rustconn-core", version = "0.19.20", default-features = false }
 tokio = { workspace = true }
 # Event-driven tray message delivery to the GTK main loop (no polling)
 async-channel = { workspace = true }
@@ -38,15 +38,11 @@ resvg = { version = "0.48", optional = true }
 tray-icon = { version = "0.24", optional = true }
 # Menu builder for macOS tray (companion to tray-icon)
 muda = { version = "0.19", optional = true }
-# Internationalization (gettext)
-# Pinned to 0.7 deliberately. 0.8 fixes RUSTSEC-2026-0244 by marking `setlocale`
-# as `unsafe`, which cannot be called from this crate: `unsafe_code` is forbidden
-# here and the workspace's crate-boundary guard rejects unsafe outside
-# `rustconn-*-sys`. The advisory is mitigated at the call sites instead — every
-# `setlocale` runs in `main()` before any thread is spawned (see `src/i18n.rs`)
-# — and is recorded in `deny.toml` with that justification. Moving the call into
-# a dedicated `rustconn-locale-sys` crate is the path to 0.8.
-gettext-rs = { version = "0.7", features = ["gettext-system"] }
+# Internationalization (gettext). Only the safe part of the API is used here —
+# `bindtextdomain`, `textdomain`, `gettext`, `ngettext`. `setlocale` is `unsafe`
+# as of 0.8 (RUSTSEC-2026-0244) and `unsafe_code` is forbidden in this crate, so
+# it is reached through rustconn-locale-sys below.
+gettext-rs = { workspace = true }
 # Tracing for structured logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -56,8 +52,12 @@ serde = { workspace = true, features = ["derive"] }
 shell-words = "1"
 nix = { version = "0.31", features = ["signal", "process"] }
 # PTY creation, sizing and controlling-terminal setup for every session's
-# child. Lives in its own crate because it holds the workspace's only `unsafe`.
-rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.19.19" }
+# child. Lives in its own crate because `unsafe` is forbidden here.
+rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.19.20" }
+# The startup `setlocale` call, guarded so it can only run while the process is
+# still single-threaded. Same reason for the separate crate: `setlocale` is
+# `unsafe` in gettext-rs 0.8 and `unsafe` is forbidden here.
+rustconn-locale-sys = { path = "../rustconn-locale-sys", version = "0.19.20" }
 # WebKitGTK 6.0 bindings for embedded web browser (Linux only)
 webkit6 = { version = "0.6", optional = true }
 

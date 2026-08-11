@@ -117,6 +117,16 @@ impl ConnectionDialog {
         let ssh_mptcp = ssh_widgets.mptcp;
         let ssh_startup_entry = ssh_widgets.startup_entry;
         let ssh_options_entry = ssh_widgets.options_entry;
+        let ssh_keyboard_group = ssh_widgets.keyboard_group;
+        let ssh_backspace_dropdown = ssh_widgets.backspace_dropdown;
+        let ssh_delete_dropdown = ssh_widgets.delete_dropdown;
+        // What an edited SFTP connection already had, since its Keyboard group is
+        // hidden and the shared dropdowns are therefore not authoritative for it
+        // (issue #271). See `ConnectionDialog::sftp_erase_modes`.
+        let sftp_erase_modes = Rc::new(std::cell::Cell::new((
+            rustconn_core::models::BackspaceSends::Automatic,
+            rustconn_core::models::DeleteSends::Automatic,
+        )));
         let mosh_settings_group = ssh_widgets.mosh_group;
         let mosh_port_range_entry = ssh_widgets.mosh_port_range_entry;
         let mosh_predict_dropdown = ssh_widgets.mosh_predict_dropdown;
@@ -317,6 +327,8 @@ impl ConnectionDialog {
             domain_entry: domain_entry.clone(),
             domain_label: domain_label.clone(),
             mosh_settings_group: mosh_settings_group.clone(),
+            // Not kept on the dialog: only the protocol dropdown ever touches it.
+            ssh_keyboard_group,
         };
         Self::connect_protocol_dropdown(
             &protocol_dropdown,
@@ -490,6 +502,9 @@ impl ConnectionDialog {
             &ssh_mptcp,
             &ssh_startup_entry,
             &ssh_options_entry,
+            &ssh_backspace_dropdown,
+            &ssh_delete_dropdown,
+            &sftp_erase_modes,
             &ssh_agent_socket_entry,
             &ssh_pkcs11_entry,
             &ssh_remote_path_entry,
@@ -707,6 +722,9 @@ impl ConnectionDialog {
             ssh_mptcp,
             ssh_startup_entry,
             ssh_options_entry,
+            ssh_backspace_dropdown,
+            ssh_delete_dropdown,
+            sftp_erase_modes,
             ssh_agent_socket_entry,
             ssh_pkcs11_entry,
             ssh_remote_path_entry,

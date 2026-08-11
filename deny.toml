@@ -24,30 +24,15 @@ yanked = "warn"
 # Last reviewed: 2026-07-29
 # Next review: when ironrdp, sspi, or picky releases a new major version.
 #
-# - RUSTSEC-2026-0244: gettext-rs 0.7.7 `setlocale` is unsound when called from
-#   a multi-threaded program (memory-corruption / thread-safety, informational
-#   "unsound"). 0.8.0 fixes it by marking `setlocale` and `TextDomain::init`
-#   `unsafe` and documenting when they may be called. RustConn cannot take that
-#   version yet: `unsafe_code = "forbid"` in rustconn/Cargo.toml, and the
-#   workspace crate-boundary guard rejects unsafe outside `rustconn-*-sys`.
-#   Not exploitable as called. `TextDomain::init` is never used. All four
-#   `setlocale` calls live in `rustconn/src/i18n.rs` and are reachable only from
-#   `i18n::init()` and the private `i18n::apply_language_setlocale()`, both of
-#   which are invoked from `main()` before the tracing subscriber, GTK, or any
-#   tokio runtime is created — so the process is still single-threaded, which is
-#   exactly the precondition the advisory names as safe. 0.19.19 removed the one
-#   call site that violated this (`apply_language` from the GTK `activate`
-#   handler, where the GIO worker thread is already running) to make the
-#   invariant hold and be checkable by reading `main()`.
-#   Upgrade path: move the `setlocale` call into a dedicated
-#   `rustconn-locale-sys` crate where unsafe is sanctioned, then move to 0.8.
-#   Mirrored in .cargo/audit.toml so cargo-audit and cargo-deny agree.
-# Last reviewed: 2026-08-09
-# Next review: when `rustconn-locale-sys` lands, or if any `setlocale` call site
-# appears outside `main()`.
+# RUSTSEC-2026-0244 (gettext-rs `setlocale` unsound off the main thread) used to
+# be ignored here. It was removed from this list when the advisory was actually
+# resolved (issue #267), which is why no version is named: it is fixed rather
+# than accepted. gettext-rs is on 0.8, where `setlocale` is `unsafe`, and the
+# call lives in `rustconn-locale-sys` behind a guard that refuses to run it once
+# a second thread exists or once the startup window is sealed. Do not re-add the
+# ignore — if this advisory reappears, something regressed.
 ignore = [
     "RUSTSEC-2023-0071",
-    "RUSTSEC-2026-0244",
 ]
 
 [licenses]

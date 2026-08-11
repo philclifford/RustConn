@@ -5,10 +5,11 @@ members = [
     "rustconn",
     "rustconn-cli",
     "rustconn-pty-sys",
+    "rustconn-locale-sys",
 ]
 
 [workspace.package]
-version = "0.19.19"
+version = "0.19.20"
 edition = "2024"
 authors = ["Anton Isaiev <totoshko88@gmail.com>"]
 license = "GPL-3.0-or-later"
@@ -86,6 +87,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Unicode text processing
 unicode-segmentation = "1.13"
+
+# Internationalization (gettext). Declared here because two crates share it and
+# they must resolve to the same version: `LocaleCategory` crosses the boundary
+# between them. `setlocale` is `unsafe` as of 0.8 (RUSTSEC-2026-0244) and is
+# therefore called only from rustconn-locale-sys; rustconn uses the safe rest.
+gettext-rs = { version = "0.8", features = ["gettext-system"] }
 
 # Testing
 proptest = "1.10"

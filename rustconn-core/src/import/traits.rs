@@ -4,8 +4,9 @@
 //! allowing different import sources to be implemented uniformly.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
@@ -83,6 +84,148 @@ fn check_import_file_size(path: &Path, source_name: &str) -> Result<(), ImportEr
     Ok(())
 }
 
+/// A non-fatal warning about imported data, for the GUI to render.
+///
+/// `rustconn-core` is GUI-free and has no i18n, so a warning travels as a
+/// typed reason rather than as a finished sentence. The GUI matches on the
+/// variant and calls `i18n_f` with the literal `xgettext` extracted;
+/// [`message`] returns that same literal so the two cannot drift apart, and
+/// [`Display`] renders the untranslated English for the CLI, logs and tests.
+///
+/// [`message`]: Self::message
+/// [`Display`]: std::fmt::Display
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportWarning {
+    /// The source format encrypts passwords, so none could be imported.
+    PasswordsEncrypted {
+        /// Display name of the source format, for example `"Royal TS"`.
+        source_name: &'static str,
+    },
+    /// An inline PEM CA certificate was written to a file so TLS works.
+    InlineCaCertificateSaved {
+        /// Path the certificate was written to.
+        path: PathBuf,
+    },
+    /// An imported connection runs automation the user should review.
+    ConnectionAutomation {
+        /// Name of the imported connection.
+        connection_name: String,
+        /// Number of pre-connect and post-disconnect tasks.
+        task_count: usize,
+        /// Number of expect rules.
+        expect_rule_count: usize,
+    },
+    /// A port the parser had to reject was replaced by the protocol default.
+    PortIgnored {
+        /// Name of the imported connection.
+        connection_name: String,
+        /// The raw value as it appeared in the source, for the user to find.
+        rejected_port: String,
+        /// Port the connection was imported on instead.
+        port: u16,
+    },
+    /// A Cloud Sync document was imported as a one-way group.
+    CloudSyncImportMode,
+    /// Templates in the source are not carried by a batch import.
+    TemplatesNotImported {
+        /// Number of templates left behind.
+        count: usize,
+    },
+    /// Clusters in the source are not carried by a batch import.
+    ClustersNotImported {
+        /// Number of clusters left behind.
+        count: usize,
+    },
+    /// Global variables in the source are not carried by a batch import.
+    VariablesNotImported {
+        /// Number of variables left behind.
+        count: usize,
+    },
+}
+
+impl ImportWarning {
+    /// Returns the untranslated message template for this warning.
+    ///
+    /// The `{}` placeholders are filled left to right from [`Self::arguments`],
+    /// which is what the GUI's `i18n_f` does with the same literal. Keep every
+    /// template here byte-identical to its counterpart in the GUI, or
+    /// `xgettext` will extract a msgid the dialog never looks up.
+    #[must_use]
+    pub const fn message(&self) -> &'static str {
+        match self {
+            Self::PasswordsEncrypted { .. } => {
+                "Passwords were not imported: {} keeps them encrypted inside the document. The affected connections ask for a password on connect."
+            }
+            Self::InlineCaCertificateSaved { .. } => "Inline CA certificate saved to {}",
+            Self::ConnectionAutomation { .. } => {
+                "Connection '{}' has {} automation task(s) and {} expect rule(s) — review before running"
+            }
+            Self::PortIgnored { .. } => {
+                "Connection '{}': ignored unusable Port '{}', using port {}"
+            }
+            Self::CloudSyncImportMode => {
+                "Imported as Cloud Sync group (Import mode). Use Sync Now to keep it updated."
+            }
+            Self::TemplatesNotImported { .. } => {
+                "{} template(s) skipped (not supported in batch import)"
+            }
+            Self::ClustersNotImported { .. } => {
+                "{} cluster(s) skipped (not supported in batch import)"
+            }
+            Self::VariablesNotImported { .. } => {
+                "{} variable(s) skipped (not supported in batch import)"
+            }
+        }
+    }
+
+    /// Returns the values that fill the placeholders of [`Self::message`].
+    #[must_use]
+    pub fn arguments(&self) -> Vec<String> {
+        match self {
+            Self::PasswordsEncrypted { source_name } => vec![(*source_name).to_string()],
+            Self::InlineCaCertificateSaved { path } => vec![path.display().to_string()],
+            Self::ConnectionAutomation {
+                connection_name,
+                task_count,
+                expect_rule_count,
+            } => vec![
+                connection_name.clone(),
+                task_count.to_string(),
+                expect_rule_count.to_string(),
+            ],
+            Self::PortIgnored {
+                connection_name,
+                rejected_port,
+                port,
+            } => vec![
+                connection_name.clone(),
+                rejected_port.clone(),
+                port.to_string(),
+            ],
+            Self::CloudSyncImportMode => Vec::new(),
+            Self::TemplatesNotImported { count }
+            | Self::ClustersNotImported { count }
+            | Self::VariablesNotImported { count } => vec![count.to_string()],
+        }
+    }
+}
+
+impl fmt::Display for ImportWarning {
+    /// Renders the untranslated English message.
+    ///
+    /// Placeholder substitution matches the GUI's `i18n_f` exactly, so a
+    /// warning reads the same in a log as it does in the dialog.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut rendered = self.message().to_string();
+        for argument in self.arguments() {
+            if let Some(position) = rendered.find("{}") {
+                rendered.replace_range(position..position + 2, &argument);
+            }
+        }
+        f.write_str(&rendered)
+    }
+}
+
 /// Result of an import operation containing successful imports and any issues encountered.
 #[derive(Debug, Default)]
 pub struct ImportResult {
@@ -101,7 +244,7 @@ pub struct ImportResult {
     /// Smart folders imported (native format only)
     pub smart_folders: Vec<SmartFolder>,
     /// Warnings generated during import (non-fatal informational messages)
-    pub warnings: Vec<String>,
+    pub warnings: Vec<ImportWarning>,
 }
 
 impl ImportResult {
@@ -150,11 +293,11 @@ impl ImportResult {
         if has_tasks || expect_count > 0 {
             let task_count = usize::from(connection.pre_connect_task.is_some())
                 + usize::from(connection.post_disconnect_task.is_some());
-            self.record_warning(format!(
-                "Connection '{}' has {} automation task(s) and {} expect rule(s) — \
-                 review before running",
-                connection.name, task_count, expect_count,
-            ));
+            self.add_warning(ImportWarning::ConnectionAutomation {
+                connection_name: connection.name.clone(),
+                task_count,
+                expect_rule_count: expect_count,
+            });
         }
         self.connections.push(connection);
     }
@@ -174,6 +317,16 @@ impl ImportResult {
         self.errors.push(error);
     }
 
+    /// Adds a non-fatal warning about the imported data.
+    ///
+    /// Use it for a limitation of the source format that the user has to act
+    /// on, such as passwords a format cannot export. Pick the [`ImportWarning`]
+    /// variant that fits, or add one — the GUI translates per variant, so a
+    /// warning cannot be expressed as free text here.
+    pub fn add_warning(&mut self, warning: ImportWarning) {
+        self.warnings.push(warning);
+    }
+
     /// Adds credentials for a connection
     pub fn add_credentials(&mut self, connection_id: Uuid, creds: Credentials) {
         self.credentials.insert(connection_id, creds);
@@ -183,11 +336,6 @@ impl ImportResult {
     #[must_use]
     pub fn has_credentials(&self) -> bool {
         !self.credentials.is_empty()
-    }
-
-    /// Records a warning (non-fatal informational message)
-    pub fn record_warning(&mut self, warning: impl Into<String>) {
-        self.warnings.push(warning.into());
     }
 
     /// Merges another import result into this one

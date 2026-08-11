@@ -277,6 +277,8 @@ impl RemminaImporter {
                         verbose: false,
                         mptcp: false,
                         remote_path: None,
+                        // Remmina has no equivalent erase-key setting to carry over.
+                        ..Default::default()
                     }),
                     22u16,
                 )

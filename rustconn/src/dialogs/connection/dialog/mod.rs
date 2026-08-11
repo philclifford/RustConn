@@ -9,7 +9,7 @@
     reason = "module-wide override for legacy code; refactored case by case"
 )]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -20,7 +20,9 @@ use gtk4::{
 };
 use libadwaita as adw;
 use rustconn_core::automation::ExpectRule;
-use rustconn_core::models::{CustomProperty, HighlightRule, SharedFolder};
+use rustconn_core::models::{
+    BackspaceSends, CustomProperty, DeleteSends, HighlightRule, SharedFolder,
+};
 use rustconn_core::variables::Variable;
 use uuid::Uuid;
 
@@ -148,6 +150,17 @@ pub struct ConnectionDialog {
     ssh_mptcp: CheckButton,
     ssh_startup_entry: Entry,
     ssh_options_entry: Entry,
+    ssh_backspace_dropdown: DropDown,
+    ssh_delete_dropdown: DropDown,
+    /// Erase modes the connection was loaded with, for SFTP only (issue #271).
+    ///
+    /// SFTP shares the SSH page, but its session is an `mc` file-manager tab that
+    /// never applies the choice, so the Keyboard group is hidden while SFTP is
+    /// selected. Saving then must not write whatever the shared dropdowns happen
+    /// to show — the user could not see them, and may have set them on the SSH or
+    /// MOSH page before switching — so `build_ssh_config` writes this back
+    /// instead. Stays at the defaults for a connection that never had a value.
+    sftp_erase_modes: Rc<Cell<(BackspaceSends, DeleteSends)>>,
     ssh_agent_socket_entry: adw::EntryRow,
     ssh_pkcs11_entry: adw::EntryRow,
     ssh_remote_path_entry: adw::EntryRow,

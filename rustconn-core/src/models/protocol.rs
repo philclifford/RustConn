@@ -135,12 +135,41 @@ impl ProtocolConfig {
             Self::Web(_) => ProtocolType::Web,
         }
     }
+
+    /// Returns what Backspace and Delete send for this protocol.
+    ///
+    /// The one place the per-connection erase choice is derived from a stored
+    /// configuration, so the terminal notebook, the SSH launcher and the MOSH
+    /// launcher cannot drift apart on it (issue
+    /// [#271](https://github.com/totoshko88/RustConn/issues/271)).
+    ///
+    /// Protocols with no VTE session of their own return the defaults rather
+    /// than nothing, so a caller re-applying the modes always has a value to
+    /// install. SFTP is deliberately among them: it shares [`SshConfig`] and so
+    /// carries the two fields, but its session is a file-manager tab that never
+    /// applies them, which is why the connection editor hides the choice when
+    /// SFTP is selected.
+    #[must_use]
+    pub const fn erase_modes(&self) -> (BackspaceSends, DeleteSends) {
+        match self {
+            Self::Ssh(cfg) => (cfg.backspace_sends, cfg.delete_sends),
+            Self::Telnet(cfg) => (cfg.backspace_sends, cfg.delete_sends),
+            Self::Mosh(cfg) => (cfg.backspace_sends, cfg.delete_sends),
+            _ => (BackspaceSends::Automatic, DeleteSends::Automatic),
+        }
+    }
 }
 
-/// What the Backspace key sends in a Telnet session
+/// What the Backspace key sends in a terminal session
+///
+/// Not protocol-specific: the remote side decides which byte erases the
+/// character to the left, and it disagrees with the local default on both
+/// Telnet hosts and SSH ones — network appliances and older Unix systems
+/// commonly expect `^H` where a Linux host expects `^?`
+/// (issue [#271](https://github.com/totoshko88/RustConn/issues/271)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum TelnetBackspaceSends {
+pub enum BackspaceSends {
     /// Automatic (use terminal default)
     #[default]
     Automatic,
@@ -150,7 +179,7 @@ pub enum TelnetBackspaceSends {
     Delete,
 }
 
-impl TelnetBackspaceSends {
+impl BackspaceSends {
     /// Returns all available options
     #[must_use]
     pub const fn all() -> &'static [Self] {
@@ -188,10 +217,14 @@ impl TelnetBackspaceSends {
     }
 }
 
-/// What the Delete key sends in a Telnet session
+/// What the Delete key sends in a terminal session
+///
+/// Shares [`BackspaceSends`]' reason for existing, but stays a separate type so
+/// the two keys cannot be configured with each other's value by accident:
+/// `Automatic` means the VT220 sequence here and DEL there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum TelnetDeleteSends {
+pub enum DeleteSends {
     /// Automatic (use terminal default)
     #[default]
     Automatic,
@@ -201,7 +234,7 @@ pub enum TelnetDeleteSends {
     Delete,
 }
 
-impl TelnetDeleteSends {
+impl DeleteSends {
     /// Returns all available options
     #[must_use]
     pub const fn all() -> &'static [Self] {
@@ -254,10 +287,10 @@ pub struct TelnetConfig {
     pub custom_args: Vec<String>,
     /// What the Backspace key sends
     #[serde(default)]
-    pub backspace_sends: TelnetBackspaceSends,
+    pub backspace_sends: BackspaceSends,
     /// What the Delete key sends
     #[serde(default)]
-    pub delete_sends: TelnetDeleteSends,
+    pub delete_sends: DeleteSends,
 }
 
 /// MOSH prediction mode
@@ -291,6 +324,24 @@ pub struct MoshConfig {
     /// Custom command-line arguments for the mosh client
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_args: Vec<String>,
+    /// What the Backspace key sends to this host.
+    ///
+    /// MOSH runs in the same VTE widget as SSH and Telnet, so the hosts that
+    /// expect `^H` (`0x08`) where the default sends DEL (`0x7f`) expect it over
+    /// MOSH too, and cannot be reconfigured from their end (issue
+    /// [#271](https://github.com/totoshko88/RustConn/issues/271)).
+    ///
+    /// `Automatic` is the pre-existing behaviour, so stored connections keep
+    /// working unchanged.
+    #[serde(default)]
+    pub backspace_sends: BackspaceSends,
+    /// What the Delete key sends to this host.
+    ///
+    /// Counterpart to [`MoshConfig::backspace_sends`]: `Automatic` sends the
+    /// VT220 sequence `\e[3~`, while hosts that treat Delete as an erase key
+    /// need `^H` or `^?` named explicitly.
+    #[serde(default)]
+    pub delete_sends: DeleteSends,
 }
 
 /// Serial port baud rate
@@ -858,6 +909,26 @@ pub struct SshConfig {
     /// `sftp` CLI and `mc` already start in `$HOME`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_path: Option<String>,
+    /// What the Backspace key sends to this host.
+    ///
+    /// Backspace normally sends DEL (`0x7f`), which is what a Linux host's
+    /// `stty erase` agrees with. Network appliances and older Unix systems
+    /// often expect `^H` (`0x08`) instead and echo `^?` or beep rather than
+    /// erasing, with no way to fix it from the remote end (issue
+    /// [#271](https://github.com/totoshko88/RustConn/issues/271)). Telnet
+    /// sessions have had this switch since the same problem appeared there.
+    ///
+    /// `Automatic` is the pre-existing behaviour, so stored connections keep
+    /// working unchanged.
+    #[serde(default)]
+    pub backspace_sends: BackspaceSends,
+    /// What the Delete key sends to this host.
+    ///
+    /// Counterpart to [`SshConfig::backspace_sends`]: `Automatic` sends the
+    /// VT220 sequence `\e[3~`, while hosts that treat Delete as an erase key
+    /// need `^H` or `^?` named explicitly.
+    #[serde(default)]
+    pub delete_sends: DeleteSends,
 }
 
 fn default_true() -> bool {
@@ -3388,5 +3459,158 @@ impl<'de> Deserialize<'de> for WebConfig {
             zoom_level: raw.zoom_level.clamp(0.3, 3.0),
             accept_invalid_certs: raw.accept_invalid_certs,
         })
+    }
+}
+
+#[cfg(test)]
+mod erase_mode_tests {
+    use super::*;
+
+    /// A stored connection predating issue #271 has neither key in its config.
+    /// The CHANGELOG promises those keep behaving exactly as before, which only
+    /// holds while both fields deserialize to `Automatic`.
+    #[test]
+    fn ssh_config_without_erase_fields_deserializes_to_automatic() {
+        let json = r#"{"auth_method":"public_key","host":"example.com"}"#;
+        let config: SshConfig =
+            serde_json::from_str(json).expect("legacy SSH JSON must still deserialize");
+        assert_eq!(config.backspace_sends, BackspaceSends::Automatic);
+        assert_eq!(config.delete_sends, DeleteSends::Automatic);
+    }
+
+    #[test]
+    fn ssh_config_toml_without_erase_fields_deserializes_to_automatic() {
+        let config: SshConfig = toml::from_str("auth_method = \"public_key\"\n")
+            .expect("legacy SSH TOML must still deserialize");
+        assert_eq!(config.backspace_sends, BackspaceSends::Automatic);
+        assert_eq!(config.delete_sends, DeleteSends::Automatic);
+    }
+
+    #[test]
+    fn mosh_config_without_erase_fields_deserializes_to_automatic() {
+        let json = r#"{"ssh_port":2222,"predict_mode":"always"}"#;
+        let config: MoshConfig =
+            serde_json::from_str(json).expect("legacy MOSH JSON must still deserialize");
+        assert_eq!(config.backspace_sends, BackspaceSends::Automatic);
+        assert_eq!(config.delete_sends, DeleteSends::Automatic);
+    }
+
+    #[test]
+    fn mosh_config_toml_without_erase_fields_deserializes_to_automatic() {
+        let config: MoshConfig =
+            toml::from_str("ssh_port = 2222\n").expect("legacy MOSH TOML must still deserialize");
+        assert_eq!(config.backspace_sends, BackspaceSends::Automatic);
+        assert_eq!(config.delete_sends, DeleteSends::Automatic);
+    }
+
+    /// The dropdown stores nothing but a row index, so `index()`/`from_index()`
+    /// being inverse is what keeps the editor from saving a different value than
+    /// the one on screen.
+    #[test]
+    fn backspace_sends_index_round_trips() {
+        for mode in BackspaceSends::all() {
+            assert_eq!(BackspaceSends::from_index(mode.index()), *mode);
+        }
+    }
+
+    #[test]
+    fn delete_sends_index_round_trips() {
+        for mode in DeleteSends::all() {
+            assert_eq!(DeleteSends::from_index(mode.index()), *mode);
+        }
+    }
+
+    /// An index past the end of `all()` cannot come from the dropdown, so it can
+    /// only mean the model and the UI disagree — fall back to the pre-#271
+    /// behaviour rather than to an arbitrary variant.
+    #[test]
+    fn out_of_range_index_falls_back_to_automatic() {
+        let past_end = u32::try_from(BackspaceSends::all().len()).unwrap_or(u32::MAX);
+        assert_eq!(
+            BackspaceSends::from_index(past_end),
+            BackspaceSends::Automatic
+        );
+        assert_eq!(
+            BackspaceSends::from_index(u32::MAX),
+            BackspaceSends::Automatic
+        );
+        let past_end = u32::try_from(DeleteSends::all().len()).unwrap_or(u32::MAX);
+        assert_eq!(DeleteSends::from_index(past_end), DeleteSends::Automatic);
+        assert_eq!(DeleteSends::from_index(u32::MAX), DeleteSends::Automatic);
+    }
+
+    /// The labels are in the translation catalogue, so changing them silently
+    /// orphans every existing `po` entry.
+    #[test]
+    fn erase_mode_display_names_are_stable() {
+        assert_eq!(BackspaceSends::Automatic.display_name(), "Automatic");
+        assert_eq!(BackspaceSends::Backspace.display_name(), "Backspace (^H)");
+        assert_eq!(BackspaceSends::Delete.display_name(), "Delete (^?)");
+        assert_eq!(DeleteSends::Automatic.display_name(), "Automatic");
+        assert_eq!(DeleteSends::Backspace.display_name(), "Backspace (^H)");
+        assert_eq!(DeleteSends::Delete.display_name(), "Delete (^?)");
+    }
+
+    #[test]
+    fn erase_modes_reads_ssh_config() {
+        let config = ProtocolConfig::Ssh(SshConfig {
+            backspace_sends: BackspaceSends::Backspace,
+            delete_sends: DeleteSends::Delete,
+            ..SshConfig::default()
+        });
+        assert_eq!(
+            config.erase_modes(),
+            (BackspaceSends::Backspace, DeleteSends::Delete)
+        );
+    }
+
+    #[test]
+    fn erase_modes_reads_telnet_config() {
+        let config = ProtocolConfig::Telnet(TelnetConfig {
+            backspace_sends: BackspaceSends::Backspace,
+            delete_sends: DeleteSends::Backspace,
+            ..TelnetConfig::default()
+        });
+        assert_eq!(
+            config.erase_modes(),
+            (BackspaceSends::Backspace, DeleteSends::Backspace)
+        );
+    }
+
+    #[test]
+    fn erase_modes_reads_mosh_config() {
+        let config = ProtocolConfig::Mosh(MoshConfig {
+            backspace_sends: BackspaceSends::Delete,
+            delete_sends: DeleteSends::Backspace,
+            ..MoshConfig::default()
+        });
+        assert_eq!(
+            config.erase_modes(),
+            (BackspaceSends::Delete, DeleteSends::Backspace)
+        );
+    }
+
+    /// A protocol without the setting still has to answer, so callers that
+    /// re-apply the modes over a whole window always have something to install.
+    #[test]
+    fn erase_modes_falls_back_to_automatic_without_the_setting() {
+        let defaults = (BackspaceSends::Automatic, DeleteSends::Automatic);
+        assert_eq!(
+            ProtocolConfig::Rdp(RdpConfig::default()).erase_modes(),
+            defaults
+        );
+        assert_eq!(
+            ProtocolConfig::Serial(SerialConfig::default()).erase_modes(),
+            defaults
+        );
+        // SFTP shares SshConfig, so it carries the fields — but its session is a
+        // file-manager tab that never applies them, and the editor hides the
+        // choice accordingly.
+        let sftp = ProtocolConfig::Sftp(SshConfig {
+            backspace_sends: BackspaceSends::Backspace,
+            delete_sends: DeleteSends::Backspace,
+            ..SshConfig::default()
+        });
+        assert_eq!(sftp.erase_modes(), defaults);
     }
 }
