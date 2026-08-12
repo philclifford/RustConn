@@ -89,12 +89,9 @@ rdp-audio = ["rdp-embedded", "dep:cpal"]
 wayland-native = ["dep:gdk4-wayland"]
 # Embedded WebKitGTK 6.0 web browser for in-tab Web protocol connections (Linux only)
 web-embedded = ["dep:webkit6", "rustconn-core/web-embedded"]
-# Enable libadwaita 1.6+ widgets (AdwSpinner, CSS variables, accent colors)
-# Requires libadwaita >= 1.6 at build time (GNOME 50 Flatpak runtime or Fedora 44+)
-adw-1-6 = ["libadwaita/v1_6"]
 # Enable libadwaita 1.7+ widgets (AdwWrapBox, AdwToggleGroup)
 # Requires libadwaita >= 1.7 at build time (GNOME 48+ / Fedora 42+)
-adw-1-7 = ["adw-1-6", "libadwaita/v1_7"]
+adw-1-7 = ["libadwaita/v1_7"]
 # Enable libadwaita 1.8+ widgets (AdwShortcutsDialog, AdwShortcutLabel)
 # Requires libadwaita >= 1.8 at build time (GNOME 49+ Flatpak runtime or Fedora 42+)
 adw-1-8 = ["adw-1-7", "libadwaita/v1_8"]

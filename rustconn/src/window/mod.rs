@@ -280,7 +280,7 @@ impl MainWindow {
                         latest = Some(busy);
                     }
                     if let Some(busy) = latest {
-                        spinner.set_spinning(busy);
+                        // adw::Spinner spins automatically when visible
                         spinner.set_visible(busy);
                     }
                 }

@@ -45,14 +45,11 @@ pub struct ExportDialog {
     // Progress
     progress_bar: ProgressBar,
     progress_label: Label,
-    #[cfg(feature = "adw-1-6")]
     #[expect(
         dead_code,
-        reason = "adw::Spinner spins automatically; field keeps widget alive"
+        reason = "adw::Spinner spins automatically when visible; field keeps widget alive"
     )]
     progress_spinner: adw::Spinner,
-    #[cfg(not(feature = "adw-1-6"))]
-    progress_spinner: gtk4::Spinner,
     // Result
     result_label: Label,
     result_details: Label,
@@ -147,16 +144,8 @@ impl ExportDialog {
 
         // === Progress Page ===
         let (progress_page, progress_bar, progress_label) = Self::create_progress_page();
-        // Create spinner with cfg guard — adw::Spinner always spins (visibility-controlled),
-        // gtk4::Spinner uses set_spinning()
-        #[cfg(feature = "adw-1-6")]
+        // Create spinner — adw::Spinner always spins (visibility-controlled)
         let progress_spinner = adw::Spinner::builder()
-            .width_request(48)
-            .height_request(48)
-            .build();
-        #[cfg(not(feature = "adw-1-6"))]
-        let progress_spinner = gtk4::Spinner::builder()
-            .spinning(true)
             .width_request(48)
             .height_request(48)
             .build();
@@ -956,8 +945,6 @@ impl ExportDialog {
         let include_groups = self.include_groups_row.clone();
         let progress_bar = self.progress_bar.clone();
         let progress_label = self.progress_label.clone();
-        #[cfg(not(feature = "adw-1-6"))]
-        let progress_spinner = self.progress_spinner.clone();
         let result_label = self.result_label.clone();
         let result_details = self.result_details.clone();
         let export_button = self.export_button.clone();
@@ -1056,8 +1043,6 @@ impl ExportDialog {
             stack.set_visible_child_name("progress");
             btn.set_sensitive(false);
             progress_bar.set_fraction(0.0);
-            #[cfg(not(feature = "adw-1-6"))]
-            progress_spinner.set_spinning(true);
             progress_label.set_text(&i18n_f(
                 "Exporting to {}...",
                 &[&i18n(format.display_name())],
@@ -1121,8 +1106,6 @@ impl ExportDialog {
             let btn = btn.clone();
             let progress_bar = progress_bar.clone();
             let progress_label = progress_label.clone();
-            #[cfg(not(feature = "adw-1-6"))]
-            let progress_spinner = progress_spinner.clone();
             let result_label = result_label.clone();
             let result_details = result_details.clone();
             let result_cell = result_cell.clone();
@@ -1143,8 +1126,6 @@ impl ExportDialog {
                 },
                 move |export_result| {
                     progress_bar.set_fraction(1.0);
-                    #[cfg(not(feature = "adw-1-6"))]
-                    progress_spinner.set_spinning(false);
 
                     match export_result {
                         Ok(result) => {

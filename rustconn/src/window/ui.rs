@@ -24,7 +24,7 @@ use crate::i18n::i18n;
 #[must_use]
 pub fn create_header_bar() -> (
     adw::HeaderBar,
-    gtk4::Spinner,
+    adw::Spinner,
     gtk4::Button,
     gtk4::ToggleButton,
     MenuButton,
@@ -41,12 +41,9 @@ pub fn create_header_bar() -> (
     title.add_css_class("title");
     title_box.append(&title);
 
-    let busy_spinner = gtk4::Spinner::new();
+    let busy_spinner = adw::Spinner::new();
     busy_spinner.set_visible(false);
     busy_spinner.set_tooltip_text(Some(&i18n("Operation in progress")));
-    busy_spinner.update_property(&[gtk4::accessible::Property::Label(&i18n(
-        "Operation in progress",
-    ))]);
     title_box.append(&busy_spinner);
 
     header_bar.set_title_widget(Some(&title_box));

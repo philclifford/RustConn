@@ -43,7 +43,7 @@ toml = "1.0"
 # GTK4 and VTE
 gtk4 = "0.11"
 vte4 = "0.10"
-libadwaita = { version = "0.9", features = ["v1_5"] }
+libadwaita = { version = "0.9", features = ["v1_6"] }
 
 # Utilities
 async-channel = "2.5"
