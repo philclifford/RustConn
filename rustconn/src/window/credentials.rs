@@ -501,6 +501,58 @@ impl MainWindow {
                             observer_clone.clone(),
                         );
                     }
+                    CredentialResolutionResult::KdbxLocked { kdbx_path, connection_id: conn_id } => {
+                        // KDBX database needs unlocking — show on-demand unlock
+                        // dialog (#273). On success, store the password in memory
+                        // and retry credential resolution for the connection.
+                        let key_file = state_clone
+                            .try_borrow()
+                            .ok()
+                            .and_then(|s| s.settings().secrets.kdbx_key_file.clone());
+
+                        {
+                            let state_unlock = state_clone.clone();
+                            let notebook_unlock = notebook_clone.clone();
+                            let split_unlock = split_view_clone.clone();
+                            let sidebar_unlock = sidebar_clone.clone();
+                            let monitoring_unlock = monitoring_clone.clone();
+                            let activity_unlock = activity_clone.clone();
+                            let observer_unlock = observer_clone.clone();
+
+                            crate::dialogs::show_kdbx_unlock_dialog(
+                                notebook_clone.widget(),
+                                &kdbx_path,
+                                key_file.as_deref(),
+                                move |response| {
+                                    match response {
+                                        crate::dialogs::KdbxUnlockResponse::Unlocked { password } => {
+                                            // Store the verified password in AppState for
+                                            // the remainder of the session (never persisted).
+                                            if let Ok(mut state_ref) = state_unlock.try_borrow_mut() {
+                                                state_ref.settings_mut().secrets.kdbx_password = Some(password);
+                                            }
+
+                                            // Retry credential resolution — now kdbx_password
+                                            // is available and the lookup will succeed.
+                                            Self::start_connection_with_credential_resolution_observed(
+                                                state_unlock.clone(),
+                                                notebook_unlock.clone(),
+                                                split_unlock.clone(),
+                                                sidebar_unlock.clone(),
+                                                monitoring_unlock.clone(),
+                                                conn_id,
+                                                activity_unlock.clone(),
+                                                observer_unlock.clone(),
+                                            );
+                                        }
+                                        crate::dialogs::KdbxUnlockResponse::Cancel => {
+                                            // User cancelled — connection is not started
+                                        }
+                                    }
+                                },
+                            );
+                        }
+                    }
                 }
             });
         }

@@ -2204,8 +2204,23 @@ pub fn collect_secret_settings(
                     )
                 }
             }
-            // For None storage, or password authentication turned off:
-            // never write an encrypted blob.
+            // For None storage ("Don't save"), or password authentication turned off:
+            // never write an encrypted blob or store to keyring. However, if the
+            // user typed a password and password auth is active, carry it as the
+            // session-only runtime copy so credential resolution works without
+            // an on-demand unlock prompt for the rest of this session (#273).
+            // `kdbx_password` is `#[serde(skip)]`, so this never reaches disk.
+            CredentialStorage::None if kdbx_use_password => {
+                let password_text = widgets.kdbx_password_entry.text();
+                if password_text.is_empty() {
+                    (None, None)
+                } else {
+                    (
+                        Some(secrecy::SecretString::new(password_text.to_string().into())),
+                        None,
+                    )
+                }
+            }
             CredentialStorage::EncryptedFile
             | CredentialStorage::SystemKeyring
             | CredentialStorage::None => (None, None),

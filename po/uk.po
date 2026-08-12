@@ -2160,9 +2160,17 @@ msgstr "Режим продуктивности"
 msgid "Quality/speed tradeoff for image rendering"
 msgstr "Баланс якости та швидкости відображення зображень"
 
-#: rustconn/src/dialogs/connection/rdp.rs:134 rustconn/src/i18n_markers.rs:76
+#: rustconn/src/dialogs/connection/rdp.rs:134
 msgid "Automatic"
 msgstr "Автоматичний"
+
+#: rustconn/src/i18n_markers.rs:76
+msgid "Automatic (^?)"
+msgstr "Автоматичний (^?)"
+
+#: rustconn/src/i18n_markers.rs:77
+msgid "Automatic (\\e[3~)"
+msgstr "Автоматичний (\\e[3~)"
 
 #: rustconn/src/dialogs/connection/rdp.rs:135
 msgid "Legacy (Compatible)"
@@ -3258,8 +3266,14 @@ msgid "Keyboard"
 msgstr "Клавіятура"
 
 #: rustconn/src/dialogs/connection/ssh.rs:723
-msgid "Change what these keys send when the host does not accept the defaults"
-msgstr "Змінь, що ці клавіші надсилають, коли гост не приймає типових значень"
+#: rustconn/src/dialogs/connection/telnet.rs:54
+msgid ""
+"If Backspace or Delete is not recognised, try Backspace (^H) or Delete (^?) "
+"— devices that reject one default usually reject both"
+msgstr ""
+"Якщо Backspace або Delete не розпізнається, спробуй Backspace (^H) або "
+"Delete (^?) — пристрої, що відкидають одне типове значення, зазвичай "
+"відкидають обидва"
 
 #: rustconn/src/dialogs/connection/ssh.rs:733
 #: rustconn/src/dialogs/connection/telnet.rs:74
@@ -3360,13 +3374,6 @@ msgid "⚠ Telnet transmits data in plain text. Use SSH for secure connections."
 msgstr ""
 "⚠ Telnet передає дані відкритим текстом. Використовуй SSH для безпечних "
 "з'єднків."
-
-#: rustconn/src/dialogs/connection/telnet.rs:54
-msgid ""
-"Configure key behavior for remote systems with              inverted "
-"backspace/delete"
-msgstr ""
-"Устави поведінки клавіш для віддалених систем з інвертованим backspace/delete"
 
 #: rustconn/src/dialogs/connection/vnc.rs:122
 #: rustconn/src/dialogs/template.rs:1041 rustconn/src/dialogs/template.rs:1052

@@ -799,6 +799,31 @@ impl AppState {
                 var_name,
                 "[resolve_credentials_blocking] Resolving variable password"
             );
+
+            // Check if the KDBX database needs to be unlocked before we can
+            // resolve the variable. This covers the "Don't save" mode where
+            // kdbx_password is None at runtime (#273).
+            let needs_kdbx_unlock = kdbx_enabled
+                && matches!(
+                    secret_settings.preferred_backend,
+                    rustconn_core::config::SecretBackendType::KeePassXc
+                        | rustconn_core::config::SecretBackendType::KdbxFile
+                )
+                && secret_settings.kdbx_use_password
+                && kdbx_password.is_none()
+                && kdbx_path.is_some();
+
+            if needs_kdbx_unlock {
+                tracing::debug!(
+                    var_name,
+                    "[resolve_credentials_blocking] KDBX password unavailable, requesting unlock"
+                );
+                return Ok(CredentialResolutionResult::KdbxLocked {
+                    kdbx_path: kdbx_path.clone().expect("checked is_some above"),
+                    connection_id: connection.id,
+                });
+            }
+
             // Look up the variable's custom kdbx_entry_path if configured
             let kdbx_entry_path = ctx
                 .global_variables
@@ -870,6 +895,19 @@ impl AppState {
             )
             && let Some(ref kdbx_path) = kdbx_path
         {
+            // Check if the KDBX database needs to be unlocked (#273).
+            // When "Save password = Don't save", kdbx_password is None and
+            // keepassxc-cli cannot unlock the database without it.
+            if secret_settings.kdbx_use_password && kdbx_password.is_none() {
+                tracing::debug!(
+                    "[resolve_credentials_blocking] KDBX password unavailable for Vault source, requesting unlock"
+                );
+                return Ok(CredentialResolutionResult::KdbxLocked {
+                    kdbx_path: kdbx_path.clone(),
+                    connection_id: connection.id,
+                });
+            }
+
             // Build hierarchical entry path using KeePassHierarchy
             // This matches how passwords are saved with group structure
             let entry_path = KeePassHierarchy::build_entry_path(connection, groups);
@@ -996,6 +1034,17 @@ impl AppState {
             )
             && let Some(ref kdbx_path) = kdbx_path
         {
+            // Check if the KDBX database needs to be unlocked (#273).
+            if secret_settings.kdbx_use_password && kdbx_password.is_none() {
+                tracing::debug!(
+                    "[resolve_credentials_blocking] KDBX password unavailable for Inherit source, requesting unlock"
+                );
+                return Ok(CredentialResolutionResult::KdbxLocked {
+                    kdbx_path: kdbx_path.clone(),
+                    connection_id: connection.id,
+                });
+            }
+
             let db_password = kdbx_password.as_ref();
             let key_file = kdbx_key_file.as_deref();
 

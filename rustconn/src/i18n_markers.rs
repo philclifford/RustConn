@@ -65,15 +65,15 @@ fn _never_called() {
     crate::i18n::i18n("Speed");
 
     // === Erase-mode dropdown labels from `display_name()` ===
-    // `BackspaceSends`/`DeleteSends` share these three labels. The SSH, Telnet
-    // and MOSH panels build their dropdowns with `i18n(mode.display_name())`,
-    // which xgettext cannot follow, so the labels stayed English everywhere.
-    // "Automatic" is now extracted here regardless of the RDP literal
-    // in `dialogs/connection/rdp.rs` that historically put it in the POT.
+    // `BackspaceSends`/`DeleteSends` build their dropdowns with
+    // `i18n(mode.display_name())`, which xgettext cannot follow, so the labels
+    // are extracted here. The two Automatic labels differ because they name
+    // different bytes/sequences.
     //
     // The exact spellings are pinned by `erase_mode_display_names_are_stable`
     // in `rustconn-core/src/models/protocol.rs` — change them there first.
-    crate::i18n::i18n("Automatic");
+    crate::i18n::i18n("Automatic (^?)");
+    crate::i18n::i18n("Automatic (\\e[3~)");
     crate::i18n::i18n("Backspace (^H)");
     crate::i18n::i18n("Delete (^?)");
 }

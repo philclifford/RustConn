@@ -16,6 +16,7 @@ use crate::models::Credentials;
 /// - `VariableMissing` → show variable setup `AdwAlertDialog`
 /// - `BackendNotConfigured` → show backend missing `AdwAlertDialog`
 /// - `VaultEntryMissing` → show vault entry save dialog
+/// - `KdbxLocked` → show on-demand KDBX unlock `AdwAlertDialog`
 #[derive(Debug)]
 pub enum CredentialResolutionResult {
     /// Credentials resolved successfully — proceed with connection.
@@ -55,6 +56,22 @@ pub enum CredentialResolutionResult {
         connection_name: String,
         /// The lookup key used in the vault.
         lookup_key: String,
+    },
+
+    /// The KDBX database needs to be unlocked before credentials can be
+    /// resolved. This occurs when "Save password = Don't save" is configured
+    /// and no session-only master password is available in memory.
+    ///
+    /// The UI should show an `AdwAlertDialog` with a password entry prompting
+    /// for the KDBX master password. On success, the password is kept in
+    /// memory for the remainder of the session (never persisted) and the
+    /// credential lookup is retried automatically.
+    KdbxLocked {
+        /// Path to the KDBX database file (displayed to the user for context).
+        kdbx_path: std::path::PathBuf,
+        /// The connection ID that triggered the unlock request, so the UI
+        /// can retry after successful unlock.
+        connection_id: uuid::Uuid,
     },
 }
 

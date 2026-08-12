@@ -1,4 +1,12 @@
 -------------------------------------------------------------------
+Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.22
+
+- Version bump to 0.19.22
+- Fixed: KeePassXC "Don't save" mode did not unlock the database on demand (#273)
+- Improved: Sidebar search uses a cached search engine with result caching
+- Improved: Keyboard group dropdowns show what "Automatic" actually sends (#271)
+
+-------------------------------------------------------------------
 Tue Aug 11 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.21
 
 - Version bump to 0.19.21

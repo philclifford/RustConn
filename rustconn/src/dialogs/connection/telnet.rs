@@ -51,8 +51,8 @@ pub fn create_telnet_options() -> TelnetOptionsWidgets {
     let keyboard_group = adw::PreferencesGroup::builder()
         .title(i18n("Keyboard"))
         .description(i18n(
-            "Configure key behavior for remote systems with \
-             inverted backspace/delete",
+            "If Backspace or Delete is not recognised, try Backspace (^H) or Delete (^?) — \
+             devices that reject one default usually reject both",
         ))
         .build();
 

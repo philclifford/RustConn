@@ -720,7 +720,8 @@ fn create_keyboard_group() -> (adw::PreferencesGroup, DropDown, DropDown) {
     let keyboard_group = adw::PreferencesGroup::builder()
         .title(i18n("Keyboard"))
         .description(i18n(
-            "Change what these keys send when the host does not accept the defaults",
+            "If Backspace or Delete is not recognised, try Backspace (^H) or Delete (^?) — \
+             devices that reject one default usually reject both",
         ))
         .build();
 

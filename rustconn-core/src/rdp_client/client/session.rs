@@ -53,8 +53,9 @@ pub(super) async fn run_active_session(
     #[cfg_attr(
         not(feature = "gfx-h264"),
         expect(
+            unused_variables,
             unused_mut,
-            reason = "only the gfx-h264 blit path mutates the statistics"
+            reason = "only the gfx-h264 blit path uses and mutates the statistics"
         )
     )]
     let mut frame_stats = super::super::graphics::FrameStatistics::new();
