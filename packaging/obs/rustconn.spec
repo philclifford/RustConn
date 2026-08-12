@@ -278,6 +278,14 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.0-0
+- Version bump to 0.20.0
+- Added: Web embedded mode — auto-hide floating toolbar with reveal zone
+- Changed: libadwaita baseline raised from v1_5 to v1_6
+- Fixed: Web zoom shortcuts (Ctrl+/-/0) did not work in split view
+- Fixed: Missing i18n entry for kdbx_unlock.rs
+- Improved: TerminalNotebook god class split — mod.rs reduced by 30%
+
 * Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.22-0
 - Version bump to 0.19.22
 - Fixed: KeePassXC "Don't save" mode did not unlock the database on demand (#273)

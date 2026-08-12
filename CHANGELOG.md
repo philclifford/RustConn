@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Web zoom shortcuts (Ctrl+/-/0) did not work in split view** — keyboard shortcuts for zoom were intercepted by WebKitGTK's internal handlers before reaching the application's EventControllerKey. Fixed by attaching the key controller to the container widget with PropagationPhase::Capture, which intercepts events before they propagate to the WebView. Also added focus delegation chain (container→overlay→web_view) so GTK properly routes keyboard events when the panel receives focus in split view.
+
 - **Missing i18n entry for kdbx_unlock.rs** — the KeePassXC unlock dialog strings were not included in `POTFILES.in`, preventing translation.
 
 ### Improved

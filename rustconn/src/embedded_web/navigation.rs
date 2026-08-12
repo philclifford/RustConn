@@ -195,11 +195,17 @@ impl NavigationToolbar {
     /// # Arguments
     /// * `web_view` - The WebKitGTK WebView to bind to
     /// * `home_url` - Shared reference to the original configured URL
-    pub fn bind_to_webview(&self, web_view: &webkit6::WebView, home_url: &Rc<RefCell<String>>) {
+    /// * `container` - The container widget for keyboard shortcuts (uses CAPTURE phase)
+    pub fn bind_to_webview(
+        &self,
+        web_view: &webkit6::WebView,
+        home_url: &Rc<RefCell<String>>,
+        container: &gtk4::Box,
+    ) {
         self.connect_navigation_buttons(web_view, home_url);
         self.connect_property_notifications(web_view);
         self.connect_zoom_buttons(web_view);
-        self.setup_keyboard_shortcuts(web_view);
+        self.setup_keyboard_shortcuts(web_view, container);
         self.setup_menu(web_view, home_url);
     }
 
@@ -320,8 +326,13 @@ impl NavigationToolbar {
     }
 
     /// Sets up keyboard shortcuts for zoom: Ctrl+Plus/Equal, Ctrl+Minus, Ctrl+0.
-    fn setup_keyboard_shortcuts(&self, web_view: &webkit6::WebView) {
+    ///
+    /// Uses CAPTURE propagation phase on the container to intercept events
+    /// before WebKitGTK's internal handlers consume them.
+    fn setup_keyboard_shortcuts(&self, web_view: &webkit6::WebView, container: &gtk4::Box) {
         let key_controller = gtk4::EventControllerKey::new();
+        // CAPTURE phase intercepts events before they reach WebKit's internal handlers
+        key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
 
         let wv = web_view.clone();
         let zoom_in_btn = self.zoom_in_button.clone();
@@ -384,7 +395,8 @@ impl NavigationToolbar {
             }
         });
 
-        web_view.add_controller(key_controller);
+        // Attach to container (not web_view) so CAPTURE phase works
+        container.add_controller(key_controller);
     }
 
     /// Sets up the menu button's popover menu with browser actions.

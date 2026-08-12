@@ -559,7 +559,6 @@ impl TerminalNotebook {
     }
 }
 
-
 impl TerminalNotebook {
     // ========================================================================
     // Tab Parking (Split View Support)

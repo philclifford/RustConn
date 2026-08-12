@@ -316,6 +316,12 @@ impl EmbeddedWebWidget {
         container.append(&reconnect_banner);
         container.append(&overlay);
 
+        // Focus delegation for split view: when container.grab_focus() is called,
+        // GTK follows the focus_child chain to reach the actual focusable widget.
+        // Without this, keyboard shortcuts (Ctrl+/-/0) don't work in split panels.
+        container.set_focus_child(Some(&overlay));
+        overlay.set_focus_child(Some(&web_view));
+
         let state = Rc::new(RefCell::new(EmbeddedConnectionState::Disconnected));
         let home_url = Rc::new(RefCell::new(url.to_string()));
         let on_state_changed: Rc<RefCell<Option<StateCallback>>> = Rc::new(RefCell::new(None));
@@ -369,7 +375,7 @@ impl EmbeddedWebWidget {
         // Bind navigation toolbar to the web view
         widget
             .toolbar
-            .bind_to_webview(&widget.web_view, &widget.home_url);
+            .bind_to_webview(&widget.web_view, &widget.home_url, &widget.container);
 
         // Disable autofill button if no credentials available; otherwise
         // connect the click handler to inject credentials into the page.

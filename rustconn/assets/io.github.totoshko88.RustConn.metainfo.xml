@@ -142,11 +142,13 @@
   <releases>
     <release version="0.20.0" date="2026-08-12">
       <description>
-        <p>Version 0.20.0 - libadwaita v1_6 baseline, code quality improvements:</p>
+        <p>Version 0.20.0 - Web embedded mode, libadwaita v1_6 baseline:</p>
         <ul>
-          <li>Changed: libadwaita baseline raised from v1_5 to v1_6 — all feature guards removed, adw::Spinner replaces gtk4::Spinner throughout</li>
+          <li>Added: Web embedded mode with auto-hide floating toolbar matching RDP/VNC behavior</li>
+          <li>Changed: libadwaita baseline raised from v1_5 to v1_6 — adw::Spinner replaces gtk4::Spinner throughout</li>
+          <li>Fixed: Web zoom shortcuts (Ctrl+/-/0) did not work in split view</li>
           <li>Fixed: Missing i18n entry for kdbx_unlock.rs</li>
-          <li>Improved: TerminalNotebook god class split — mod.rs reduced by 30% (4365 to 3052 lines), extracted tab_lifecycle.rs and session_lifecycle.rs</li>
+          <li>Improved: TerminalNotebook god class split — mod.rs reduced by 30%</li>
         </ul>
       </description>
     </release>

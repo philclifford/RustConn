@@ -1,8 +1,13 @@
 rustconn (0.20.0-1) unstable; urgency=medium
 
   * Version bump to 0.20.0
+  * Added: Web embedded mode — auto-hide floating toolbar with reveal zone
+    matching RDP/VNC behavior
   * Changed: libadwaita baseline raised from v1_5 to v1_6 — all feature
     guards removed, adw::Spinner replaces gtk4::Spinner throughout
+  * Fixed: Web zoom shortcuts (Ctrl+/-/0) did not work in split view —
+    keyboard events were intercepted by WebKitGTK before reaching the
+    application's EventControllerKey
   * Fixed: Missing i18n entry for kdbx_unlock.rs
   * Improved: TerminalNotebook god class split — mod.rs reduced by 30%
     (4365 to 3052 lines), extracted tab_lifecycle.rs and session_lifecycle.rs
