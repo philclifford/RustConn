@@ -84,6 +84,7 @@ rustconn/src/dialogs/import/mod.rs
 rustconn/src/dialogs/import/sources.rs
 rustconn/src/dialogs/history.rs
 rustconn/src/dialogs/keyboard.rs
+rustconn/src/dialogs/kdbx_unlock.rs
 rustconn/src/dialogs/shortcuts.rs
 rustconn/src/dialogs/smart_folder.rs
 rustconn/src/dialogs/snippet.rs
