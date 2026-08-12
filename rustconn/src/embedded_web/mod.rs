@@ -230,6 +230,10 @@ impl EmbeddedWebWidget {
             .network_session(&network_session)
             .build();
 
+        // Ensure WebView can receive keyboard focus (required for split view)
+        web_view.set_can_focus(true);
+        web_view.set_focusable(true);
+
         // Apply settings (JS, user-agent, hardened defaults)
         settings::apply_settings(&web_view, config);
 
