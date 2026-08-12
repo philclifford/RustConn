@@ -18,6 +18,7 @@ pub mod pty_relay;
 pub mod pty_spawn;
 mod recording;
 pub mod tab_container;
+mod tab_lifecycle;
 mod tab_menu;
 mod types;
 
@@ -701,60 +702,6 @@ impl TerminalNotebook {
 
             glib::Propagation::Stop
         });
-    }
-
-    /// Creates the welcome tab content - uses the full welcome screen with features
-    fn create_welcome_tab() -> GtkBox {
-        let container = GtkBox::new(Orientation::Vertical, 0);
-        container.set_hexpand(true);
-        container.set_vexpand(true);
-
-        // Use the full welcome content from SplitViewBridge for consistency
-        let status_page = crate::split_view::SplitViewBridge::create_welcome_content_static();
-        container.append(&status_page);
-        container
-    }
-
-    /// Appends the Welcome tab to an empty `TabView`.
-    ///
-    /// Shared by both paths that can empty the tab bar: a normal tab close and
-    /// parking the last tab into a detached window (issue #236). The caller
-    /// checks the user preference and that no pages are left.
-    fn append_welcome_page(tab_view: &adw::TabView) {
-        let welcome = Self::create_welcome_tab();
-        let welcome_wrap = TabPageContainer::welcome(&welcome.upcast::<gtk4::Widget>());
-        let welcome_page = tab_view.append(welcome_wrap.widget());
-        welcome_page.set_title(&i18n("Welcome"));
-        welcome_page.set_icon(Some(&gio::ThemedIcon::new("go-home-symbolic")));
-    }
-
-    /// Gets the icon name for a protocol
-    fn get_protocol_icon(protocol: &str) -> &'static str {
-        rustconn_core::get_protocol_icon_by_name(protocol)
-    }
-
-    /// Removes the welcome page if it exists
-    fn remove_welcome_page(&self) {
-        if self.sessions.borrow().is_empty() && self.tab_view.n_pages() > 0 {
-            // Find and remove welcome page
-            for i in 0..self.tab_view.n_pages() {
-                let page = self.tab_view.nth_page(i);
-                if page.title() == i18n("Welcome") {
-                    self.tab_view.close_page(&page);
-                    break;
-                }
-            }
-        }
-    }
-
-    /// Restores the Welcome page when the configured empty-notebook conditions hold.
-    pub(super) fn ensure_welcome_page(&self) {
-        if self.show_welcome.get()
-            && self.sessions.borrow().is_empty()
-            && self.tab_view.n_pages() == 0
-        {
-            Self::append_welcome_page(&self.tab_view);
-        }
     }
 
     /// Stops expect polling and scrubs resolved responses for a finished child.
@@ -3031,28 +2978,6 @@ impl TerminalNotebook {
         // The session has a home again, so the park mark may go.
         self.clear_park_marks(session_id);
         true
-    }
-
-    /// Builds a tab tooltip from a session title, its host, and its group.
-    ///
-    /// One place decides the layout — title, then the host line the embedded
-    /// creation paths add, then the group line `set_tab_group` appends — so a tab
-    /// recreated after a park or a rename is indistinguishable from the original
-    /// (Requirement 2.3).
-    fn tab_tooltip(title: &str, host: Option<&str>, group: Option<&str>) -> String {
-        use std::fmt::Write;
-
-        let mut tooltip = title.to_owned();
-        if let Some(host) = host.filter(|host| !host.is_empty()) {
-            tooltip.push('\n');
-            tooltip.push_str(host);
-        }
-        if let Some(group) = group {
-            // Writing into a String never fails; the result is discarded the
-            // same way the other string builders in the GUI do it.
-            let _ = write!(tooltip, "\n[{group}]");
-        }
-        tooltip
     }
 
     /// Closes (terminates) a session by id, running the standard tab-close
