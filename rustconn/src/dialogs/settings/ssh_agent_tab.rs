@@ -140,7 +140,7 @@ pub fn create_ssh_agent_page() -> (
         .build();
     keys_group.add(&ssh_agent_keys_list);
 
-    let ssh_agent_loading_spinner = adw::Spinner::new();
+    let ssh_agent_loading_spinner = crate::spinner::new();
     let ssh_agent_error_label = Label::builder()
         .label("")
         .halign(gtk4::Align::Start)
@@ -213,7 +213,7 @@ pub fn load_ssh_agent_settings(
     let loading_row = adw::ActionRow::builder()
         .title(i18n("Loading keys..."))
         .build();
-    let spinner = adw::Spinner::new();
+    let spinner = crate::spinner::new();
     loading_row.add_prefix(&spinner);
     ssh_agent_keys_list.append(&loading_row);
 
@@ -326,7 +326,7 @@ pub fn populate_available_keys_list(
     let loading_row = adw::ActionRow::builder()
         .title(i18n("Scanning ~/.ssh/..."))
         .build();
-    let spinner = adw::Spinner::new();
+    let spinner = crate::spinner::new();
     loading_row.add_prefix(&spinner);
     available_keys_list.append(&loading_row);
 

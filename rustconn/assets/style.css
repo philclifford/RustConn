@@ -864,19 +864,14 @@ togglebutton.broadcasting image {
     animation: tunnel-pulse 1.6s ease-in-out infinite;
 }
 
-/* Embedded RDP/VNC toolbar — applied to the toolbar box itself so that the
- * revealer container stays fully transparent when hidden. The toolbar floats
- * over the DrawingArea without consuming vertical space. */
-.rdp-toolbar-overlay {
-    background-color: rgba(36, 36, 36, 0.85);
-    border-bottom-left-radius: 8px;
-    border-bottom-right-radius: 8px;
-    margin-top: 4px;
-    margin-bottom: 4px;
-}
-
-/* Embedded Web browser toolbar — floats over the WebView like RDP/VNC.
- * Semi-transparent background with rounded corners for a modern overlay look. */
+/* Floating toolbar for the embedded viewers — RDP and VNC over their
+ * DrawingArea, Web over its WebView. Applied to the toolbar box itself so that
+ * the revealer container stays fully transparent when hidden, and so the
+ * toolbar floats without consuming vertical space.
+ *
+ * One rule for both: the two classes were byte-identical copies, and a change
+ * to one silently stopped matching the other. */
+.rdp-toolbar-overlay,
 .web-toolbar-overlay {
     background-color: rgba(36, 36, 36, 0.85);
     border-bottom-left-radius: 8px;

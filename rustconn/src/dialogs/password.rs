@@ -12,7 +12,6 @@ use gtk4::{Box as GtkBox, Button, CheckButton, Entry, Grid, Label, Orientation, 
 use libadwaita as adw;
 use rustconn_core::secret::CancellationToken;
 use secrecy::SecretString;
-use zeroize::Zeroizing;
 
 use crate::i18n::{i18n, i18n_f};
 
@@ -41,7 +40,7 @@ pub struct PasswordDialog {
     save_check: CheckButton,
     migrate_button: Button,
     connect_button: Button,
-    spinner: adw::Spinner,
+    spinner: crate::spinner::Spinner,
     spinner_label: Label,
     spinner_box: GtkBox,
     result: Rc<RefCell<Option<PasswordDialogResult>>>,
@@ -93,7 +92,7 @@ impl PasswordDialog {
         spinner_box.set_halign(gtk4::Align::Center);
         spinner_box.set_visible(false);
 
-        let spinner = adw::Spinner::new();
+        let spinner = crate::spinner::new();
         let spinner_label = Label::builder()
             .label(i18n("Resolving credentials..."))
             .css_classes(["dim-label"])
@@ -251,11 +250,16 @@ impl PasswordDialog {
         let migrate_requested_clone = migrate_requested.clone();
         let connect_btn_clone = connect_btn.clone();
         connect_btn_clone.connect_clicked(move |_| {
-            // Wrap intermediate password String in Zeroizing for secure memory cleanup
-            let password_text = Zeroizing::new(password_clone.text().to_string());
+            // The String goes straight into SecretString, which owns it as a
+            // Box<str> and zeroizes it on drop. An intermediate Zeroizing here
+            // would only add a copy: the one plaintext that escapes unscrubbed
+            // is the GString the entry hands back, and GTK frees that without
+            // zeroing it — with `unsafe_code = "forbid"` there is no reaching
+            // into GLib's buffer to fix that, so the widget is the floor on
+            // exposure and no Rust-side wrapper lowers it.
             *result_clone.borrow_mut() = Some(PasswordDialogResult {
                 username: username_clone.text().to_string(),
-                password: SecretString::from(password_text.as_str().to_owned()),
+                password: SecretString::from(password_clone.text().to_string()),
                 domain: domain_clone.text().to_string(),
                 save_credentials: save_clone.is_active(),
                 migrate_to_keepass: *migrate_requested_clone.borrow(),

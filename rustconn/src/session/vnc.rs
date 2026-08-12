@@ -11,7 +11,6 @@ use std::rc::Rc;
 
 use gtk4::prelude::*;
 use gtk4::{Align, Box as GtkBox, Label, Orientation, Overlay};
-use libadwaita as adw;
 use rustconn_core::models::{VncClientMode, VncConfig};
 use rustconn_core::protocol::{VncProtocol, detect_vnc_client, detect_vnc_viewer_name};
 
@@ -51,7 +50,7 @@ pub struct VncSessionWidget {
     /// Status label for connection feedback
     status_label: Label,
     /// Spinner for connection progress
-    spinner: adw::Spinner,
+    spinner: crate::spinner::Spinner,
     /// Status container (kept for preventing premature deallocation and future floating controls)
     status_container: GtkBox,
     /// State change callback
@@ -92,7 +91,7 @@ impl VncSessionWidget {
         status_container.set_valign(Align::Center);
 
         let spinner = {
-            let s = adw::Spinner::new();
+            let s = crate::spinner::new();
             s.set_visible(false);
             s
         };

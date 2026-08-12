@@ -6,7 +6,7 @@ Version: 0.20.0-1
 Maintainer: Anton Isaiev <totoshko88@gmail.com>
 Homepage: https://github.com/totoshko88/RustConn
 Standards-Version: 4.6.2
-Build-Depends: debhelper-compat (= 13), cargo, rustc, libgtk-4-dev, libvte-2.91-gtk4-dev, libdbus-1-dev, libssl-dev, pkg-config, zstd
+Build-Depends: debhelper-compat (= 13), cargo, rustc, libgtk-4-dev (>= 4.14), libvte-2.91-gtk4-dev (>= 0.76), libadwaita-1-dev (>= 1.5), libdbus-1-dev, libssl-dev, pkg-config, zstd
 Package-List:
  rustconn deb net optional arch=any
 Files:

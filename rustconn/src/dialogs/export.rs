@@ -47,9 +47,9 @@ pub struct ExportDialog {
     progress_label: Label,
     #[expect(
         dead_code,
-        reason = "adw::Spinner spins automatically when visible; field keeps widget alive"
+        reason = "the spinner animates whenever it is shown; field keeps widget alive"
     )]
-    progress_spinner: adw::Spinner,
+    progress_spinner: crate::spinner::Spinner,
     // Result
     result_label: Label,
     result_details: Label,
@@ -144,11 +144,10 @@ impl ExportDialog {
 
         // === Progress Page ===
         let (progress_page, progress_bar, progress_label) = Self::create_progress_page();
-        // Create spinner — adw::Spinner always spins (visibility-controlled)
-        let progress_spinner = adw::Spinner::builder()
-            .width_request(48)
-            .height_request(48)
-            .build();
+        // Larger than the natural 16 px: this is a progress page, not a row.
+        // The spinner animates whenever it is shown, so the stack switching
+        // away from the progress page is what stops it.
+        let progress_spinner = crate::spinner::sized(48, 48);
         // Prepend spinner before the "Exporting..." label
         progress_page.prepend(&progress_spinner);
         stack.add_named(&progress_page, Some("progress"));

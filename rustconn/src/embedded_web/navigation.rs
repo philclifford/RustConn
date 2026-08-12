@@ -32,6 +32,12 @@ const ZOOM_DEFAULT: f64 = 1.0;
 /// inactivity. A reveal zone (arrow button) appears at the top center when
 /// the toolbar is hidden, allowing the user to show it on hover or click.
 ///
+/// When the panel is narrower than
+/// [`WEB_OVERFLOW_THRESHOLD_PX`](crate::embedded_toolbar_overflow::WEB_OVERFLOW_THRESHOLD_PX),
+/// the actions named by [`overflow_actions`](Self::overflow_actions) fold into a
+/// "⋯" popover so the menu and the URL bar keep their place — the same
+/// `ToolbarOverflow` the RDP and VNC toolbars use.
+///
 /// All icon-only buttons carry both `set_tooltip_text` and `update_property`
 /// for GNOME HIG accessibility compliance.
 pub struct NavigationToolbar {
@@ -55,13 +61,6 @@ pub struct NavigationToolbar {
     zoom_out_button: gtk4::Button,
     /// Menu button for additional actions
     menu_button: gtk4::MenuButton,
-    /// Box containing secondary actions that collapse on narrow width.
-    /// Stored to prevent GTK from dropping the widget (it has no other owning reference).
-    #[expect(
-        dead_code,
-        reason = "field keeps the GTK widget alive; removing it destroys the box"
-    )]
-    secondary_box: gtk4::Box,
 }
 
 impl NavigationToolbar {
@@ -121,8 +120,10 @@ impl NavigationToolbar {
         container.append(&url_entry);
 
         // --- Right buttons: secondary (collapsible) + menu (always visible) ---
-
-        let secondary_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+        //
+        // Appended directly to the container rather than wrapped in a box:
+        // `ToolbarOverflow` reparents each secondary action into its popover
+        // individually, which it cannot do through an intermediate box.
 
         let autofill_button = gtk4::Button::from_icon_name("dialog-password-symbolic");
         autofill_button.add_css_class("flat");
@@ -130,21 +131,19 @@ impl NavigationToolbar {
         autofill_button.update_property(&[gtk4::accessible::Property::Label(&i18n(
             "Autofill credentials",
         ))]);
-        secondary_box.append(&autofill_button);
+        container.append(&autofill_button);
 
         let zoom_in_button = gtk4::Button::from_icon_name("zoom-in-symbolic");
         zoom_in_button.add_css_class("flat");
         zoom_in_button.set_tooltip_text(Some(&i18n("Zoom in")));
         zoom_in_button.update_property(&[gtk4::accessible::Property::Label(&i18n("Zoom in"))]);
-        secondary_box.append(&zoom_in_button);
+        container.append(&zoom_in_button);
 
         let zoom_out_button = gtk4::Button::from_icon_name("zoom-out-symbolic");
         zoom_out_button.add_css_class("flat");
         zoom_out_button.set_tooltip_text(Some(&i18n("Zoom out")));
         zoom_out_button.update_property(&[gtk4::accessible::Property::Label(&i18n("Zoom out"))]);
-        secondary_box.append(&zoom_out_button);
-
-        container.append(&secondary_box);
+        container.append(&zoom_out_button);
 
         let menu_button = gtk4::MenuButton::new();
         menu_button.set_icon_name("open-menu-symbolic");
@@ -164,8 +163,26 @@ impl NavigationToolbar {
             zoom_in_button,
             zoom_out_button,
             menu_button,
-            secondary_box,
         }
+    }
+
+    /// Returns the actions that fold into the overflow popover when the toolbar
+    /// is narrower than [`WEB_OVERFLOW_THRESHOLD_PX`], in toolbar order.
+    ///
+    /// Back, Forward, Reload, the URL bar and the menu are primary and stay put:
+    /// the first three are how the user moves around, the URL bar is the only
+    /// way to reach an address that is not linked from the page, and the menu is
+    /// where the overflow itself lives.
+    ///
+    /// [`WEB_OVERFLOW_THRESHOLD_PX`]: crate::embedded_toolbar_overflow::WEB_OVERFLOW_THRESHOLD_PX
+    #[must_use]
+    pub fn overflow_actions(&self) -> Vec<gtk4::Widget> {
+        vec![
+            self.home_button.clone().upcast(),
+            self.autofill_button.clone().upcast(),
+            self.zoom_in_button.clone().upcast(),
+            self.zoom_out_button.clone().upcast(),
+        ]
     }
 
     /// Returns the toolbar container widget.

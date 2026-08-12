@@ -123,6 +123,8 @@ rustconn/src/terminal/mod.rs
 rustconn/src/terminal/config.rs
 rustconn/src/terminal/playback.rs
 rustconn/src/terminal/recording.rs
+rustconn/src/terminal/session_lifecycle.rs
+rustconn/src/terminal/tab_lifecycle.rs
 rustconn/src/terminal/tab_menu.rs
 rustconn/src/validation.rs
 rustconn/src/vault_ops.rs

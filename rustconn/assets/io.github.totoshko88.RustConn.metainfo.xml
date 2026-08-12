@@ -142,13 +142,16 @@
   <releases>
     <release version="0.20.0" date="2026-08-12">
       <description>
-        <p>Version 0.20.0 - Web embedded mode, libadwaita v1_6 baseline:</p>
+        <p>Version 0.20.0 - Web embedded mode floating toolbar:</p>
         <ul>
           <li>Added: Web embedded mode with auto-hide floating toolbar matching RDP/VNC behavior</li>
-          <li>Changed: libadwaita baseline raised from v1_5 to v1_6 — adw::Spinner replaces gtk4::Spinner throughout</li>
           <li>Fixed: Web zoom shortcuts (Ctrl+/-/0) did not work in split view</li>
-          <li>Fixed: Missing i18n entry for kdbx_unlock.rs</li>
+          <li>Fixed: Web toolbar clipped instead of collapsing in a narrow split panel</li>
+          <li>Fixed: a failed Web page load left the toolbar logic unrun, and the load timeout reported nothing</li>
+          <li>Fixed: the header bar's busy spinner lost its accessible name</li>
+          <li>Changed: the Web load timeout now reports itself in the reconnect banner</li>
           <li>Improved: TerminalNotebook god class split — mod.rs reduced by 30%</li>
+          <li>Improved: adw::Spinner where the runtime has it, gtk4::Spinner where it does not, decided in one module</li>
         </ul>
       </description>
     </release>

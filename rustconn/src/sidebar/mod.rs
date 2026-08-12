@@ -86,7 +86,7 @@ pub struct ConnectionSidebar {
     /// Cached search engine with result caching for search-as-you-type performance
     search_engine: Rc<DebouncedSearchEngine>,
     /// Spinner widget to show search is pending during debounce
-    search_spinner: adw::Spinner,
+    search_spinner: crate::spinner::Spinner,
     /// Pending search query during debounce period
     pending_search_query: Rc<RefCell<Option<String>>>,
     /// Saved tree state before search (for restoration when search is cleared)
@@ -144,7 +144,7 @@ impl ConnectionSidebar {
 
         // Search pending spinner (hidden by default)
         let search_spinner = {
-            let s = adw::Spinner::new();
+            let s = crate::spinner::new();
             s.set_visible(false);
             s.set_tooltip_text(Some(&i18n("Search pending...")));
             s

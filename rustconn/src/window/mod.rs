@@ -280,7 +280,9 @@ impl MainWindow {
                         latest = Some(busy);
                     }
                     if let Some(busy) = latest {
-                        // adw::Spinner spins automatically when visible
+                        // The spinner animates whenever it is shown, on both
+                        // the libadwaita 1.6 and the 1.5 path — see
+                        // `crate::spinner`.
                         spinner.set_visible(busy);
                     }
                 }

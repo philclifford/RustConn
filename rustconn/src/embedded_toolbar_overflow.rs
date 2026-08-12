@@ -1,11 +1,13 @@
 //! Adaptive toolbar overflow for embedded protocol viewers.
 //!
 //! Embedded RDP/VNC/SPICE widgets build a horizontal `embedded-toolbar`
-//! [`gtk4::Box`]. In a narrow split panel — or a small/narrow application window
-//! — that toolbar clips. [`ToolbarOverflow`] watches the viewer's drawing-area
-//! width and, below a documented breakpoint, folds the *secondary* actions into
-//! a "⋯" overflow [`gtk4::MenuButton`] popover while the *primary* actions
-//! (Fit resolution, Ctrl+Alt+Del) stay directly reachable.
+//! [`gtk4::Box`]; the embedded Web viewer builds an equivalent navigation
+//! toolbar. In a narrow split panel — or a small/narrow application window —
+//! that toolbar clips. [`ToolbarOverflow`] watches the viewer's width and, below
+//! a documented breakpoint, folds the *secondary* actions into a "⋯" overflow
+//! [`gtk4::MenuButton`] popover while the *primary* actions (Fit resolution,
+//! Ctrl+Alt+Del; Back/Forward/Reload and the URL bar for Web) stay directly
+//! reachable.
 //!
 //! The existing button widgets are **reparented** between the toolbar and the
 //! popover — never rebuilt — so every signal handler stays bound and every
@@ -39,6 +41,17 @@ pub const RDP_OVERFLOW_THRESHOLD_PX: i32 = 560;
 /// than RDP and need a smaller breakpoint.
 // ponytail: eyeballed; see `RDP_OVERFLOW_THRESHOLD_PX`.
 pub const SPICE_VNC_OVERFLOW_THRESHOLD_PX: i32 = 360;
+
+/// Collapse breakpoint for the embedded Web navigation toolbar, in pixels.
+///
+/// Sits between the other two because the Web toolbar is the only one carrying a
+/// text entry: four navigation buttons, the URL bar, then Home, Autofill, Zoom
+/// In and Zoom Out as secondary, then the menu. The URL bar can shrink but stops
+/// being usable long before the buttons stop fitting, so this collapses earlier
+/// than the button widths alone would require.
+// ponytail: eyeballed from the natural widths at the default font; retune if the
+// navigation toolbar gains or loses buttons.
+pub const WEB_OVERFLOW_THRESHOLD_PX: i32 = 520;
 
 /// Width margin above the collapse breakpoint required before expanding again.
 ///
@@ -130,6 +143,32 @@ impl ToolbarOverflow {
         let this = Rc::clone(self);
         resize_source.connect_resize(move |_, width, _| {
             this.update(width);
+        });
+    }
+
+    /// Wires the width watch to any widget, for viewers with no drawing area.
+    ///
+    /// `GtkDrawingArea::resize` is the cheap way to learn about a width change,
+    /// but GTK4 exposes no equivalent signal on a plain widget — there is no
+    /// `size-allocate` to connect to and no `width` property to watch. So this
+    /// reads the allocated width from a tick callback and calls
+    /// [`update`](Self::update) only when the number actually changed, which
+    /// makes the per-frame cost an integer comparison and leaves the reparenting
+    /// work driven by real resizes.
+    ///
+    /// Used by the embedded Web viewer, whose content is a `WebView`.
+    pub fn attach_to_widget(self: &Rc<Self>, resize_source: &impl IsA<Widget>) {
+        let this = Rc::clone(self);
+        let last_width = Cell::new(-1_i32);
+        resize_source.as_ref().add_tick_callback(move |widget, _| {
+            let width = widget.width();
+            // Width is 0 until the widget is first allocated; feeding that
+            // to update() would collapse the toolbar before it is on screen.
+            if width > 0 && width != last_width.get() {
+                last_width.set(width);
+                this.update(width);
+            }
+            glib::ControlFlow::Continue
         });
     }
 

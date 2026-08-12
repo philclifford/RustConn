@@ -1487,6 +1487,24 @@ impl SplitViewAdapter {
                         gesture.set_state(gtk4::EventSequenceState::Denied);
                         return;
                     }
+                    // Let the embedded web view receive clicks: links, form
+                    // fields and text selection are all page-side behaviour, and
+                    // WebKit also takes keyboard focus from the press, which is
+                    // what routes this panel's Ctrl+/-/0 to the right WebView.
+                    // Matched by type name for the same reason VteTerminal is —
+                    // webkit6 is behind a feature flag and this module builds
+                    // without it. `WebKitWebViewBase` is the parent class, in
+                    // case a pick ever lands on it rather than the leaf.
+                    let type_name = widget.type_().name();
+                    if type_name == "WebKitWebView" || type_name == "WebKitWebViewBase" {
+                        tracing::debug!(
+                            "Panel click handler: click on web view in panel {}, denying gesture",
+                            panel_id
+                        );
+                        callback(panel_id);
+                        gesture.set_state(gtk4::EventSequenceState::Denied);
+                        return;
+                    }
                     current = widget.parent();
                 }
             }

@@ -234,6 +234,30 @@ impl EmbeddedWebWidget {
         web_view.set_can_focus(true);
         web_view.set_focusable(true);
 
+        // Take keyboard focus when the page is clicked.
+        //
+        // The zoom shortcuts are an `EventControllerKey` on this panel's
+        // container in the capture phase, so they only see a key press that GTK
+        // routes into this container — which means something inside it has to
+        // hold the focus. Clicking a toolbar button put the focus there as a side
+        // effect of the button press, which is why the shortcuts came alive only
+        // after using the toolbar, and why in a split view they kept reaching
+        // whichever panel had been clicked last. A click on the page itself was
+        // not moving the focus at all, so this does it explicitly.
+        //
+        // Capture phase and `Denied`: this only observes. WebKit still receives
+        // the press for links, form fields and selection.
+        let focus_click = gtk4::GestureClick::new();
+        focus_click.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        let web_view_for_focus = web_view.clone();
+        focus_click.connect_pressed(move |gesture, _, _, _| {
+            if !web_view_for_focus.has_focus() {
+                web_view_for_focus.grab_focus();
+            }
+            gesture.set_state(gtk4::EventSequenceState::Denied);
+        });
+        web_view.add_controller(focus_click);
+
         // Apply settings (JS, user-agent, hardened defaults)
         settings::apply_settings(&web_view, config);
 
@@ -305,6 +329,19 @@ impl EmbeddedWebWidget {
         overlay.add_overlay(&toolbar_revealer);
         overlay.set_hexpand(true);
         overlay.set_vexpand(true);
+
+        // Fold the secondary actions into a "⋯" popover when the panel is too
+        // narrow for the full toolbar, the same way RDP and VNC do it. Without
+        // this the box overflows its allocation in a narrow split panel and the
+        // menu button — the last child, and the only route to Copy URL, Open in
+        // System Browser, Zoom Reset and Clear Session Data — is what gets
+        // clipped away.
+        crate::embedded_toolbar_overflow::ToolbarOverflow::new(
+            toolbar.widget(),
+            toolbar.overflow_actions(),
+            crate::embedded_toolbar_overflow::WEB_OVERFLOW_THRESHOLD_PX,
+        )
+        .attach_to_widget(&overlay);
 
         // Attach ToolbarAutoHide controller to the overlay
         let toolbar_auto_hide =
@@ -420,48 +457,59 @@ impl EmbeddedWebWidget {
         Ok(widget)
     }
 
+    /// Applies the banner and toolbar presentation that belongs to a state.
+    ///
+    /// Not a method, because [`set_state`](Self::set_state) is not the only path
+    /// that changes the state: the `load-failed` signal handler and the load
+    /// timeout both run in closures that own a few `Rc` clones rather than the
+    /// widget, and both used to write the state field directly — which left the
+    /// toolbar untouched on the two transitions that matter most. Every writer
+    /// calls this, so the presentation cannot drift from the state again.
+    fn apply_state_presentation(
+        new_state: EmbeddedConnectionState,
+        reconnect_banner: &gtk4::Box,
+        banner_label: &gtk4::Label,
+        toolbar_auto_hide: &Rc<ToolbarAutoHide>,
+    ) {
+        match new_state {
+            EmbeddedConnectionState::Error => {
+                // The label is left alone: the caller has already put the reason
+                // in it, and only the caller knows what went wrong.
+                reconnect_banner.set_visible(true);
+                // Deliberately not `hide()`, which is what an RDP or VNC session
+                // does here. An error page is something the user navigates away
+                // from, and Back, the URL bar and the menu are the way out — so
+                // the toolbar has to stay reachable.
+                toolbar_auto_hide.show_briefly();
+            }
+            EmbeddedConnectionState::Disconnected => {
+                banner_label.set_text(&crate::i18n::i18n("Disconnected"));
+                reconnect_banner.set_visible(true);
+                // Nothing to navigate once the session is over; the banner's
+                // Reload button is the way back in.
+                toolbar_auto_hide.hide();
+            }
+            EmbeddedConnectionState::Connecting | EmbeddedConnectionState::Connected => {
+                reconnect_banner.set_visible(false);
+                // Show the toolbar briefly, then let it auto-hide.
+                toolbar_auto_hide.show_briefly();
+            }
+        }
+    }
+
     /// Sets the connection state, notifies the callback, and updates banner visibility.
     fn set_state(&self, new_state: EmbeddedConnectionState) {
         *self.state.borrow_mut() = new_state;
 
-        // Toggle reconnect banner and toolbar visibility based on state
-        match new_state {
-            EmbeddedConnectionState::Error => {
-                self.reconnect_banner.set_visible(true);
-                self.toolbar_auto_hide.hide();
-            }
-            EmbeddedConnectionState::Disconnected => {
-                self.banner_label
-                    .set_text(&crate::i18n::i18n("Disconnected"));
-                self.reconnect_banner.set_visible(true);
-                self.toolbar_auto_hide.hide();
-            }
-            EmbeddedConnectionState::Connecting => {
-                self.reconnect_banner.set_visible(false);
-                // Show toolbar briefly during connection
-                self.toolbar_auto_hide.show_briefly();
-            }
-            EmbeddedConnectionState::Connected => {
-                self.reconnect_banner.set_visible(false);
-                // Show toolbar briefly when connected, then auto-hide
-                self.toolbar_auto_hide.show_briefly();
-            }
-        }
+        Self::apply_state_presentation(
+            new_state,
+            &self.reconnect_banner,
+            &self.banner_label,
+            &self.toolbar_auto_hide,
+        );
 
         if let Some(ref callback) = *self.on_state_changed.borrow() {
             callback(new_state);
-        }
-    }
-
-    /// Reports an error and transitions to Error state.
-    #[expect(
-        dead_code,
-        reason = "called from error display paths added in future improvements"
-    )]
-    fn report_error(&self, error: &EmbeddedError) {
-        self.set_state(EmbeddedConnectionState::Error);
-        if let Some(ref callback) = *self.on_error.borrow() {
-            callback(error);
         }
     }
 
@@ -475,12 +523,29 @@ impl EmbeddedWebWidget {
         let state = Rc::clone(&self.state);
         let on_state_changed = Rc::clone(&self.on_state_changed);
         let on_error = Rc::clone(&self.on_error);
+        let banner = self.reconnect_banner.clone();
+        let banner_label = self.banner_label.clone();
+        let toolbar_auto_hide = Rc::clone(&self.toolbar_auto_hide);
 
         // 60-second timeout for page load
         let source_id = glib::timeout_add_seconds_local_once(60, move || {
             // Only trigger timeout if still in Connecting state
             if *state.borrow() == EmbeddedConnectionState::Connecting {
                 *state.borrow_mut() = EmbeddedConnectionState::Error;
+
+                // Say so in the banner, the same way a load failure does.
+                // Before this the timeout only fired the callbacks, so a page
+                // that never finished loading left the user with no explanation
+                // and no Reload button.
+                banner_label.set_text(&crate::i18n::i18n(
+                    "Connection timed out. Check that the host is reachable.",
+                ));
+                Self::apply_state_presentation(
+                    EmbeddedConnectionState::Error,
+                    &banner,
+                    &banner_label,
+                    &toolbar_auto_hide,
+                );
 
                 if let Some(ref callback) = *on_state_changed.borrow() {
                     callback(EmbeddedConnectionState::Error);
@@ -556,6 +621,7 @@ impl EmbeddedWebWidget {
         let load_timeout_err = Rc::clone(&self.load_timeout);
         let banner_for_error = self.reconnect_banner.clone();
         let banner_label_for_error = self.banner_label.clone();
+        let toolbar_auto_hide_for_error = Rc::clone(&self.toolbar_auto_hide);
 
         self.web_view
             .connect_load_failed(move |_web_view, _event, _uri, error| {
@@ -575,9 +641,16 @@ impl EmbeddedWebWidget {
                     description
                 };
 
-                // Update banner label with error and show it
+                // Update banner label with error, then apply the presentation
+                // that belongs to Error — this is what keeps the toolbar
+                // reachable so the user can navigate away from the error page.
                 banner_label_for_error.set_text(&truncated);
-                banner_for_error.set_visible(true);
+                Self::apply_state_presentation(
+                    EmbeddedConnectionState::Error,
+                    &banner_for_error,
+                    &banner_label_for_error,
+                    &toolbar_auto_hide_for_error,
+                );
 
                 if let Some(ref callback) = *on_state_changed_err.borrow() {
                     callback(EmbeddedConnectionState::Error);

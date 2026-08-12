@@ -86,6 +86,7 @@ mod sidebar;
 mod sidebar_types;
 mod sidebar_ui;
 pub mod smart_folder_ui;
+pub mod spinner;
 pub mod split_view;
 mod state;
 mod terminal;

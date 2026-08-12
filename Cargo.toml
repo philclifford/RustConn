@@ -43,7 +43,10 @@ toml = "1.0"
 # GTK4 and VTE
 gtk4 = "0.11"
 vte4 = "0.10"
-libadwaita = { version = "0.9", features = ["v1_6"] }
+# v1_5 is the baseline because Ubuntu 24.04 (libadwaita 1.5.0) and the snap's
+# core24 gnome-46-2404 platform are still supported build targets — see the
+# `adw-1-6` feature in rustconn/Cargo.toml for the opt-in 1.6+ path.
+libadwaita = { version = "0.9", features = ["v1_5"] }
 
 # Utilities
 async-channel = "2.5"

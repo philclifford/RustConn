@@ -37,9 +37,13 @@ BuildRequires:  alsa-lib-devel
 %endif
 
 # Common build dependencies
+# The floors are the crate feature baselines in Cargo.toml — gtk4 v4_14,
+# vte4 v0_76, libadwaita v1_5. system-deps fails the build script rather than
+# the dependency solver when they are not met, which is a much less obvious
+# error, so state them here.
 BuildRequires:  pkgconfig(gtk4) >= 4.14
-BuildRequires:  pkgconfig(vte-2.91-gtk4)
-BuildRequires:  pkgconfig(libadwaita-1)
+BuildRequires:  pkgconfig(vte-2.91-gtk4) >= 0.76
+BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
 BuildRequires:  pkgconfig(dbus-1)
 # WebKitGTK 6.0 — only on distros that ship it (Tumbleweed, Fedora 43+)
 %if 0%{?suse_version} > 1600 || 0%{?fedora} >= 43
@@ -281,10 +285,15 @@ done
 * Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.0-0
 - Version bump to 0.20.0
 - Added: Web embedded mode — auto-hide floating toolbar with reveal zone
-- Changed: libadwaita baseline raised from v1_5 to v1_6
 - Fixed: Web zoom shortcuts (Ctrl+/-/0) did not work in split view
-- Fixed: Missing i18n entry for kdbx_unlock.rs
+- Fixed: Web toolbar clipped instead of collapsing in a narrow split panel
+- Fixed: a failed Web page load left the toolbar logic unrun, and the load timeout reported nothing
+- Fixed: the header bar's busy spinner lost its accessible name
+- Fixed: POTFILES.in did not list the two modules extracted from terminal/mod.rs
+- Changed: the 60-second Web load timeout now reports itself in the reconnect banner
 - Improved: TerminalNotebook god class split — mod.rs reduced by 30%
+- Improved: adw::Spinner where the runtime has it (opt-in adw-1-6), gtk4::Spinner where it does not; baseline stays libadwaita 1.5
+- Improved: build dependencies state the versions the crate features require (libadwaita >= 1.5, VTE >= 0.76)
 
 * Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.22-0
 - Version bump to 0.19.22
