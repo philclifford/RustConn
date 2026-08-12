@@ -5,6 +5,25 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-08-12
+
+### Changed
+
+- **libadwaita baseline raised from v1_5 to v1_6** — the workspace now requires libadwaita 1.6 or later. All `#[cfg(feature = "adw-1-6")]` feature guards have been removed; `adw::Spinner` replaces `gtk4::Spinner` throughout the codebase (sidebar loading indicator, password dialog verification, export dialog progress, VNC session connecting state, SSH agent settings validation, header bar operations). This is a **breaking change** for distributions still on libadwaita 1.5.
+
+### Fixed
+
+- **Missing i18n entry for kdbx_unlock.rs** — the KeePassXC unlock dialog strings were not included in `POTFILES.in`, preventing translation.
+
+### Improved
+
+- **TerminalNotebook god class split: mod.rs reduced by 30%** — the 4365-line `terminal/mod.rs` has been refactored into focused modules:
+  - `tab_lifecycle.rs` (890 lines): welcome tab creation, terminal/VNC/RDP/Web tab creation, tab parking for split view, tab restore, widget reparenting
+  - `session_lifecycle.rs` (500 lines): reconnect preparation, VTE reset with history preservation, disconnect/connect status indicators, reconnect banner UI, poll cancellation, font refresh after fontconfig changes
+  - `mod.rs` reduced to 3052 lines (−1313 lines, −30%)
+  
+  This improves code navigation and maintainability without changing any public API or behavior.
+
 ## [0.19.22] - 2026-08-12
 
 ### Fixed

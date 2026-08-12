@@ -12,7 +12,7 @@ name = "rustconn"
 path = "src/main.rs"
 
 [dependencies]
-rustconn-core = { path = "../rustconn-core", version = "0.19.22", default-features = false }
+rustconn-core = { path = "../rustconn-core", version = "0.20.0", default-features = false }
 tokio = { workspace = true }
 # Event-driven tray message delivery to the GTK main loop (no polling)
 async-channel = { workspace = true }
@@ -53,12 +53,12 @@ shell-words = "1"
 nix = { version = "0.31", features = ["signal", "process"] }
 # PTY creation, sizing and controlling-terminal setup for every session's
 # child. Lives in its own crate because `unsafe` is forbidden here.
-rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.19.22" }
+rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.20.0" }
 # The startup `setlocale` call, guarded so it can only run from the startup
 # thread, before this program has spawned any thread of its own, and before the
 # window is sealed. Same reason for the separate crate: `setlocale` is `unsafe`
 # in gettext-rs 0.8 and `unsafe` is forbidden here.
-rustconn-locale-sys = { path = "../rustconn-locale-sys", version = "0.19.22" }
+rustconn-locale-sys = { path = "../rustconn-locale-sys", version = "0.20.0" }
 # WebKitGTK 6.0 bindings for embedded web browser (Linux only)
 webkit6 = { version = "0.6", optional = true }
 
