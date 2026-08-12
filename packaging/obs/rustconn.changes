@@ -1,4 +1,12 @@
 -------------------------------------------------------------------
+Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.0
+
+- Version bump to 0.20.0
+- Changed: libadwaita baseline raised from v1_5 to v1_6 — all feature guards removed, adw::Spinner replaces gtk4::Spinner
+- Fixed: Missing i18n entry for kdbx_unlock.rs
+- Improved: TerminalNotebook god class split — mod.rs reduced by 30% (4365 to 3052 lines), extracted tab_lifecycle.rs and session_lifecycle.rs
+
+-------------------------------------------------------------------
 Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.22
 
 - Version bump to 0.19.22

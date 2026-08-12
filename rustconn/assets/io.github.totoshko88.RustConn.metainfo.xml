@@ -140,6 +140,16 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.20.0" date="2026-08-12">
+      <description>
+        <p>Version 0.20.0 - libadwaita v1_6 baseline, code quality improvements:</p>
+        <ul>
+          <li>Changed: libadwaita baseline raised from v1_5 to v1_6 — all feature guards removed, adw::Spinner replaces gtk4::Spinner throughout</li>
+          <li>Fixed: Missing i18n entry for kdbx_unlock.rs</li>
+          <li>Improved: TerminalNotebook god class split — mod.rs reduced by 30% (4365 to 3052 lines), extracted tab_lifecycle.rs and session_lifecycle.rs</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.22" date="2026-08-12">
       <description>
         <p>Version 0.19.22 - KeePassXC unlock on demand, search caching, keyboard label clarity:</p>
