@@ -60,6 +60,62 @@ Use when the developer explicitly asks to run tests.
 2. `cargo test --workspace` — run directly, NO pipes. Allow 180s.
 3. Report final summary (e.g. "test result: ok. 42 passed; 0 failed"). If failures — list test names.
 
+## Hygiene checks (no toolchain needed)
+
+Wired into the CI `hygiene` job on 2026-08-12. Both are seconds-fast and need no
+cargo, so run them whenever you touched prose, dependencies or Cargo.toml.
+
+1. `typos` — spell check, config in `typos.toml`. Must exit 0.
+   `typos.toml` had sat in the repo fully configured but unexecuted; when it was
+   first run it produced 73 findings and **every one was a false positive**
+   (HashiCorp, the `flate2`/`writeable` crate names, Asbru's own `Parrallels`
+   wire format, the `bottons` field in vnc-rs, a deliberate `prodction` example
+   in the CLI docs, base64 PEM fixtures). The vocabulary is now recorded with a
+   reason per entry. If a new finding appears, check whether it is genuinely
+   misspelled before "fixing" it — several of those corrections would have
+   introduced bugs.
+2. `cargo machete` — unused dependencies. Must exit 0.
+   Crates whose import path differs from their package name (`md-5` → `md5`,
+   `gettext-rs` → `gettextrs`, `vnc-rs` → `vnc`) are declared per-crate under
+   `[package.metadata.cargo-machete] ignored`, along with `native-tls`, which is
+   present only to pin a version. A genuine hit means the dependency really is
+   dead — `tracing-subscriber` was a direct dependency of `rustconn-core` with
+   zero references until this check found it.
+
+Also verified in CI: the toolchain in `rust-toolchain.toml` matches the workflow's
+`RUST_TOOLCHAIN`. Two copies exist because the install action cannot read the
+file; the gate stops them drifting.
+
+## GUI tests — evaluated, not wired up
+
+There is no automated GUI check, so `cargo test --workspace` says nothing about
+`rustconn/`. The numbers: 3532 test markers across 157k lines in
+`rustconn-core`, 325 across 129k in `rustconn`, 23 across 14k in `rustconn-cli`.
+The 0.20.0 notes carry three consecutive web-toolbar/split-view focus fixes, each
+repairing the last one's incompleteness — that is what the gap costs.
+
+[WayDriver](https://waydriver.io/) (Apache-2.0) is the candidate: it runs the app
+in a headless Mutter session with a private D-Bus and drives it **through
+AT-SPI** — the accessible labels `dialogs-guide.md` already requires on every
+icon-only button. It also ships an MCP server, so an agent could reproduce a GUI
+bug itself. Not adopted yet because the machine lacks every needed dev library
+and `mutter`, so nothing could be verified; details, API notes and the intended
+design are in memory under topic `decision/gui-testing-waydriver`.
+
+To try it:
+
+```bash
+sudo apt install mutter libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+                 libpipewire-0.3-dev libatspi2.0-dev
+```
+
+Put it in a `gui-tests/` crate listed in the root `[workspace] exclude`, not as a
+workspace member and not as a dev-dependency of `rustconn` — otherwise
+waydriver's gstreamer/pipewire/zbus tree lands in the workspace lockfile, the
+`cargo deny` graph and every `cargo test --workspace`, to serve tests that cannot
+run without `mutter`. Run it deliberately: `cd gui-tests && cargo test -- --ignored`.
+Do not make it a CI gate on the first landing.
+
 ## i18n checks
 
 Run when translatable strings were touched (any `i18n()` call added or edited,

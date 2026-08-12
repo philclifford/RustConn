@@ -558,6 +558,47 @@ pub enum ColorScheme {
     Dark,
 }
 
+/// Which GSK renderer the GUI should ask GTK for.
+///
+/// GTK offers no API for this — the `GSK_RENDERER` environment variable is the
+/// only interface, and it must be set before `gtk_init`. The value is therefore
+/// read at startup and takes effect on the next launch, not immediately.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RendererPreference {
+    /// Let RustConn decide per environment.
+    ///
+    /// Picks software rendering where the GPU path is known to be worse: X11
+    /// sessions whose compositor paints GTK4 popovers blank until hovered
+    /// (issue #85), and macOS guests running under a hypervisor, where the
+    /// paravirtualised GPU offers Metal but no accelerated OpenGL, so GSK's GL
+    /// renderer lands on a software fallback that is slower than Cairo and
+    /// burns CPU (issue #274). Everywhere else GTK's own default stands.
+    #[default]
+    Auto,
+    /// Always let GTK choose its default (GPU) renderer.
+    ///
+    /// The way out for a user whom [`Self::Auto`] downgrades unnecessarily —
+    /// an X11 session with a working driver, for instance.
+    Gpu,
+    /// Always use the Cairo (software) renderer.
+    Software,
+}
+
+impl RendererPreference {
+    /// Returns the untranslated label for this preference.
+    ///
+    /// Wrap the result in `i18n()` at the call site.
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Auto => "Automatic",
+            Self::Gpu => "Hardware (GPU)",
+            Self::Software => "Software (Cairo)",
+        }
+    }
+}
+
 /// Action to perform when the application starts
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -588,6 +629,9 @@ pub struct UiSettings {
     /// Color scheme preference
     #[serde(default)]
     pub color_scheme: ColorScheme,
+    /// Which GSK renderer to ask GTK for; applies from the next start.
+    #[serde(default)]
+    pub renderer: RendererPreference,
     /// Language override (locale code like "uk", "de", "fr", or "system" for auto-detect)
     #[serde(default = "default_language")]
     pub language: String,
@@ -752,6 +796,7 @@ impl Default for UiSettings {
     fn default() -> Self {
         Self {
             color_scheme: ColorScheme::default(),
+            renderer: RendererPreference::default(),
             language: default_language(),
             remember_window_geometry: true,
             window_width: None,
@@ -1400,4 +1445,69 @@ fn hex_decode(data: &str) -> Option<Vec<u8>> {
         result.push(byte);
     }
     Some(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RendererPreference, UiSettings};
+
+    /// A config written before the renderer preference existed must still load,
+    /// and must load as `Auto` — the behaviour those users already have.
+    #[test]
+    fn ui_settings_without_renderer_field_default_to_auto() {
+        let older_config = r#"
+            color_scheme = "system"
+            language = "system"
+        "#;
+
+        let settings: UiSettings =
+            toml::from_str(older_config).expect("a config predating the field must still parse");
+
+        assert_eq!(settings.renderer, RendererPreference::Auto);
+    }
+
+    /// The persisted spelling is part of the config format: renaming a variant
+    /// would silently reset the preference of everyone who set it.
+    #[test]
+    fn renderer_preference_round_trips_through_toml() {
+        for (preference, expected) in [
+            (RendererPreference::Auto, "auto"),
+            (RendererPreference::Gpu, "gpu"),
+            (RendererPreference::Software, "software"),
+        ] {
+            let settings = UiSettings {
+                renderer: preference,
+                ..Default::default()
+            };
+
+            let encoded = toml::to_string(&settings).expect("UiSettings is serializable");
+            assert!(
+                encoded.contains(&format!("renderer = \"{expected}\"")),
+                "expected `renderer = \"{expected}\"` in:\n{encoded}"
+            );
+
+            let decoded: UiSettings = toml::from_str(&encoded).expect("round trip");
+            assert_eq!(decoded.renderer, preference);
+        }
+    }
+
+    /// Every variant has a label, and no two share one — the settings combo
+    /// maps positions to variants by this list.
+    #[test]
+    fn every_preference_has_a_distinct_label() {
+        let labels: Vec<&str> = [
+            RendererPreference::Auto,
+            RendererPreference::Gpu,
+            RendererPreference::Software,
+        ]
+        .iter()
+        .map(|preference| preference.display_name())
+        .collect();
+
+        assert!(labels.iter().all(|label| !label.is_empty()));
+        let mut unique = labels.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), labels.len(), "labels must be distinct");
+    }
 }

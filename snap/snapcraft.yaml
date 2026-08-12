@@ -260,6 +260,14 @@ parts:
     override-build: |
       # Ensure cargo/rustc from rust-deps are on PATH
       export PATH="$HOME/.cargo/bin:$PATH"
+      # The `rust-deps` part installs rustup with --default-toolchain 1.95 on
+      # purpose (MSRV), and cargo on that PATH is a rustup proxy, so it WOULD
+      # read the repo's rust-toolchain.toml and pull 1.97.1 instead. This env
+      # var outranks that file and keeps the snap on the toolchain the part
+      # deliberately installed — otherwise adding a dev-toolchain pin would have
+      # silently changed what the snap compiles with, and downloaded a second
+      # toolchain to do it. Keep this in sync with rust-deps' --default-toolchain.
+      export RUSTUP_TOOLCHAIN=1.95
       # Pin pango to a single source at link time (issue #198). The gnome
       # extension stages the gnome-46-2404 SDK's libpangoft2-1.0, but the
       # build also has noble's libpango-1.0 in /usr/lib. On arm64 these two

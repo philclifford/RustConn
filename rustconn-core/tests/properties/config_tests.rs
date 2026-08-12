@@ -515,6 +515,7 @@ fn arb_full_settings() -> impl Strategy<Value = AppSettings> {
                     },
                     ui: UiSettings {
                         color_scheme: ColorScheme::default(),
+                        renderer: rustconn_core::config::RendererPreference::default(),
                         language: String::from("system"),
                         remember_window_geometry,
                         window_width,

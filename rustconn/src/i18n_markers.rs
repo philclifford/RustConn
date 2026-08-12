@@ -12,6 +12,8 @@
 //! - `rustconn-core/src/models/protocol.rs` (`display_name()` of the RDP/VNC
 //!   client-mode and performance-mode enums, and of `BackspaceSends` /
 //!   `DeleteSends`)
+//! - `rustconn-core/src/config/settings.rs` (`display_name()` of
+//!   `RendererPreference`)
 
 #![allow(
     dead_code,
@@ -76,4 +78,14 @@ fn _never_called() {
     crate::i18n::i18n("Automatic (\\e[3~)");
     crate::i18n::i18n("Backspace (^H)");
     crate::i18n::i18n("Delete (^?)");
+
+    // === Renderer preference labels from `display_name()` ===
+    // The Rendering combo in Settings ▸ Interface builds its rows with
+    // `i18n(preference.display_name())`.
+    //
+    // Pinned by `every_preference_has_a_distinct_label` in
+    // `rustconn-core/src/config/settings.rs` — change them there first.
+    crate::i18n::i18n("Automatic");
+    crate::i18n::i18n("Hardware (GPU)");
+    crate::i18n::i18n("Software (Cairo)");
 }

@@ -294,6 +294,13 @@ done
 - Improved: TerminalNotebook god class split — mod.rs reduced by 30%
 - Improved: adw::Spinner where the runtime has it (opt-in adw-1-6), gtk4::Spinner where it does not; baseline stays libadwaita 1.5
 - Improved: build dependencies state the versions the crate features require (libadwaita >= 1.5, VTE >= 0.76)
+- Added: Settings > Interface > Rendering — Automatic, Hardware (GPU) or Software (Cairo) (#274)
+- Fixed: macOS inside a virtual machine had input lag and stuttering scroll — the
+  automatic renderer choice now detects a hypervisor and selects Cairo (#274)
+- Fixed: seven translatable strings were in the source but in no catalogue; now
+  translated in all 16 locales
+- Improved: the X11 Cairo fallback no longer re-execs the process — the
+  GSK_RENDERER write moved into the new rustconn-env-sys crate
 
 * Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.22-0
 - Version bump to 0.19.22

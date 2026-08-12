@@ -7,6 +7,12 @@ authors.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+# Package name is gettext-rs, import path is `gettextrs`, so cargo-machete's
+# textual scan cannot see it. Used in src/lib.rs (`gettextrs::setlocale`,
+# and `pub use gettextrs::LocaleCategory`).
+[package.metadata.cargo-machete]
+ignored = ["gettext-rs"]
+
 [dependencies]
 # `setlocale` is `unsafe` as of 0.8.0 (RUSTSEC-2026-0244). Calling it is this
 # crate's entire reason to exist; the safe remainder of the gettext API

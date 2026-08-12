@@ -6,7 +6,7 @@ This document describes the internal architecture of RustConn for contributors a
 
 ## Crate Structure
 
-RustConn is a four-crate Cargo workspace (Rust 2024 edition) with strict separation of concerns:
+RustConn is a six-crate Cargo workspace (Rust 2024 edition) with strict separation of concerns:
 
 ```
 rustconn/            # GTK4 GUI application
@@ -14,6 +14,7 @@ rustconn-core/       # Business logic library (GUI-free)
 rustconn-cli/        # Command-line interface
 rustconn-pty-sys/    # Isolated FFI helper (PTY + controlling terminal)
 rustconn-locale-sys/ # Isolated FFI helper (startup setlocale)
+rustconn-env-sys/    # Isolated FFI helper (startup GSK_RENDERER write)
 ```
 
 ### Dependency Graph
@@ -22,10 +23,10 @@ rustconn-locale-sys/ # Isolated FFI helper (startup setlocale)
 ┌─────────────┐     ┌─────────────────┐     ┌──────────────────────┐
 │ rustconn    │────▶│  rustconn-core  │     │  rustconn-pty-sys    │
 │ (GUI)       │──┐  │  (Library)      │     │  rustconn-locale-sys │
-└─────────────┘  │  └─────────────────┘     │  (FFI, no GUI)       │
-                 │          ▲               └──────────────────────┘
-┌─────────────┐  │          │                        ▲
-│ rustconn-cli│──┼──────────┘                        │
+└─────────────┘  │  └─────────────────┘     │  rustconn-env-sys    │
+                 │          ▲               │  (FFI, no GUI)       │
+┌─────────────┐  │          │               └──────────────────────┘
+│ rustconn-cli│──┼──────────┘                        ▲
 │ (CLI)       │  └───────────────────────────────────┘
 └─────────────┘   (only rustconn depends on the -sys crates)
 ```
@@ -39,6 +40,7 @@ rustconn-locale-sys/ # Isolated FFI helper (startup setlocale)
 | `rustconn-cli` | Headless management CLI: config, connections, import/export, list/show, simple operations | CLI/runtime dependencies plus `rustconn-core`; client launch and secret-management stay behind explicit features — NO GTK |
 | `rustconn-pty-sys` | FFI helper: give a spawned child its PTY slave as a controlling terminal (`setsid` + `TIOCSCTTY`) for the macOS native PTY ([#175](https://github.com/totoshko88/RustConn/issues/175)) | `libc` only — NO GTK |
 | `rustconn-locale-sys` | FFI helper: the startup `setlocale` call, refused once the process has a second thread or the startup window is sealed ([#267](https://github.com/totoshko88/RustConn/issues/267)) | `gettext-rs` only — NO GTK |
+| `rustconn-env-sys` | FFI helper: the startup `GSK_RENDERER` write, guarded the same way. GTK has no renderer API, so the environment is the only interface, and it must be written before `gtk_init` ([#274](https://github.com/totoshko88/RustConn/issues/274)) | No dependencies — NO GTK |
 
 **Decision Rule:** "Does this code need GTK widgets?" → No → `rustconn-core` / Yes → `rustconn`
 
@@ -105,6 +107,23 @@ of `apply_language_from_config()`, so a `setlocale` call added to a running
 application panics during development instead of corrupting memory in the field.
 Everything else in the gettext API is safe and is called from `rustconn`
 directly.
+
+`rustconn-env-sys` is the same shape for the one environment variable RustConn
+has to write. GTK exposes no API for choosing a GSK renderer — `GSK_RENDERER` is
+the only interface, and it is read while the first surface is realised, so it has
+to be in the environment before `gtk_init`. `setenv(3)`, which
+`std::env::set_var` wraps, mutates the process-global environment block without
+synchronisation, so `set_startup_var` refuses to run once the process has a
+second thread, once an earlier call came from another thread, or after
+`seal_env()`. `rustconn/src/renderer.rs` is the only consumer: it decides the
+renderer from the saved preference plus a per-environment probe, then seals.
+
+This replaced a re-exec that set the variable in a child process. That worked on
+Linux but was unavailable on macOS, where replacing the process image destroys
+the LaunchServices scene registration `NSStatusItem` needs and the tray icon
+disappears — so the macOS guest-VM case
+([#274](https://github.com/totoshko88/RustConn/issues/274)) had no fix until the
+write moved in-process. Startup also spawns one process fewer than it used to.
 
 ### Who Owns a Session's PTY
 

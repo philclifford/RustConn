@@ -142,16 +142,20 @@
   <releases>
     <release version="0.20.0" date="2026-08-12">
       <description>
-        <p>Version 0.20.0 - Web embedded mode floating toolbar:</p>
+        <p>Version 0.20.0 - Web embedded mode floating toolbar, renderer choice:</p>
         <ul>
           <li>Added: Web embedded mode with auto-hide floating toolbar matching RDP/VNC behavior</li>
+          <li>Added: Settings, Interface, Rendering — Automatic, Hardware (GPU) or Software (Cairo), applied at the next start (#274)</li>
           <li>Fixed: Web zoom shortcuts (Ctrl+/-/0) did not work in split view</li>
           <li>Fixed: Web toolbar clipped instead of collapsing in a narrow split panel</li>
           <li>Fixed: a failed Web page load left the toolbar logic unrun, and the load timeout reported nothing</li>
           <li>Fixed: the header bar's busy spinner lost its accessible name</li>
+          <li>Fixed: macOS inside a virtual machine had input lag and stuttering scroll — the automatic renderer choice now detects a hypervisor and selects Cairo (#274)</li>
+          <li>Fixed: seven translatable strings were in the source but in no catalogue; now translated in all 16 locales</li>
           <li>Changed: the Web load timeout now reports itself in the reconnect banner</li>
           <li>Improved: TerminalNotebook god class split — mod.rs reduced by 30%</li>
           <li>Improved: adw::Spinner where the runtime has it, gtk4::Spinner where it does not, decided in one module</li>
+          <li>Improved: the X11 Cairo fallback no longer re-execs the process — the GSK_RENDERER write moved into the new rustconn-env-sys crate</li>
         </ul>
       </description>
     </release>

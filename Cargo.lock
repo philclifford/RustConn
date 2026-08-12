@@ -5179,6 +5179,7 @@ dependencies = [
  "regex",
  "resvg",
  "rustconn-core",
+ "rustconn-env-sys",
  "rustconn-locale-sys",
  "rustconn-pty-sys",
  "secrecy",
@@ -5270,7 +5271,6 @@ dependencies = [
  "tokio",
  "toml 1.1.4+spec-1.1.0",
  "tracing",
- "tracing-subscriber",
  "unicode-segmentation",
  "uuid",
  "vnc-rs",
@@ -5278,6 +5278,10 @@ dependencies = [
  "zip",
  "zune-jpeg",
 ]
+
+[[package]]
+name = "rustconn-env-sys"
+version = "0.20.0"
 
 [[package]]
 name = "rustconn-locale-sys"

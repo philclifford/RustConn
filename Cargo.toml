@@ -6,6 +6,7 @@ members = [
     "rustconn-cli",
     "rustconn-pty-sys",
     "rustconn-locale-sys",
+    "rustconn-env-sys",
 ]
 
 [workspace.package]

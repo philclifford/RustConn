@@ -166,29 +166,12 @@ fn apply_configured_language() {
 }
 
 /// Reads just the `language` field from `~/.config/rustconn/config.toml`.
+///
+/// Shares the single-key scan with the renderer choice, which faces the same
+/// constraint — see [`crate::startup_config`] for why neither can wait for the
+/// application's own settings to load.
 fn read_language_from_config() -> Option<String> {
-    let config_dir = dirs::config_dir()?;
-    let path = config_dir.join("rustconn").join("config.toml");
-    let content = std::fs::read_to_string(path).ok()?;
-    // Simple TOML parsing: find `language = "xx"` under [ui] section
-    let mut in_ui_section = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            in_ui_section = trimmed == "[ui]";
-            continue;
-        }
-        if in_ui_section && let Some(rest) = trimmed.strip_prefix("language") {
-            let rest = rest.trim_start();
-            if let Some(rest) = rest.strip_prefix('=') {
-                let val = rest.trim().trim_matches('"');
-                if !val.is_empty() {
-                    return Some(val.to_string());
-                }
-            }
-        }
-    }
-    None
+    crate::startup_config::read_ui_string("language")
 }
 
 /// Checks whether a build-time locale directory actually contains at least

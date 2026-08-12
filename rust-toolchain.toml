@@ -1,0 +1,47 @@
+# This file pins the toolchain used for development and CI so that a new stable
+# release cannot turn CI red without a single line of code changing. The project
+# already carried an escape hatch for exactly that failure ("Clippy warning from
+# new upstream lint or compiler upgrade" in steering project-rules.md), which is
+# the evidence it had happened.
+#
+# MSRV is a SEPARATE number and lives in Cargo.toml (`rust-version = "1.95"`).
+# This pin is the *newest* compiler we develop against; MSRV is the *oldest* we
+# promise to support. Bumping this does not bump MSRV.
+#
+# Who honours this file, and who ignores it — verified per channel, because
+# getting it wrong silently changes what a packaging channel compiles with:
+#
+#   honoured (cargo invoked through a rustup proxy)
+#     - local development            -> the point of the file
+#     - GitHub Actions CI            -> all jobs except `msrv`, which sets
+#                                       RUSTUP_TOOLCHAIN=1.95.0 to override it
+#                                       (env beats the file; without that the
+#                                       MSRV gate would silently test 1.97.1)
+#     - release.yml `build-rpm`      -> installs rustup with
+#                                       --default-toolchain 1.95.0 to ship an
+#                                       MSRV-built RPM, so it sets
+#                                       RUSTUP_TOOLCHAIN=1.95.0 and asserts the
+#                                       result. This list must name EVERY
+#                                       override; missing this one is how the
+#                                       RPM nearly changed compiler unnoticed.
+#     - snap                         -> snapcraft.yaml installs rustup with
+#                                       --default-toolchain 1.95 on purpose, so
+#                                       its build part sets RUSTUP_TOOLCHAIN=1.95
+#                                       to keep that deliberate choice
+#     - obs-update.yml               -> keeps `stable` deliberately: it publishes
+#                                       an arbitrary older tag, and the toolchain
+#                                       it resolves is vendored into the OBS
+#                                       build by scripts/obs-publish.sh
+#
+#   ignored (cargo is not a rustup proxy -- rust-toolchain.toml is a rustup
+#   feature, so a bare cargo never reads it)
+#     - Flatpak / Flathub            -> /usr/lib/sdk/rust-stable/bin/cargo
+#     - debian / OBS                 -> distro cargo, and `--offline` besides
+#
+# When bumping: change `channel` only, then re-run clippy across the workspace.
+# Dependabot does not update this file.
+
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

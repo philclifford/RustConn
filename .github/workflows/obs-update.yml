@@ -24,6 +24,19 @@ jobs:
         with:
           ref: v${{ inputs.version }}
 
+      # Deliberately `stable`, unlike ci.yml and release.yml which pin
+      # ${{ env.RUST_TOOLCHAIN }} to match rust-toolchain.toml. This job checks
+      # out an ARBITRARY released tag, and tags older than 0.20.x carry no
+      # rust-toolchain.toml — `stable` is the only value correct for all of them.
+      # For newer tags the checked-out toolchain file takes over anyway (cargo
+      # here is a rustup proxy), which is the desired result. The cost is not
+      # merely an extra toolchain download: scripts/obs-publish.sh vendors
+      # `rustc --print sysroot` into rust-toolchain.tar.zst, so whatever this
+      # step resolves is the compiler the OBS build uses. For tags >= 0.20.0
+      # that is the pinned version; for older tags it is whatever `stable` meant
+      # on the day of the re-publish, which is how those tags were always built.
+      # Do not add a third copy of the pinned version here: the drift gate in
+      # ci.yml only guards the two workflows that build the product.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:

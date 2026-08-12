@@ -12,6 +12,10 @@ Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.0
 - Improved: TerminalNotebook god class split — mod.rs reduced by 30% (4365 to 3052 lines), extracted tab_lifecycle.rs and session_lifecycle.rs
 - Improved: adw::Spinner where the runtime has it (libadwaita 1.6+, opt-in adw-1-6) and gtk4::Spinner where it does not, decided in one module instead of six call sites; build baseline stays libadwaita 1.5 so Ubuntu 24.04 and snap core24 still build
 - Improved: build dependencies state the versions the crate features require — libadwaita-1-dev (>= 1.5), libvte-2.91-gtk4-dev (>= 0.76)
+- Added: Settings > Interface > Rendering — Automatic, Hardware (GPU) or Software (Cairo), applied at the next start (#274)
+- Fixed: macOS inside a virtual machine had input lag, late frames and stuttering scroll — the paravirtualised GPU has no accelerated OpenGL, so the automatic renderer choice now detects a hypervisor and selects the Cairo renderer (#274)
+- Fixed: seven translatable strings were present in the source but in no catalogue, rendering as English in every locale; now translated in all 16 locales
+- Improved: the X11 Cairo fallback no longer re-execs the process — the GSK_RENDERER write moved into the new rustconn-env-sys crate, guarded the way rustconn-locale-sys guards setlocale, so startup spawns one process fewer and macOS shares the same code path
 
 -------------------------------------------------------------------
 Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.22

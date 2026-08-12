@@ -1,21 +1,25 @@
 ---
 inclusion: manual
-description: "Full project rules reference. Already injected as user-rule at session start — use this only when you need to re-read the rules mid-session."
+description: "Long-form project rules: code philosophy, Codex target split, workflow, escape hatches, terminal discipline. The always-loaded subset (crate table, Absolute Rules, Definition of Done) is in core-rules.md and is not repeated here."
 ---
 
 # RustConn — Project Rules
 
-Communication language: Ukrainian.
+> **Read `core-rules.md` first.** It is `inclusion: always`, so it is already in
+> context, and it owns the crate table, the Absolute Rules, the Definition of
+> Done and the quick commands. This file is the long form: everything that is too
+> situational to carry in every request. Rules are *not* duplicated between the
+> two files — if you are looking for an invariant and it is not here, it is there.
+>
+> This file's front matter used to claim it was "already injected as user-rule at
+> session start". It was not: `inclusion: manual` means it loads only via
+> `#project-rules` or a slash command, and `~/.kiro/steering/` holds no global
+> copy. That is why the invariants were split out into `core-rules.md` on
+> 2026-08-12 — a fresh session had none of them.
 
-## Architecture (4 crates)
+## Architecture
 
-| Crate | Purpose | Restrictions |
-|-------|---------|-------------|
-| `rustconn-core` | Domain logic: models, config, CRUD managers, import/export, protocol data, credential abstractions | **FORBIDDEN**: gtk4, adw, vte4. Default features stay headless/empty. Embedded clients, GFX, RD Gateway, and host keyring are optional features only. |
-| `rustconn-cli` | Headless management over core data | Only rustconn-core. Default features stay minimal; client launch and secret-management paths are optional. |
-| `rustconn` | GTK4/libadwaita GUI, dialogs, embedded/external session presentation | May import GUI crates and enable core integration features |
-| `rustconn-pty-sys` | Isolated FFI helper (macOS PTY controlling terminal, `setsid`+`TIOCSCTTY`) | Sanctioned `unsafe` location (M-UNSAFE); `libc` only, no gtk4/adw/vte4 |
-| `rustconn-locale-sys` | Isolated FFI helper: the startup `setlocale` call, guarded so it cannot run once a second thread exists (RUSTSEC-2026-0244) | Sanctioned `unsafe` location (M-UNSAFE); `gettext-rs` only, no gtk4/adw/vte4 |
+Crate table and the FFI rule: see `core-rules.md`.
 
 ### Codex Target Split
 
@@ -53,25 +57,18 @@ Before writing any code, stop at the first rung that holds:
 
 ## Absolute Rules
 
-- `unsafe_code = "forbid"` in all crates **except** the `rustconn-*-sys` FFI crates (`rustconn-pty-sys`, `rustconn-locale-sys`) — the sanctioned FFI locations (M-UNSAFE). Never write `unsafe` anywhere else; new FFI gets its own `rustconn-*-sys` crate rather than an exception in an existing crate.
-- Passwords/keys → `secrecy::SecretString`, never plain String
-- Intermediate `expose_secret().to_string()` → wrap in `zeroize::Zeroizing::new()`
-- Errors → `thiserror::Error`, never `unwrap()`/`expect()`
-- Logging → `tracing`, never `println!`/`eprintln!`
-- i18n → `i18n()` / `i18n_f()` with `{}` placeholders for all user-facing strings
-- `display_name()` values used in UI → wrap in `i18n()` at call site
-- After new i18n strings → `bash po/update-pot.sh` + `msgmerge --update` for 16 languages
-- Rust 2024 edition: let-chains instead of collapsible_if
-- Never `set_var`/`remove_var` (unsafe in Rust 2024)
+See `core-rules.md`. They are unconditional and always loaded — that is the point
+of keeping them there rather than here.
 
 ## Quick Commands
 
+Core set: see `core-rules.md`. Additional targets used less often:
+
 ```
-cargo fmt --all                    # Format
-cargo clippy --all-targets         # Lint (0 warnings)
-cargo test --workspace             # Tests (~120s, argon2 is slow)
 cargo test -p rustconn-core --test property_tests  # Property tests only
-bash po/update-pot.sh              # Regenerate POT after new i18n strings
+cargo test -p rustconn-cli --features full         # CLI with all features
+cargo machete                                      # Unused dependencies
+./scripts/check-cli-versions.sh                    # Bundled CLI tool versions
 ```
 
 ## Quality Checks
@@ -87,7 +84,7 @@ adds GUI imports to `rustconn-core`/`rustconn-cli`, or `unsafe` outside a
 `rustconn-*-sys` crate). Still verify them yourself BEFORE writing — the hook is
 a safety net, not an excuse to skip thinking:
 - **Crate boundary**: `rustconn-core/` and `rustconn-cli/` must NOT contain `use gtk4`, `use adw`, `use vte4`, `gtk4::`, `adw::`, `vte4::`. Move GUI code to `rustconn/`. *(hook-enforced)*
-- **No unsafe**: never write `unsafe {`, `unsafe fn`, `unsafe impl`, `unsafe trait` — **except** in a `rustconn-*-sys` crate (`rustconn-pty-sys`, `rustconn-locale-sys`; M-UNSAFE). New `unsafe` outside them is forbidden — it gets its own `-sys` crate instead. *(hook-enforced)*
+- **No unsafe**: never write `unsafe {`, `unsafe fn`, `unsafe impl`, `unsafe trait` — **except** in a `rustconn-*-sys` crate (`rustconn-pty-sys`, `rustconn-locale-sys`, `rustconn-env-sys`; M-UNSAFE). New `unsafe` outside them is forbidden — it gets its own `-sys` crate instead. *(hook-enforced)*
 
 After writing `.rs` files in `rustconn/src/`, verify (these stay mental — caught later by clippy + the `post-session-diagnostics` agentStop hook, not pre-write):
 - **i18n**: all user-facing strings (`.set_label()`, `.set_title()`, `.set_tooltip_text()`, `Button::with_label()`) wrapped in `i18n()` or `i18n_f()`. Ignore: tracing, CSS, icons, action names.
@@ -107,15 +104,9 @@ When a task surfaced something worth keeping for next time — an interpretation
 
 ### Definition of Done (goal-loop acceptance gate)
 
-A task is done ONLY when all hold — this is the finish line for `/goal` loops and any self-verification:
-
-1. `cargo clippy --all-targets` → 0 warnings
-2. `cargo test --workspace` green (or the targeted tests for the change)
-3. Crate boundaries intact (no gtk4/adw/vte4 in core/cli, no `unsafe` outside the `rustconn-*-sys` crates)
-4. New user-facing strings wrapped in `i18n()`/`i18n_f()` + POT updated (`bash po/update-pot.sh`)
-5. No debug leftovers (`dbg!`/`todo!`/`println!`/`eprintln!`)
-
-If a goal-loop can't reach this within its iterations, STOP and report what's blocking — never loosen the gate (drop a test, silence clippy, skip i18n) just to "finish".
+See `core-rules.md`. Never loosen the gate (drop a test, silence clippy, skip
+i18n) just to "finish". The one sanctioned exception is below, and it applies
+only when the blocker is external.
 
 #### Escape Hatches (when the gate is blocked by external factors)
 
@@ -138,7 +129,11 @@ sanctioned workarounds. Each requires a tracking comment and must be reported to
 
 ### Test Run Rules (CRITICAL)
 
-- **NEVER** pipe `cargo test` through `tail`, `grep`, or any filter — run directly to see progress.
+- **NEVER** pipe `cargo test` through `tail`, `grep`, or any filter. Either run it
+  unpiped, or redirect the whole output to a file under `target/` and read the
+  file afterwards — both preserve the full run; a pipe is what makes the shell
+  tool return nothing at all. (Same rule, stated once more in
+  `shell-environment.md`, which unlike this file is always loaded.)
 - **NEVER** start `cargo test` if another instance is already running (`pgrep -f 'cargo test'`).
 - Tests take ~120s (argon2 property tests). This is normal — wait for completion, do NOT assume timeout.
 - If a hook or sub-agent already ran tests in this turn, do NOT re-run them.
@@ -159,8 +154,11 @@ Apply this discipline to avoid them:
   all `cargo build/clippy/test` through a single `rust-quality-check` invocation.
 - **No polling loops.** Never use `sleep N; tail …` to watch progress. Run the
   command once, redirect to a log file, then read it with `readFile`.
-- **Logs go inside the workspace** (`target/*.log`), never `/tmp` — `readFile` is
-  restricted to the workspace and cannot read `/tmp`.
+- **Logs go inside the workspace** (`target/*.log`), never `/tmp`. Not because
+  the file-reading tool cannot reach `/tmp` — it can; this claim used to say
+  otherwise and was wrong — but because a log under `target/` is gitignored,
+  survives for the rest of the session, and is visible to sub-agents and to the
+  developer looking at the same checkout.
 - **Check before launching.** Run `pgrep -f 'cargo'` first; if anything is running,
   do not start another cargo command.
 - **One command per `executeBash` call.** Do not chain unrelated commands with

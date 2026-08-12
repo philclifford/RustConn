@@ -25,6 +25,19 @@ rustconn (0.20.0-1) unstable; urgency=medium
     build
   * Improved: build dependencies now state the versions the crate features
     require — libadwaita-1-dev (>= 1.5), libvte-2.91-gtk4-dev (>= 0.76)
+  * Added: Settings > Interface > Rendering — Automatic, Hardware (GPU) or
+    Software (Cairo), applied at the next start (#274)
+  * Fixed: macOS inside a virtual machine had input lag, late frames and
+    stuttering scroll — the paravirtualised GPU has no accelerated OpenGL,
+    so the automatic renderer choice now detects a hypervisor and selects
+    the Cairo renderer (#274)
+  * Fixed: seven translatable strings were present in the source but in no
+    catalogue, rendering as English in every locale; now translated in all
+    16 locales
+  * Improved: the X11 Cairo fallback no longer re-execs the process — the
+    GSK_RENDERER write moved into the new rustconn-env-sys crate, which
+    guards it the way rustconn-locale-sys guards setlocale, so startup
+    spawns one process fewer and macOS shares the same code path
 
  -- Anton Isaiev <totoshko88@gmail.com>  Wed, 12 Aug 2026 21:00:00 +0300
 

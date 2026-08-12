@@ -4,10 +4,23 @@ use adw::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{Box as GtkBox, DropDown, StringList};
 use libadwaita as adw;
-use rustconn_core::config::{ColorScheme, SessionRestoreSettings, StartupAction, UiSettings};
+use rustconn_core::config::{
+    ColorScheme, RendererPreference, SessionRestoreSettings, StartupAction, UiSettings,
+};
 use rustconn_core::models::Connection;
 
 use crate::i18n::i18n;
+
+/// Renderer preferences in the order the Rendering combo lists them.
+///
+/// The combo carries no per-row payload, so the row index is the only link back
+/// to the variant — building the model and reading the selection both go through
+/// this array so the two cannot drift apart.
+const RENDERER_ORDER: [RendererPreference; 3] = [
+    RendererPreference::Auto,
+    RendererPreference::Gpu,
+    RendererPreference::Software,
+];
 
 /// Creates the UI settings page using AdwPreferencesPage
 #[expect(
@@ -34,6 +47,7 @@ pub fn create_ui_page() -> (
     adw::SwitchRow,
     adw::SwitchRow,
     adw::SwitchRow,
+    adw::ComboRow,
 ) {
     let page = adw::PreferencesPage::builder()
         .title(i18n("Interface"))
@@ -151,6 +165,21 @@ pub fn create_ui_page() -> (
     language_row.add_suffix(&language_dropdown);
     language_row.set_activatable_widget(Some(&language_dropdown));
     appearance_group.add(&language_row);
+
+    // Renderer selector. GTK reads GSK_RENDERER while it realises the first
+    // surface, so a change can only take effect on the next start — same
+    // constraint as the language above, hence the same subtitle.
+    let renderer_labels: Vec<String> = RENDERER_ORDER
+        .iter()
+        .map(|preference| i18n(preference.display_name()))
+        .collect();
+    let renderer_label_refs: Vec<&str> = renderer_labels.iter().map(String::as_str).collect();
+    let renderer_row = adw::ComboRow::builder()
+        .title(i18n("Rendering"))
+        .subtitle(i18n("Restart required to apply"))
+        .model(&StringList::new(&renderer_label_refs))
+        .build();
+    appearance_group.add(&renderer_row);
 
     // Color tabs by protocol toggle
     let color_tabs_by_protocol = adw::SwitchRow::builder()
@@ -389,6 +418,9 @@ pub fn create_ui_page() -> (
         window_title_shows_connection,
         show_welcome_switch,
         double_click_opens_new_session,
+        // Last so that the neighbouring positional arguments in load/collect
+        // are SwitchRows: a ComboRow cannot be swapped with one by mistake.
+        renderer_row,
     )
 }
 
@@ -442,6 +474,7 @@ pub fn load_ui_settings(
     window_title_shows_connection: &adw::SwitchRow,
     show_welcome_switch: &adw::SwitchRow,
     double_click_opens_new_session: &adw::SwitchRow,
+    renderer_row: &adw::ComboRow,
     settings: &UiSettings,
     connections: &[&Connection],
 ) {
@@ -521,6 +554,14 @@ pub fn load_ui_settings(
 
     double_click_opens_new_session.set_active(settings.double_click_opens_new_session);
 
+    // Sync the Rendering combo with the saved preference. An unknown variant
+    // (a config from a newer build) falls back to the first row, Automatic.
+    let renderer_index = RENDERER_ORDER
+        .iter()
+        .position(|preference| *preference == settings.renderer)
+        .unwrap_or(0);
+    renderer_row.set_selected(u32::try_from(renderer_index).unwrap_or(0));
+
     // Populate startup action dropdown with connections
     let entries = build_startup_entries(connections);
     let mut labels: Vec<String> = vec![i18n("Do nothing"), i18n("Local Shell")];
@@ -570,6 +611,7 @@ pub fn collect_ui_settings(
     window_title_shows_connection: &adw::SwitchRow,
     show_welcome_switch: &adw::SwitchRow,
     double_click_opens_new_session: &adw::SwitchRow,
+    renderer_row: &adw::ComboRow,
     connections: &[&Connection],
 ) -> UiSettings {
     let mut selected_scheme = ColorScheme::System;
@@ -600,8 +642,15 @@ pub fn collect_ui_settings(
             .map_or(StartupAction::None, |e| StartupAction::Connection(e.id)),
     };
 
+    // Resolve the renderer preference from the combo's row index.
+    let renderer = RENDERER_ORDER
+        .get(renderer_row.selected() as usize)
+        .copied()
+        .unwrap_or_default();
+
     UiSettings {
         color_scheme: selected_scheme,
+        renderer,
         language,
         remember_window_geometry: remember_geometry.is_active(),
         window_width: None,

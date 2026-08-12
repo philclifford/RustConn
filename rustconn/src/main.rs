@@ -81,6 +81,7 @@ pub mod i18n;
 mod i18n_markers;
 pub mod icon_render;
 pub mod monitoring;
+mod renderer;
 pub mod session;
 mod sidebar;
 mod sidebar_types;
@@ -88,6 +89,7 @@ mod sidebar_ui;
 pub mod smart_folder_ui;
 pub mod spinner;
 pub mod split_view;
+mod startup_config;
 mod state;
 mod terminal;
 pub mod toast;
@@ -225,60 +227,6 @@ fn print_usage() {
            FILE.rdp             Open and connect from an .rdp file\n  \
            FILE.vv              Open and connect from a virt-viewer .vv file"
     );
-}
-
-/// Falls back to the Cairo GSK renderer on pure X11 sessions.
-///
-/// GTK4's default NGL (OpenGL) renderer has known issues with popover
-/// initial paint on some X11 compositors — menus appear blank until the
-/// pointer hovers over them (#85, affects MATE, XFCE, older Mutter).
-///
-/// If `GSK_RENDERER` is not already set by the user and the session is
-/// X11 (no `WAYLAND_DISPLAY`), this function re-executes the process
-/// with `GSK_RENDERER=cairo`.  The re-exec happens before GTK or tokio
-/// start, so it is safe.  A sentinel env var prevents infinite loops.
-#[cfg(not(target_os = "macos"))]
-fn ensure_x11_renderer_fallback() {
-    use std::os::unix::process::CommandExt;
-
-    // Skip if user explicitly chose a renderer
-    if std::env::var("GSK_RENDERER").is_ok() {
-        return;
-    }
-
-    // Skip on Wayland — NGL works fine there
-    if std::env::var("WAYLAND_DISPLAY").is_ok() {
-        return;
-    }
-
-    // Only act when running on X11
-    if std::env::var("DISPLAY").is_err() {
-        return;
-    }
-
-    // Sentinel: we already re-execed once
-    if std::env::var("_RUSTCONN_GSK_SET").ok().as_deref() == Some("1") {
-        return;
-    }
-
-    let exe = match std::env::current_exe() {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    let args: Vec<String> = std::env::args().collect();
-
-    // Replace the current process image with GSK_RENDERER=cairo.
-    // exec() only returns on error — in that case we just continue
-    // with the default renderer.
-    let err = std::process::Command::new(exe)
-        .args(&args[1..])
-        .env("GSK_RENDERER", "cairo")
-        .env("_RUSTCONN_GSK_SET", "1")
-        .exec();
-
-    // exec() only returns on error — fall through to default renderer
-    tracing::warn!(?err, "GSK_RENDERER re-exec failed; using default renderer");
 }
 
 /// Detects if running inside a macOS .app bundle and returns the
@@ -461,15 +409,6 @@ fn main() -> gtk4::glib::ExitCode {
     // Initialize internationalization (gettext)
     i18n::init();
 
-    // Work around blank popover/menu rendering on X11 with GTK4's default
-    // NGL renderer.  On some X11 compositors (MATE, XFCE, older Mutter)
-    // popovers appear empty until the pointer moves over them (#85).
-    // Re-exec with GSK_RENDERER=cairo before GTK starts (same pattern as
-    // the language re-exec in i18n.rs).  Wayland sessions are unaffected.
-    // Skipped on macOS — no X11/Wayland there.
-    #[cfg(not(target_os = "macos"))]
-    ensure_x11_renderer_fallback();
-
     // Apply saved language from config BEFORE GTK starts.
     // This must happen early so that all gettext() calls during UI construction
     // use the correct locale. The LANGUAGE env var must be set before any
@@ -506,6 +445,12 @@ fn main() -> gtk4::glib::ExitCode {
         );
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
+
+    // Choose the GSK renderer before GTK reads it. Placed after the subscriber
+    // so the choice — a heuristic, when the setting is Automatic — is visible in
+    // the log, and before anything spawns a thread, which is what makes writing
+    // the environment sound. Also seals the startup environment.
+    renderer::apply_renderer_preference();
 
     // Drop the flood of harmless CSS theme-parser warnings GTK4 emits when it
     // reads the libadwaita ≥1.9 stylesheet (it uses CSS syntax the older GTK4
