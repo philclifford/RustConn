@@ -140,6 +140,16 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.19.22" date="2026-08-12">
+      <description>
+        <p>Version 0.19.22 - KeePassXC unlock on demand, search caching, keyboard label clarity:</p>
+        <ul>
+          <li>Fixed: KeePassXC "Don't save" mode did not unlock the database on demand, reporting credentials as missing (#273)</li>
+          <li>Improved: Sidebar search uses a cached search engine with result caching for better responsiveness on large databases</li>
+          <li>Improved: Keyboard group dropdowns show what "Automatic" actually sends — Automatic (^?) for Backspace, Automatic (\e[3~) for Delete — so users know which option to select when the default fails (#271)</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.21" date="2026-08-11">
       <description>
         <p>Version 0.19.21 - startup fix for the setlocale guard:</p>

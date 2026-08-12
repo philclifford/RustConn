@@ -1741,8 +1741,6 @@ impl MainWindow {
 
     /// Filters connections based on search query
     fn filter_connections(state: &SharedAppState, sidebar: &SharedSidebar, query: &str) {
-        use rustconn_core::search::SearchEngine;
-
         if query.is_empty() {
             // Restore full hierarchy when search is cleared
             Self::reload_sidebar(state, sidebar);
@@ -1828,9 +1826,10 @@ impl MainWindow {
                 store.append(&item);
             }
         } else {
-            // Use standard search engine for other queries
-            let search_engine = SearchEngine::new();
-            let parsed_query = match SearchEngine::parse_query(query) {
+            // Use cached search engine from sidebar (avoids per-keystroke allocation
+            // and provides result caching with TTL for repeated queries)
+            let search_engine = sidebar.search_engine();
+            let parsed_query = match rustconn_core::search::SearchEngine::parse_query(query) {
                 Ok(q) => q,
                 Err(_) => {
                     // Fall back to simple text search on parse error
@@ -1838,8 +1837,13 @@ impl MainWindow {
                 }
             };
 
-            // Perform search with ranking
-            let results = search_engine.search(&parsed_query, &connections, &groups);
+            // Use search_debounced which checks/populates the result cache.
+            // GTK-level debouncing (sidebar.search_debouncer) has already passed,
+            // so the internal debouncer will proceed — giving us automatic caching
+            // for repeated queries (e.g. type-delete-retype same text).
+            let results = search_engine
+                .search_debounced(&parsed_query, &connections, &groups)
+                .unwrap_or_default();
 
             // Index by id once so result lookup is O(1) instead of O(n) per hit.
             let conn_by_id: std::collections::HashMap<_, _> =
@@ -3309,6 +3313,7 @@ impl MainWindow {
 
     /// Reloads the sidebar with current data (preserving hierarchy)
     fn reload_sidebar(state: &SharedAppState, sidebar: &SharedSidebar) {
+        sidebar.invalidate_search_cache();
         sorting::rebuild_sidebar_sorted(state, sidebar);
     }
 
@@ -3318,6 +3323,7 @@ impl MainWindow {
     /// reloads the sidebar data, and then restores the state. Use this when editing
     /// connections to maintain the user's view.
     pub fn reload_sidebar_preserving_state(state: &SharedAppState, sidebar: &SharedSidebar) {
+        sidebar.invalidate_search_cache();
         // Save current tree state
         let tree_state = sidebar.save_state();
 

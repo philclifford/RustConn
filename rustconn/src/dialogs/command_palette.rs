@@ -296,7 +296,7 @@ impl CommandPaletteDialog {
     ) -> Vec<PaletteItem> {
         let (mode, query) = parse_palette_input(input);
         match mode {
-            PaletteMode::Commands => Self::filter_commands(query),
+            PaletteMode::Commands => Self::filter_commands(query, engine),
             PaletteMode::Tags => Self::filter_by_tag(query, connections),
             PaletteMode::Groups => Self::filter_by_group(query, connections, groups),
             PaletteMode::OpenTabs => Self::filter_open_tabs(query, open_tabs, engine),
@@ -307,12 +307,11 @@ impl CommandPaletteDialog {
     }
 
     /// Filters built-in commands by query
-    fn filter_commands(query: &str) -> Vec<PaletteItem> {
+    fn filter_commands(query: &str, engine: &SearchEngine) -> Vec<PaletteItem> {
         let mut cmds = builtin_commands();
         if query.is_empty() {
             cmds.sort_by_key(|b| std::cmp::Reverse(b.priority));
         } else {
-            let engine = SearchEngine::new();
             cmds.retain(|item| engine.fuzzy_score(query, &item.label) > 0.0);
             cmds.sort_by(|a, b| {
                 let sa = engine.fuzzy_score(query, &a.label);

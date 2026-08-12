@@ -43,6 +43,7 @@ use libadwaita as adw;
 use rustconn_core::Debouncer;
 use rustconn_core::connection::{LazyGroupLoader, SelectionState as CoreSelectionState};
 use rustconn_core::models::{Connection, SmartFolder};
+use rustconn_core::search::DebouncedSearchEngine;
 use uuid::Uuid;
 
 use crate::i18n::i18n;
@@ -82,6 +83,8 @@ pub struct ConnectionSidebar {
     selection_state: Rc<RefCell<CoreSelectionState>>,
     /// Debouncer for rate-limiting search operations (100ms delay)
     search_debouncer: Rc<Debouncer>,
+    /// Cached search engine with result caching for search-as-you-type performance
+    search_engine: Rc<DebouncedSearchEngine>,
     /// Spinner widget to show search is pending during debounce
     #[cfg(feature = "adw-1-6")]
     search_spinner: adw::Spinner,
@@ -1013,6 +1016,7 @@ impl ConnectionSidebar {
             lazy_loader: Rc::new(RefCell::new(LazyGroupLoader::new())),
             selection_state: Rc::new(RefCell::new(CoreSelectionState::new())),
             search_debouncer,
+            search_engine: Rc::new(DebouncedSearchEngine::for_search()),
             search_spinner,
             pending_search_query: Rc::new(RefCell::new(None)),
             pre_search_state: Rc::new(RefCell::new(None)),
@@ -1044,6 +1048,20 @@ impl ConnectionSidebar {
     #[must_use]
     pub fn search_debouncer(&self) -> Rc<Debouncer> {
         Rc::clone(&self.search_debouncer)
+    }
+
+    /// Returns the cached search engine (debounced + result caching)
+    #[must_use]
+    pub fn search_engine(&self) -> &DebouncedSearchEngine {
+        &self.search_engine
+    }
+
+    /// Invalidates cached search results.
+    ///
+    /// Call after connections are added, modified, or deleted so that
+    /// the next search re-evaluates against fresh data.
+    pub fn invalidate_search_cache(&self) {
+        self.search_engine.invalidate_cache();
     }
 
     /// Sets the callback used to check if a connection has an active recording

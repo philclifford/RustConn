@@ -1,3 +1,16 @@
+rustconn (0.19.22-1) unstable; urgency=medium
+
+  * Version bump to 0.19.22
+  * Fixed: KeePassXC "Don't save" mode did not unlock the database on
+    demand, reporting credentials as missing (#273)
+  * Improved: Sidebar search uses a cached search engine with result
+    caching for better responsiveness on large databases
+  * Improved: Keyboard group dropdowns now show what "Automatic" actually
+    sends — Automatic (^?) for Backspace, Automatic (\e[3~) for Delete —
+    so users know which option to select when the default fails (#271)
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Wed, 12 Aug 2026 17:00:00 +0300
+
 rustconn (0.19.21-1) unstable; urgency=medium
 
   * Version bump to 0.19.21

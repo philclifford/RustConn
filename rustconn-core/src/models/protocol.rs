@@ -190,7 +190,7 @@ impl BackspaceSends {
     #[must_use]
     pub const fn display_name(self) -> &'static str {
         match self {
-            Self::Automatic => "Automatic",
+            Self::Automatic => "Automatic (^?)",
             Self::Backspace => "Backspace (^H)",
             Self::Delete => "Delete (^?)",
         }
@@ -245,7 +245,7 @@ impl DeleteSends {
     #[must_use]
     pub const fn display_name(self) -> &'static str {
         match self {
-            Self::Automatic => "Automatic",
+            Self::Automatic => "Automatic (\\e[3~)",
             Self::Backspace => "Backspace (^H)",
             Self::Delete => "Delete (^?)",
         }
@@ -3543,10 +3543,10 @@ mod erase_mode_tests {
     /// orphans every existing `po` entry.
     #[test]
     fn erase_mode_display_names_are_stable() {
-        assert_eq!(BackspaceSends::Automatic.display_name(), "Automatic");
+        assert_eq!(BackspaceSends::Automatic.display_name(), "Automatic (^?)");
         assert_eq!(BackspaceSends::Backspace.display_name(), "Backspace (^H)");
         assert_eq!(BackspaceSends::Delete.display_name(), "Delete (^?)");
-        assert_eq!(DeleteSends::Automatic.display_name(), "Automatic");
+        assert_eq!(DeleteSends::Automatic.display_name(), "Automatic (\\e[3~)");
         assert_eq!(DeleteSends::Backspace.display_name(), "Backspace (^H)");
         assert_eq!(DeleteSends::Delete.display_name(), "Delete (^?)");
     }

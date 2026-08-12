@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.21
+Version:        0.19.22
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -278,6 +278,12 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.22-0
+- Version bump to 0.19.22
+- Fixed: KeePassXC "Don't save" mode did not unlock the database on demand (#273)
+- Improved: Sidebar search uses a cached search engine with result caching
+- Improved: Keyboard group dropdowns show what "Automatic" actually sends (#271)
+
 * Tue Aug 11 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.21-0
 - Version bump to 0.19.21
 - Fixed: RustConn did not start at all on Fedora 44 — the setlocale guard
