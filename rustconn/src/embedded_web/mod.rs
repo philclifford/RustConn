@@ -8,7 +8,7 @@
 //! - Per-connection persistent `NetworkSession` (cookies, local storage)
 //! - State machine: Disconnected → Connecting → Connected / Error
 //! - 60-second load timeout
-//! - Navigation toolbar (back/forward/reload/home/zoom)
+//! - Auto-hide navigation toolbar (back/forward/reload/home/zoom) with reveal zone
 //! - Credential autofill via JavaScript injection and HTTP Basic Auth
 //!
 //! # Feature Gate
@@ -32,6 +32,7 @@ pub use settings::apply_settings;
 use uuid::Uuid;
 use webkit6::prelude::*;
 
+use crate::embedded_toolbar_overflow::ToolbarAutoHide;
 use crate::embedded_trait::{
     EmbeddedConnectionState, EmbeddedError, EmbeddedWidget, ErrorCallback, ReconnectCallback,
     StateCallback,
@@ -42,10 +43,26 @@ use crate::embedded_trait::{
 /// Implements `EmbeddedWidget` for polymorphic handling alongside
 /// RDP and VNC sessions in the terminal notebook.
 pub struct EmbeddedWebWidget {
-    /// Vertical container: toolbar + webview
+    /// Vertical container: overlay (webview + floating toolbar)
     container: gtk4::Box,
+    /// Overlay container for floating toolbar over webview.
+    /// Stored to prevent GTK from dropping the widget (it has no other owning reference).
+    #[expect(
+        dead_code,
+        reason = "field keeps the GTK widget alive; removing it destroys the overlay"
+    )]
+    overlay: gtk4::Overlay,
     /// Navigation toolbar (back/forward/reload/home/zoom)
     toolbar: NavigationToolbar,
+    /// Revealer wrapping the toolbar for show/hide animation.
+    /// Stored to prevent GTK from dropping the widget (it has no other owning reference).
+    #[expect(
+        dead_code,
+        reason = "field keeps the GTK widget alive; removing it destroys the revealer"
+    )]
+    toolbar_revealer: gtk4::Revealer,
+    /// Auto-hide controller for the floating toolbar
+    toolbar_auto_hide: Rc<ToolbarAutoHide>,
     /// WebKitGTK WebView instance
     web_view: webkit6::WebView,
     /// Per-connection network session (persistent cookies/storage).
@@ -226,6 +243,8 @@ impl EmbeddedWebWidget {
 
         // Create navigation toolbar
         let toolbar = NavigationToolbar::new();
+        // Add overlay styling for floating toolbar
+        toolbar.widget().add_css_class("web-toolbar-overlay");
 
         // Create reconnect banner (hidden by default): [⚠ icon] [status label] [Reload button]
         let reconnect_banner = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
@@ -250,23 +269,48 @@ impl EmbeddedWebWidget {
         reload_button.add_css_class("suggested-action");
         reconnect_banner.append(&reload_button);
 
-        // Build vertical container: toolbar + progress bar + reconnect banner + webview
+        // Thin progress bar (Firefox/Chrome style)
         let progress_bar = gtk4::ProgressBar::new();
         progress_bar.set_visible(false);
-        // Thin 2px progress bar (Firefox/Chrome style)
         progress_bar.set_margin_start(0);
         progress_bar.set_margin_end(0);
         progress_bar.add_css_class("osd");
 
-        let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-        container.append(toolbar.widget());
-        container.append(&progress_bar);
-        container.append(&reconnect_banner);
-        container.append(&web_view);
+        // --- Floating toolbar setup (like RDP/VNC) ---
+        // Toolbar is wrapped in a Revealer for show/hide animation
+        let toolbar_revealer = gtk4::Revealer::new();
+        // Crossfade avoids geometry changes during the transition
+        toolbar_revealer.set_transition_type(gtk4::RevealerTransitionType::Crossfade);
+        toolbar_revealer.set_transition_duration(150);
+        toolbar_revealer.set_reveal_child(false);
+        // Start non-targetable: the revealer is an overlay child and must not
+        // capture input when the toolbar is hidden. ToolbarAutoHide flips this
+        // to true when revealing and back to false when hiding.
+        toolbar_revealer.set_can_target(false);
+        toolbar_revealer.set_valign(gtk4::Align::Start);
+        toolbar_revealer.set_hexpand(true);
+        toolbar_revealer.set_child(Some(toolbar.widget()));
 
         // Make web_view expand to fill available space
         web_view.set_vexpand(true);
         web_view.set_hexpand(true);
+
+        // Overlay: webview fills the space, toolbar floats on top
+        let overlay = gtk4::Overlay::new();
+        overlay.set_child(Some(&web_view));
+        overlay.add_overlay(&toolbar_revealer);
+        overlay.set_hexpand(true);
+        overlay.set_vexpand(true);
+
+        // Attach ToolbarAutoHide controller to the overlay
+        let toolbar_auto_hide =
+            ToolbarAutoHide::attach(&overlay, toolbar.widget(), &toolbar_revealer);
+
+        // Build main container: progress bar + reconnect banner + overlay (webview + toolbar)
+        let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        container.append(&progress_bar);
+        container.append(&reconnect_banner);
+        container.append(&overlay);
 
         let state = Rc::new(RefCell::new(EmbeddedConnectionState::Disconnected));
         let home_url = Rc::new(RefCell::new(url.to_string()));
@@ -277,7 +321,10 @@ impl EmbeddedWebWidget {
 
         let widget = Self {
             container,
+            overlay,
             toolbar,
+            toolbar_revealer,
+            toolbar_auto_hide,
             web_view,
             network_session,
             state,
@@ -367,18 +414,27 @@ impl EmbeddedWebWidget {
     fn set_state(&self, new_state: EmbeddedConnectionState) {
         *self.state.borrow_mut() = new_state;
 
-        // Toggle reconnect banner based on state
+        // Toggle reconnect banner and toolbar visibility based on state
         match new_state {
             EmbeddedConnectionState::Error => {
                 self.reconnect_banner.set_visible(true);
+                self.toolbar_auto_hide.hide();
             }
             EmbeddedConnectionState::Disconnected => {
                 self.banner_label
                     .set_text(&crate::i18n::i18n("Disconnected"));
                 self.reconnect_banner.set_visible(true);
+                self.toolbar_auto_hide.hide();
             }
-            EmbeddedConnectionState::Connecting | EmbeddedConnectionState::Connected => {
+            EmbeddedConnectionState::Connecting => {
                 self.reconnect_banner.set_visible(false);
+                // Show toolbar briefly during connection
+                self.toolbar_auto_hide.show_briefly();
+            }
+            EmbeddedConnectionState::Connected => {
+                self.reconnect_banner.set_visible(false);
+                // Show toolbar briefly when connected, then auto-hide
+                self.toolbar_auto_hide.show_briefly();
             }
         }
 

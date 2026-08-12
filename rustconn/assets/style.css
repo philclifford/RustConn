@@ -875,6 +875,16 @@ togglebutton.broadcasting image {
     margin-bottom: 4px;
 }
 
+/* Embedded Web browser toolbar — floats over the WebView like RDP/VNC.
+ * Semi-transparent background with rounded corners for a modern overlay look. */
+.web-toolbar-overlay {
+    background-color: rgba(36, 36, 36, 0.85);
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
 /* Toolbar reveal handle — small arrow indicator at the top center that
  * triggers the floating toolbar on hover/click. Kept unobtrusive so it
  * does not interfere with the remote desktop or window controls. */

@@ -28,8 +28,9 @@ const ZOOM_DEFAULT: f64 = 1.0;
 ///
 /// Layout: [Back] [Forward] [Reload] [Home] | [URL Entry] | [Autofill] [Zoom+] [Zoom-] [Menu]
 ///
-/// When the toolbar is narrow (< 500px), secondary actions (Home, Autofill,
-/// Zoom In, Zoom Out) are hidden and available via the overflow menu.
+/// The toolbar floats as an overlay above the WebView and auto-hides after
+/// inactivity. A reveal zone (arrow button) appears at the top center when
+/// the toolbar is hidden, allowing the user to show it on hover or click.
 ///
 /// All icon-only buttons carry both `set_tooltip_text` and `update_property`
 /// for GNOME HIG accessibility compliance.
@@ -151,25 +152,6 @@ impl NavigationToolbar {
         menu_button.set_tooltip_text(Some(&i18n("Menu")));
         menu_button.update_property(&[gtk4::accessible::Property::Label(&i18n("Menu"))]);
         container.append(&menu_button);
-
-        // --- Responsive overflow: hide secondary actions on narrow width ---
-        // Threshold: 500px. Secondary buttons + Home are hidden; actions
-        // remain reachable via the menu popover.
-        {
-            // Overflow threshold: below this width, hide secondary actions.
-            const OVERFLOW_THRESHOLD_PX: i32 = 500;
-            let secondary_for_overflow = secondary_box.clone();
-            let home_for_overflow = home_button.clone();
-            container.add_tick_callback(move |widget, _| {
-                let width = widget.width();
-                if width > 0 {
-                    let narrow = width < OVERFLOW_THRESHOLD_PX;
-                    secondary_for_overflow.set_visible(!narrow);
-                    home_for_overflow.set_visible(!narrow);
-                }
-                glib::ControlFlow::Continue
-            });
-        }
 
         Self {
             container,

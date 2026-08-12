@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.20.0] - 2026-08-12
 
+### Added
+
+- **Web embedded mode: auto-hide floating toolbar with reveal zone** — the navigation toolbar (Back, Forward, Reload, Home, URL bar, Zoom, Menu) now floats as a semi-transparent overlay above the WebView, matching the behavior of RDP and VNC embedded sessions. The toolbar appears briefly when the page connects, then auto-hides after 2 seconds of inactivity. A small arrow indicator at the top center acts as the reveal zone — hover or click it to show the toolbar. The toolbar stays visible while the pointer is over it, any control has focus, or a menu is open. This gives the web content the full viewport height, identical to how graphical remote sessions work.
+
 ### Changed
 
 - **libadwaita baseline raised from v1_5 to v1_6** — the workspace now requires libadwaita 1.6 or later. All `#[cfg(feature = "adw-1-6")]` feature guards have been removed; `adw::Spinner` replaces `gtk4::Spinner` throughout the codebase (sidebar loading indicator, password dialog verification, export dialog progress, VNC session connecting state, SSH agent settings validation, header bar operations). This is a **breaking change** for distributions still on libadwaita 1.5.
