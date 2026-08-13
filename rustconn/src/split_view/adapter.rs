@@ -747,8 +747,7 @@ impl SplitViewAdapter {
                 overlay.set_vexpand(true);
                 overlay.set_child(Some(widget));
 
-                let (reveal_container, _revealer) =
-                    self.panel_corner_buttons_autohide(panel_id);
+                let (reveal_container, _revealer) = self.panel_corner_buttons_autohide(panel_id);
                 overlay.add_overlay(&reveal_container);
 
                 panel_widget.append(&overlay);
