@@ -20,8 +20,8 @@ Communication language: Ukrainian.
 | `rustconn-cli` | Headless management over core data | Only rustconn-core. Default features minimal. |
 | `rustconn` | GTK4/libadwaita GUI, dialogs, embedded/external session presentation | May import GUI crates |
 | `rustconn-pty-sys` | Isolated FFI: macOS PTY controlling terminal (`setsid`+`TIOCSCTTY`) | Sanctioned `unsafe` (M-UNSAFE); `libc` only |
-| `rustconn-locale-sys` | Isolated FFI: startup `setlocale`, guarded against running once a second thread exists | Sanctioned `unsafe` (M-UNSAFE); `gettext-rs` only |
-| `rustconn-env-sys` | Isolated FFI: the startup `GSK_RENDERER` write, guarded the same way | Sanctioned `unsafe` (M-UNSAFE); no dependencies |
+| `rustconn-locale-sys` | Isolated FFI: startup `setlocale`, refused once *this program* spawns a thread of its own (baseline growth, Linux only), once a call arrives from another thread, or after sealing | Sanctioned `unsafe` (M-UNSAFE); `gettext-rs` only |
+| `rustconn-env-sys` | Isolated FFI: the startup `GSK_RENDERER` and `LANGUAGE` writes, guarded the same way | Sanctioned `unsafe` (M-UNSAFE); no dependencies |
 
 Every `-sys` crate is an **unconditional** workspace member and an
 unconditional dependency, with `#[cfg]` inside where the platform differs. That
@@ -34,7 +34,13 @@ the caller lives.
 
 ## Absolute Rules
 
-- `unsafe_code = "forbid"` everywhere **except** the `rustconn-*-sys` crates
+- No `unsafe` outside the `rustconn-*-sys` crates. Mechanically:
+  `unsafe_code = "deny"` in `[workspace.lints.rust]`, re-opened by a crate-level
+  `#![expect(unsafe_code, reason = "…")]` in each of the three helpers. It is
+  `deny` and not `forbid` on purpose — `forbid` cannot be overridden, so the
+  helpers had to declare their own `[lints]` table, which *replaces* the
+  inherited one and left the only crates allowed to write `unsafe` as the only
+  crates with no clippy lints at all. `rustconn` keeps a local `forbid`.
 - Passwords/keys → `secrecy::SecretString`, never plain `String`
 - Intermediate `expose_secret().to_string()` → wrap in `zeroize::Zeroizing::new()`
 - Errors → `thiserror::Error`. No `unwrap()`/`expect()` in production code; both
@@ -47,9 +53,11 @@ the caller lives.
 - Rust 2024 edition: let-chains instead of collapsible_if
 - Never `set_var`/`remove_var` (unsafe in Rust 2024). The one exception is
   `rustconn-env-sys::set_startup_var`, which may only be called from `main()`
-  before any thread starts and panics if it is not — reach for it only when a C
-  library reads the variable later and offers no API, as GTK does for
-  `GSK_RENDERER`
+  before this program starts a thread and panics if it is not — reach for it only
+  when a C library reads the variable later and offers no API, as GTK does for
+  `GSK_RENDERER` and gettext does for `LANGUAGE`. Those two are the only callers;
+  the second one seals the window, so a third added later panics rather than
+  quietly working
 
 ## Definition of Done
 

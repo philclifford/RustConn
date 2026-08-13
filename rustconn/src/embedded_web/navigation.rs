@@ -32,11 +32,12 @@ const ZOOM_DEFAULT: f64 = 1.0;
 /// inactivity. A reveal zone (arrow button) appears at the top center when
 /// the toolbar is hidden, allowing the user to show it on hover or click.
 ///
-/// When the panel is narrower than
-/// [`WEB_OVERFLOW_THRESHOLD_PX`](crate::embedded_toolbar_overflow::WEB_OVERFLOW_THRESHOLD_PX),
-/// the actions named by [`overflow_actions`](Self::overflow_actions) fold into a
-/// "⋯" popover so the menu and the URL bar keep their place — the same
-/// `ToolbarOverflow` the RDP and VNC toolbars use.
+/// When the panel is narrower than the assembled toolbar needs, the actions
+/// named by [`overflow_actions`](Self::overflow_actions) fold into a "⋯" popover
+/// so the menu and the URL bar keep their place — the same
+/// [`ToolbarOverflow`](crate::embedded_toolbar_overflow::ToolbarOverflow) the RDP
+/// and VNC toolbars use, which measures the toolbar rather than comparing
+/// against a fixed breakpoint.
 ///
 /// All icon-only buttons carry both `set_tooltip_text` and `update_property`
 /// for GNOME HIG accessibility compliance.
@@ -167,14 +168,12 @@ impl NavigationToolbar {
     }
 
     /// Returns the actions that fold into the overflow popover when the toolbar
-    /// is narrower than [`WEB_OVERFLOW_THRESHOLD_PX`], in toolbar order.
+    /// no longer fits, in toolbar order.
     ///
     /// Back, Forward, Reload, the URL bar and the menu are primary and stay put:
     /// the first three are how the user moves around, the URL bar is the only
     /// way to reach an address that is not linked from the page, and the menu is
     /// where the overflow itself lives.
-    ///
-    /// [`WEB_OVERFLOW_THRESHOLD_PX`]: crate::embedded_toolbar_overflow::WEB_OVERFLOW_THRESHOLD_PX
     #[must_use]
     pub fn overflow_actions(&self) -> Vec<gtk4::Widget> {
         vec![

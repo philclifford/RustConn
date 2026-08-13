@@ -42,12 +42,25 @@ The spec file automatically selects libadwaita feature flags based on the distro
 | `_multibuild` | Multi-build flavors: `standard` + `appimage` |
 | `rustconn.spec` | RPM spec for openSUSE / Fedora |
 | `rustconn.changes` | RPM changelog (OBS format) |
-| `rustconn.dsc` | Debian source control |
+| `rustconn.dsc` | Debian source control, `3.0 (quilt)` form — **not the file OBS builds from**, see below |
+| `debian.dsc` | Debian source control, `1.0` form — **this is the live one** |
 | `debian.changelog` | Debian changelog |
 | `debian.control` | Debian build/runtime dependencies |
 | `debian.copyright` | Debian copyright file |
 | `debian.rules` | Debian build rules |
 | `AppImageBuilder.yml` | AppImage configuration |
+
+### Which `.dsc` is live
+
+`scripts/obs-publish.sh` rewrites `Version:` and `DEBTRANSFORM-TAR:` in
+**`debian.dsc`** only; nothing in the pipeline reads `rustconn.dsc`. It is kept
+because the OBS project has historically carried both forms and removing a source
+control file from a live project is not something to do blind, but treat
+`debian.dsc` as the authority. Their `Build-Depends` lines are held identical
+deliberately: when they drifted, `rustconn.dsc` was missing `libadwaita-1-dev`
+altogether, which is exactly the kind of difference nobody notices in a file that
+is never built. `.dsc` is a strict deb822 file with no comment syntax, hence this
+note lives here.
 
 ## Build Dependencies
 

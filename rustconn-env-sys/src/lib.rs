@@ -5,8 +5,10 @@
 //! without synchronisation. A concurrent `getenv` — from any thread, including
 //! one inside a C library RustConn links — can read a half-updated block, or
 //! keep using a string `setenv` has already freed. Every other crate in this
-//! workspace sets `unsafe_code = "forbid"`, so the call lives here, behind a
-//! guard that refuses it outside the window in which it is sound.
+//! workspace denies `unsafe_code`, so the call lives here, behind a guard that
+//! refuses it outside the window in which it is sound. `deny` rather than
+//! `forbid` is what lets this crate re-open the lint for itself while still
+//! inheriting the workspace's clippy set; see the `[lints]` note in `Cargo.toml`.
 //!
 //! It exposes one operation, [`set_startup_var`], and one way to close the
 //! window in which that operation is allowed, [`seal_env`]. Reading the
@@ -16,22 +18,31 @@
 //!
 //! # Why RustConn needs to write the environment at all
 //!
-//! `GSK_RENDERER` is the only interface GTK offers for choosing a GSK renderer
-//! — there is no API — and it has to be set before `gtk_init`. RustConn selects
-//! the Cairo renderer in the two situations where the GPU path is known to be
-//! worse than software rasterisation: X11 compositors that paint popovers blank
-//! until hovered ([#85](https://github.com/totoshko88/RustConn/issues/85)), and
-//! macOS guests on Apple Silicon, whose paravirtualised GPU offers Metal but no
-//! accelerated OpenGL, leaving GSK's GL renderer on a software fallback
-//! ([#274](https://github.com/totoshko88/RustConn/issues/274)).
+//! Two startup settings are exposed by their host library as an environment
+//! variable and nothing else — no API exists to pass either one:
 //!
-//! The mechanism used to be a re-exec with the variable set in the child, which
-//! sidesteps `set_var` entirely. That works on Linux but is unavailable on
-//! macOS: replacing the process image destroys the LaunchServices scene
-//! registration `NSStatusItem` needs, and the tray icon silently disappears —
-//! diagnosed and fixed once already, and not worth reintroducing. Setting the
-//! variable in-process is what lets both platforms share one code path, at the
-//! cost of the guarded `unsafe` below.
+//! * **`GSK_RENDERER`**, GTK's only interface for choosing a GSK renderer, read
+//!   while the first surface is realised and therefore needed before `gtk_init`.
+//!   RustConn selects the Cairo renderer in the two situations where the GPU path
+//!   is known to be worse than software rasterisation: X11 compositors that paint
+//!   popovers blank until hovered
+//!   ([#85](https://github.com/totoshko88/RustConn/issues/85)), and macOS guests
+//!   on Apple Silicon, whose paravirtualised GPU offers Metal but no accelerated
+//!   OpenGL, leaving GSK's GL renderer on a software fallback
+//!   ([#274](https://github.com/totoshko88/RustConn/issues/274)).
+//! * **`LANGUAGE`**, GNU gettext's primary catalogue-selection mechanism, needed
+//!   before the first translatable string is evaluated. It matters beyond
+//!   `setlocale` because gettext honours it even when the named locale is not
+//!   installed, which is the normal case inside a Flatpak sandbox
+//!   ([#158](https://github.com/totoshko88/RustConn/issues/158)).
+//!
+//! Both used to be applied by re-execing the process with the variable set in the
+//! child, which sidesteps `set_var` entirely. That works on Linux but is
+//! unavailable on macOS: replacing the process image destroys the LaunchServices
+//! scene registration `NSStatusItem` needs, and the tray icon silently
+//! disappears. Setting the variables in-process is what lets both platforms share
+//! one code path, at the cost of the guarded `unsafe` below — and it removes two
+//! process spawns from startup.
 //!
 //! # The contract
 //!
@@ -82,6 +93,16 @@
 //! sitting. Any change to the reasoning above belongs in both.
 //!
 //! [`rustconn-locale-sys`]: https://github.com/totoshko88/RustConn/tree/main/rustconn-locale-sys
+
+// The one lint this crate re-opens out of the inherited workspace set, which is
+// `deny` rather than `forbid` precisely so that this line is possible. `expect`
+// rather than `allow`: if the `unsafe` call below ever goes away, the compiler
+// says so instead of leaving a stale exemption behind — and a `-sys` crate with
+// no `unsafe` left has no reason to exist and should be folded into its caller.
+#![expect(
+    unsafe_code,
+    reason = "sanctioned FFI crate (M-UNSAFE); the guarded setenv call is its entire purpose"
+)]
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -235,8 +256,8 @@ fn live_thread_count() -> Option<usize> {
 /// Sets the environment variable `name` to `value` for the rest of the process.
 ///
 /// Intended for variables that a C library reads later during its own
-/// initialisation, where no API-level alternative exists — `GSK_RENDERER` being
-/// the case this crate was written for.
+/// initialisation, where no API-level alternative exists — `GSK_RENDERER` and
+/// `LANGUAGE` being the two cases this crate was written for.
 ///
 /// # Panics
 ///
@@ -275,11 +296,15 @@ pub fn set_startup_var(name: &str, value: &str) {
     //    the case the call site controls and the case a regression would create.
     //
     //    Elsewhere — macOS — that count is unavailable and the absence of a new
-    //    thread is *not* verified here; it follows from the call site instead.
-    //    The sole caller, `rustconn::renderer::apply_renderer_preference`, runs
-    //    from `main()` before GTK, GIO, tokio or the tracing subscriber start,
-    //    and any call that appeared later would come from one of those threads
-    //    and be refused by the thread-identity check above.
+    //    thread is *not* verified here; it follows from the call sites instead.
+    //    There are two, `rustconn::i18n::apply_configured_language` (LANGUAGE)
+    //    and `rustconn::renderer::apply_renderer_preference` (GSK_RENDERER), in
+    //    that order. Both run from `main()` before GTK, GIO, tokio or the
+    //    tracing subscriber start, and nothing between them spawns a thread; any
+    //    call that appeared later would come from one of those threads and be
+    //    refused by the thread-identity check above. The second of the two also
+    //    calls `seal_env`, so a third caller added after startup is refused by
+    //    the seal rather than relying on anyone noticing this comment.
     //
     // `name` and `value` are copied into NUL-terminated buffers before the C
     // call, so no borrow outlives it.

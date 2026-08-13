@@ -14,7 +14,12 @@ nix = { version = "0.31", features = ["term"] }
 
 # This crate is the single sanctioned location for `unsafe` in the workspace
 # (see rust-pragmatic-guidelines.md, M-UNSAFE: isolate FFI in a small -sys
-# crate). It therefore does NOT opt into `[workspace.lints]`
-# (unsafe_code = "forbid") and instead explicitly allows unsafe here.
-[lints.rust]
-unsafe_code = "allow"
+# crate), and it opts into the workspace lint set like every other crate. The
+# single exemption it needs is re-opened in src/lib.rs with a crate-level
+# `#![expect(unsafe_code, reason = "…")]`, which is possible because the workspace
+# sets that lint to `deny` rather than `forbid`. Declaring `[lints.rust]` here
+# instead would *replace* the inherited table, losing clippy::pedantic,
+# clippy::nursery and clippy::unwrap_used in the one crate that least wants them
+# relaxed.
+[lints]
+workspace = true

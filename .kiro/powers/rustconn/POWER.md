@@ -111,7 +111,7 @@ The `rustconn-checks` hook (userTriggered) provides a manual full quality gate w
 | `adw::` widgets | Deprecated GTK patterns |
 | `tracing` for structured logging | `println!`/`eprintln!` for log output |
 | Line width 100 chars, 4 spaces, LF | Tabs, CRLF, long lines |
-| `unsafe_code = "forbid"` | Any unsafe code |
+| `unsafe` only in `rustconn-*-sys` (`unsafe_code = "deny"` + crate-level `expect`) | Any unsafe outside a `-sys` crate |
 | Rust 2024 edition patterns (let-chains) | Legacy `if let` + `collapsible_if` |
 
 ## Code Patterns

@@ -64,13 +64,13 @@ rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.20.0" }
 # window is sealed. Same reason for the separate crate: `setlocale` is `unsafe`
 # in gettext-rs 0.8 and `unsafe` is forbidden here.
 rustconn-locale-sys = { path = "../rustconn-locale-sys", version = "0.20.0" }
-# The startup `GSK_RENDERER` write, guarded the same way. GTK offers no API for
-# choosing a renderer, so the environment is the only interface, and
-# `std::env::set_var` is `unsafe` in edition 2024 while `unsafe` is forbidden
-# here. Not gated to one platform on purpose: both the X11 (#85) and the macOS
-# guest-VM (#274) fallbacks go through it, and an unconditional dependency is
-# what gets the guard compiled and its contract tests run — no CI job builds
-# macOS.
+# The startup `GSK_RENDERER` and `LANGUAGE` writes, guarded the same way.
+# Neither GTK nor gettext offers an API for these, so the environment is the only
+# interface, and `std::env::set_var` is `unsafe` in edition 2024 while `unsafe`
+# is forbidden here. Not gated to one platform on purpose: the X11 (#85), macOS
+# guest-VM (#274) and Flatpak language (#158) paths all go through it, and an
+# unconditional dependency is what gets the guard compiled and its contract
+# tests run — no CI job builds macOS.
 rustconn-env-sys = { path = "../rustconn-env-sys", version = "0.20.0" }
 # WebKitGTK 6.0 bindings for embedded web browser (Linux only)
 webkit6 = { version = "0.6", optional = true }

@@ -723,18 +723,15 @@ impl EmbeddedRdpWidget {
             ];
             #[cfg(feature = "rdp-embedded")]
             secondary.push(save_files_button.clone().upcast());
-            crate::embedded_toolbar_overflow::ToolbarOverflow::new(
-                &toolbar,
-                secondary,
-                crate::embedded_toolbar_overflow::RDP_OVERFLOW_THRESHOLD_PX,
-            )
-            .attach(&drawing_area);
+            crate::embedded_toolbar_overflow::ToolbarOverflow::new(&toolbar, secondary)
+                .attach(&drawing_area);
         }
 
         let toolbar_auto_hide = crate::embedded_toolbar_overflow::ToolbarAutoHide::attach(
             &overlay,
             &toolbar,
             &toolbar_revealer,
+            crate::embedded_toolbar_overflow::RevealHandle::TopCentre,
         );
 
         // Reconnect banner (shown when disconnected, at bottom like VTE sessions)

@@ -47,15 +47,22 @@ fn find_table_string(content: &str, table: &str, key: &str) -> Option<String> {
         let Some(rest) = trimmed.strip_prefix(key) else {
             continue;
         };
-        // `renderer_extra = …` starts with `renderer` but is a different key,
-        // so the separator has to be the next non-space character.
+        // `renderer_debug = …` starts with `renderer` but is a different key, so
+        // the separator has to be the next non-space character.
         let Some(value) = rest.trim_start().strip_prefix('=') else {
             continue;
         };
 
-        // Quoted, so an inline comment after the value is not part of it.
-        let value = value.trim_start().strip_prefix('"')?;
-        let value = value.split('"').next()?;
+        // Quoted, so an inline comment after the value is not part of it. A value
+        // that is not quoted at all — hand-edited `renderer = software`, say — is
+        // something this scan does not claim to understand, so it reads as unset
+        // and the caller's default wins. `continue` rather than `return None`
+        // purely for symmetry with the two checks above: TOML forbids a duplicate
+        // key inside one table, so there is no second line for the loop to find.
+        let Some(quoted) = value.trim_start().strip_prefix('"') else {
+            continue;
+        };
+        let value = quoted.split('"').next()?;
         if value.is_empty() {
             return None;
         }
@@ -102,6 +109,15 @@ mod tests {
     #[test]
     fn does_not_match_a_longer_key_with_the_same_prefix() {
         let content = "[ui]\nrenderer_debug = \"1\"\n";
+
+        assert_eq!(find_table_string(content, "ui", "renderer"), None);
+    }
+
+    /// An unquoted value is outside what this scan claims to read, so it reads as
+    /// unset rather than as a value — the caller's default is the safe answer.
+    #[test]
+    fn treats_an_unquoted_value_as_unset() {
+        let content = "[ui]\nrenderer = software\n";
 
         assert_eq!(find_table_string(content, "ui", "renderer"), None);
     }

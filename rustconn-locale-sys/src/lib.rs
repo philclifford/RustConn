@@ -5,8 +5,11 @@
 //! environment without synchronisation, so it is only sound while the process
 //! is still single-threaded — the unsoundness reported as
 //! [RUSTSEC-2026-0244](https://rustsec.org/advisories/RUSTSEC-2026-0244).
-//! `gettext-rs` 0.8 marks it `unsafe` for exactly that reason, and every other
-//! crate in this workspace sets `unsafe_code = "forbid"`. Hence this crate.
+//! `gettext-rs` 0.8 marks it `unsafe` for exactly that reason, and no other crate
+//! in this workspace may write `unsafe` at all. Hence this crate. The workspace
+//! lint is `deny` rather than `forbid` so that the three `-sys` crates can
+//! re-open it for themselves and still inherit the workspace's clippy set; see
+//! the `[lints]` note in `Cargo.toml`.
 //!
 //! It exposes one operation, [`init_locale`], and one way to close the window
 //! in which that operation is allowed, [`seal_locale`]. The rest of the gettext
@@ -78,6 +81,16 @@
 //!   application's; a check would refuse every call. RustConn satisfies this
 //!   clause by ordering instead: `i18n::init()` is the first statement of
 //!   `main()`, ahead of every handler the application or GTK installs.
+
+// The one lint this crate re-opens out of the inherited workspace set, which is
+// `deny` rather than `forbid` precisely so that this line is possible. `expect`
+// rather than `allow`: if the `unsafe` call below ever goes away, the compiler
+// says so instead of leaving a stale exemption behind — and a `-sys` crate with
+// no `unsafe` left has no reason to exist and should be folded into its caller.
+#![expect(
+    unsafe_code,
+    reason = "sanctioned FFI crate (M-UNSAFE); the guarded setlocale call is its entire purpose"
+)]
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};

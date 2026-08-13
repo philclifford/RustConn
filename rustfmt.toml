@@ -7,7 +7,23 @@ use_small_heuristics = "Default"
 reorder_imports = true
 reorder_modules = true
 remove_nested_parens = true
-# NOTE: imports_granularity = "Module" and group_imports = "StdExternalCrate"
-# require nightly rustfmt. Run with: cargo +nightly fmt --all
-imports_granularity = "Module"
-group_imports = "StdExternalCrate"
+# `imports_granularity` and `group_imports` are deliberately NOT set here.
+#
+# Both are nightly-only rustfmt options. Keeping them in this file did not apply
+# them on the pinned stable toolchain — it only made every invocation print
+#
+#   Warning: can't set `imports_granularity = Module`, unstable features are
+#   only available in nightly channel.
+#
+# twice per crate, 22 lines of noise on every `cargo fmt` and on the CI format
+# gate, for a rule that never ran. `rust-toolchain.toml` now pins stable 1.97.1,
+# so they would never have run again either. Same class of problem as a
+# `typos.toml` with no runner: a config nothing honours is decoration.
+#
+# To apply them deliberately, pass them to a nightly run instead of storing them:
+#
+#   cargo +nightly fmt --all -- \
+#       --config imports_granularity=Module,group_imports=StdExternalCrate
+#
+# Note that the stable `cargo fmt --all -- --check` gate does not enforce either
+# option, so such a run is a tidy-up, not something CI will ask for.

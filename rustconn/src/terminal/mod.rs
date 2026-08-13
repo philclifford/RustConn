@@ -7,7 +7,21 @@
 //!
 //! - `types` - Data structures for sessions
 //! - `config` - Terminal appearance and behavior configuration
-
+//! - `tab_lifecycle` - Tab creation, parking for split view, restore, reparenting
+//! - `session_lifecycle` - Reconnect, VTE reset, status indicators, reconnect banner
+//!
+// ponytail: `TerminalNotebook` is still one type with ~156 methods; 0.20.0 moved
+// the tab- and session-lifecycle ones into the two modules named above, which cut
+// this file by 30% but did not reduce coupling — it only made it visible, since
+// the moved methods had to widen from private to `pub(super)`.
+//
+// The actual god object is the per-tab state those methods share: the notebook
+// holds parallel collections keyed by tab, and every method reaches across them.
+// The upgrade path is to extract that into a `TerminalTab` type owning its own
+// widget, session handle, connection and reconnect state, after which most of
+// these methods become methods on the tab and the notebook keeps only the ones
+// that are genuinely about the collection. Do that before splitting another file
+// off; a fourth module would move lines without moving the problem.
 mod config;
 mod detach;
 pub use detach::{DetachMonitor, DetachPresentation};

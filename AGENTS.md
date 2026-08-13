@@ -63,9 +63,13 @@ number in `Cargo.toml` (`rust-version`).
 | `rustconn` | Yes | All GUI, dialogs, session presentation. |
 | `rustconn-pty-sys` | No | Isolated FFI: macOS PTY controlling terminal. |
 | `rustconn-locale-sys` | No | Isolated FFI: startup `setlocale`. |
-| `rustconn-env-sys` | No | Isolated FFI: startup `GSK_RENDERER` write. |
+| `rustconn-env-sys` | No | Isolated FFI: startup `GSK_RENDERER` and `LANGUAGE` writes. |
 
-`unsafe_code = "forbid"` everywhere **except** the three `*-sys` crates. New FFI
+No `unsafe` outside the three `*-sys` crates: `unsafe_code = "deny"` in
+`[workspace.lints.rust]`, re-opened by a crate-level
+`#![expect(unsafe_code, reason = "…")]` in each helper. `deny` and not `forbid`
+because `forbid` cannot be overridden, which would stop the helpers inheriting
+the workspace clippy set. New FFI
 gets its own `rustconn-*-sys` crate — never an exception where the caller lives,
 and never a platform-gated dependency: no CI job builds macOS, so a
 macOS-only `-sys` crate would hold `unsafe` that nothing compiles.
@@ -85,7 +89,8 @@ A pre-write hook blocks violations of both rules, but do not rely on it.
 - Icon-only buttons need both a tooltip and an accessible label
 - Never `std::env::set_var`/`remove_var` (unsafe in Rust 2024) — the sole
   exception is `rustconn-env-sys::set_startup_var`, callable only from `main()`
-  before any thread starts
+  before this program starts a thread. Its two callers are `LANGUAGE` (i18n.rs)
+  and `GSK_RENDERER` (renderer.rs), in that order; the second seals the window
 - Prefer `adw::` widgets; `adw::AlertDialog`, not the deprecated `gtk::MessageDialog`
 
 ## Definition of done

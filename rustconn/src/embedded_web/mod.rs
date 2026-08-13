@@ -339,13 +339,19 @@ impl EmbeddedWebWidget {
         crate::embedded_toolbar_overflow::ToolbarOverflow::new(
             toolbar.widget(),
             toolbar.overflow_actions(),
-            crate::embedded_toolbar_overflow::WEB_OVERFLOW_THRESHOLD_PX,
         )
         .attach_to_widget(&overlay);
 
-        // Attach ToolbarAutoHide controller to the overlay
-        let toolbar_auto_hide =
-            ToolbarAutoHide::attach(&overlay, toolbar.widget(), &toolbar_revealer);
+        // Attach ToolbarAutoHide controller to the overlay. The reveal handle
+        // goes to the trailing corner rather than the centre RDP and VNC use:
+        // the surface underneath is a web page, and its top centre is where the
+        // logo, navigation and search live.
+        let toolbar_auto_hide = ToolbarAutoHide::attach(
+            &overlay,
+            toolbar.widget(),
+            &toolbar_revealer,
+            crate::embedded_toolbar_overflow::RevealHandle::TopTrailing,
+        );
 
         // Build main container: progress bar + reconnect banner + overlay (webview + toolbar)
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -353,12 +359,15 @@ impl EmbeddedWebWidget {
         container.append(&reconnect_banner);
         container.append(&overlay);
 
-        // Focus delegation for split view: when container.grab_focus() is called,
-        // GTK follows the focus_child chain to reach the actual focusable widget.
-        // Without this, keyboard shortcuts (Ctrl+/-/0) don't work in split panels.
-        container.set_focus_child(Some(&overlay));
-        overlay.set_focus_child(Some(&web_view));
-
+        // No `set_focus_child` chain here on purpose. A pair of those calls used
+        // to sit at this spot, justified as making `container.grab_focus()` reach
+        // the WebView so the zoom shortcuts would work in a split panel. Nothing
+        // calls `grab_focus()` on this container, `gtk_widget_set_focus_child` is
+        // documented as an API for widget *implementations*, and GTK overwrites
+        // the value during focus navigation — so the pair was inert. What makes
+        // the shortcuts land in the right panel is the `GestureClick` above,
+        // which takes the focus on a press exactly as the RDP drawing area
+        // (`embedded_rdp::input`) and the VNC one already do.
         let state = Rc::new(RefCell::new(EmbeddedConnectionState::Disconnected));
         let home_url = Rc::new(RefCell::new(url.to_string()));
         let on_state_changed: Rc<RefCell<Option<StateCallback>>> = Rc::new(RefCell::new(None));

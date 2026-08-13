@@ -413,6 +413,11 @@ fn main() -> gtk4::glib::ExitCode {
     // This must happen early so that all gettext() calls during UI construction
     // use the correct locale. The LANGUAGE env var must be set before any
     // translatable string is evaluated.
+    //
+    // This is the first of the two startup environment writes, both guarded by
+    // rustconn-env-sys; the renderer choice below is the second and seals the
+    // window afterwards. Nothing between the two may spawn a thread — the guard
+    // refuses the second write if anything does.
     i18n::apply_language_from_config();
 
     // Initialize logging with environment filter (RUST_LOG)
@@ -449,7 +454,8 @@ fn main() -> gtk4::glib::ExitCode {
     // Choose the GSK renderer before GTK reads it. Placed after the subscriber
     // so the choice — a heuristic, when the setting is Automatic — is visible in
     // the log, and before anything spawns a thread, which is what makes writing
-    // the environment sound. Also seals the startup environment.
+    // the environment sound. Also seals the startup environment, which is why it
+    // must stay after the language write above: the seal covers both.
     renderer::apply_renderer_preference();
 
     // Drop the flood of harmless CSS theme-parser warnings GTK4 emits when it

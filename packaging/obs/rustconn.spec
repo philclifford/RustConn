@@ -282,25 +282,40 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
-* Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.0-0
+* Thu Aug 13 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.0-0
 - Version bump to 0.20.0
+- Added: signed build provenance for every .deb, .rpm, AppImage and Flatpak bundle
+  attached to a GitHub release — verify with
+  "gh attestation verify <file> --repo totoshko88/RustConn"
 - Added: Web embedded mode — auto-hide floating toolbar with reveal zone
+- Added: Settings > Interface > Rendering — Automatic, Hardware (GPU) or Software (Cairo) (#274)
+- Fixed: the floating viewer toolbar was revealed but not clickable for its first
+  two seconds in RDP, VNC and Web sessions
+- Fixed: choosing a non-system interface language cost macOS users the tray icon —
+  applying the language re-executed the process; the re-exec is gone (#158)
 - Fixed: Web zoom shortcuts (Ctrl+/-/0) did not work in split view
-- Fixed: Web toolbar clipped instead of collapsing in a narrow split panel
+- Fixed: Web toolbar clipped instead of collapsing in a narrow split panel; the
+  collapse point is now measured rather than a fixed pixel breakpoint
+- Fixed: the Web reveal handle sat over the page's top centre, and the floating
+  toolbar ignored the local theme
 - Fixed: a failed Web page load left the toolbar logic unrun, and the load timeout reported nothing
 - Fixed: the header bar's busy spinner lost its accessible name
-- Fixed: POTFILES.in did not list the two modules extracted from terminal/mod.rs
-- Changed: the 60-second Web load timeout now reports itself in the reconnect banner
-- Improved: TerminalNotebook god class split — mod.rs reduced by 30%
-- Improved: adw::Spinner where the runtime has it (opt-in adw-1-6), gtk4::Spinner where it does not; baseline stays libadwaita 1.5
-- Improved: build dependencies state the versions the crate features require (libadwaita >= 1.5, VTE >= 0.76)
-- Added: Settings > Interface > Rendering — Automatic, Hardware (GPU) or Software (Cairo) (#274)
 - Fixed: macOS inside a virtual machine had input lag and stuttering scroll — the
   automatic renderer choice now detects a hypervisor and selects Cairo (#274)
 - Fixed: seven translatable strings were in the source but in no catalogue; now
   translated in all 16 locales
-- Improved: the X11 Cairo fallback no longer re-execs the process — the
-  GSK_RENDERER write moved into the new rustconn-env-sys crate
+- Fixed: POTFILES.in did not list the two modules extracted from terminal/mod.rs
+- Changed: the 60-second Web load timeout now reports itself in the reconnect banner
+- Improved: neither the X11 Cairo fallback nor the language selection re-execs the
+  process any more — both environment writes moved into the new rustconn-env-sys
+  crate, so startup spawns two processes fewer
+- Improved: terminal/mod.rs split into three modules — 4365 lines down to 3052
+- Improved: adw::Spinner where the runtime has it (opt-in adw-1-6), gtk4::Spinner where it does not; baseline stays libadwaita 1.5
+- Improved: build dependencies state the versions the crate features require (libadwaita >= 1.5, VTE >= 0.76)
+- Improved: the three FFI crates now inherit the workspace clippy lint set; they
+  had been the only crates in the workspace with no lints at all
+- Documentation: how to verify a downloaded release artifact, in docs/INSTALL.md
+  and SECURITY.md
 
 * Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.22-0
 - Version bump to 0.19.22

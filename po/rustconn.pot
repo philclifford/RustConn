@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: rustconn 0.20.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-13 00:42+0300\n"
+"POT-Creation-Date: 2026-08-13 12:26+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -151,8 +151,8 @@ msgstr ""
 msgid "{} — RustConn"
 msgstr ""
 
-#: rustconn/src/detached_window.rs:137 rustconn/src/embedded_rdp/mod.rs:750
-#: rustconn/src/embedded_rdp/mod.rs:1875
+#: rustconn/src/detached_window.rs:137 rustconn/src/embedded_rdp/mod.rs:747
+#: rustconn/src/embedded_rdp/mod.rs:1872
 #: rustconn/src/embedded_rdp/polling_handlers.rs:62
 #: rustconn/src/embedded_vnc/ui.rs:133
 #: rustconn/src/terminal/session_lifecycle.rs:313
@@ -8173,7 +8173,7 @@ msgid "Connection refused. Check host and port."
 msgstr ""
 
 #: rustconn/src/embedded_rdp/connection.rs:2071
-#: rustconn/src/embedded_web/mod.rs:541
+#: rustconn/src/embedded_web/mod.rs:550
 msgid "Connection timed out. Check that the host is reachable."
 msgstr ""
 
@@ -8229,19 +8229,19 @@ msgstr ""
 msgid "Computer Management"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:396 rustconn/src/embedded_rdp/mod.rs:1002
+#: rustconn/src/embedded_rdp/mod.rs:396 rustconn/src/embedded_rdp/mod.rs:999
 msgid "Shell Launchers"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:398 rustconn/src/embedded_rdp/mod.rs:1019
+#: rustconn/src/embedded_rdp/mod.rs:398 rustconn/src/embedded_rdp/mod.rs:1016
 msgid "Scripts"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:400 rustconn/src/embedded_rdp/mod.rs:997
+#: rustconn/src/embedded_rdp/mod.rs:400 rustconn/src/embedded_rdp/mod.rs:994
 msgid "PowerShell (Admin)"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:401 rustconn/src/embedded_rdp/mod.rs:1001
+#: rustconn/src/embedded_rdp/mod.rs:401 rustconn/src/embedded_rdp/mod.rs:998
 msgid "CMD (Admin)"
 msgstr ""
 
@@ -8309,52 +8309,52 @@ msgstr ""
 msgid "Save files from remote clipboard"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:753 rustconn/src/embedded_trait.rs:236
-#: rustconn/src/embedded_vnc/ui.rs:136 rustconn/src/terminal/mod.rs:1043
+#: rustconn/src/embedded_rdp/mod.rs:750 rustconn/src/embedded_trait.rs:236
+#: rustconn/src/embedded_vnc/ui.rs:136 rustconn/src/terminal/mod.rs:1057
 #: rustconn/src/terminal/session_lifecycle.rs:326
 msgid "Reconnect"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:755 rustconn/src/embedded_vnc/ui.rs:138
-#: rustconn/src/terminal/mod.rs:1045
+#: rustconn/src/embedded_rdp/mod.rs:752 rustconn/src/embedded_vnc/ui.rs:138
+#: rustconn/src/terminal/mod.rs:1059
 #: rustconn/src/terminal/session_lifecycle.rs:328
 msgid "Reconnect to this session"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:936
+#: rustconn/src/embedded_rdp/mod.rs:933
 msgid "{} file(s) ready to paste on remote"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:995
+#: rustconn/src/embedded_rdp/mod.rs:992
 msgid "PowerShell"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:1000
+#: rustconn/src/embedded_rdp/mod.rs:997
 msgid "CMD"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:1076 rustconn/src/embedded_rdp/mod.rs:1147
-#: rustconn/src/embedded_rdp/mod.rs:1350
+#: rustconn/src/embedded_rdp/mod.rs:1073 rustconn/src/embedded_rdp/mod.rs:1144
+#: rustconn/src/embedded_rdp/mod.rs:1347
 msgid "Channel not ready"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:1121 rustconn/src/embedded_rdp/mod.rs:1174
+#: rustconn/src/embedded_rdp/mod.rs:1118 rustconn/src/embedded_rdp/mod.rs:1171
 msgid "Script sent"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:1395
+#: rustconn/src/embedded_rdp/mod.rs:1392
 msgid "Select folder to save files"
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:1424
+#: rustconn/src/embedded_rdp/mod.rs:1421
 msgid "Downloading..."
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:1457
+#: rustconn/src/embedded_rdp/mod.rs:1454
 msgid "Downloading files..."
 msgstr ""
 
-#: rustconn/src/embedded_rdp/mod.rs:1860
+#: rustconn/src/embedded_rdp/mod.rs:1857
 msgid "Connection may have been lost while the computer slept"
 msgstr ""
 
@@ -8460,13 +8460,13 @@ msgstr ""
 msgid "Connected to {}"
 msgstr ""
 
-#: rustconn/src/embedded_toolbar_overflow.rs:108
-#: rustconn/src/embedded_toolbar_overflow.rs:110
+#: rustconn/src/embedded_toolbar_overflow.rs:87
+#: rustconn/src/embedded_toolbar_overflow.rs:89
 msgid "More actions"
 msgstr ""
 
-#: rustconn/src/embedded_toolbar_overflow.rs:249
-#: rustconn/src/embedded_toolbar_overflow.rs:251
+#: rustconn/src/embedded_toolbar_overflow.rs:311
+#: rustconn/src/embedded_toolbar_overflow.rs:313
 msgid "Show session toolbar"
 msgstr ""
 
@@ -8487,7 +8487,7 @@ msgid "Reconnect to the remote session"
 msgstr ""
 
 #: rustconn/src/embedded_trait.rs:319 rustconn/src/embedded_web/mod.rs:290
-#: rustconn/src/embedded_web/mod.rs:486 rustconn/src/session/vnc.rs:99
+#: rustconn/src/embedded_web/mod.rs:495 rustconn/src/session/vnc.rs:99
 #: rustconn/src/session/vnc.rs:174 rustconn/src/session/vnc.rs:393
 msgid "Disconnected"
 msgstr ""
@@ -8512,93 +8512,93 @@ msgid "Using external viewer (unsupported encryption)"
 msgstr ""
 
 #: rustconn/src/embedded_web/mod.rs:296
-#: rustconn/src/embedded_web/navigation.rs:97
 #: rustconn/src/embedded_web/navigation.rs:98
+#: rustconn/src/embedded_web/navigation.rs:99
 msgid "Reload"
 msgstr ""
 
-#: rustconn/src/embedded_web/mod.rs:427
+#: rustconn/src/embedded_web/mod.rs:436
 msgid "No credentials configured for this connection"
 msgstr ""
 
-#: rustconn/src/embedded_web/mod.rs:701
+#: rustconn/src/embedded_web/mod.rs:710
 msgid "TLS certificate accepted (self-signed or untrusted)"
 msgstr ""
 
-#: rustconn/src/embedded_web/mod.rs:805
+#: rustconn/src/embedded_web/mod.rs:814
 msgid "Downloaded: {}"
 msgstr ""
 
-#: rustconn/src/embedded_web/mod.rs:832
+#: rustconn/src/embedded_web/mod.rs:841
 msgid "No login form fields found on this page"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:83
 #: rustconn/src/embedded_web/navigation.rs:84
+#: rustconn/src/embedded_web/navigation.rs:85
 msgid "Back"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:90
 #: rustconn/src/embedded_web/navigation.rs:91
+#: rustconn/src/embedded_web/navigation.rs:92
 msgid "Forward"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:103
 #: rustconn/src/embedded_web/navigation.rs:104
+#: rustconn/src/embedded_web/navigation.rs:105
 msgid "Home"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:112
+#: rustconn/src/embedded_web/navigation.rs:113
 msgid "Enter URL"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:113
+#: rustconn/src/embedded_web/navigation.rs:114
 msgid "URL address bar"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:130
-#: rustconn/src/embedded_web/navigation.rs:132
+#: rustconn/src/embedded_web/navigation.rs:131
+#: rustconn/src/embedded_web/navigation.rs:133
 msgid "Autofill credentials"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:138
 #: rustconn/src/embedded_web/navigation.rs:139
-#: rustconn/src/embedded_web/navigation.rs:338
+#: rustconn/src/embedded_web/navigation.rs:140
+#: rustconn/src/embedded_web/navigation.rs:337
 msgid "Zoom in"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:144
 #: rustconn/src/embedded_web/navigation.rs:145
-#: rustconn/src/embedded_web/navigation.rs:339
+#: rustconn/src/embedded_web/navigation.rs:146
+#: rustconn/src/embedded_web/navigation.rs:338
 msgid "Zoom out"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:151
-#: rustconn/src/embedded_web/navigation.rs:152 rustconn/src/window/ui.rs:98
+#: rustconn/src/embedded_web/navigation.rs:152
+#: rustconn/src/embedded_web/navigation.rs:153 rustconn/src/window/ui.rs:98
 msgid "Menu"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:430
+#: rustconn/src/embedded_web/navigation.rs:429
 msgid "Copy URL"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:432
+#: rustconn/src/embedded_web/navigation.rs:431
 msgid "Open in System Browser"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:438
+#: rustconn/src/embedded_web/navigation.rs:437
 msgid "Zoom Reset (100%)"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:442
+#: rustconn/src/embedded_web/navigation.rs:441
 msgid "Clear Session Data"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:458
+#: rustconn/src/embedded_web/navigation.rs:457
 msgid "URL copied to clipboard"
 msgstr ""
 
-#: rustconn/src/embedded_web/navigation.rs:507
+#: rustconn/src/embedded_web/navigation.rs:506
 msgid "Session data cleared"
 msgstr ""
 
@@ -9251,32 +9251,32 @@ msgstr ""
 msgid "Execute Snippet…"
 msgstr ""
 
-#: rustconn/src/terminal/mod.rs:381
+#: rustconn/src/terminal/mod.rs:395
 msgid "Tab Overview (Ctrl+Shift+O)"
 msgstr ""
 
-#: rustconn/src/terminal/mod.rs:385
+#: rustconn/src/terminal/mod.rs:399
 msgid "Tab Overview"
 msgstr ""
 
-#: rustconn/src/terminal/mod.rs:398 rustconn/src/terminal/tab_lifecycle.rs:35
+#: rustconn/src/terminal/mod.rs:412 rustconn/src/terminal/tab_lifecycle.rs:35
 #: rustconn/src/terminal/tab_lifecycle.rs:50 rustconn/src/window/mod.rs:3021
 msgid "Welcome"
 msgstr ""
 
-#: rustconn/src/terminal/mod.rs:1037
+#: rustconn/src/terminal/mod.rs:1051
 msgid "Command not found: {}"
 msgstr ""
 
-#: rustconn/src/terminal/mod.rs:1039
+#: rustconn/src/terminal/mod.rs:1053
 msgid "Failed to start '{}'"
 msgstr ""
 
-#: rustconn/src/terminal/mod.rs:1061
+#: rustconn/src/terminal/mod.rs:1075
 msgid "'{}' is not installed"
 msgstr ""
 
-#: rustconn/src/terminal/mod.rs:1064
+#: rustconn/src/terminal/mod.rs:1078
 msgid "Failed to start '{}': {}"
 msgstr ""
 

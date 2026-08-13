@@ -6,6 +6,30 @@ Please report security issues privately via GitHub Security Advisories
 (<https://github.com/totoshko88/RustConn/security/advisories/new>) rather than
 in public issues. We aim to acknowledge reports within a few days.
 
+## Release Artifact Provenance
+
+The `.deb`, `.rpm`, AppImage and Flatpak bundle attached to a GitHub release from
+0.20.0 onwards carry a signed [SLSA build provenance](https://slsa.dev/) attestation,
+issued through Sigstore to the release workflow itself:
+
+```bash
+gh attestation verify <file> --repo totoshko88/RustConn
+```
+
+**What a pass proves.** The file's digest and filename match a statement GitHub
+holds, signed with a short-lived certificate bound to a specific workflow run in
+this repository, naming the commit it was built from. An artifact rebuilt elsewhere,
+tampered with after the run, or renamed will not verify.
+
+**What it does not prove.** Nothing about the *contents* being free of defects or
+malicious code — provenance answers "who built this, from what source", not "is this
+source trustworthy". It also does not cover the snap (signed by the Snap Store) or
+packages installed from Flathub, OBS, AUR, nixpkgs or Homebrew, which are signed by
+whichever repository serves them.
+
+See [docs/INSTALL.md](docs/INSTALL.md#verifying-a-file-downloaded-from-a-github-release)
+for the offline variant and further detail.
+
 ## Credential Storage — Threat Model
 
 RustConn supports several backends for storing connection credentials. They

@@ -869,25 +869,45 @@ togglebutton.broadcasting image {
  * the revealer container stays fully transparent when hidden, and so the
  * toolbar floats without consuming vertical space.
  *
- * One rule for both: the two classes were byte-identical copies, and a change
- * to one silently stopped matching the other. */
+ * Geometry is shared; the background is not, and deliberately so — see the two
+ * rules below. These classes used to be byte-identical copies, which meant a
+ * change to one silently stopped matching the other; splitting only the single
+ * declaration that has to differ keeps that from coming back. */
 .rdp-toolbar-overlay,
 .web-toolbar-overlay {
-    background-color: rgba(36, 36, 36, 0.85);
     border-bottom-left-radius: 8px;
     border-bottom-right-radius: 8px;
     margin-top: 4px;
     margin-bottom: 4px;
 }
 
-/* Toolbar reveal handle — small arrow indicator at the top center that
+/* RDP, VNC and SPICE float over a remote desktop. What is underneath is not ours
+ * and follows the *remote* theme, so a fixed dark scrim is the only value that
+ * reads correctly in every case — and these toolbars carry nothing but symbolic
+ * icons, which stay legible on it whatever the local theme is. */
+.rdp-toolbar-overlay {
+    background-color: rgba(36, 36, 36, 0.85);
+}
+
+/* Web floats over a page but is local chrome, and unlike its siblings it carries
+ * a GtkEntry, which takes its colours from the local theme. The fixed dark scrim
+ * put a light URL bar inside a dark bar on a light desktop, so this one follows
+ * the theme the way a header bar does. */
+.web-toolbar-overlay {
+    background-color: alpha(@headerbar_bg_color, 0.9);
+}
+
+/* Toolbar reveal handle — small arrow indicator along the top edge that
  * triggers the floating toolbar on hover/click. Kept unobtrusive so it
- * does not interfere with the remote desktop or window controls. */
+ * does not interfere with the remote desktop or window controls.
+ *
+ * No min-width/min-height here: the 44×44 GNOME HIG tap target is set from Rust
+ * (`TOUCH_TARGET_PX` in embedded_toolbar_overflow.rs), next to the same value
+ * applied to every other toolbar button. The two used to disagree — CSS said
+ * 28px tall, the size request said 44 — with the size request quietly winning. */
 .toolbar-reveal-handle {
     opacity: 0.4;
     background-color: alpha(@view_bg_color, 0.5);
-    min-width: 44px;
-    min-height: 28px;
     padding: 2px 8px;
     transition: opacity 150ms ease-in-out;
 }
