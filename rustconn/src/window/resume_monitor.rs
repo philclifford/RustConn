@@ -114,13 +114,21 @@ pub fn setup_resume_monitor(
 
         // Give the network a moment, then let the existing sweep reconnect
         // whatever has actually died. Sessions that survived are untouched.
+        // Show a toast only when the sweep actually reconnects something —
+        // same rule the network-change handler follows.
         let state_for_sweep = state.clone();
         let notebook_for_sweep = notebook.clone();
+        let toast_for_sweep = toast_overlay.clone();
         glib::timeout_add_local_once(RECONNECT_SWEEP_DELAY, move || {
-            super::network_monitor::reconnect_sessions_after_outage(
+            let reconnecting = super::network_monitor::reconnect_sessions_after_outage(
                 &state_for_sweep,
                 &notebook_for_sweep,
             );
+            if reconnecting > 0 {
+                toast_for_sweep.show_toast(&i18n(
+                    "Reconnecting sessions after sleep",
+                ));
+            }
         });
 
         glib::ControlFlow::Continue
