@@ -47,6 +47,7 @@ pub fn create_ui_page() -> (
     adw::SwitchRow,
     adw::SwitchRow,
     adw::SwitchRow,
+    adw::SwitchRow,
     adw::ComboRow,
 ) {
     let page = adw::PreferencesPage::builder()
@@ -224,6 +225,19 @@ pub fn create_ui_page() -> (
         ))
         .build();
     appearance_group.add(&compact_auto);
+
+    // Reveal-on-hover for the floating session toolbar. The handle sits at the
+    // top centre of an embedded RDP/VNC view, so aiming at the remote window's
+    // own title bar or close button opens a panel over the very spot being
+    // aimed at. Turning this off keeps the handle and every action — it just
+    // asks for a click.
+    let reveal_toolbar_on_hover = adw::SwitchRow::builder()
+        .title(i18n("Open session toolbar on hover"))
+        .subtitle(i18n(
+            "Reveal the floating RDP/VNC toolbar when the pointer touches its handle. When off, the handle must be clicked",
+        ))
+        .build();
+    appearance_group.add(&reveal_toolbar_on_hover);
 
     // Live preview: both toggles feed the same recompute so the effect is
     // visible before the dialog is saved.
@@ -418,6 +432,7 @@ pub fn create_ui_page() -> (
         window_title_shows_connection,
         show_welcome_switch,
         double_click_opens_new_session,
+        reveal_toolbar_on_hover,
         // Last so that the neighbouring positional arguments in load/collect
         // are SwitchRows: a ComboRow cannot be swapped with one by mistake.
         renderer_row,
@@ -474,6 +489,7 @@ pub fn load_ui_settings(
     window_title_shows_connection: &adw::SwitchRow,
     show_welcome_switch: &adw::SwitchRow,
     double_click_opens_new_session: &adw::SwitchRow,
+    reveal_toolbar_on_hover: &adw::SwitchRow,
     renderer_row: &adw::ComboRow,
     settings: &UiSettings,
     connections: &[&Connection],
@@ -554,6 +570,11 @@ pub fn load_ui_settings(
 
     double_click_opens_new_session.set_active(settings.double_click_opens_new_session);
 
+    // Same shape as the compact toggle above: push the stored value into the
+    // process preference too, so a session opened straight after startup gets
+    // the saved behaviour without waiting for the dialog to be saved.
+    reveal_toolbar_on_hover.set_active(settings.reveal_session_toolbar_on_hover);
+    crate::app::set_reveal_toolbar_on_hover(settings.reveal_session_toolbar_on_hover);
     // Sync the Rendering combo with the saved preference. An unknown variant
     // (a config from a newer build) falls back to the first row, Automatic.
     let renderer_index = RENDERER_ORDER
@@ -611,6 +632,7 @@ pub fn collect_ui_settings(
     window_title_shows_connection: &adw::SwitchRow,
     show_welcome_switch: &adw::SwitchRow,
     double_click_opens_new_session: &adw::SwitchRow,
+    reveal_toolbar_on_hover: &adw::SwitchRow,
     renderer_row: &adw::ComboRow,
     connections: &[&Connection],
 ) -> UiSettings {
@@ -680,5 +702,6 @@ pub fn collect_ui_settings(
         window_title_shows_connection: window_title_shows_connection.is_active(),
         show_welcome_on_startup: show_welcome_switch.is_active(),
         double_click_opens_new_session: double_click_opens_new_session.is_active(),
+        reveal_session_toolbar_on_hover: reveal_toolbar_on_hover.is_active(),
     }
 }

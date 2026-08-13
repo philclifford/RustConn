@@ -300,6 +300,13 @@ impl ToolbarAutoHide {
     /// hovering or clicking it reveals the full toolbar. `handle` decides which
     /// part of that edge it sits on; see [`RevealHandle`] for why the viewers do
     /// not agree.
+    ///
+    /// The hover half of that trigger honours
+    /// `ui.reveal_session_toolbar_on_hover`, read live on each pointer entry.
+    /// With it off the handle still shows, still takes focus and still opens the
+    /// toolbar when clicked — only the pointer-proximity trigger is dropped, so
+    /// approaching the top of a remote desktop no longer opens a panel over the
+    /// spot being aimed at.
     #[must_use]
     pub fn attach(
         overlay: &Overlay,
@@ -347,10 +354,18 @@ impl ToolbarAutoHide {
             }
         });
 
-        // Hovering over the arrow reveals the toolbar without a click.
+        // Hovering over the arrow reveals the toolbar without a click, unless
+        // the user asked for the click to be required. The preference is read
+        // per event rather than captured here on purpose: an embedded session
+        // is long-lived, and a setting that only took effect on sessions opened
+        // afterwards would leave the very session the user is complaining about
+        // behaving the old way until they tore it down and reconnected.
         let reveal_motion = EventControllerMotion::new();
         let controller_weak = Rc::downgrade(&controller);
         reveal_motion.connect_enter(move |_, _, _| {
+            if !crate::app::reveal_toolbar_on_hover() {
+                return;
+            }
             if let Some(controller) = controller_weak.upgrade() {
                 controller.pointer_in_reveal_button.set(true);
                 controller.show();
@@ -359,6 +374,9 @@ impl ToolbarAutoHide {
         let controller_weak = Rc::downgrade(&controller);
         reveal_motion.connect_leave(move |_| {
             if let Some(controller) = controller_weak.upgrade() {
+                // Runs unconditionally: the flag may have been set while the
+                // preference was still on, and leaving it stuck true would hold
+                // the auto-hide timer open forever.
                 controller.pointer_in_reveal_button.set(false);
                 controller.schedule_hide();
             }

@@ -56,6 +56,15 @@ thread_local! {
     /// `manual` forces the compact chrome on always; `auto` engages it only
     /// while a window is small (see [`window_is_small`]).
     static COMPACT_PREFS: Cell<(bool, bool)> = const { Cell::new((false, false)) };
+
+    /// Whether the floating session toolbar opens on pointer hover.
+    ///
+    /// Kept here, next to the compact preferences, for the same reason: an
+    /// embedded RDP/VNC view is built by a constructor that takes no settings,
+    /// and threading `AppSettings` through every one of them to carry a single
+    /// boolean would be worse than reading it where it is needed. Mirrors
+    /// `ui.reveal_session_toolbar_on_hover`.
+    static REVEAL_TOOLBAR_ON_HOVER: Cell<bool> = const { Cell::new(true) };
 }
 
 /// Auto-compact engages when the window is no taller than this (logical px).
@@ -119,6 +128,23 @@ pub fn set_compact_prefs(manual: bool, auto: bool) {
     for window in gtk_app.windows() {
         set_window_compact(&window, manual, auto);
     }
+}
+
+/// Stores whether hovering the session-toolbar handle reveals the toolbar.
+///
+/// Call after the settings toggle changes. Sessions opened from here on pick it
+/// up; an embedded view already on screen keeps the behaviour it was built with,
+/// which is what the settings row tells the user.
+pub fn set_reveal_toolbar_on_hover(enabled: bool) {
+    REVEAL_TOOLBAR_ON_HOVER.with(|pref| pref.set(enabled));
+}
+
+/// Whether hovering the session-toolbar handle should reveal the toolbar.
+///
+/// Read when an embedded RDP/VNC view builds its toolbar controller.
+#[must_use]
+pub fn reveal_toolbar_on_hover() -> bool {
+    REVEAL_TOOLBAR_ON_HOVER.with(Cell::get)
 }
 
 /// Attaches a size watcher so auto-compact reacts live to window resizing.
@@ -281,6 +307,7 @@ fn build_ui(app: &adw::Application, tray_manager: SharedTrayManager) {
         (ui.compact_ui, ui.compact_auto)
     };
     set_compact_prefs(compact_manual, compact_auto);
+    set_reveal_toolbar_on_hover(state.borrow().settings().ui.reveal_session_toolbar_on_hover);
 
     // Initialize tray icon if enabled in settings
     let enable_tray = state.borrow().settings().ui.enable_tray_icon;
