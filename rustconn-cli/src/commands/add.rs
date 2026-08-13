@@ -96,6 +96,7 @@ pub(super) struct AddParams<'a> {
     pub vnc_view_only: bool,
     pub vnc_no_scaling: bool,
     pub vnc_no_clipboard: bool,
+    pub vnc_toolbar: Option<bool>,
     pub vnc_custom_arg: &'a [String],
     // SPICE
     pub spice_tls: bool,
@@ -123,6 +124,7 @@ pub(super) struct AddParams<'a> {
     pub javascript: Option<bool>,
     pub user_agent: Option<&'a str>,
     pub accept_invalid_certs: Option<bool>,
+    pub web_toolbar: Option<bool>,
     pub private_mode: bool,
     pub zoom_level: Option<f64>,
 }
@@ -375,6 +377,7 @@ pub(super) fn cmd_add(config_path: Option<&Path>, params: AddParams<'_>) -> Resu
         || params.vnc_view_only
         || params.vnc_no_scaling
         || params.vnc_no_clipboard
+        || params.vnc_toolbar.is_some()
         || !params.vnc_custom_arg.is_empty()
     {
         if let rustconn_core::models::ProtocolConfig::Vnc(ref mut cfg) = connection.protocol_config
@@ -448,6 +451,7 @@ pub(super) fn cmd_add(config_path: Option<&Path>, params: AddParams<'_>) -> Resu
         || params.javascript.is_some()
         || params.user_agent.is_some()
         || params.accept_invalid_certs.is_some()
+        || params.web_toolbar.is_some()
         || params.private_mode
         || params.zoom_level.is_some()
     {
@@ -474,6 +478,10 @@ pub(super) fn cmd_add(config_path: Option<&Path>, params: AddParams<'_>) -> Resu
             }
             if let Some(certs) = params.accept_invalid_certs {
                 cfg.accept_invalid_certs = certs;
+            }
+            // Inverted: the flag offers the toolbar, the field hides it.
+            if let Some(toolbar) = params.web_toolbar {
+                cfg.hide_floating_toolbar = !toolbar;
             }
             if params.private_mode {
                 cfg.private_mode = true;
@@ -1219,6 +1227,10 @@ pub(super) fn apply_vnc_fields(
     }
     if params.vnc_no_clipboard {
         cfg.clipboard_enabled = false;
+    }
+    // Inverted: the flag offers the toolbar, the field hides it.
+    if let Some(toolbar) = params.vnc_toolbar {
+        cfg.hide_floating_toolbar = !toolbar;
     }
     for arg in params.vnc_custom_arg {
         cfg.custom_args.push(arg.clone());

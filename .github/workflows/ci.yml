@@ -23,6 +23,25 @@ env:
   # framing layer"): force HTTP/1.1 and retry network operations.
   CARGO_HTTP_MULTIPLEXING: 'false'
   CARGO_NET_RETRY: '10'
+  # The development toolchain, pinned so a new stable release cannot turn CI red
+  # without a code change. MUST equal `channel` in rust-toolchain.toml and the
+  # same variable in release.yml — the `hygiene` job below fails the build if any
+  # of the three drift apart.
+  #
+  # Why this is duplicated here at all: rust-toolchain.toml is honoured by cargo
+  # (a rustup proxy) but the install action cannot read it, so if this said
+  # `stable` every job would install stable AND then have the toolchain file pull
+  # 1.97.1 on the first cargo call — two toolchains downloaded per job.
+  #
+  # The `msrv` job deliberately does NOT use this; it pins 1.95.0 and overrides
+  # the toolchain file with RUSTUP_TOOLCHAIN.
+  #
+  # Keep the quotes. A future two-component pin like 1.100 would otherwise be
+  # parsed by YAML as a float and handed to the action as "1.1". Note that the
+  # drift gate would NOT catch that: it reads this line as raw text with sed and
+  # would see "1.100" matching the toml. The quoting is the only thing standing
+  # between that typo and a silently wrong toolchain.
+  RUST_TOOLCHAIN: '1.97.1'
 
 jobs:
   check:
@@ -34,7 +53,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install dependencies
         uses: ./.github/actions/install-deps
@@ -62,11 +81,86 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt
 
       - name: Check formatting
         run: cargo fmt --all -- --check
+
+  # Cheap text-only gates that need no Rust toolchain, so they stay off the
+  # cargo matrix and report in seconds.
+  hygiene:
+    name: Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # rust-toolchain.toml is the source of truth for the development
+      # toolchain, but the install action cannot read it, so the version is
+      # mirrored into the workflow `env.RUST_TOOLCHAIN`. Two copies drift; this
+      # asserts they have not. Without the gate a bumped toolchain file would
+      # leave CI quietly building on the old compiler.
+      - name: Toolchain pin matches both workflows
+        run: |
+          set -euo pipefail
+          if [ ! -f rust-toolchain.toml ]; then
+            echo "::error::rust-toolchain.toml is missing"
+            exit 1
+          fi
+          file_channel="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
+          if [ -z "$file_channel" ]; then
+            echo "::error file=rust-toolchain.toml::could not parse [toolchain] channel"
+            exit 1
+          fi
+          echo "rust-toolchain.toml channel: $file_channel"
+          rc=0
+          # Three copies of this version exist: the toolchain file plus one
+          # RUST_TOOLCHAIN per workflow. Check every one, not just this file's.
+          for wf in .github/workflows/ci.yml .github/workflows/release.yml; do
+            wf_value="$(sed -n "s/^[[:space:]]*RUST_TOOLCHAIN:[[:space:]]*['\"]\{0,1\}\([^'\"[:space:]]*\)['\"]\{0,1\}[[:space:]]*$/\1/p" "$wf" | head -1)"
+            if [ -z "$wf_value" ]; then
+              echo "::error file=$wf::no RUST_TOOLCHAIN found in workflow env"
+              rc=1
+              continue
+            fi
+            echo "$wf RUST_TOOLCHAIN: $wf_value"
+            if [ "$wf_value" != "$file_channel" ]; then
+              echo "::error file=$wf::RUST_TOOLCHAIN '$wf_value' != rust-toolchain.toml channel '$file_channel' — update both"
+              rc=1
+            fi
+          done
+          exit $rc
+
+      # typos.toml has been in the repo, fully configured, since before this
+      # job existed — with extend-ignore-re for UUIDs, hex salts and commit
+      # hashes — but nothing ever ran it. A config without a runner is decoration.
+      #
+      # Pinned by SHA like every other third-party action here, and to the same
+      # version as the locally installed typos-cli (1.49.0) so a CI-only
+      # dictionary update cannot produce findings that do not reproduce locally.
+      - name: Spell check
+        uses: crate-ci/typos@8a48f81b6c64dcfea44b3633223084c4be58ac5f # v1.49.0
+
+      # Prebuilt binary, so this job still needs no Rust toolchain. Pinned by
+      # SHA — this action downloads and executes a binary, which is the last
+      # place to accept a moving tag.
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@b20dedce73af6905cdc30d6611090c9b67557c8d # v2.85.12
+        with:
+          # The tool is version-pinned too, not just the action. An unpinned
+          # `cargo-machete` would let a new upstream release turn CI red with no
+          # change to this repo — the same failure mode rust-toolchain.toml
+          # exists to prevent. Matches the locally installed 0.9.2.
+          tool: cargo-machete@0.9.2
+
+      # Invoked as the bare binary rather than `cargo machete` on purpose: going
+      # through the cargo proxy would make rust-toolchain.toml pull a whole
+      # toolchain into a job that otherwise needs none. Without --with-metadata
+      # machete only parses Cargo.toml and greps sources, so no cargo is
+      # required. Crates whose import path differs from their package name are
+      # declared in each Cargo.toml's [package.metadata.cargo-machete] ignored.
+      - name: Unused dependencies
+        run: cargo-machete
 
   i18n:
     name: i18n
@@ -113,7 +207,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy
 
       - name: Install dependencies
@@ -142,7 +236,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install dependencies
         uses: ./.github/actions/install-deps
@@ -173,7 +267,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache cargo registry
         uses: actions/cache@v6
@@ -202,7 +296,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache cargo registry
         uses: actions/cache@v6
@@ -221,6 +315,12 @@ jobs:
   msrv:
     name: MSRV (1.95)
     runs-on: ubuntu-latest
+    # RUSTUP_TOOLCHAIN overrides rust-toolchain.toml, which pins 1.97.1 for
+    # development. Without this the toolchain file would win over the
+    # `rustup default 1.95.0` that the install action performs, and this job
+    # would silently re-test 1.97.1 while still calling itself MSRV.
+    env:
+      RUSTUP_TOOLCHAIN: 1.95.0
     steps:
       - uses: actions/checkout@v7
 
@@ -228,6 +328,16 @@ jobs:
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: 1.95.0
+
+      - name: Confirm the pinned toolchain did not take over
+        run: |
+          set -e
+          actual="$(rustc --version)"
+          echo "rustc in effect: $actual"
+          case "$actual" in
+            *" 1.95."*) ;;
+            *) echo "::error::MSRV job is not running 1.95 (got: $actual)"; exit 1 ;;
+          esac
 
       - name: Install dependencies
         uses: ./.github/actions/install-deps

@@ -40,10 +40,7 @@ pub struct PasswordDialog {
     save_check: CheckButton,
     migrate_button: Button,
     connect_button: Button,
-    #[cfg(feature = "adw-1-6")]
-    spinner: adw::Spinner,
-    #[cfg(not(feature = "adw-1-6"))]
-    spinner: gtk4::Spinner,
+    spinner: crate::spinner::Spinner,
     spinner_label: Label,
     spinner_box: GtkBox,
     result: Rc<RefCell<Option<PasswordDialogResult>>>,
@@ -95,10 +92,7 @@ impl PasswordDialog {
         spinner_box.set_halign(gtk4::Align::Center);
         spinner_box.set_visible(false);
 
-        #[cfg(feature = "adw-1-6")]
-        let spinner = adw::Spinner::new();
-        #[cfg(not(feature = "adw-1-6"))]
-        let spinner = gtk4::Spinner::builder().spinning(false).build();
+        let spinner = crate::spinner::new();
         let spinner_label = Label::builder()
             .label(i18n("Resolving credentials..."))
             .css_classes(["dim-label"])
@@ -256,6 +250,13 @@ impl PasswordDialog {
         let migrate_requested_clone = migrate_requested.clone();
         let connect_btn_clone = connect_btn.clone();
         connect_btn_clone.connect_clicked(move |_| {
+            // The String goes straight into SecretString, which owns it as a
+            // Box<str> and zeroizes it on drop. An intermediate Zeroizing here
+            // would only add a copy: the one plaintext that escapes unscrubbed
+            // is the GString the entry hands back, and GTK frees that without
+            // zeroing it — with `unsafe_code = "forbid"` there is no reaching
+            // into GLib's buffer to fix that, so the widget is the floor on
+            // exposure and no Rust-side wrapper lowers it.
             *result_clone.borrow_mut() = Some(PasswordDialogResult {
                 username: username_clone.text().to_string(),
                 password: SecretString::from(password_clone.text().to_string()),
@@ -362,8 +363,6 @@ impl PasswordDialog {
         let default_msg = i18n("Resolving credentials...");
         let msg = message.unwrap_or(&default_msg);
         self.spinner_label.set_text(msg);
-        #[cfg(not(feature = "adw-1-6"))]
-        self.spinner.set_spinning(true);
         self.spinner_box.set_visible(true);
         self.connect_button.set_sensitive(false);
     }
@@ -373,8 +372,6 @@ impl PasswordDialog {
     /// This method hides the spinner and re-enables the connect button
     /// after async credential resolution completes.
     pub fn hide_loading(&self) {
-        #[cfg(not(feature = "adw-1-6"))]
-        self.spinner.set_spinning(false);
         self.spinner_box.set_visible(false);
         self.connect_button.set_sensitive(true);
     }
@@ -384,8 +381,6 @@ impl PasswordDialog {
     /// This method displays an error message in the loading area
     /// when credential resolution fails.
     pub fn show_error(&self, message: &str) {
-        #[cfg(not(feature = "adw-1-6"))]
-        self.spinner.set_spinning(false);
         self.spinner_label.set_text(message);
         self.spinner_label.add_css_class("error");
         self.spinner_box.set_visible(true);

@@ -4,7 +4,8 @@
 #
 #   1. rustconn-core / rustconn-cli are GUI-free — no gtk4 / adw / vte4.
 #   2. `unsafe` lives only in the sanctioned rustconn-*-sys crates
-#      (unsafe_code = "forbid" workspace-wide, Cargo.toml).
+#      (unsafe_code = "deny" workspace-wide, Cargo.toml, re-opened by a
+#      crate-level #![expect(unsafe_code, …)] in each of those crates).
 #
 # Reads the PreToolUse JSON on stdin, exits 2 with an explanation on stderr to
 # block, exits 0 silently otherwise.
@@ -99,11 +100,13 @@ esac
 # The pattern is deliberately the crate-name shape (rustconn-<x>-sys), not a
 # hardcoded list: the point of the invariant is that unsafe stays inside a
 # small, separately reviewable FFI crate, not that there is exactly one of
-# them. Each such crate opts out of unsafe_code = "forbid" in its own
-# Cargo.toml, so adding one is a visible, reviewed act.
+# them. There are three today (rustconn-pty-sys, rustconn-locale-sys,
+# rustconn-env-sys). Each re-opens the lint with a crate-level
+# #![expect(unsafe_code, reason = "…")] in its own src/lib.rs, so adding one is a
+# visible, reviewed act.
 #
 # `extern` is in the keyword list for edition-2024 `unsafe extern "C" { … }` and
-# `unsafe extern "C" fn`. The compiler's `unsafe_code = "forbid"` already rejects
+# `unsafe extern "C" fn`. The compiler's `unsafe_code = "deny"` already rejects
 # both, so this is defence-in-depth. The `*/rustconn-*-sys/*` arm is a
 # belt-and-braces exemption for the case where the normalisation above could not
 # find a repo root: better to miss a violation than to block a legitimate edit to
@@ -113,7 +116,7 @@ rustconn-*-sys/* | */rustconn-*-sys/*) ;;
 *)
     bad=$(printf '%s' "$content" | grep -nE '(^|[^[:alnum:]_])unsafe[[:space:]]+(fn|impl|trait|extern)|(^|[^[:alnum:]_])unsafe[[:space:]]*\{' || true)
     if [ -n "$bad" ]; then
-        fail 'unsafe outside a rustconn-*-sys crate (unsafe_code = "forbid"). New FFI belongs in a dedicated rustconn-*-sys crate.' "$bad"
+        fail 'unsafe outside a rustconn-*-sys crate (unsafe_code = "deny"). New FFI belongs in a dedicated rustconn-*-sys crate.' "$bad"
     fi
     ;;
 esac

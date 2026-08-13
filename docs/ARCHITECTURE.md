@@ -1,12 +1,12 @@
 # RustConn Architecture Guide
 
-**Version 0.19.22** | Last updated: August 2026
+**Version 0.20.0** | Last updated: August 2026
 
 This document describes the internal architecture of RustConn for contributors and maintainers.
 
 ## Crate Structure
 
-RustConn is a four-crate Cargo workspace (Rust 2024 edition) with strict separation of concerns:
+RustConn is a six-crate Cargo workspace (Rust 2024 edition) with strict separation of concerns:
 
 ```
 rustconn/            # GTK4 GUI application
@@ -14,21 +14,33 @@ rustconn-core/       # Business logic library (GUI-free)
 rustconn-cli/        # Command-line interface
 rustconn-pty-sys/    # Isolated FFI helper (PTY + controlling terminal)
 rustconn-locale-sys/ # Isolated FFI helper (startup setlocale)
+rustconn-env-sys/    # Isolated FFI helper (startup GSK_RENDERER write)
 ```
 
 ### Dependency Graph
 
 ```
-┌─────────────┐     ┌─────────────────┐     ┌──────────────────────┐
-│ rustconn    │────▶│  rustconn-core  │     │  rustconn-pty-sys    │
-│ (GUI)       │──┐  │  (Library)      │     │  rustconn-locale-sys │
-└─────────────┘  │  └─────────────────┘     │  (FFI, no GUI)       │
-                 │          ▲               └──────────────────────┘
-┌─────────────┐  │          │                        ▲
-│ rustconn-cli│──┼──────────┘                        │
-│ (CLI)       │  └───────────────────────────────────┘
-└─────────────┘   (only rustconn depends on the -sys crates)
+┌─────────────┐        ┌─────────────────┐
+│ rustconn    │───────▶│  rustconn-core  │
+│ (GUI)       │        │   (Library)     │
+└──────┬──────┘        └─────────────────┘
+       │                        ▲
+       │                        │
+       │               ┌─────────────┐
+       │               │ rustconn-cli│
+       │               │   (CLI)     │
+       │               └─────────────┘
+       │
+       │               ┌──────────────────────┐
+       └──────────────▶│  rustconn-pty-sys    │
+                       │  rustconn-locale-sys │
+                       │  rustconn-env-sys    │
+                       │    (FFI, no GUI)     │
+                       └──────────────────────┘
 ```
+
+Only `rustconn` depends on the `-sys` crates. `rustconn-cli` depends on
+`rustconn-core` and nothing else in the workspace.
 
 ### Crate Boundaries
 
@@ -38,7 +50,8 @@ rustconn-locale-sys/ # Isolated FFI helper (startup setlocale)
 | `rustconn` | GTK4 UI, dialogs, terminal integration, embedded/external session presentation | Owns `gtk4`, `vte4`, `libadwaita`, and enables core integration features when needed |
 | `rustconn-cli` | Headless management CLI: config, connections, import/export, list/show, simple operations | CLI/runtime dependencies plus `rustconn-core`; client launch and secret-management stay behind explicit features — NO GTK |
 | `rustconn-pty-sys` | FFI helper: give a spawned child its PTY slave as a controlling terminal (`setsid` + `TIOCSCTTY`) for the macOS native PTY ([#175](https://github.com/totoshko88/RustConn/issues/175)) | `libc` only — NO GTK |
-| `rustconn-locale-sys` | FFI helper: the startup `setlocale` call, refused once the process has a second thread or the startup window is sealed ([#267](https://github.com/totoshko88/RustConn/issues/267)) | `gettext-rs` only — NO GTK |
+| `rustconn-locale-sys` | FFI helper: the startup `setlocale` call, refused once this program spawns a thread of its own, once a call arrives from a second thread, or once the startup window is sealed ([#267](https://github.com/totoshko88/RustConn/issues/267)) | `gettext-rs` only — NO GTK |
+| `rustconn-env-sys` | FFI helper: the startup `GSK_RENDERER` and `LANGUAGE` writes, guarded the same way. Neither GTK nor gettext offers an API, so the environment is the only interface and it has to be written before `gtk_init` ([#274](https://github.com/totoshko88/RustConn/issues/274), [#158](https://github.com/totoshko88/RustConn/issues/158)) | No dependencies — NO GTK |
 
 **Decision Rule:** "Does this code need GTK widgets?" → No → `rustconn-core` / Yes → `rustconn`
 
@@ -76,11 +89,22 @@ not require their runtime dependencies in the default feature set.
 
 ### The `unsafe` Exception
 
-The workspace sets `unsafe_code = "forbid"` in every crate **except** the
-`rustconn-*-sys` helpers. Each of them is a sanctioned location for `unsafe`,
-following the M-UNSAFE guideline (isolate FFI in a small `-sys` crate with a
-documented safety contract) instead of relaxing the lint in the main crates. New
-FFI gets a new `-sys` crate; it never earns an exception where the caller lives.
+No crate outside the `rustconn-*-sys` helpers may write `unsafe`. Each helper is a
+sanctioned location for it, following the M-UNSAFE guideline (isolate FFI in a
+small `-sys` crate with a documented safety contract) instead of relaxing the
+lint in the main crates. New FFI gets a new `-sys` crate; it never earns an
+exception where the caller lives.
+
+The mechanism is `unsafe_code = "deny"` in `[workspace.lints.rust]`, plus a
+crate-level `#![expect(unsafe_code, reason = "…")]` in each of the three helpers.
+It used to be `forbid`, which cannot be overridden at any level — so the helpers
+could not inherit the workspace lint table and each declared its own
+`[lints.rust]` instead. Because a crate-local `[lints]` table *replaces* the
+inherited one rather than adding to it, the only three crates allowed to write
+`unsafe` were also the only three running with no clippy lints at all: no
+`pedantic`, no `nursery`, no `unwrap_used`. `deny` is one step weaker on paper and
+considerably stronger in practice. `rustconn` itself keeps a local `forbid`, since
+it spells out its own lint set for GTK-specific suppressions anyway.
 
 `rustconn-pty-sys` exposes a handful of safe functions covering PTY creation
 (`open_pty_pair`), sizing (`pty_set_winsize`), readiness waiting
@@ -96,15 +120,60 @@ and its consumers, `rustconn/src/terminal/pty_spawn.rs` and
 `setlocale(3)` replaces process-global locale state and reads the environment
 without synchronisation, so it is sound only while the process is still
 single-threaded — the unsoundness behind RUSTSEC-2026-0244, which is why
-`gettext-rs` 0.8 marks it `unsafe`. The crate's `init_locale` enforces that
-precondition rather than documenting it: it refuses to run if the process already
-has a second thread (counted from `/proc/self/task` on Linux), if an earlier call
-came from another thread, or after `seal_locale()` has closed the startup window.
-`rustconn/src/i18n.rs` is the only consumer, and it seals the locale at the end
-of `apply_language_from_config()`, so a `setlocale` call added to a running
-application panics during development instead of corrupting memory in the field.
-Everything else in the gettext API is safe and is called from `rustconn`
-directly.
+`gettext-rs` 0.8 marks it `unsafe`. The crate's `init_locale` enforces what it can
+of that precondition rather than merely documenting it. It refuses a call that
+arrives from a thread other than the first caller, and any call after
+`seal_locale()` has closed the startup window; on Linux it additionally counts
+`/proc/self/task` and refuses once that count has **grown past the baseline it
+sampled on its first call**.
+
+Growth, not "a second thread exists" — and the distinction is the whole of
+[#271](https://github.com/totoshko88/RustConn/issues/271). The guard originally
+demanded exactly one live thread, which is not a state an application can arrange:
+a shared library's ELF constructor runs before `main()` is entered and may spawn a
+thread there, which is what Fedora 44 (glibc 2.43 + OpenSSL 3.5) does, so 0.19.20
+aborted at startup on a perfectly correct call site. Pre-existing library threads
+are therefore tolerated, and only a thread *this program* started between two
+calls is refused — which is the case the call site actually controls and the shape
+a regression in `main()`'s ordering would take. That one clause is a judgement
+rather than a proof, and the SAFETY comment in `init_locale` says so: whether a
+constructor-spawned thread reads locale state is not knowable from there.
+
+What makes the call sound remains the call site. `rustconn/src/i18n.rs` is the only
+consumer, and it seals the locale at the end of `apply_language_from_config()`, so
+a `setlocale` call added to a running application panics during development
+instead of corrupting memory in the field. Everything else in the gettext API is
+safe and is called from `rustconn` directly.
+
+`rustconn-env-sys` is the same shape, with the same guard, for the two environment
+variables RustConn has to write. GTK exposes no API for choosing a GSK renderer —
+`GSK_RENDERER` is the only interface, and it is read while the first surface is
+realised, so it has to be in the environment before `gtk_init`. GNU gettext is in
+the same position with `LANGUAGE`, which it honours even when the named locale is
+not installed, the normal case inside a Flatpak sandbox
+([#158](https://github.com/totoshko88/RustConn/issues/158)). `setenv(3)`, which
+`std::env::set_var` wraps, mutates the process-global environment block without
+synchronisation, so `set_startup_var` refuses a call from a thread other than the
+first caller, a call after `seal_env()`, and — on Linux, where `/proc/self/task`
+answers — a call made after the thread count has grown past the baseline sampled
+on the first call. The baseline rule and the reason for it are exactly as described
+for `rustconn-locale-sys` above; the two guards are deliberately duplicated rather
+than shared, so that neither crate has to depend on anything but `std`.
+
+There are two consumers, in this order: `rustconn/src/i18n.rs` writes `LANGUAGE`
+from `apply_language_from_config()`, then `rustconn/src/renderer.rs` decides the
+renderer from the saved preference plus a per-environment probe and calls
+`seal_env()`. Nothing between them spawns a thread, which is what keeps the second
+write admissible.
+
+This replaced a re-exec that set the variables in a child process. That worked on
+Linux but was unavailable on macOS, where replacing the process image destroys
+the LaunchServices scene registration `NSStatusItem` needs and the tray icon
+disappears — so the macOS guest-VM case
+([#274](https://github.com/totoshko88/RustConn/issues/274)) had no fix until the
+write moved in-process — and anyone running a non-system interface language lost
+the tray icon for the same reason, since the language re-exec was not
+platform-gated. Startup now spawns two processes fewer than it used to.
 
 ### Who Owns a Session's PTY
 

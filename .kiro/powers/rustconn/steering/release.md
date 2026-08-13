@@ -333,6 +333,21 @@ grep -r "X.Y.Z" Cargo.toml debian/changelog packaging/ rustconn/assets/*.xml doc
 
 ## Changelog conversion
 
+The five propagated lists — `debian/changelog`, `packaging/obs/debian.changelog`,
+`packaging/obs/rustconn.changes`, the `%changelog` in `packaging/obs/rustconn.spec`
+and the `<release>` block in `metainfo.xml` — are written by hand from
+`CHANGELOG.md`. `scripts/release.sh` enforces that all five carry the *same date*
+as the CHANGELOG, but nothing checks their *contents*, so they drift item by item.
+
+They are allowed to differ in verbosity, and metainfo may legitimately omit
+packaging-only entries such as a `POTFILES.in` fix or a build-dependency floor.
+They are **not** allowed to drop an `### Added` entry: 0.20.0 shipped signed build
+provenance for every release artifact — the release's headline change for anyone
+downloading a file — and it reached none of the five, so no user would have learned
+that `gh attestation verify` applies to their download. When propagating, walk
+`### Added` first and confirm every item lands in all five before touching the
+other sections.
+
 ### CHANGELOG.md → Debian
 ```
 ### Added

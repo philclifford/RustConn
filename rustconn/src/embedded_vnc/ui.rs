@@ -110,7 +110,6 @@ impl EmbeddedVncWidget {
         crate::embedded_toolbar_overflow::ToolbarOverflow::new(
             &toolbar,
             vec![copy_button.clone().upcast(), paste_button.clone().upcast()],
-            crate::embedded_toolbar_overflow::SPICE_VNC_OVERFLOW_THRESHOLD_PX,
         )
         .attach(&drawing_area);
 
@@ -118,6 +117,7 @@ impl EmbeddedVncWidget {
             &overlay,
             &toolbar,
             &toolbar_revealer,
+            crate::embedded_toolbar_overflow::RevealHandle::TopCentre,
         );
 
         // Reconnect banner (shown when disconnected, at bottom like VTE sessions)

@@ -74,18 +74,28 @@ Library functions in `rustconn-core` MUST still use `thiserror::Error`
 
 ## Safety
 
-### M-UNSAFE — `unsafe_code = "forbid"` already applied
+### M-UNSAFE — `unsafe` is confined to the `-sys` crates
 
-Workspace `[lints.rust] unsafe_code = "forbid"` in every crate **except** the
-sanctioned `rustconn-*-sys` FFI crates: `rustconn-pty-sys` (macOS PTY
-controlling terminal) and `rustconn-locale-sys` (the startup `setlocale` call).
+Workspace `[lints.rust] unsafe_code = "deny"`, re-opened only by a crate-level
+`#![expect(unsafe_code, reason = "…")]` in the three sanctioned FFI crates:
+`rustconn-pty-sys` (macOS PTY controlling terminal), `rustconn-locale-sys` (the
+startup `setlocale` call) and `rustconn-env-sys` (the startup `GSK_RENDERER` and
+`LANGUAGE` writes). `deny` rather than `forbid` because `forbid` cannot be
+overridden at any level, which forced each helper to declare its own `[lints]`
+table — and a crate-local `[lints]` table replaces the inherited one, so those
+three ended up as the only crates in the workspace running without
+`clippy::pedantic`, `clippy::nursery` or `clippy::unwrap_used`. Do not "tighten"
+this back to `forbid` without also solving that.
 If further FFI is ever needed — create another small `rustconn-*-sys` crate with
 a documented `// SAFETY:` contract on every `unsafe` block, rather than relaxing
 the lint where the caller lives. Miri cannot execute the syscalls/FFI used here
-(`pre_exec`, `ioctl`, `setlocale`), so prefer a contract unit test (asserting
-preconditions/behaviour where observable) over a Miri job — see
-`rustconn-locale-sys`, where the precondition guard is a testable type precisely
-because the FFI call itself is not reachable from a test harness.
+(`pre_exec`, `ioctl`, `setlocale`, `setenv`), so prefer a contract unit test
+(asserting preconditions/behaviour where observable) over a Miri job — see
+`rustconn-locale-sys` and `rustconn-env-sys`, where the precondition guard is a
+testable type precisely because the FFI call itself is not reachable from a test
+harness. Keep the new crate an unconditional dependency even when only one
+platform reaches the call: CI has no macOS runner, so a platform-gated `-sys`
+crate is `unsafe` that never gets compiled.
 Do not allow unsafe to "spread" across the main crates.
 
 ## Documentation

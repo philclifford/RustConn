@@ -192,6 +192,7 @@ Options:
 | `--vnc-view-only` | — | VNC view-only mode (no keyboard/mouse input) |
 | `--vnc-no-scaling` | — | Disable VNC scaling |
 | `--vnc-no-clipboard` | — | Disable VNC clipboard sharing |
+| `--vnc-toolbar` | — | Floating session toolbar in the embedded viewer: `true` (default) or `false`; bare `--vnc-toolbar` = `false`. Off removes the toolbar, its reveal arrow and the split panel's corner buttons |
 | `--vnc-custom-arg` | — | Custom VNC client argument (repeatable) |
 | `--spice-tls` | — | Enable SPICE TLS encryption |
 | `--spice-ca-cert` | — | SPICE CA certificate path for TLS verification |
@@ -215,6 +216,7 @@ Options:
 | `--javascript` | — | Enable/disable JavaScript: `true` (default) or `false`; bare `--javascript` = `false` |
 | `--user-agent` | — | Custom user agent string (max 512 Unicode characters) |
 | `--accept-invalid-certs` | — | Accept invalid TLS certificates: `true`/`false`; bare flag = `true` |
+| `--web-toolbar` | — | Floating navigation toolbar in the embedded browser: `true` (default) or `false`; bare `--web-toolbar` = `false`. Off removes the toolbar and its reveal arrow; the keyboard routes (Alt+←/→, Ctrl+R, Ctrl+L, Ctrl+±/0) keep working |
 | `--private-mode` | — | Open in private/incognito mode (custom browser) |
 | `--zoom-level` | — | Zoom level for embedded browser (0.3–3.0, default: 1.0) |
 | `--provider` | — | Zero Trust provider (see [Zero Trust examples](#zero-trust-examples) below) |

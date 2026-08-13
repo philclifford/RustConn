@@ -11,8 +11,6 @@ use std::rc::Rc;
 
 use gtk4::prelude::*;
 use gtk4::{Align, Box as GtkBox, Label, Orientation, Overlay};
-#[cfg(feature = "adw-1-6")]
-use libadwaita as adw;
 use rustconn_core::models::{VncClientMode, VncConfig};
 use rustconn_core::protocol::{VncProtocol, detect_vnc_client, detect_vnc_viewer_name};
 
@@ -52,10 +50,7 @@ pub struct VncSessionWidget {
     /// Status label for connection feedback
     status_label: Label,
     /// Spinner for connection progress
-    #[cfg(feature = "adw-1-6")]
-    spinner: adw::Spinner,
-    #[cfg(not(feature = "adw-1-6"))]
-    spinner: gtk4::Spinner,
+    spinner: crate::spinner::Spinner,
     /// Status container (kept for preventing premature deallocation and future floating controls)
     status_container: GtkBox,
     /// State change callback
@@ -95,16 +90,8 @@ impl VncSessionWidget {
         status_container.set_halign(Align::Center);
         status_container.set_valign(Align::Center);
 
-        #[cfg(feature = "adw-1-6")]
         let spinner = {
-            let s = adw::Spinner::new();
-            s.set_visible(false);
-            s
-        };
-        #[cfg(not(feature = "adw-1-6"))]
-        let spinner = {
-            let s = gtk4::Spinner::new();
-            s.set_spinning(false);
+            let s = crate::spinner::new();
             s.set_visible(false);
             s
         };
@@ -195,11 +182,7 @@ impl VncSessionWidget {
 
                 if vnc_state == VncConnectionState::Connecting {
                     spinner.set_visible(true);
-                    #[cfg(not(feature = "adw-1-6"))]
-                    spinner.set_spinning(true);
                 } else {
-                    #[cfg(not(feature = "adw-1-6"))]
-                    spinner.set_spinning(false);
                     spinner.set_visible(false);
                 }
 
@@ -259,8 +242,6 @@ impl VncSessionWidget {
         *self.state.borrow_mut() = SessionState::Connecting;
         self.status_label.set_text(&i18n("Connecting..."));
         self.spinner.set_visible(true);
-        #[cfg(not(feature = "adw-1-6"))]
-        self.spinner.set_spinning(true);
 
         // Notify state change
         if let Some(ref callback) = *self.state_callback.borrow() {
@@ -282,6 +263,12 @@ impl VncSessionWidget {
             embedded_config.scale_override = config.scale_override;
             embedded_config.show_local_cursor = config.show_local_cursor;
             embedded_config.accept_certificate = config.accept_certificate;
+            // A connection can opt out of the floating toolbar entirely
+            // (issue #260). Applied before `connect`, which is what first
+            // reveals it, and before the split view can wrap this session in
+            // its own corner buttons.
+            self.embedded_widget
+                .set_toolbar_enabled(!config.hide_floating_toolbar);
 
             let embedded_config = if let Some(pwd) = password {
                 embedded_config.with_password(pwd)
@@ -336,8 +323,6 @@ impl VncSessionWidget {
                 *self.state.borrow_mut() = SessionState::Connected;
                 self.status_label
                     .set_text(&i18n("Session running in external window"));
-                #[cfg(not(feature = "adw-1-6"))]
-                self.spinner.set_spinning(false);
                 self.spinner.set_visible(false);
 
                 // Notify state change
@@ -350,8 +335,6 @@ impl VncSessionWidget {
             Err(e) => {
                 *self.state.borrow_mut() = SessionState::Disconnected;
                 self.status_label.set_text(&i18n("Connection failed"));
-                #[cfg(not(feature = "adw-1-6"))]
-                self.spinner.set_spinning(false);
                 self.spinner.set_visible(false);
                 Err(e)
             }
@@ -414,8 +397,6 @@ impl VncSessionWidget {
         *self.is_embedded_native.borrow_mut() = false;
         *self.state.borrow_mut() = SessionState::Disconnected;
         self.status_label.set_text(&i18n("Disconnected"));
-        #[cfg(not(feature = "adw-1-6"))]
-        self.spinner.set_spinning(false);
         self.spinner.set_visible(false);
 
         if let Some(ref callback) = *self.state_callback.borrow() {

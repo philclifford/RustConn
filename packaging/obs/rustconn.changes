@@ -1,4 +1,30 @@
 -------------------------------------------------------------------
+Thu Aug 13 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.0
+- Version bump to 0.20.0
+- Added: opening a cluster now labels every member tab with a tab group named after the cluster, so it reads "[cluster] host"; Close All in Group on any member closes the whole cluster, and Close All Ungrouped keeps open clusters
+- Added: signed build provenance for every .deb, .rpm, AppImage and Flatpak bundle attached to a GitHub release — verify a download with "gh attestation verify <file> --repo totoshko88/RustConn"
+- Added: Web embedded mode — auto-hide floating toolbar with reveal zone matching RDP/VNC behavior
+- Added: Settings > Interface > Rendering — Automatic, Hardware (GPU) or Software (Cairo), applied at the next start (#274)
+- Fixed: an RDP, VNC, SPICE or Web member of a cluster was never registered in it, so "Disconnect all cluster sessions" could not close it — cluster membership is now resolved for every protocol, not just terminals
+- Fixed: a tab returning from a split pane lost its "[group]" title label
+- Fixed: the floating viewer toolbar was revealed but not clickable for its first two seconds in RDP, VNC and Web sessions; it only became usable after auto-hiding once and being re-revealed from the arrow handle
+- Fixed: choosing a non-system interface language cost macOS users the tray icon — applying the language re-executed the process, which destroys the LaunchServices scene registration the tray needs; the re-exec is gone (#158)
+- Fixed: Web zoom shortcuts (Ctrl+/-/0) did not work in split view — keyboard events intercepted by WebKitGTK
+- Fixed: Web toolbar clipped instead of collapsing in a narrow split panel — Home, Autofill and Zoom now fold into a "..." popover like RDP/VNC, and the collapse point is measured from the toolbar rather than compared against a fixed pixel breakpoint
+- Fixed: the Web reveal handle sat over the top centre of the page, where sites put their logo and navigation, and the floating toolbar ignored the local theme — a light URL bar inside a dark bar on a light desktop
+- Fixed: a failed Web page load left the toolbar logic unrun, and the 60-second load timeout reported nothing to the user
+- Fixed: the header bar's busy spinner lost its accessible name
+- Fixed: macOS inside a virtual machine had input lag, late frames and stuttering scroll — the paravirtualised GPU has no accelerated OpenGL, so the automatic renderer choice now detects a hypervisor and selects the Cairo renderer (#274)
+- Fixed: seven translatable strings were present in the source but in no catalogue, rendering as English in every locale; now translated in all 16 locales
+- Fixed: POTFILES.in did not list the two modules extracted from terminal/mod.rs, failing the i18n check
+- Changed: the 60-second Web load timeout now reports itself in the reconnect banner with a Reload button
+- Improved: neither the X11 Cairo fallback nor the language selection re-execs the process any more — both environment writes moved into the new rustconn-env-sys crate, guarded the way rustconn-locale-sys guards setlocale, so startup spawns two processes fewer and macOS shares the same code path
+- Improved: terminal/mod.rs split into three modules — 4365 lines down to 3052, with tab_lifecycle.rs and session_lifecycle.rs extracted
+- Improved: adw::Spinner where the runtime has it (libadwaita 1.6+, opt-in adw-1-6) and gtk4::Spinner where it does not, decided in one module instead of six call sites; build baseline stays libadwaita 1.5 so Ubuntu 24.04 and snap core24 still build
+- Improved: build dependencies state the versions the crate features require — libadwaita-1-dev (>= 1.5), libvte-2.91-gtk4-dev (>= 0.76)
+- Improved: the three FFI crates now inherit the workspace clippy lint set; they had been the only crates in the workspace with no lints at all
+- Documentation: how to verify a downloaded release artifact, in docs/INSTALL.md and SECURITY.md
+-------------------------------------------------------------------
 Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.22
 
 - Version bump to 0.19.22

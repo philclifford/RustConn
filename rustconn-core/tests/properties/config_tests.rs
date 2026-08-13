@@ -195,6 +195,7 @@ fn arb_rdp_config() -> impl Strategy<Value = RdpConfig> {
                 ignore_certificate: false,
                 clipboard_enabled: true,
                 show_local_cursor: true,
+                hide_floating_toolbar: false,
                 jiggler_enabled: false,
                 jiggler_interval_secs: 60,
                 jump_host_id: None,
@@ -248,6 +249,7 @@ fn arb_vnc_config() -> impl Strategy<Value = VncConfig> {
             custom_args,
             scale_override: Default::default(),
             show_local_cursor: true,
+            hide_floating_toolbar: false,
             jump_host_id: None,
             accept_certificate: false,
             mptcp: false,
@@ -515,6 +517,7 @@ fn arb_full_settings() -> impl Strategy<Value = AppSettings> {
                     },
                     ui: UiSettings {
                         color_scheme: ColorScheme::default(),
+                        renderer: rustconn_core::config::RendererPreference::default(),
                         language: String::from("system"),
                         remember_window_geometry,
                         window_width,

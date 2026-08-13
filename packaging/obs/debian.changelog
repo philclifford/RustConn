@@ -1,3 +1,71 @@
+rustconn (0.20.0-1) unstable; urgency=medium
+
+  * Version bump to 0.20.0
+  * Added: opening a cluster now labels every member tab with a tab group named
+    after the cluster, so it reads "[cluster] host"; Close All in Group on any
+    member closes the whole cluster and Close All Ungrouped keeps open clusters
+  * Added: signed build provenance for every .deb, .rpm, AppImage and Flatpak
+    bundle attached to a GitHub release — verify a download with
+    "gh attestation verify <file> --repo totoshko88/RustConn"
+  * Added: Web embedded mode — auto-hide floating toolbar with reveal zone
+    matching RDP/VNC behavior
+  * Added: Settings > Interface > Rendering — Automatic, Hardware (GPU) or
+    Software (Cairo), applied at the next start (#274)
+  * Fixed: an RDP, VNC, SPICE or Web member of a cluster was never registered in
+    it, so "Disconnect all cluster sessions" could not close it — cluster
+    membership is now resolved for every protocol, not just terminals
+  * Fixed: a tab returning from a split pane lost its "[group]" title label
+  * Fixed: the floating viewer toolbar was revealed but not clickable for its
+    first two seconds in RDP, VNC and Web sessions; it only became usable
+    after auto-hiding once and being re-revealed from the arrow handle
+  * Fixed: choosing a non-system interface language cost macOS users the tray
+    icon — applying the language re-executed the process, which destroys the
+    LaunchServices scene registration the tray needs; the re-exec is gone (#158)
+  * Fixed: Web zoom shortcuts (Ctrl+/-/0) did not work in split view —
+    keyboard events were intercepted by WebKitGTK before reaching the
+    application's EventControllerKey
+  * Fixed: Web toolbar clipped instead of collapsing in a narrow split
+    panel; it now folds Home, Autofill and Zoom into a "..." popover like
+    the RDP and VNC toolbars, and the collapse point is measured from the
+    toolbar rather than compared against a fixed pixel breakpoint
+  * Fixed: the Web reveal handle sat over the top centre of the page, where
+    sites put their logo and navigation, and the floating toolbar ignored the
+    local theme — a light URL bar inside a dark bar on a light desktop
+  * Fixed: a failed Web page load left the toolbar logic unrun, and the
+    60-second load timeout reported nothing to the user
+  * Fixed: the header bar's busy spinner lost its accessible name
+  * Fixed: macOS inside a virtual machine had input lag, late frames and
+    stuttering scroll — the paravirtualised GPU has no accelerated OpenGL,
+    so the automatic renderer choice now detects a hypervisor and selects
+    the Cairo renderer (#274)
+  * Fixed: seven translatable strings were present in the source but in no
+    catalogue, rendering as English in every locale; now translated in all
+    16 locales
+  * Fixed: POTFILES.in did not list the two modules extracted from
+    terminal/mod.rs, failing the i18n check
+  * Changed: the 60-second Web load timeout now reports itself in the
+    reconnect banner with a Reload button
+  * Improved: neither the X11 Cairo fallback nor the language selection
+    re-execs the process any more — both environment writes moved into the new
+    rustconn-env-sys crate, which guards them the way rustconn-locale-sys
+    guards setlocale, so startup spawns two processes fewer and macOS shares
+    the same code path
+  * Improved: terminal/mod.rs split into three modules — 4365 lines down to
+    3052, with tab_lifecycle.rs and session_lifecycle.rs extracted
+  * Improved: adw::Spinner is used where the runtime has it (libadwaita
+    1.6+, via the opt-in adw-1-6 feature) and gtk4::Spinner where it does
+    not; the choice moved from six call sites into one module. The build
+    baseline stays libadwaita 1.5, so Ubuntu 24.04 and snap core24 still
+    build
+  * Improved: build dependencies now state the versions the crate features
+    require — libadwaita-1-dev (>= 1.5), libvte-2.91-gtk4-dev (>= 0.76)
+  * Improved: the three FFI crates now inherit the workspace clippy lint set;
+    they had been the only crates in the workspace with no lints at all
+  * Documentation: how to verify a downloaded release artifact, in
+    docs/INSTALL.md and SECURITY.md
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Thu, 13 Aug 2026 12:00:00 +0300
+
 rustconn (0.19.22-1) unstable; urgency=medium
 
   * Version bump to 0.19.22
@@ -323,17 +391,23 @@ rustconn (0.19.4-1) unstable; urgency=medium
  -- Anton Isaiev <totoshko88@gmail.com>  Mon, 27 Jul 2026 01:57:32 +0300
 
 rustconn (0.19.3-1) unstable; urgency=medium
+
   * Version bump to 0.19.3
   * Added option to hide Welcome tab at startup (issue #232)
   * Fixed FreeRDP fallback fails on FreeRDP 3.26+ due to args-from exclusivity (issue #234)
   * Fixed RDP clipboard syncing even when disabled in connection settings (issue #233)
   * Fixed SSH MPTCP used non-existent TCPMultipath option (issue #231)
+
  -- Anton Isaiev <totoshko88@gmail.com>  Wed, 23 Jul 2026 22:00:00 +0300
+
 rustconn (0.19.2-1) unstable; urgency=medium
+
   * Version bump to 0.19.2
   * Added Multipath TCP (MPTCP) support for SSH, RDP, and VNC connections
   * Fixed VPN connect/disconnect no longer kills healthy SSH sessions
+
  -- Anton Isaiev <totoshko88@gmail.com>  Thu, 23 Jul 2026 01:06:02 +0300
+
 rustconn (0.19.1-1) unstable; urgency=medium
 
   * Version bump to 0.19.1
@@ -416,6 +490,10 @@ rustconn (0.18.7-1) unstable; urgency=medium
     rustconn-cli is minimal by default with optional client-launch and
     secret-management features
   * System keyring (oo7/macOS Keychain) gated behind system-keyring feature
+  * NO_COLOR env var handling follows the no-color.org spec
+  * Disabled keyring backends now log at warn level
+  * Updated lockfile: cc 1.2.67, http-body 1.1.0, mio 1.2.2, open 5.4.0,
+    rand 0.9.5, rustls 0.23.42, uuid 1.23.5
 
  -- Anton Isaiev <totoshko88@gmail.com>  Mon, 13 Jul 2026 12:00:00 +0200
 
@@ -769,11 +847,13 @@ rustconn (0.17.0-1) unstable; urgency=medium
   * Security: kubectl and Zero Trust Generic sessions now spawn argv directly
     instead of via `sh -c`, preventing shell-metacharacter command injection
     from imported/untrusted configs
-  * Security: removed the obsolete legacy XOR credential fallback; documented
-    the machine-key threat model and Passbolt passphrase Known Issue
+  * Security: removed the obsolete legacy XOR credential fallback (only
+    AES-256-GCM credentials are read); documented the machine-key threat model
+    and the Passbolt passphrase Known Issue in SECURITY.md
   * Security: wrap transient Bitwarden/KeePassXC serialized buffers in Zeroizing
   * Added workspace split-layout restore on Open
-  * Improved terminal highlight rendering and connection sort performance
+  * Improved terminal highlight rendering (pre-parsed colours, allocation-free
+    hot path) and connection sort (cached lowercase keys)
   * Converted the embedded-RDP autotype dialog to adw::Dialog; header-bar icon
     buttons now meet the 44x44 minimum tap target
   * Build: narrowed the tokio feature set from "full" to the features used
@@ -968,13 +1048,15 @@ rustconn (0.16.2-1) unstable; urgency=medium
 
   * GNOME HIG follow-up audit:
     - Critical errors shown as blocking alert dialogs instead of toasts
+      (vault password save, secret load, smart folder deletion)
     - Error alert dialogs no longer style OK button as destructive
     - Sidebar drag-and-drop indicators use libadwaita accent color
   * Dead code cleanup: removed unused ContainerState, is_split/is_welcome,
     load_variable_from_vault, stale #[allow(dead_code)] attributes
-  * Fixed F10 opening application menu in keyboard passthrough mode
+  * Fixed F10 opening application menu in keyboard passthrough mode —
+    primary flag dropped during passthrough
   * Fixed Ctrl+T (SSH Tunnel Manager) ignoring passthrough and not
-    customizable — now a regular keybinding
+    customizable — now a regular keybinding in the central registry
   * Updated: block-buffer 0.12.0→0.12.1, cc 1.2.63→1.2.64,
     memchr 2.8.1→2.8.2, smallvec 1.15.1→1.15.2, yuv 0.8.14→0.8.15
 
@@ -987,11 +1069,14 @@ rustconn (0.16.1-1) unstable; urgency=medium
       caps-lock warning, focus on row click)
     - Highlight-rules editor rebuilt: one expandable row per rule with
       proper EntryRows, enable switch and delete button
-    - Rows with suffix controls activatable via the row itself
+    - Rows with suffix controls (language, startup action, keybinding,
+      SSH key, cloud-sync import) activatable via the row itself
     - Reset All to Defaults for shortcuts now asks for confirmation
     - Restart to apply after settings restore is a dialog with Quit now
     - Backup/restore failures shown to user instead of only logged
-    - Removed extra suggested-action styling from inline buttons
+    - Removed extra suggested-action styling from inline buttons;
+      error dialog headings unified to sentence case; ZIP filter name
+      translatable
   * Fixed Settings dialog taking 5+ seconds to appear with Bitwarden
     backend (flatpak) — keyring calls moved to gio::spawn_blocking
   * Fixed UI froze for seconds after startup with Bitwarden (flatpak) —
@@ -1663,38 +1748,29 @@ rustconn (0.13.1-1) unstable; urgency=medium
 
 rustconn (0.13.0-1) unstable; urgency=medium
 
+  * Version bump to 0.13.0
   * [Fixed] External RDP tab shows only toolbar, content area empty —
     added force_external parameter so external sessions always render
     the informational StatusPage
   * [Fixed] Group edit: SSH settings toggle reopens confirmation dialog
     in a loop — added guard flag to prevent re-entry
-  * [Fixed] Incomplete translations for Dynamic Folder strings — provided
-    correct translations and removed fuzzy flags for all 16 languages
+  * [Fixed] Incomplete translations for Dynamic Folder strings —
+    provided correct translations and removed fuzzy flags for all 16 languages
   * [Fixed] Bulk actions: Move to Group icon missing — replaced with
     standard folder-drag-accept-symbolic from Adwaita
   * [Fixed] External RDP (FreeRDP) fails on changed server certificate —
-    added ignore_certificate field and Accept Certificate checkbox;
-    also fixed password not passed to sdl-freerdp3, disable_nla not
-    forwarded, connection errors not shown, tab not auto-closed (#112)
+    added ignore_certificate field and Accept Certificate checkbox (#112)
   * [Added] Smart Folders in sidebar — dynamically groups connections
-    based on tag, protocol, host pattern, and group filters using AND
-    logic; shows match count badge per folder; Add button and right-click
-    context menu (Edit / Delete) fully wired (#111)
+    based on tag, protocol, host pattern, and group filters (#111)
   * [Added] Group-level Expect rules and post-login scripts inheritance —
-    connections with empty automation config inherit from parent group
-    chain; applies to all terminal protocols (#110)
-  * [Improved] Vault entry missing toast notification — warning toast
-    shows when credential resolution finds no vault entry (#114)
-  * [Improved] Test credential resolution button in connection dialog —
-    verify vault configuration before connecting (#114)
-  * [Improved] Multi-language SSH password prompt detection — supports
-    14 non-English locales for auto-fill (#114)
+    connections inherit automation config from parent group chain (#110)
+  * [Improved] Vault entry missing toast notification (#114)
+  * [Improved] Test credential resolution button in connection dialog (#114)
+  * [Improved] Multi-language SSH password prompt detection (#114)
   * [Improved] GNOME HIG: sidebar toolbar decluttered — removed
     Import/Export buttons from bottom toolbar
-  * [Documentation] Auto-login with stored passwords troubleshooting
-    section added to User Guide (#114)
 
- -- Anton Isaiev <totoshko88@gmail.com>  Sat, 02 May 2026 12:00:00 +0000
+ -- Anton Isaiev <totoshko88@gmail.com>  Sat, 02 May 2026 14:00:00 +0200
 
 rustconn (0.12.9-1) unstable; urgency=medium
 
@@ -1779,20 +1855,6 @@ rustconn (0.12.5-1) unstable; urgency=medium
   * [Dependencies] Teleport CLI 18.7.6 → 18.7.5 (URL fix)
 
  -- Anton Isaiev <totoshko88@gmail.com>  Tue, 29 Apr 2026 12:00:00 +0000
-
-rustconn (0.12.4-1) unstable; urgency=medium
-
-  * [Cleaned] Removed dead mosh.rs dialog module — standalone MOSH options
-    panel was never wired into the connection dialog; MOSH settings are
-    already integrated into the SSH tab via ssh::create_ssh_options()
-  * [Cleaned] Removed legacy connect_password_load_button wrapper — unused
-    passthrough method; all callers already use the _with_groups variant
-  * [Cleaned] Removed unused add_available_file_row from Cloud Sync
-    settings — will be re-added when import-from-settings is implemented
-  * [Dependencies] rpassword 7.4.0 → 7.5.0
-  * [Dependencies] rustls 0.23.39 → 0.23.40
-
- -- Anton Isaiev <totoshko88@gmail.com>  Tue, 28 Apr 2026 12:00:00 +0000
 
 rustconn (0.12.4-1) unstable; urgency=medium
 
@@ -1947,17 +2009,22 @@ rustconn (0.11.2-1) unstable; urgency=medium
   * [Fixed] Reconnect reuses existing tab for all VTE protocols — SSH,
     Telnet, Serial, Kubernetes, ZeroTrust, MOSH; tab position, group,
     and split view state fully preserved (#89)
-  * [Fixed] RDP port check skipped with jump host
+  * [Fixed] RDP port check skipped with jump host — direct TCP probe
+    always timed out for jump-host connections
   * [Fixed] Hoop.dev CLI download — switched to versioned URL (HTTP 403)
-  * [Fixed] Azure/gcloud/OCI CLI wrapper test in Flatpak
-  * [Fixed] Flatpak SFTP always uses mc
-  * [Improved] Reconnect banner consistent across all protocols
-  * [Improved] Sidebar width tuned for HiDPI — 360px→320px default
+  * [Fixed] Azure/gcloud/OCI CLI wrapper test in Flatpak — Read-only
+    file system crash during pip install verification
+  * [Fixed] Flatpak SFTP always uses mc — xdg-open unreachable in sandbox
+  * [Improved] Reconnect banner consistent across all protocols — RDP,
+    VNC, SPICE now show bottom banner like SSH/Telnet
+  * [Improved] Sidebar width tuned for HiDPI — 360px→320px default,
+    old saved widths reset on upgrade
   * [Added] SSH Jump Host for RDP via ssh -L tunnel (#90)
   * [Added] Tab context menu: Close Others/Left/Right/All/Ungrouped
   * [Added] CLI: all 10 protocols and 11 Zero Trust providers
   * [Documentation] Complete CLI reference in User Guide
-  * [Dependencies] open 5.3.4, openssl 0.10.78, typenum 1.20.0
+  * [Dependencies] open 5.3.4, openssl 0.10.78, typenum 1.20.0,
+    Hoop.dev CLI 1.56.1
 
  -- Anton Isaiev <totoshko88@gmail.com>  Mon, 20 Apr 2026 12:00:00 +0200
 
@@ -2099,20 +2166,23 @@ rustconn (0.10.13-1) unstable; urgency=medium
 
 rustconn (0.10.12-1) unstable; urgency=medium
 
-  * [Security] VNC password stored as SecretString
-  * [Security] VNC pixel buffer max resolution guard (16384x16384)
-  * [Improved] RDP 4K frame conversion zero-copy (Cow<[u8]>)
-  * [Improved] Sidebar search highlight regex cached
-  * [Improved] Log sanitization custom patterns pre-compiled
+  * [Security] VNC password stored as SecretString — zeroized on drop,
+    protected from accidental logging
+  * [Security] VNC pixel buffer max resolution guard — clamp to 16384x16384
+    preventing OOM from malicious VNC server
+  * [Improved] RDP 4K frame conversion zero-copy — convert_to_bgra() returns
+    Cow<[u8]> instead of Vec<u8>, avoiding 33 MB clone per frame
+  * [Improved] Sidebar search highlight regex cached — compiled once per
+    query change instead of once per visible item per keystroke
+  * [Improved] Log sanitization custom patterns pre-compiled at construction
+    time instead of recompiling on every sanitize_output() call
   * [Improved] Log sanitization redundant to_lowercase() removed
   * [Dead code] Removed wayland_surface.rs (~1050 lines)
   * [Dead code] Removed TracingOutput::OpenTelemetry variant
-  * [Dead code] Removed RDPDR FileLock struct and notify_directory_change()
-  * [Dead code] Removed commented-out code
-  * [Dependencies] gtk4 0.11.2, glib 0.22.4, pango 0.22.4, zip 8.5.1
-  * [CLI downloads] TigerVNC 1.16.2, Teleport 18.7.3, Bitwarden CLI 2026.3.0
+  * [Dead code] Removed RDPDR FileLock struct and notify_directory_change() stub
+  * [Dead code] Removed commented-out code (set_allow_bold, --full-screen)
 
- -- Anton Isaiev <totoshko88@gmail.com>  Mon, 07 Apr 2026 12:00:00 +0000
+ -- Anton Isaiev <totoshko88@gmail.com>  Tue, 07 Apr 2026 12:00:00 +0000
 
 rustconn (0.10.11-1) unstable; urgency=medium
 
@@ -2798,16 +2868,25 @@ rustconn (0.8.1-1) unstable; urgency=medium
 rustconn (0.8.0-1) unstable; urgency=medium
 
   * Version bump to 0.8.0
-  * Added Telnet backspace/delete key configuration (#5):
-    - TelnetBackspaceSends and TelnetDeleteSends enums (Automatic/Backspace/Delete)
-    - Connection dialog Keyboard group with two dropdowns
-    - stty erase shell wrapper in spawn_telnet() to apply key settings
-    - Addresses common backspace/delete inversion issue
-  * Added Flatpak Telnet support:
-    - GNU inetutils 2.7 built as Flatpak module
+  * Added Telnet Backspace/Delete Configuration (#5):
+    - TelnetBackspaceSends and TelnetDeleteSends enums with Automatic/Backspace/Delete options
+    - Connection dialog Keyboard group with two dropdowns for Backspace and Delete key behavior
+    - stty erase shell wrapper in spawn_telnet() to apply key settings before connecting
+    - Addresses common backspace/delete inversion issue reported by users
+  * Added Flatpak Telnet Support:
+    - GNU inetutils built as Flatpak module
     - telnet binary available at /app/bin/ in Flatpak sandbox
-    - Added to all three Flatpak manifests
-  * Updated OBS _service revision from v0.5.3 to current version tag
+    - Added to all three Flatpak manifests (flatpak, flatpak-local, flathub)
+  * Fixed OBS Screenshot Display:
+    - Updated _service revision from v0.5.3 to current version tag
+  * Fixed Flatpak AWS CLI:
+    - Replaced awscliv2 pip package (Docker wrapper) with official AWS CLI v2
+      binary installer from awscli.amazonaws.com
+  * Fixed Flatpak Component Detection:
+    - SSM Plugin, Azure CLI, OCI CLI now correctly detected after installation
+    - Added explicit search paths and increased recursive search depth
+  * Fixed Flatpak Python Version:
+    - Wrapper scripts dynamically detect Python version instead of hardcoding
   * Updated dependencies: libc 0.2.180->0.2.181, tempfile 3.24.0->3.25.0,
     unicode-ident 1.0.22->1.0.23
 
@@ -2879,28 +2958,27 @@ rustconn (0.7.7-1) unstable; urgency=medium
 rustconn (0.7.6-1) unstable; urgency=medium
 
   * Version bump to 0.7.6
+  * Flatpak Components Manager - On-demand CLI download for Flatpak environment:
+    - Menu → Flatpak Components... (visible only in Flatpak)
+    - Download and install CLIs to ~/.var/app/io.github.totoshko88.RustConn/cli/
+    - Supports: AWS CLI, AWS SSM Plugin, Google Cloud CLI, Azure CLI, OCI CLI,
+      Teleport, Tailscale, Cloudflare Tunnel, Boundary, Bitwarden CLI, 1Password CLI, TigerVNC
+    - SHA256 checksum verification, progress indicators, cancel support
+  * Snap Strict Confinement - Migrated from classic to strict confinement:
+    - Snap-aware path resolution for data, config, and SSH directories
+    - Uses embedded clients (IronRDP, vnc-rs, spice-gtk)
+    - External CLIs accessed from host via system-files interface
   * UI/UX Enhancements - GNOME HIG compliance improvements:
-    - Added accessible labels to connection status icons (Connected, Connecting, Connection failed)
-    - Added accessible labels to protocol filter buttons in sidebar
-    - Increased sidebar minimum width from 180px to 200px per GNOME HIG
-    - Added adw::Clamp to connection dialog for adaptive width on wide screens
-    - Added CSS status styles (.status-connected, .status-connecting, .status-failed)
-    - Toast notifications now use adw::ToastPriority (High for warnings/errors)
-    - Added ToastType::icon_name() and ToastType::priority() methods
-    - Connection dialog now uses adaptive adw::ViewSwitcherTitle with fallback ViewSwitcherBar
-  * Legacy Code Cleanup - Removed unused legacy types from terminal module:
-    - Removed TabDisplayMode enum (handled by adw::TabView automatically)
-    - Removed TabLabelWidgets struct (managed by adw::TabPage properties)
-  * Dialog Widget Builders - Created reusable UI components for dialogs:
-    - Moved widgets.rs from dialogs/connection/ to dialogs/ for shared access
-    - Added SwitchRowBuilder for adw::SwitchRow creation
-    - Builders: CheckboxRowBuilder, EntryRowBuilder, SpinRowBuilder, DropdownRowBuilder, SwitchRowBuilder
-  * Protocol Dialogs Refactoring - Applied widget builders across all protocol panels:
-    - SSH, RDP, VNC, SPICE dialogs refactored using widget builders
-    - Reduces code duplication and ensures consistent GNOME HIG styling
-  * Other Dialogs Refactoring - Extended widget builders to non-protocol dialogs:
-    - Export dialog: Replaced Frame + Grid with adw::PreferencesGroup, added adw::Clamp
-    - Snippet and Cluster dialogs refactored to use widget builders
+    - Accessible labels for status icons and protocol filter buttons
+    - Sidebar minimum width increased to 200px
+    - Connection dialog uses adaptive adw::ViewSwitcherTitle
+    - Toast notifications with proper priority levels
+  * Settings → Clients - Improved client detection display:
+    - All protocols show embedded client status with blue indicator
+    - Fixed AWS SSM Plugin detection
+  * Dialog Widget Builders - Reusable UI components (CheckboxRowBuilder, EntryRowBuilder, etc.)
+  * Protocol Dialogs Refactoring - Applied widget builders to SSH, RDP, VNC, SPICE panels
+  * Legacy Code Cleanup - Removed unused TabDisplayMode, TabLabelWidgets types
 
  -- Anton Isaiev <totoshko88@gmail.com>  Fri, 06 Feb 2026 12:00:00 +0200
 
@@ -2955,15 +3033,10 @@ rustconn (0.7.2-1) unstable; urgency=medium
 rustconn (0.7.1-1) unstable; urgency=medium
 
   * Version bump to 0.7.1
-  * Undo/Trash Functionality - Safely recover deleted items
-  * Group Inheritance - Load Username and Domain from parent Group
-  * Debounced Persistence - Changes batched and saved after 2 seconds
-  * Refactored Sidebar - Split monolithic sidebar into modular components
-  * Refactored Drag & Drop - Strongly typed DragPayload
-  * Added Search Highlighting - Visual feedback for search matches
-  * Fixed Credential Inheritance from Groups
-  * Fixed GTK Widget Parenting warning
-  * Fixed Connection History Reconnect
+  * Refactored Sidebar - Split monolithic sidebar into modular components (TECH-03)
+  * Refactored Drag & Drop - Strongly typed DragPayload (TECH-04)
+  * Added Search Highlighting - Visual feedback for search matches (TECH-05)
+  * Code Quality - Async persistence fixes and cleanup
 
  -- Anton Isaiev <totoshko88@gmail.com>  Sun, 01 Feb 2026 14:00:00 +0200
 
@@ -2978,6 +3051,13 @@ rustconn (0.7.0-1) unstable; urgency=medium
   * Dialog Size Unification - Export 750×650, Import 750×800, New Group 450×550
 
  -- Anton Isaiev <totoshko88@gmail.com>  Sun, 01 Feb 2026 12:00:00 +0200
+
+rustconn (0.6.9-1) unstable; urgency=medium
+
+  * Version bump to 0.6.9
+  * Fixed Local Shell tabs not appearing in Split View "Select Tab" dialog
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Sat, 31 Jan 2026 12:00:00 +0200
 
 rustconn (0.6.8-1) unstable; urgency=medium
 
@@ -3046,109 +3126,147 @@ rustconn (0.6.2-1) unstable; urgency=medium
 rustconn (0.6.1-1) unstable; urgency=medium
 
   * Update to version 0.6.1 - Credential Inheritance and Jump Host Support
-    - Credential Inheritance from parent groups
-    - Jump Host Support for SSH connections
-    - Adwaita Empty States migration
-    - Group sorting and credentials UI improvements
 
- -- Anton Isaiev <totoshko88@gmail.com>  Sun, 12 Jan 2026 18:00:00 +0200
+ -- Anton Isaiev <totoshko88@gmail.com>  Sun, 12 Jan 2026 22:00:00 +0200
 
 rustconn (0.6.0-1) unstable; urgency=medium
 
-  * Update to version 0.6.0 - Code Audit & Cleanup Release
-    - Removed check_structs.rs development artifact containing unsafe code
-    - Replaced blocking_send() with try_send() in VNC input handlers
-    - Replaced unwrap() with safe alternatives in sidebar.rs iterator access
-    - Replaced expect() with proper error handling in validation.rs regex
-    - Replaced module-level clippy allows with targeted function-level annotations
-    - Improved app.rs initialization error handling
-    - Updated Cargo.toml license from MIT to GPL-3.0-or-later
-    - Updated Cargo.toml authors to Anton Isaiev
-    - Added developer_name tag to metainfo.xml for AppStream compatibility
-    - Added author and license fields to AppImage packaging
-    - Added debian.copyright file to OBS debian packaging
-    - Updated dependencies: base64ct, cc, data-encoding, find-msvc-tools, flate2,
-      getrandom, libc, toml, zbus, zbus_macros, zbus_names, zmij, zvariant
-    - Removed unused cfg_aliases, nix, static_assertions dependencies
+  * New upstream release - Code Audit & Cleanup
+  * Removed check_structs.rs development artifact containing unsafe code
+  * Replaced blocking_send() with try_send() in VNC input handlers
+  * Replaced unwrap() with safe alternatives in sidebar.rs iterator access
+  * Replaced expect() with proper error handling in validation.rs regex
+  * Replaced module-level clippy allows with targeted function-level annotations
+  * Improved app.rs initialization error handling
+  * Updated Cargo.toml license from MIT to GPL-3.0-or-later
+  * Updated Cargo.toml authors to Anton Isaiev
+  * Added developer_name tag to metainfo.xml for AppStream compatibility
+  * Updated dependencies: base64ct, cc, data-encoding, find-msvc-tools, flate2,
+    getrandom, libc, toml, zbus, zbus_macros, zbus_names, zmij, zvariant
+  * Removed unused cfg_aliases, nix, static_assertions dependencies
 
  -- Anton Isaiev <totoshko88@gmail.com>  Sun, 12 Jan 2026 12:00:00 +0200
 
 rustconn (0.5.9-1) unstable; urgency=medium
 
-  * Update to version 0.5.9
-    - Migrated Settings dialog from deprecated PreferencesWindow to PreferencesDialog
-    - Updated libadwaita feature from v1_4 to v1_5
-    - Migrated Template dialog to modern libadwaita patterns
-    - Fixed Zero Trust (AWS SSM) connection status icon showing as failed
-    - Fixed remote-viewer version parsing in Settings Clients tab
-    - Fixed SSH Agent key selection when connecting
-    - Improved agent key dropdown display in Connection Dialog
+  * New upstream release
+  * Migrated Settings dialog from deprecated PreferencesWindow to PreferencesDialog
+  * Updated libadwaita feature from v1_4 to v1_5
+  * Migrated Template dialog to modern libadwaita patterns
+  * Fixed Zero Trust (AWS SSM) connection status icon showing as failed
+  * Fixed remote-viewer version parsing in Settings Clients tab
+  * Fixed SSH Agent key selection when connecting
+  * Improved agent key dropdown display in Connection Dialog
 
  -- Anton Isaiev <totoshko88@gmail.com>  Sat, 11 Jan 2026 12:00:00 +0200
 
 rustconn (0.5.8-1) unstable; urgency=medium
 
-  * Update to version 0.5.8
-    - Fixed SSH Agent "Add Key" button - now opens file chooser to select any SSH key file
-    - Fixed SSH Agent "+" buttons in Available Key Files list - now load keys with passphrase dialog
-    - Fixed SSH Agent "Remove Key" (trash) button - now actually removes keys from the agent
-    - Fixed SSH Agent Refresh button - updates both loaded keys and available keys lists
+  * New upstream release
+  * Fixed SSH Agent Add Key button (opens file chooser)
+  * Fixed SSH Agent plus buttons in Available Key Files (load keys with passphrase)
+  * Fixed SSH Agent Remove Key button (actually removes keys from agent)
+  * Fixed SSH Agent Refresh button (updates both loaded and available keys)
 
  -- Anton Isaiev <totoshko88@gmail.com>  Tue, 07 Jan 2026 20:00:00 +0200
 
 rustconn (0.5.7-1) unstable; urgency=medium
 
-  * Update to version 0.5.7
-    - Fixed Test button in New Connection dialog (async runtime issue with GTK)
-    - Updated dependencies: h2, proc-macro2, quote, rsa, rustls, serde_json, url, zerocopy
-    - Note: sspi and picky-krb kept at previous versions due to rand_core compatibility
+  * New upstream release
+  * Fixed Test button in New Connection dialog (async runtime issue with GTK)
+  * Updated dependencies: h2, proc-macro2, quote, rsa, rustls, serde_json, url, zerocopy
+  * Note: sspi and picky-krb kept at previous versions due to rand_core compatibility
 
  -- Anton Isaiev <totoshko88@gmail.com>  Tue, 07 Jan 2026 18:00:00 +0200
 
 rustconn (0.5.6-1) unstable; urgency=medium
 
-  * Update to version 0.5.6
-    - Updated USER_GUIDE.md with complete v0.5.5+ feature documentation
-    - Unified dialog widths (Rename, Edit Group dialogs now 750px)
-    - Added Security Tips section to Password Generator dialog
+  * New upstream release
+  * Migrated to native libadwaita architecture (adw::Application, adw::ApplicationWindow)
+  * All dialogs redesigned to use adw::Window with adw::HeaderBar following GNOME HIG
+  * Added KeePass status button in sidebar toolbar with visual integration indicator
+  * Added Quick Filter functionality for protocol filtering (SSH, RDP, VNC, SPICE, ZeroTrust)
+  * Enhanced terminal settings with color themes, cursor options, and behavior controls
+  * Added Security Tips section to Password Generator dialog
+  * Fixed Quick Filter logic and button state synchronization
+  * Updated USER_GUIDE.md with complete v0.5.5+ feature documentation
 
- -- Anton Isaiev <totoshko88@gmail.com>  Sun, 04 Jan 2026 12:00:00 +0200
+ -- Anton Isaiev <totoshko88@gmail.com>  Tue, 07 Jan 2026 12:00:00 +0200
 
 rustconn (0.5.5-1) unstable; urgency=medium
 
-  * Update to version 0.5.5
-    - Added Kiro steering rules for development workflow
-    - Rename action in sidebar context menu for connections and groups
-    - Double-click on import source to start import
-    - Double-click on template to create connection from it
-    - Group dropdown in Connection dialog for selecting parent group
-    - Info tab for viewing connection details (replaces popover)
-    - Default alphabetical sorting with drag-drop reordering support
-    - Toast notification system for non-blocking user feedback
-    - User-friendly error display utilities
-    - GUI utility module with safe display access
-    - Form validation module with visual feedback
-    - Accessibility improvements on sidebar and terminal tabs
-    - Keyboard shortcuts help dialog (Ctrl+? or F1)
-    - Empty state widgets for no connections/search results/sessions
-    - Color scheme toggle in Settings dialog (System/Light/Dark)
-    - CSS animations for connection status
-    - Enhanced drag-drop visual feedback
+  * New upstream release
+  * Added Kiro steering rules for commit and release checklists
+  * Fixed Flatpak manifest version references
 
- -- Anton Isaiev <totoshko88@gmail.com>  Sat, 03 Jan 2026 12:00:00 +0200
+ -- Anton Isaiev <totoshko88@gmail.com>  Fri, 02 Jan 2026 17:30:00 +0200
+
+rustconn (0.5.4-1) unstable; urgency=medium
+
+  * New upstream release
+  * Royal TS (.rtsz XML) import support with folder hierarchy and trash filtering
+  * Royal TS (.rtsz XML) export support for SSH, RDP, VNC connections
+  * Close Tab action implementation for terminal notebook (Ctrl+W)
+  * Session Restore feature with configurable settings
+  * Password Generator with strength evaluation and entropy calculation
+  * Advanced session logging modes (activity, user input, terminal output)
+  * Updated dependencies: cc, iri-string, itoa, libredox, proc-macro2, and others
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Fri, 02 Jan 2026 12:00:00 +0200
+
+rustconn (0.5.3-1) unstable; urgency=medium
+
+  * New upstream release
+  * UI Unification: All dialogs now use consistent 750×500px dimensions
+  * Connection history recording for all protocols (SSH, VNC, SPICE, RDP, ZeroTrust)
+  * Protocol-specific tabs in Template Dialog matching Connection Dialog
+  * Connection history and statistics dialogs with search and visualization
+  * Common embedded widget trait for RDP/VNC/SPICE deduplication
+  * Quick Connect now supports RDP and VNC protocols with templates
+  * Property tests for history and session restore models
+  * Refactored terminal.rs into modular structure
+  * Removed duplicate Close/Cancel buttons from all dialogs
+  * Renamed action buttons: "New X" → "Create", "Quick Connect" → "Connect"
+  * Create Connection now always opens blank dialog (removed template picker)
+  * Updated gtk4 dependency to 0.10.2
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Thu, 02 Jan 2026 12:00:00 +0200
+
+rustconn (0.5.2-1) unstable; urgency=medium
+
+  * New upstream release
+  * Refactored window.rs into modular structure (reduced from 7283 to 2396 lines, -67%)
+  * Refactored embedded_rdp.rs into modular structure (reduced from 4234 to 2803 lines, -34%)
+  * Refactored sidebar.rs into modular structure (reduced from 2787 to 1937 lines, -30%)
+  * Refactored embedded_vnc.rs into modular structure (reduced from 2304 to 1857 lines, -19%)
+  * Fixed tab icons to match sidebar icons for all protocols
+  * Fixed Snippet dialog Save button not clickable
+  * Fixed Template dialog not showing all fields
+  * Added wayland-native feature flag with gdk4-wayland integration
+  * CI improvements: added libadwaita-1-dev, property tests job, OBS changelog generation
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Sun, 29 Dec 2025 12:00:00 +0200
+
+rustconn (0.5.1-1) unstable; urgency=medium
+
+  * New upstream release
+    - Removed dead code and placeholder implementations
+    - Code cleanup and documentation improvements
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Sat, 28 Dec 2025 12:00:00 +0200
 
 rustconn (0.5.0-1) unstable; urgency=medium
 
-  * Update to version 0.5.0
+  * New upstream release
     - RDP clipboard file transfer support (CF_HDROP format)
-    - RDPDR directory change notifications and file locking
+    - RDPDR directory change notifications and file locking support
     - Native SPICE protocol embedding using spice-client crate 0.2.0
     - Real-time connection status indicators in sidebar
     - Custom cursors in RDP sessions
     - Full Expect automation engine integration
     - Terminal context menu and keyboard shortcuts
-    - Performance: lock-free audio, optimized search, cached tokio runtime
-    - Fixed SSH Agent key discovery for all private key formats
+    - Performance: lock-free audio callback, optimized fuzzy search, cached tokio runtime
+    - Fixed SSH Agent key discovery for all private key formats (.pem, .key, header detection)
     - Fixed system tray menu intermittent issues
     - Updated thiserror from 1.0 to 2.0
 
@@ -3156,7 +3274,7 @@ rustconn (0.5.0-1) unstable; urgency=medium
 
 rustconn (0.4.2-1) unstable; urgency=medium
 
-  * Update to version 0.4.2
+  * New upstream release
     - Fixed Asbru-CM import for installed configuration (environments key)
     - Fixed application icon resolution for all installation scenarios
     - Extended icon theme search paths
@@ -3165,7 +3283,7 @@ rustconn (0.4.2-1) unstable; urgency=medium
 
 rustconn (0.4.1-1) unstable; urgency=medium
 
-  * Update to version 0.4.1
+  * New upstream release
     - IronRDP audio backend (RDPSND) with PCM format support
     - Optional rdp-audio feature for audio playback via cpal
     - Bidirectional clipboard improvements for embedded RDP
@@ -3176,7 +3294,7 @@ rustconn (0.4.1-1) unstable; urgency=medium
 
 rustconn (0.4.0-1) unstable; urgency=medium
 
-  * Update to version 0.4.0
+  * New upstream release
     - Zero Trust: Improved UI by hiding irrelevant fields
     - Upgraded ironrdp to 0.13
     - Refactored rustconn-core
@@ -3186,7 +3304,7 @@ rustconn (0.4.0-1) unstable; urgency=medium
 
 rustconn (0.3.1-1) unstable; urgency=medium
 
-  * Update to version 0.3.1
+  * New upstream release
     - Code cleanup: fixed all Clippy warnings
     - Applied rustfmt formatting
     - Added Deactivation-Reactivation for RDP sessions
@@ -3196,7 +3314,7 @@ rustconn (0.3.1-1) unstable; urgency=medium
 
 rustconn (0.3.0-1) unstable; urgency=medium
 
-  * Update to version 0.3.0
+  * New upstream release
     - IronRDP clipboard integration (bidirectional copy/paste)
     - IronRDP shared folders (RDPDR) support
     - RemoteFX codec for better RDP image quality
@@ -3206,25 +3324,21 @@ rustconn (0.3.0-1) unstable; urgency=medium
 
 rustconn (0.2.0-1) unstable; urgency=medium
 
-  * Update to version 0.2.0
-    - Tree view state persistence (expanded/collapsed folders saved)
-    - Native format (.rcn) import/export with proper group hierarchy
+  * New upstream release
+    - Tree view state persistence (expanded/collapsed folders)
     - Fixed RDP embedded mode window sizing
-    - Updated dependencies
+    - Fixed native format import group hierarchy preservation
+    - Updated dependencies: ksni 0.3, resvg 0.45, dirs 6.0
+    - Dynamic version in About dialog
+    - Zero Trust providers support (AWS SSM, GCP IAP, Azure Bastion)
 
- -- Anton Isaiev <totoshko88@gmail.com>  Mon, 23 Dec 2024 12:00:00 +0000
+ -- Anton Isaiev <totoshko88@gmail.com>  Sun, 22 Dec 2025 18:00:00 +0200
 
 rustconn (0.1.0-1) unstable; urgency=medium
 
   * Initial release
     - GTK4 GUI for managing remote connections
-    - SSH support with embedded VTE terminal
-    - RDP support via FreeRDP
-    - VNC support via TigerVNC
-    - SPICE support via virt-viewer
-    - Connection groups and tags
-    - Import/export (Remmina, Asbru-CM, SSH config, Ansible)
-    - Credential backends (libsecret, KeePassXC)
-    - Session logging and command snippets
+    - SSH, RDP, VNC, SPICE support
+    - Connection groups and import/export
 
- -- Anton Isaiev <totoshko88@gmail.com>  Sun, 22 Dec 2024 12:00:00 +0000
+ -- Anton Isaiev <totoshko88@gmail.com>  Sun, 22 Dec 2025 12:00:00 +0000

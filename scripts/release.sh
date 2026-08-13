@@ -616,9 +616,41 @@ if command -v msgfmt >/dev/null; then
         fail "$PO_FAILED po file(s) failed msgfmt validation"
     fi
     ok "All po/*.po files pass msgfmt --check"
+
+    # Fuzzy and untranslated entries pass msgfmt --check but render as English
+    # at runtime, so the loop above cannot see them. Same gate as CI.
+    if [[ -x scripts/check-po-complete.sh ]]; then
+        if PO_COMPLETE_OUTPUT="$(./scripts/check-po-complete.sh 2>&1)"; then
+            ok "check-po-complete.sh passed"
+        else
+            printf '%s\n' "$PO_COMPLETE_OUTPUT" >&2
+            fail "check-po-complete.sh failed — CI enforces this"
+        fi
+    fi
 else
     warn "msgfmt not installed — skipping po validation"
 fi
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 9b. The two i18n gates that need no gettext tooling
+# ──────────────────────────────────────────────────────────────────────────────
+# The checks above validate the catalogues; they say nothing about whether the
+# manifest still matches the sources. The CI `i18n` job runs both of these and
+# fails the build on either, so a release prepared without them gets a red CI on
+# the release commit — which is how the 0.20.0 terminal split reached a tag with
+# two new modules missing from POTFILES.in.
+for i18n_check in check-potfiles.sh check-i18n-escapes.sh; do
+    if [[ -x "scripts/$i18n_check" ]]; then
+        if I18N_OUTPUT="$(./scripts/"$i18n_check" 2>&1)"; then
+            ok "$i18n_check passed"
+        else
+            printf '%s\n' "$I18N_OUTPUT" >&2
+            fail "$i18n_check failed — CI enforces this and will fail the release commit"
+        fi
+    else
+        warn "scripts/$i18n_check not found or not executable — skipping"
+    fi
+done
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 10. cargo fmt + clippy + tests

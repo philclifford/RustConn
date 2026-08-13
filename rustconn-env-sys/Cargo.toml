@@ -1,0 +1,26 @@
+[package]
+name = "rustconn-env-sys"
+description = "Isolated FFI helper for RustConn's startup environment: a guarded, single-threaded-only wrapper around setenv(3)."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Deliberately none. `std::env::set_var` already is the `setenv(3)` wrapper this
+# crate guards, so there is nothing for `libc` to add, and the startup guard's
+# thread count is read from /proc/self/task with std alone (Linux only — see the
+# crate docs, "What is checked, and what is not").
+
+# This crate is one of the sanctioned locations for `unsafe` in the workspace
+# (see rust-pragmatic-guidelines.md, M-UNSAFE: isolate FFI in a small -sys
+# crate), and it opts into the workspace lint set like every other crate. The
+# single exemption it needs is re-opened in src/lib.rs with a crate-level
+# `#![expect(unsafe_code, reason = "…")]`, which is possible because the workspace
+# sets that lint to `deny` rather than `forbid`. Declaring `[lints.rust]` here
+# instead would *replace* the inherited table, and this crate would silently lose
+# clippy::pedantic, clippy::nursery and clippy::unwrap_used — the last place in
+# the workspace that should be running with fewer checks than the rest.
+[lints]
+workspace = true

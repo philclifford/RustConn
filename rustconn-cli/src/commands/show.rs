@@ -160,6 +160,12 @@ fn print_json(
             if config.printer_enabled {
                 map.insert("printer_enabled".to_string(), serde_json::Value::Bool(true));
             }
+            if config.hide_floating_toolbar {
+                map.insert(
+                    "hide_floating_toolbar".to_string(),
+                    serde_json::Value::Bool(true),
+                );
+            }
             if config.disable_nla {
                 map.insert("nla_disabled".to_string(), serde_json::Value::Bool(true));
             }
@@ -178,6 +184,12 @@ fn print_json(
                 map.insert(
                     "jump_host".to_string(),
                     serde_json::Value::String(resolve_jump(jump_id)),
+                );
+            }
+            if config.hide_floating_toolbar {
+                map.insert(
+                    "hide_floating_toolbar".to_string(),
+                    serde_json::Value::Bool(true),
                 );
             }
             if config.mptcp {
@@ -262,6 +274,12 @@ fn print_json(
             if config.accept_invalid_certs {
                 map.insert(
                     "accept_invalid_certs".to_string(),
+                    serde_json::Value::Bool(true),
+                );
+            }
+            if config.hide_floating_toolbar {
+                map.insert(
+                    "hide_floating_toolbar".to_string(),
                     serde_json::Value::Bool(true),
                 );
             }
@@ -421,6 +439,9 @@ fn print_table(connection: &Connection, connections: &[Connection]) -> Result<()
             if config.printer_enabled {
                 println!("  Printer:  enabled");
             }
+            if config.hide_floating_toolbar {
+                println!("  Session Toolbar: hidden");
+            }
             if let Some(jump_id) = config.jump_host_id {
                 println!("  Jump Host: {}", resolve_jump(jump_id));
             }
@@ -484,6 +505,9 @@ fn print_table(connection: &Connection, connections: &[Connection]) -> Result<()
             if let Some(jump_id) = config.jump_host_id {
                 println!("  Jump Host: {}", resolve_jump(jump_id));
             }
+            if config.hide_floating_toolbar {
+                println!("  Session Toolbar: hidden");
+            }
             if config.mptcp {
                 println!("  MPTCP:    enabled");
             }
@@ -511,6 +535,9 @@ fn print_table(connection: &Connection, connections: &[Connection]) -> Result<()
             }
             if config.accept_invalid_certs {
                 println!("  Accept Invalid TLS: yes");
+            }
+            if config.hide_floating_toolbar {
+                println!("  Navigation Toolbar: hidden");
             }
             if config.private_mode {
                 println!("  Private Mode: yes");

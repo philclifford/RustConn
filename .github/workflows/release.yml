@@ -9,6 +9,14 @@ on:
 env:
   CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Must equal `channel` in rust-toolchain.toml and the same variable in ci.yml —
+  # the CI `hygiene` job fails the build if any of the three drift apart. Without
+  # this, a job asking for `stable` installs stable and then has the toolchain
+  # file pull a second toolchain on the first cargo call.
+  #
+  # The `build-rpm` job deliberately opts out via RUSTUP_TOOLCHAIN=1.95.0: its
+  # RPM is built on MSRV.
+  RUST_TOOLCHAIN: '1.97.1'
 
 # Least privilege by default; jobs that need more (e.g. creating the GitHub
 # release) raise it explicitly at the job level.
@@ -26,7 +34,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install dependencies
         run: |
@@ -122,6 +130,13 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: fedora:44
+    # This job installs rustup with --default-toolchain 1.95.0 on purpose (MSRV),
+    # and the cargo it then calls is a rustup proxy, so it WOULD read the repo's
+    # rust-toolchain.toml and silently build the shipped RPM with 1.97.1 instead.
+    # RUSTUP_TOOLCHAIN outranks that file. Keep in sync with the
+    # --default-toolchain value in the "Install Rust" step below.
+    env:
+      RUSTUP_TOOLCHAIN: 1.95.0
     steps:
       - name: Install build tools
         run: |
@@ -152,10 +167,21 @@ jobs:
 
       - name: Install Rust
         run: |
+          set -e
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.95.0 --profile minimal
           source $HOME/.cargo/env
-          rustc --version
           cargo --version
+          # Assert rather than just echo. If the job-level RUSTUP_TOOLCHAIN ever
+          # goes missing, rust-toolchain.toml silently wins and the shipped RPM
+          # is built with the development toolchain while this log still looks
+          # healthy — the exact regression this env var exists to prevent. The
+          # `msrv` job in ci.yml carries the same assertion.
+          actual="$(rustc --version)"
+          echo "rustc in effect: $actual"
+          case "$actual" in
+            *" 1.95."*) ;;
+            *) echo "::error::RPM must be built on MSRV 1.95 (got: $actual)"; exit 1 ;;
+          esac
 
       - name: Build release binary
         run: |
@@ -239,7 +265,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install dependencies
         run: |
@@ -469,6 +495,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
+      # Required by actions/attest-build-provenance: id-token to obtain the
+      # Sigstore OIDC token that proves which workflow ran, attestations to
+      # store the signed statement against the repository.
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -503,6 +534,22 @@ jobs:
 
       - name: Rename Flatpak with version
         run: mv dist/RustConn.flatpak "dist/RustConn-${{ steps.version.outputs.VERSION }}.flatpak"
+
+      # Signed SLSA build provenance for every file that ends up on the release.
+      # Placed after the Flatpak rename on purpose: the attestation binds to a
+      # file's digest AND name, so attesting before the rename would leave the
+      # published artifact unverifiable.
+      #
+      # Verify a download with:
+      #   gh attestation verify RustConn-<ver>.AppImage --repo totoshko88/RustConn
+      #
+      # Covers deb, rpm, AppImage and Flatpak. The snap is NOT covered here — it
+      # is built in a separate post-release job and the Snap Store does its own
+      # signing, so adding it would mean a second attestation step in that job.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: 'dist/*'
 
       - name: Extract changelog for version
         id: changelog
@@ -659,7 +706,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install dependencies
         run: |

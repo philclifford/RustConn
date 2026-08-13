@@ -13,8 +13,16 @@ Use after completing a feature or before merge. Adapted from AI-DLC methodology.
       (a cache hit prints `Finished ... in 0.2s` and reports zero warnings without
       looking at anything — see steering `quality-gate.md`)
 - [ ] `cargo test --workspace` — all tests pass
+- [ ] `typos` — exit 0 (CI `hygiene` job)
+- [ ] `cargo machete` — exit 0 (CI `hygiene` job). A new hit is either a real dead
+      dependency or an import-path/package-name mismatch that belongs in
+      `[package.metadata.cargo-machete] ignored`
 - [ ] `getDiagnostics` on modified files — no errors. Note that `git diff` does not
       list **untracked** new files; check those separately.
+- [ ] `git status` before claiming anything is verified. A cargo run only proves
+      something about the tree as it was when the run started; if files changed
+      after it (another editor, a parallel session, a hook), the result is stale
+      and must be re-run rather than reported.
 
 ## 1b. When a Subsystem Was Deleted
 

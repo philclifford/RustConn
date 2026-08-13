@@ -109,6 +109,15 @@ cargo build --release      # release, all crates
 | `adw-1-7` | — | libadwaita 1.7+ (AdwWrapBox); enables `adw-1-6` |
 | `adw-1-8` | — | libadwaita 1.8+ (AdwShortcutsDialog); enables `adw-1-7` |
 
+The default build targets **libadwaita 1.5**, which is what Ubuntu 24.04 and the
+snap's `core24` platform ship. The `adw-1-*` flags each raise the required
+system libadwaita, so a build with one of them fails at the `libadwaita-sys`
+build script — not at the dependency solver — on a system below that version.
+`crate::spinner` is the single place that switches between `AdwSpinner` and
+`GtkSpinner`; the widgets behind `adw-1-7` and `adw-1-8` are guarded at their own
+call sites. Drop these flags and make 1.6+ the baseline once no supported target
+is below it.
+
 Examples:
 
 ```bash

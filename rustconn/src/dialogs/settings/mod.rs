@@ -132,6 +132,8 @@ pub struct SettingsDialog {
     show_welcome_switch: adw::SwitchRow,
     // Always open a new session on a sidebar double-click (issue #242)
     double_click_opens_new_session: adw::SwitchRow,
+    // GSK renderer preference; applies from the next start (issue #274)
+    renderer_row: adw::ComboRow,
     // SSH Agent settings
     ssh_agent_status_label: Label,
     ssh_agent_socket_label: Label,
@@ -254,6 +256,7 @@ impl SettingsDialog {
             window_title_shows_connection,
             show_welcome_switch,
             double_click_opens_new_session,
+            renderer_row,
         ) = create_ui_page();
         mark("ui_page");
 
@@ -679,6 +682,7 @@ impl SettingsDialog {
             window_title_shows_connection,
             show_welcome_switch,
             double_click_opens_new_session,
+            renderer_row,
             ssh_agent_status_label,
             ssh_agent_socket_label,
             ssh_agent_start_button,
@@ -1028,6 +1032,7 @@ impl SettingsDialog {
             &self.window_title_shows_connection,
             &self.show_welcome_switch,
             &self.double_click_opens_new_session,
+            &self.renderer_row,
             &settings.ui,
             &conn_refs,
         );
@@ -1178,6 +1183,7 @@ impl SettingsDialog {
         let window_title_shows_connection_clone = self.window_title_shows_connection.clone();
         let show_welcome_switch_clone = self.show_welcome_switch.clone();
         let double_click_opens_new_session_clone = self.double_click_opens_new_session.clone();
+        let renderer_row_clone = self.renderer_row.clone();
         let connections_clone = self.connections.clone();
         let keybindings_overrides_clone = self.keybindings_overrides.clone();
 
@@ -1330,6 +1336,7 @@ impl SettingsDialog {
                 &window_title_shows_connection_clone,
                 &show_welcome_switch_clone,
                 &double_click_opens_new_session_clone,
+                &renderer_row_clone,
                 &conn_refs,
             );
             // Preserve smart folders visibility (managed by toolbar toggle, not settings dialog)

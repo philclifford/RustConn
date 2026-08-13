@@ -1133,14 +1133,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/clap_mangen/clap_mangen-0.3.2.crate",
-        "sha256": "c630ddc90572b3d9abd3f887f0007b4e048faf5c5a59ae607f8ac1c5e3790873",
-        "dest": "cargo/vendor/clap_mangen-0.3.2"
+        "url": "https://static.crates.io/crates/clap_mangen/clap_mangen-0.3.3.crate",
+        "sha256": "211d617eaa4b735c96c9e0228fcbdb5120ef623f2b8cb67ffb84c3e02dbc28a4",
+        "dest": "cargo/vendor/clap_mangen-0.3.3"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"c630ddc90572b3d9abd3f887f0007b4e048faf5c5a59ae607f8ac1c5e3790873\", \"files\": {}}",
-        "dest": "cargo/vendor/clap_mangen-0.3.2",
+        "contents": "{\"package\": \"211d617eaa4b735c96c9e0228fcbdb5120ef623f2b8cb67ffb84c3e02dbc28a4\", \"files\": {}}",
+        "dest": "cargo/vendor/clap_mangen-0.3.3",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -2212,14 +2212,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/font-types/font-types-0.12.2.crate",
-        "sha256": "0a7299a780854a6d391be2ae1c8521c9368471b559dbfd6a8dbd9f407eaff100",
-        "dest": "cargo/vendor/font-types-0.12.2"
+        "url": "https://static.crates.io/crates/font-types/font-types-0.12.3.crate",
+        "sha256": "75382bc7392ef10aad10935f92fc3db36d2d4dad0e5d96d8d65e04f89a07ec39",
+        "dest": "cargo/vendor/font-types-0.12.3"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"0a7299a780854a6d391be2ae1c8521c9368471b559dbfd6a8dbd9f407eaff100\", \"files\": {}}",
-        "dest": "cargo/vendor/font-types-0.12.2",
+        "contents": "{\"package\": \"75382bc7392ef10aad10935f92fc3db36d2d4dad0e5d96d8d65e04f89a07ec39\", \"files\": {}}",
+        "dest": "cargo/vendor/font-types-0.12.3",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -3226,14 +3226,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/http-body-util/http-body-util-0.1.4.crate",
-        "sha256": "e9f41fd6a08e4d4ec69df65976da761afd5ad5e58a9d4acb46bd1c953a9e3ff2",
-        "dest": "cargo/vendor/http-body-util-0.1.4"
+        "url": "https://static.crates.io/crates/http-body-util/http-body-util-0.1.5.crate",
+        "sha256": "23169fe34a5fbcdd3f3862e78fb9b6fccd5f02a6dc6f732547005d45631ce71c",
+        "dest": "cargo/vendor/http-body-util-0.1.5"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"e9f41fd6a08e4d4ec69df65976da761afd5ad5e58a9d4acb46bd1c953a9e3ff2\", \"files\": {}}",
-        "dest": "cargo/vendor/http-body-util-0.1.4",
+        "contents": "{\"package\": \"23169fe34a5fbcdd3f3862e78fb9b6fccd5f02a6dc6f732547005d45631ce71c\", \"files\": {}}",
+        "dest": "cargo/vendor/http-body-util-0.1.5",
         "dest-filename": ".cargo-checksum.json"
     },
     {

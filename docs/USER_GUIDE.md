@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.19.22** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.20.0** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -45,8 +45,8 @@ RustConn is a modern connection manager designed for Linux with Wayland-first ap
 7. [Productivity Tools](#productivity-tools)
    - [Templates](#templates)
    - [Snippets](#snippets)
-   - [Clusters & Broadcast](#clusters)
-   - [Ad-hoc Broadcast](#ad-hoc-broadcast)
+   - [Clusters](#clusters)
+   - [Broadcast Input](#broadcast-input)
    - [Command Palette](#command-palette)
    - [Global Variables](#global-variables)
    - [Password Generator](#password-generator)
@@ -773,6 +773,12 @@ The embedded RDP session provides a floating toolbar with actions like Copy, Pas
 
 The toolbar is fully transparent and pass-through when hidden — it does not block interaction with the remote desktop or window controls. In narrow panels (split view or small windows), secondary actions collapse into an overflow "⋯" menu while Fit Resolution and Ctrl+Alt+Del stay directly visible.
 
+**Turning the toolbar off completely:** switch off **Session Toolbar** in the connection dialog's Features section. The toolbar and its arrow indicator are then absent for that connection — there is nothing left to reveal and nothing to hit by accident, which matters when the window behind the session has controls of its own near the top edge. In a split pane the panel's own corner buttons are suppressed for that session too (see [Split View](#split-view)).
+
+Know what goes with it. **Ctrl+Alt+Del has no keyboard route of its own**, and neither do Fit Resolution, Autotype, Scripts, Quick Actions or Save Files — all of those live only on the toolbar. Copy and Paste survive, because Ctrl+C / Ctrl+V reach the remote session directly, as does clipboard sync. Leave the toolbar on if you ever need to unlock a Windows login screen from inside the session.
+
+The setting is per connection and defaults to on, so existing connections are unaffected. Quick Connect, which has no saved profile, always keeps the toolbar. It can also be set from the CLI for VNC and Web connections (`--vnc-toolbar false`, `--web-toolbar false`); RDP has no CLI protocol options at all, so use the connection editor there.
+
 #### Mouse Jiggler
 
 Keeps the remote RDP session awake and prevents the remote desktop from locking by sending periodic input.
@@ -1027,6 +1033,8 @@ Create the `freerdp` directory first if it does not exist, make sure the JSON is
 
 VNC connections support embedded (vnc-rs) or external (TigerVNC) client modes. Configure encoding (Auto/Tight/ZRLE/Hextile/Raw/CopyRect), compression level, quality level, display scale override, view-only mode, scaling, and clipboard sharing in the VNC protocol tab.
 
+An embedded VNC session carries the same floating toolbar as RDP — Copy, Paste and Ctrl+Alt+Del behind an arrow indicator at the top centre — with the same **Session Toolbar** switch in the Features section to remove it entirely. See [Session Toolbar](#session-toolbar) under RDP for how the reveal works and what becomes unreachable when it is off.
+
 ### SPICE
 
 SPICE connections support TLS encryption, CA certificate validation, USB redirection, clipboard sharing, image compression (Auto/Off/GLZ/LZ/QUIC), proxy URL, and shared folders. SPICE opens in an external viewer (remote-viewer / virt-viewer).
@@ -1265,8 +1273,13 @@ The embedded browser provides a full browsing experience inside a RustConn tab o
 - **Zoom In / Zoom Out** buttons with dynamic tooltip showing current zoom percentage (e.g. "Zoom in (120%)")
 - **Menu (⋯)** button with: Copy URL, Open in System Browser, Zoom Reset (100%), Clear Session Data
 
+**Floating Toolbar:**
+The toolbar floats over the page rather than taking a strip of its own, so the page gets the full height of the tab. It appears briefly when the page connects and then hides after 2 seconds of inactivity; hover or click the arrow indicator in the top-right corner to bring it back. The corner rather than the centre on purpose — a site's logo, navigation and search live across the top centre, and an indicator there would swallow clicks meant for the page.
+
+To remove it entirely, switch off **Navigation Toolbar** in the connection dialog's Embedded Browser Settings. The address bar goes with it, but the keyboard routes do not: Alt+← / Alt+→ still navigate, Ctrl+R reloads, Ctrl+L copies the current URL, and Ctrl+Plus / Ctrl+Minus / Ctrl+0 still zoom. The setting applies to embedded mode only — System and Custom browser modes hand the URL to another program, which has its own chrome.
+
 **Responsive Toolbar:**
-When the toolbar is narrow (e.g. in split view, < 500px), secondary buttons (Home, Autofill, Zoom In, Zoom Out) are hidden automatically. All actions remain reachable via the "⋯" menu button.
+When the panel is too narrow for the assembled toolbar, secondary actions (Home, Autofill, Zoom In, Zoom Out) move into the "⋯" menu button instead of being clipped, so every action stays reachable at any width. Back, Forward, Reload, the URL bar and the menu itself stay in place. The threshold is measured from the toolbar's own requested width rather than being a fixed pixel count, so it follows your theme's button metrics.
 
 **Loading Progress Bar:**
 A thin progress bar appears under the toolbar during page loads, showing real-time load progress. It disappears automatically when the page finishes loading.
@@ -1410,6 +1423,8 @@ Sessions shown through an external viewer (xfreerdp, vncviewer, or an external S
 Embedded viewers adapt to narrow panels: the toolbar collapses its secondary actions into an overflow ("⋯") menu (Fit resolution and Ctrl+Alt+Del stay visible), and the remote desktop rescales to fully fill a small or oddly-shaped panel. The same adaptation applies to a single embedded tab in a small or narrow application window. Keystroke broadcast (Ctrl+Shift+B) applies only to terminals — its toggle appears when a split holds at least two terminal sessions and a terminal panel is focused, and mirroring never targets an embedded remote desktop.
 
 Each occupied panel has a small arrow indicator (◂) at the top-right corner. Hovering or clicking it reveals the panel action buttons: **Remove from Split** (returns the session to its own tab without closing it) and **Close** (terminates the session). The buttons hide automatically after a short delay, keeping the view uncluttered and avoiding overlap with the session toolbar.
+
+A session whose **Session Toolbar** / **Navigation Toolbar** is switched off gets no corner indicator either — a connection that asked for an unobstructed view means both overlays. Right-clicking the panel still offers **Remove from Split**, **Remove Split** and **Close Connection**, so nothing becomes unreachable.
 
 ### Detached Session Windows
 
@@ -2036,9 +2051,13 @@ The tab title changes to `[GroupName] ConnectionName` and the tooltip shows the 
 
 **Close All in Group:** Right-click a grouped tab → **Close All in Group** (with confirmation dialog)
 
+**Close All Ungrouped:** Right-click any tab → **Close All Ungrouped** — closes everything that is *not* in a group, which is the quick way to clear scratch tabs while keeping your labelled sets.
+
 **Monitor Mode Toggle:** Right-click any tab → **Monitor: Off/Activity/Silence** to cycle monitoring mode.
 
 Groups are visual only — they are session-scoped and not persisted across restarts.
+
+Opening a [cluster](#clusters) assigns its member tabs to a group named after the cluster automatically, so the operations above work on a cluster without any setup.
 
 ---
 
@@ -2127,21 +2146,36 @@ If all variables are resolved automatically, the snippet executes immediately wi
 
 ### Clusters
 
-Clusters group multiple connections for simultaneous management. The primary use case is broadcast mode: type a command once and it is sent to all connected cluster members at the same time.
+A cluster is a named set of connections you open together — a rack, a Kubernetes node pool, the three web servers behind one load balancer.
 
-**Create Cluster:**
-1. Menu → Tools → **Manage Clusters**
-2. Click **Create** → enter name → add connections → optionally enable **Broadcast by default**
-3. Save
+**Create a cluster:**
+1. Menu → Tools → **Clusters…**
+2. Click **New Cluster** → enter a name → tick the member connections → **Save**
 
-**Connect Cluster:** Open Manage Clusters → select a cluster → **Connect All**. RustConn opens a terminal tab for each member connection.
+You can also select several connections in the sidebar and use **Create Cluster** in the bulk-action bar.
 
-**Broadcast Mode:** When enabled, every keystroke you type in the focused terminal is sent to all connected cluster members simultaneously. Toggle the broadcast switch in the cluster toolbar.
+**Open a cluster:** Menu → Tools → **Clusters…** → the ▶ button on the cluster's row. RustConn opens a tab for every member, whatever their protocol.
+
+**Every tab of an open cluster joins a tab group named after the cluster.** The tab reads `[ClusterName] ConnectionName`, so you can see at a glance which tabs belong together, and every [tab group](#tab-grouping) operation applies to the cluster:
+
+- **Close All in Group** on any member closes the whole cluster
+- **Close All Ungrouped** closes everything *except* your open clusters
+- The tab switcher (**Ctrl+%**) shows the cluster name beside each member
+
+**Close a cluster:** either **Close All in Group** from any member tab, or the ■ button on the cluster's row in Clusters… (**Disconnect all cluster sessions**).
+
+Notes on the automatic group:
+- The group name is the cluster's name exactly as written. Renaming a cluster affects the *next* time you open it, not tabs that are already open.
+- A cluster whose name matches a group you created by hand merges into it — same name means same group, which is the rule two hand-labelled tabs already follow.
+- You can override it per tab: **Remove from Group**, or **Set Group…** to move one member elsewhere. The tab stays part of the cluster for the Disconnect button either way.
+- Groups are visual and session-scoped; they are not written to disk.
+
+**Broadcast:** typing into several hosts at once is *not* a cluster property. It is a split-view feature — arrange the members in a split layout and use the broadcast toggle in the header bar. See [Broadcast Input](#broadcast-input).
 
 **Use cases:**
 - Rolling out configuration changes across multiple servers
 - Running the same diagnostic command on all nodes
-- Updating packages on a fleet of machines
+- Opening and closing a whole environment as one unit
 
 ### Workspace Profiles
 
@@ -2183,22 +2217,22 @@ Port knocking allows you to open firewall ports by sending a specific sequence o
 - Inter-knock delay: 100ms
 - Post-knock settle: 200ms
 
-### Ad-hoc Broadcast
+### Broadcast Input
 
-Send keystrokes to multiple terminal sessions simultaneously without setting up a cluster.
+Type once and have the keystrokes reach several terminals at the same time.
+
+Broadcast is a property of a **split layout**, not of a cluster: whichever terminals share the active tab's split receive the input. That keeps the target set visible on screen — you are typing into exactly the panels you can see.
 
 **Usage:**
-1. Click the **Broadcast** toggle button in the toolbar
-2. Checkboxes appear on each terminal tab
-3. Select the terminals you want to broadcast to
-4. Type in any selected terminal — keystrokes are sent to all selected terminals
-5. Click the Broadcast button again to deactivate
+1. Put the terminals side by side in a split layout (see [Split View](#split-view))
+2. Focus one of the terminal panels
+3. Press **Ctrl+Shift+B**, or click the broadcast toggle in the header bar
+4. Type — the keystrokes are mirrored into the other terminal panels of that split
+5. Press **Ctrl+Shift+B** again to stop
 
-| Feature | Ad-hoc Broadcast | Cluster Broadcast |
-|---------|-----------------|-------------------|
-| Setup | No setup — select terminals on the fly | Requires pre-defined cluster |
-| Scope | Any open terminal tabs | Connections in a cluster |
-| Persistence | Session-only | Saved in configuration |
+The toggle only becomes available when the active tab's split holds at least two terminal sessions and a terminal panel has focus. Mirroring never targets an embedded RDP, VNC or SPICE panel — those are not terminals and receive their own input only.
+
+Opening a [cluster](#clusters) is the quick way to get the members on screen; from there, split them and toggle broadcast. Earlier releases had a separate cluster-owned broadcast mode with checkboxes on tabs. It was removed in 0.14.8 in favour of the split-view toggle, which has one visible target set instead of two competing ones. `Cluster` still carries a `broadcast_enabled` flag on disk for CLI compatibility; it does not affect the GUI.
 
 ### Command Palette
 
@@ -2527,7 +2561,9 @@ The settings dialog uses `adw::PreferencesDialog` with built-in search. Settings
 
 ### Interface page
 
-**Appearance group:** Theme (System, Light, Dark), Language (UI language selector, restart required), Color tabs by protocol, Sidebar width (260–500 pixels, default 320).
+**Appearance group:** Theme (System, Light, Dark), Language (UI language selector, restart required), Rendering (see below, restart required), Color tabs by protocol, Sidebar width (260–500 pixels, default 320).
+
+**Rendering** chooses which GTK renderer draws the interface. Leave it on **Automatic** unless the interface is sluggish: RustConn then uses the GPU renderer, except where it is known to behave worse than software rasterisation — X11 sessions whose compositor paints menus blank until you hover them, and macOS running inside a virtual machine, where the virtual GPU offers no accelerated OpenGL and the GPU path becomes both slow and CPU-hungry. **Software (Cairo)** forces software rasterisation everywhere; pick it if the interface lags, scrolls in steps, or responds late to typing in an environment the automatic choice does not recognise. **Hardware (GPU)** forces the GPU renderer, which is the setting for an X11 session with a driver that works fine. A `GSK_RENDERER` environment variable, if you set one, overrides all three. The choice applies on the next start, because GTK reads it while it opens the first window.
 
 **Window group:** Remember size (restore window geometry on startup), Show connection in window title (appends the active connection name so time-tracking tools can attribute usage; off by default for privacy).
 

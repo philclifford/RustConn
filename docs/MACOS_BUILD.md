@@ -276,6 +276,26 @@ brew install --cask session-manager-plugin
 
 RustConn also checks the official `/usr/local/sessionmanagerplugin/bin` installation path.
 
+### Sluggish Interface Inside a macOS Virtual Machine
+
+Apple's paravirtualised GPU gives a macOS guest Metal but no accelerated OpenGL, and Homebrew builds `gtk4` with `-Dvulkan=disabled`. GSK's GL renderer therefore falls back to software inside a guest, which shows up as input lag, late frames and stuttering scroll while a core sits busy ([#274](https://github.com/totoshko88/RustConn/issues/274)).
+
+RustConn detects this itself: on macOS the automatic renderer choice asks `sysctl -n kern.hv_vmm_present` and switches to the Cairo renderer when the answer is `1`. The log line naming the choice appears at `info` level:
+
+```
+Selected GSK renderer renderer="cairo" reason="guest VM: paravirtualised GPU has no accelerated OpenGL (#274)"
+```
+
+To check what the guest actually offers, and to confirm the diagnosis on a machine that behaves differently:
+
+```bash
+sysctl -n kern.hv_vmm_present          # 1 in a guest, 0 on bare metal
+GSK_RENDERER=help rustconn             # which renderers this GTK build has
+GDK_DEBUG=opengl rustconn              # which GL renderer the guest hands out
+```
+
+`Settings ▸ Interface ▸ Rendering` overrides the automatic choice in either direction, and an explicit `GSK_RENDERER` in the environment overrides both. Note that `GDK_SCALE` is an X11-only variable — the macOS backend takes its scale factor from `NSWindow.backingScaleFactor`, so setting it in a wrapper script does nothing.
+
 ## Architecture Notes
 
 All macOS-specific Rust paths are target-gated. Key areas are:

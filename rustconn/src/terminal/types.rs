@@ -78,3 +78,141 @@ pub enum SessionWidgetStorage {
     /// External process (xfreerdp, vncviewer, etc.) — killed on tab close
     ExternalProcess(Rc<RefCell<Option<Child>>>),
 }
+
+// ============================================================================
+// Cluster tab tracking
+// ============================================================================
+
+/// A cluster whose connections are being opened, remembered until each tab appears.
+///
+/// A cluster member's tab may be created long after the launch — an SSH session
+/// waits on a TCP port check first — so the notebook records the cluster against
+/// the *connection* id and resolves it when the tab shows up. The name travels
+/// with the id because it becomes the tab group's name, and the notebook has no
+/// way to look a cluster up: cluster definitions live in `AppState`.
+#[derive(Debug, Clone)]
+pub struct PendingCluster {
+    /// The cluster this connection is being opened as part of.
+    pub cluster_id: Uuid,
+    /// The cluster's name, used verbatim as the tab group name.
+    pub group: String,
+}
+
+/// The open tabs of one cluster, and the tab group they were labelled with.
+///
+/// The name is kept here rather than looked up on demand so that closing a
+/// cluster can retire its group from the group registry — by then the member
+/// sessions are gone and nothing else remembers what they were called.
+#[derive(Debug, Clone)]
+pub struct ClusterTabs {
+    /// The tab group name every member tab carries.
+    pub group: String,
+    /// Session ids of the cluster's open tabs, in the order they appeared.
+    pub sessions: Vec<Uuid>,
+}
+
+/// Reports whether any live session still carries `group`.
+///
+/// The guard on retiring a group name: a cluster's name is not necessarily
+/// exclusive to it — a user may have typed the same name into "Set Group…" on an
+/// unrelated tab, and two clusters may share a name — so a name is only forgotten
+/// once nothing is labelled with it any more.
+pub fn group_still_in_use<'a, I>(group: &str, live: I) -> bool
+where
+    I: IntoIterator<Item = Option<&'a str>>,
+{
+    live.into_iter().any(|live| live == Some(group))
+}
+
+/// Composes a tab title from a session name and its group.
+///
+/// One place decides the `[group] ` prefix, so a tab rebuilt after a park, a
+/// detach or a rename is titled exactly as the creation path titled it. The
+/// brackets are not translated: they are punctuation around user data, and the
+/// group name is whatever the user or the cluster is called.
+#[must_use]
+pub fn tab_title(name: &str, group: Option<&str>) -> String {
+    match group {
+        Some(group) => format!("[{group}] {name}"),
+        None => name.to_owned(),
+    }
+}
+
+/// Strips a `[group] ` prefix composed by [`tab_title`] from a rendered title.
+///
+/// Needed because the group can change on a tab that already has one, and the
+/// only record of the base name in that moment is the title itself.
+///
+/// Deliberately conservative: a name that merely *starts* with `[` is left alone
+/// unless it also contains `"] "`, and even then the caller may be re-splitting a
+/// connection genuinely named `[dc1] web`. That ambiguity is inherent to encoding
+/// the group into the title string and is why the group is also carried
+/// structurally on the session.
+#[must_use]
+pub fn strip_group_prefix(title: &str) -> &str {
+    if !title.starts_with('[') {
+        return title;
+    }
+    title
+        .find("] ")
+        .map_or(title, |pos| &title[pos + "] ".len()..])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{group_still_in_use, strip_group_prefix, tab_title};
+
+    /// The shape the creation paths produce.
+    #[test]
+    fn a_grouped_tab_is_titled_with_its_group() {
+        assert_eq!(tab_title("web1", Some("dc1")), "[dc1] web1");
+        assert_eq!(tab_title("web1", None), "web1");
+    }
+
+    /// Round trip: the prefix a grouped title carries is the one that comes off.
+    #[test]
+    fn stripping_undoes_composing() {
+        let titled = tab_title("ssh1 via ssh2", Some("staging"));
+        assert_eq!(strip_group_prefix(&titled), "ssh1 via ssh2");
+    }
+
+    /// An ungrouped title is returned untouched, including one containing
+    /// brackets somewhere other than the start.
+    #[test]
+    fn an_ungrouped_title_is_left_alone() {
+        assert_eq!(strip_group_prefix("web1"), "web1");
+        assert_eq!(strip_group_prefix("web1 [prod]"), "web1 [prod]");
+    }
+
+    /// A leading `[` with no closing `"] "` is not a prefix and must survive.
+    #[test]
+    fn a_bare_leading_bracket_is_not_a_prefix() {
+        assert_eq!(strip_group_prefix("[unclosed"), "[unclosed");
+        assert_eq!(strip_group_prefix("[a]b"), "[a]b");
+    }
+
+    /// A name is in use while any session carries it.
+    #[test]
+    fn a_group_worn_by_a_live_session_is_in_use() {
+        let live = [Some("dc1"), None, Some("staging")];
+        assert!(group_still_in_use("dc1", live.iter().copied()));
+        assert!(group_still_in_use("staging", live.iter().copied()));
+    }
+
+    /// A name nothing carries may be retired — including when every session is
+    /// ungrouped, and when there are no sessions left at all.
+    #[test]
+    fn a_group_nothing_carries_may_be_retired() {
+        assert!(!group_still_in_use("dc1", [None, None].iter().copied()));
+        assert!(!group_still_in_use("dc1", std::iter::empty()));
+        assert!(!group_still_in_use("dc1", std::iter::once(Some("dc2"))));
+    }
+
+    /// The check is exact, not a prefix match: retiring "dc1" must not be blocked
+    /// by a live "dc10", and must not be allowed by a live "dc1" spelt otherwise.
+    #[test]
+    fn the_in_use_check_matches_the_whole_name() {
+        assert!(!group_still_in_use("dc1", std::iter::once(Some("dc10"))));
+        assert!(!group_still_in_use("dc1", std::iter::once(Some("DC1"))));
+    }
+}

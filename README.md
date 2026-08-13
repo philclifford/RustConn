@@ -100,6 +100,11 @@ More screenshots on the [Flathub listing](https://flathub.org/apps/io.github.tot
 | **From source** | Rust 1.95+, GTK4 4.14+ ([build guide](docs/BUILD.md)) |
 | **Nix (flake)** | `nix profile install github:totoshko88/RustConn` or add to your flake inputs |
 
+Files attached to a GitHub release carry a signed build-provenance attestation —
+verify a download with
+`gh attestation verify <file> --repo totoshko88/RustConn`
+([details](docs/INSTALL.md#verifying-a-file-downloaded-from-a-github-release)).
+
 Keyboard shortcuts are customizable in Settings → Keybindings; press `Ctrl+?`
 in the app for the complete, always-current list.
 

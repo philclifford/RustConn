@@ -1,11 +1,18 @@
 ---
-inclusion: fileMatch
-fileMatchPattern: "Cargo.toml"
+inclusion: auto
+name: release-reminder
+description: "Mandatory steps when bumping the workspace version in Cargo.toml — changelog propagation to debian/OBS/metainfo, dependency refresh, CLI version check. Use when preparing a release, bumping a version, or writing release notes."
 ---
 
 # Release Process Reminder
 
-When editing `Cargo.toml`, if the workspace version is being bumped:
+> Was `inclusion: fileMatch` on `Cargo.toml` until 2026-08-12, which fired on
+> *any* read of `Cargo.toml` — including plain dependency lookups and audits that
+> have nothing to do with a release. `auto` matches the request instead of the
+> file, so it now loads when the task actually is a release. Force it with
+> `/release-reminder` if the matcher misses.
+
+When the workspace version in `Cargo.toml` is being bumped:
 
 ## Mandatory Steps (in order)
 

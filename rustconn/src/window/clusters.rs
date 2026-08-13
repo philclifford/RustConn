@@ -248,10 +248,22 @@ fn show_new_cluster_dialog_from_manager(
 /// is now an independent split-view feature (see toggle-broadcast action),
 /// not a cluster property — tabs do not need to belong to a cluster to use it.
 ///
-/// Sessions are registered into the cluster lazily via the
-/// `cluster_session_registered` callback installed on the notebook —
+/// Sessions are registered into the cluster lazily, when each tab appears, so
 /// this works for both synchronously created tabs (Telnet, Serial) and
 /// asynchronously created ones (SSH after a TCP port check).
+///
+/// Each member tab is also put into a tab group named after the cluster, which
+/// is what makes an open cluster visible and operable. Before this, a cluster
+/// dissolved into anonymous tabs the moment it opened: nothing on screen said
+/// which tabs belonged together, and the only way to act on the set as a whole
+/// was the Disconnect button in this dialog. With the group in place the tab
+/// reads `[cluster] host` and the existing group operations — Close All in
+/// Group, Close All Ungrouped — apply to the cluster for free.
+///
+/// The group name is the cluster's name verbatim, so renaming a cluster changes
+/// the label of the next opening, not of tabs already open. A cluster sharing a
+/// name with a hand-made group merges into it, which is the same rule two tabs
+/// with the same typed name already follow.
 fn connect_cluster(
     state: &SharedAppState,
     notebook: &SharedNotebook,
@@ -291,10 +303,11 @@ fn connect_cluster(
     }
 
     // Mark every connection as pending; the central hook in
-    // `create_terminal_tab_with_settings` resolves them when each terminal
-    // actually appears, registering the new session in the cluster's session list.
+    // `TerminalNotebook::notify_tab_added` resolves them when each tab actually
+    // appears, registering the new session in the cluster's session list and
+    // labelling its tab with a tab group named after the cluster.
     for conn_id in &connection_ids {
-        notebook.mark_cluster_pending(cluster_id, *conn_id);
+        notebook.mark_cluster_pending(cluster_id, &cluster_name, *conn_id);
     }
 
     // Kick off each connection. We don't care whether `start_connection`

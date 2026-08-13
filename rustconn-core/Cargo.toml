@@ -7,6 +7,21 @@ authors.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+# cargo-machete scans the source textually for the dependency's name, so a crate
+# whose import path differs from its package name always looks unused. These are
+# verified in use; the CI `machete` job would otherwise fail on every run.
+[package.metadata.cargo-machete]
+ignored = [
+    # package md-5    -> `use md5::{Digest, Md5}` in connection/spa.rs
+    "md-5",
+    # package vnc-rs  -> `use vnc::{...}` in vnc_client/client.rs (vnc-embedded)
+    "vnc-rs",
+    # Not imported at all, and deliberately so: declared to pin the version away
+    # from native-tls 0.2.17's Tlsv13 compile bug and to select the native-tls
+    # backend for the ironrdp-tls / ironrdp-mstsgu features.
+    "native-tls",
+]
+
 [dependencies]
 tokio = { workspace = true }
 futures = { workspace = true }
@@ -51,9 +66,15 @@ ar = "0.9"
 # Linux-only application, no macOS features needed
 # macos_fsevent is needed for macOS dev builds (fsevent_sys dependency)
 notify = { version = "8.2", default-features = false, features = ["macos_fsevent"] }
-# Tracing for structured logging and performance profiling
+# Tracing for structured logging and performance profiling.
+# NOTE: only `tracing` belongs here. `tracing-subscriber` was a direct dependency
+# of this crate until 2026-08-12 without a single reference in its source — the
+# subscriber is installed by the application entry points (rustconn/src/main.rs,
+# rustconn-cli/src/main.rs), which declare and use it themselves, and this
+# crate's own tracing/mod.rs doc comment already said so. Found by cargo-machete
+# when it was first wired into CI. Do not re-add it: a library that pulls in a
+# subscriber invites two subscribers in one process.
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 # Pure Rust VNC client for embedded VNC sessions
 vnc-rs = { version = "0.5", optional = true }
 # JPEG decoder for VNC Tight encoding (pure Rust, no C deps). Already present

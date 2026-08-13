@@ -50,6 +50,7 @@ pub(super) fn create_rdp_options() -> (
     adw::SwitchRow,
     adw::SwitchRow,
     adw::SwitchRow,
+    adw::SwitchRow,
     SpinButton,
     SpinButton,
     SpinButton,
@@ -300,6 +301,20 @@ pub(super) fn create_rdp_options() -> (
         .active(true)
         .build();
     features_group.add(&rdp_show_local_cursor_check);
+
+    // Floating session toolbar (issue #260). Stated positively here while the
+    // stored field reads `hide_floating_toolbar`: the switch is inverted once,
+    // in the builder and the populate path, so that a connection written by an
+    // older RustConn — or by any importer, which all start from
+    // `RdpConfig::default()` — keeps its toolbar.
+    let rdp_floating_toolbar_check = adw::SwitchRow::builder()
+        .title(i18n("Session Toolbar"))
+        .subtitle(i18n(
+            "Turn off to remove the floating toolbar and its reveal arrow. Ctrl+Alt+Del and the toolbar buttons go with it.",
+        ))
+        .active(true)
+        .build();
+    features_group.add(&rdp_floating_toolbar_check);
 
     // Mouse Jiggler — prevent idle disconnect
     let rdp_jiggler_check = adw::SwitchRow::builder()
@@ -747,6 +762,7 @@ pub(super) fn create_rdp_options() -> (
         ignore_certificate_check,
         clipboard_check,
         rdp_show_local_cursor_check,
+        rdp_floating_toolbar_check,
         rdp_jiggler_check,
         rdp_jiggler_interval_spin,
         rdp_autotype_delay_spin,

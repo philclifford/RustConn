@@ -1,7 +1,16 @@
 ---
-inclusion: auto
+inclusion: always
 ---
 # Shell Environment
+
+> This file is `inclusion: always` on purpose. It was `inclusion: auto` until
+> 2026-08-12, but `auto` matches a request against the file's `description` and
+> requires `name` + `description` in the front matter — neither was present, so
+> the file matched nothing and was never loaded. Its own text meanwhile asserted
+> that "the non-negotiable parts live here where they are always loaded", which
+> was false for as long as the mode was wrong. Terminal discipline is cheap to
+> carry and expensive to omit, so it is unconditional now. If you ever switch a
+> steering file to `auto`, give it both `name` and `description`.
 
 ## Terminal Profile
 

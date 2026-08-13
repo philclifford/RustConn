@@ -166,6 +166,37 @@ chmod +x RustConn-*-x86_64.AppImage
 ./RustConn-*-x86_64.AppImage
 ```
 
+## Verifying a File Downloaded from a GitHub Release
+
+Every `.deb`, `.rpm`, AppImage and Flatpak bundle attached to a GitHub release from
+0.20.0 onwards carries a signed [SLSA build provenance
+attestation](https://slsa.dev/spec/v1.0/provenance). Check one with the
+[GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify RustConn-0.20.0-x86_64.AppImage --repo totoshko88/RustConn
+```
+
+A pass means GitHub holds a Sigstore-signed statement that this exact file — bound
+by both its SHA-256 digest and its filename — was produced by this repository's
+release workflow, from a named commit, on GitHub-hosted runners. The signature uses
+a short-lived certificate issued to that workflow run, so it cannot be reproduced
+by anyone who merely has a copy of the repository. Verification fails if the file
+was rebuilt somewhere else, or altered after the run — including a rename.
+
+The command fetches the attestation from GitHub, so it needs network access. For an
+air-gapped check, download the bundle alongside the artifact
+(`gh attestation download <file> --repo totoshko88/RustConn`) and pass it with
+`--bundle`.
+
+Not covered:
+
+- **The snap.** It is built by a separate post-release job and the Snap Store signs
+  it with its own key, which `snapd` verifies on install.
+- **Packages installed from a repository** — Flathub, OBS, AUR, nixpkgs, Homebrew.
+  Those are signed by the repository or tap that serves them and verified by the
+  package manager; the attestation covers the files on the release page only.
+
 ## macOS (Homebrew)
 
 RustConn is available via a Homebrew Tap. All dependencies (GTK4, libadwaita, VTE,

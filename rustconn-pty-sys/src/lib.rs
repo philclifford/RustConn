@@ -1,7 +1,9 @@
 //! Isolated FFI helpers for RustConn's PTY layer.
 //!
-//! This crate is the workspace's only sanctioned location for `unsafe` code
-//! (per the M-UNSAFE guideline). It provides:
+//! This crate is one of the workspace's three sanctioned locations for `unsafe`
+//! code (per the M-UNSAFE guideline), alongside `rustconn-locale-sys` for the
+//! startup `setlocale` call and `rustconn-env-sys` for the startup environment
+//! writes. It was the first, hence the wording it used to carry. It provides:
 //!
 //! - [`set_controlling_terminal`] — `pre_exec` hook for `setsid` + `TIOCSCTTY`
 //! - [`open_pty_pair`] — creates a PTY master/slave pair via `openpty(2)`
@@ -12,6 +14,16 @@
 //! Reading and writing the descriptor itself is deliberately absent: the caller
 //! turns the master into a [`std::fs::File`], so no session data passes through
 //! any `unsafe` code.
+
+// The one lint this crate re-opens out of the inherited workspace set, which is
+// `deny` rather than `forbid` precisely so that this line is possible. `expect`
+// rather than `allow`: if the `unsafe` blocks below ever go away, the compiler
+// says so instead of leaving a stale exemption behind — and a `-sys` crate with
+// no `unsafe` left has no reason to exist and should be folded into its caller.
+#![expect(
+    unsafe_code,
+    reason = "sanctioned FFI crate (M-UNSAFE); the libc calls below are its entire purpose"
+)]
 
 use std::io;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
@@ -124,11 +136,17 @@ pub fn pty_set_winsize(master_fd: impl AsFd, rows: u16, cols: u16) -> io::Result
     // SAFETY: TIOCSWINSZ is a well-defined ioctl; the descriptor is valid for
     // the duration of the call because `AsFd` borrows it; `ws` is a stack-local
     // fully initialised struct that the ioctl only reads.
+    //
+    // `&raw const` rather than `&ws as *const _`: the cast form creates a real
+    // reference first and then discards it, which asserts to the compiler an
+    // aliasing guarantee that C code on the other side of the call has never
+    // agreed to. The raw-borrow operator produces the pointer without ever
+    // materialising that reference.
     let ret = unsafe {
         libc::ioctl(
             master_fd.as_fd().as_raw_fd(),
             libc::TIOCSWINSZ as libc::c_ulong,
-            &ws as *const libc::winsize,
+            &raw const ws,
         )
     };
     if ret == -1 {
@@ -170,7 +188,10 @@ pub fn pty_wait_readable(fd: impl AsFd, timeout: std::time::Duration) -> io::Res
 
     // SAFETY: `pollfd` is a single fully initialised struct and the length
     // passed matches; the descriptor is borrowed for the duration of the call.
-    let ret = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+    // `&raw mut` rather than an implicit `&mut` coercion, for the reason given at
+    // the `TIOCSWINSZ` call above: no `&mut` is created, so no uniqueness claim
+    // is made about memory `poll(2)` is about to write through a raw pointer.
+    let ret = unsafe { libc::poll(&raw mut pollfd, 1, timeout_ms) };
     match ret {
         -1 => {
             let err = io::Error::last_os_error();
@@ -222,7 +243,8 @@ pub fn dup_fd(fd: &OwnedFd) -> io::Result<OwnedFd> {
 
 #[cfg(all(unix, test))]
 mod tests {
-    use std::os::fd::AsRawFd;
+    // `AsRawFd` is not re-imported: `use super::*` already brings it in from the
+    // module's own imports, and `redundant_imports` flags the duplicate.
     use std::process::{Command, Stdio};
 
     use super::*;

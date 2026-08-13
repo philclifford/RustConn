@@ -7,6 +7,12 @@ authors.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+# Package name is gettext-rs, import path is `gettextrs`, so cargo-machete's
+# textual scan cannot see it. Used in src/lib.rs (`gettextrs::setlocale`,
+# and `pub use gettextrs::LocaleCategory`).
+[package.metadata.cargo-machete]
+ignored = ["gettext-rs"]
+
 [dependencies]
 # `setlocale` is `unsafe` as of 0.8.0 (RUSTSEC-2026-0244). Calling it is this
 # crate's entire reason to exist; the safe remainder of the gettext API
@@ -24,7 +30,12 @@ gettext-rs = { workspace = true }
 
 # This crate is one of the sanctioned locations for `unsafe` in the workspace
 # (see rust-pragmatic-guidelines.md, M-UNSAFE: isolate FFI in a small -sys
-# crate). It therefore does NOT opt into `[workspace.lints]`
-# (unsafe_code = "forbid") and instead explicitly allows unsafe here.
-[lints.rust]
-unsafe_code = "allow"
+# crate), and it opts into the workspace lint set like every other crate. The
+# single exemption it needs is re-opened in src/lib.rs with a crate-level
+# `#![expect(unsafe_code, reason = "…")]`, which is possible because the workspace
+# sets that lint to `deny` rather than `forbid`. Declaring `[lints.rust]` here
+# instead would *replace* the inherited table, losing clippy::pedantic,
+# clippy::nursery and clippy::unwrap_used in the one crate that least wants them
+# relaxed.
+[lints]
+workspace = true

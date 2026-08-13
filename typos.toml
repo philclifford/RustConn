@@ -21,6 +21,10 @@ extend-exclude = [
     "Cargo.lock",
     "package-lock.json",
     "messages.mo",
+    # Vendored verbatim from flatpak-builder-tools upstream. It carries an
+    # upstream typo ("fragement"); patching vendored code to satisfy a local
+    # spell checker would make the next re-vendor a conflict for no gain.
+    "packaging/flatpak/flatpak-cargo-generator.py",
 ]
 
 [default.extend-words]
@@ -33,8 +37,54 @@ adw = "adw"
 # Ukrainian locale identifiers
 uk = "uk"
 
+# --- Vocabulary below added 2026-08-12, when `typos` was first wired into CI. ---
+# It had never been run, so its whole 73-finding backlog surfaced at once. Every
+# one turned out to be legitimate: proper nouns, crate names, upstream spellings,
+# wire-format strings from other apps, or deliberate examples. Nothing in the
+# codebase was misspelled, so nothing was "corrected" — several of those
+# corrections would have introduced bugs. Each entry says why it stays.
+
+# Vendor and product names that typos splits out of CamelCase.
+# "Hashi" is the head of HashiCorp (Boundary, Vault).
+Hashi = "Hashi"
+
+# Huawei OLT MA5800 — Optical Line Terminal, real telecom hardware whose login
+# banner the Telnet prompt detector matches on. Both cases appear (device class
+# in prose, host name `olt-1` in tests).
+OLT = "OLT"
+olt = "olt"
+
+# Asbru Connection Manager spells its own global variable `<GV:US_Parrallels_User>`
+# with the double r. That string is wire format for the importer in
+# rustconn-core/src/import/asbru.rs — "fixing" the spelling breaks the import.
+Parrallels = "Parrallels"
+
+# Crate names that appear in CHANGELOG dependency lists.
+# flate2 (compression) and writeable (an ICU dependency).
+flate = "flate"
+writeable = "writeable"
+
+# Hyphenated prefixes: typos splits "mis-read" and "pre-empted" at the hyphen
+# and then judges the fragments.
+mis = "mis"
+empted = "empted"
+
+# Valid English variants that typos prefers to normalise. Both are established
+# in this domain: GTK genuinely "unparents" a widget, and the -eable spelling is
+# used consistently across the config parsers and their test names.
+unparented = "unparented"
+unparseable = "unparseable"
+
+# Illustrative misspelling in docs/CLI_REFERENCE.md: the example output shows
+# `rustconn-cli show "prodction"` answered by "Did you mean: Production DB?".
+# The typo IS the demonstration.
+prodction = "prodction"
+
 [default.extend-identifiers]
-# Add false-positive identifiers here as they appear
+# Field name in the vnc-rs crate's event struct. The source already flags it
+# (`bottons: buttons, // Note: typo in vnc-rs library`); it is upstream's
+# identifier and cannot be renamed from here.
+bottons = "bottons"
 
 [default]
 extend-ignore-re = [
@@ -44,4 +94,11 @@ extend-ignore-re = [
     "\\b[0-9a-fA-F]{32,}\\b",
     # Commit hashes in CHANGELOG.md
     "\\b[0-9a-f]{7,40}\\b",
+    # Base64 payload lines — PEM certificate fixtures in the .vv importer tests
+    # are dense enough to contain accidental words ("UE", "Fo").
+    # Note this is broader than its motivating case: it exempts ANY run of 40+
+    # alphanumerics anywhere in the repo, not just PEM blocks. Accepted because
+    # a 40-character unbroken alnum run is not prose in the first place, but do
+    # not reach for it to silence an ordinary long identifier.
+    "\\b[A-Za-z0-9+/]{40,}={0,2}\\b",
 ]

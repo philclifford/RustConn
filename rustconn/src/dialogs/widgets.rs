@@ -467,6 +467,24 @@ fn _i18n_markers() {
     i18n("Send");
     i18n("Use Template");
     i18n("Done");
+
+    // Rows built through `SwitchRowBuilder`, whose `build()` calls `i18n()` on a
+    // *variable* — so `xgettext` sees nothing at the call site and these msgids
+    // were absent from all 16 catalogues while rendering through gettext at
+    // runtime, which is to say rendering in English forever. Same class of rot
+    // as the seven strings 0.20.0 recovered, and `check-potfiles.sh` cannot
+    // catch it: the file is listed, it is the string that is invisible.
+    //
+    // The Web connection panel is the builder's only caller. Adding the
+    // floating-toolbar row (issue #260) is what surfaced it.
+    i18n("JavaScript");
+    i18n("Enable or disable JavaScript execution in the embedded browser");
+    i18n("Navigation Toolbar");
+    i18n(
+        "Turn off to remove the floating toolbar and its reveal arrow. Keyboard shortcuts for back, forward, reload and zoom still work.",
+    );
+    i18n("Private / Incognito Mode");
+    i18n("Open URL in a private browsing window (Firefox, Chrome, Brave)");
 }
 
 #[cfg(test)]

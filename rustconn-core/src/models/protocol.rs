@@ -1645,7 +1645,7 @@ impl RdpAudioMode {
     clippy::struct_excessive_bools,
     reason = "settings/flags struct mirrors persisted config 1:1; bools represent independent toggles, not a state machine"
 )]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RdpConfig {
     /// RDP client mode (embedded or external)
     #[serde(default)]
@@ -1719,6 +1719,19 @@ pub struct RdpConfig {
     /// Show local mouse cursor over embedded viewer (disable to avoid double cursor)
     #[serde(default = "default_true")]
     pub show_local_cursor: bool,
+    /// Remove the floating session toolbar and its reveal handle from the
+    /// embedded viewer (issue #260).
+    ///
+    /// Stated negatively so that `false` — the value `Default::default()` and a
+    /// stored profile without the key both produce — keeps the toolbar. Every
+    /// importer, template and wizard builds its protocol config from
+    /// [`Default`], so a positive `default_true` field would have arrived
+    /// switched off through all of them.
+    ///
+    /// This also suppresses the split view's own corner-button overlay for the
+    /// session; see `floating_overlays_suppressed` in the GUI crate.
+    #[serde(default)]
+    pub hide_floating_toolbar: bool,
     /// Enable mouse jiggler to prevent idle disconnect
     #[serde(default)]
     pub jiggler_enabled: bool,
@@ -1778,6 +1791,63 @@ pub struct RdpConfig {
     /// Only applies to Embedded mode; External FreeRDP handles its own sockets.
     #[serde(default)]
     pub mptcp: bool,
+}
+
+/// Written out by hand rather than derived, so that it agrees with the serde
+/// defaults above.
+///
+/// `#[derive(Default)]` does not read `#[serde(default = "…")]`, so the two
+/// disagreed on five fields: `clipboard_enabled`, `show_local_cursor` and
+/// `script_paste_via_clipboard` came back `false` where a stored profile without
+/// the key deserialises to `true`, `jiggler_interval_secs` came back `0` instead
+/// of 60, and `autotype_delay_ms` `0` instead of 20 — fast enough that autotype
+/// drops characters on a Citrix or gateway session. That mattered because
+/// `RdpConfig::default()` is not a corner case: every importer (Remmina,
+/// RoyalTS, RDM, SecureCRT, CSV, Ásbrú, libvirt), `models::template`,
+/// `sync::inventory`, the connection wizard and RDP quick-connect all build
+/// their config from it. Adding `hide_floating_toolbar` (issue #260) is what
+/// surfaced this: the field is negative precisely so it cannot be caught by the
+/// same trap, and then the trap turned out to be worth closing.
+///
+/// `SpiceConfig` already did this; `default_agrees_with_serde` in
+/// `default_consistency_tests` now checks all three so the next added field
+/// cannot re-open the gap silently.
+impl Default for RdpConfig {
+    fn default() -> Self {
+        Self {
+            client_mode: RdpClientMode::default(),
+            performance_mode: RdpPerformanceMode::default(),
+            graphics_mode: crate::rdp_client::graphics::GraphicsMode::default(),
+            resolution: None,
+            color_depth: None,
+            audio_redirect: false,
+            audio_mode: None,
+            printer_enabled: false,
+            gateway: None,
+            shared_folders: Vec::new(),
+            custom_args: Vec::new(),
+            keyboard_layout: None,
+            scale_override: ScaleOverride::default(),
+            disable_nla: false,
+            security_layer: RdpSecurityLayer::default(),
+            tls_security_level: None,
+            ignore_certificate: false,
+            clipboard_enabled: default_true(),
+            show_local_cursor: default_true(),
+            hide_floating_toolbar: false,
+            jiggler_enabled: false,
+            jiggler_interval_secs: default_jiggler_interval(),
+            jump_host_id: None,
+            autotype_delay_ms: default_autotype_delay(),
+            autotype_initial_delay_ms: 0,
+            reconnect_on_resize: false,
+            script_paste_via_clipboard: default_true(),
+            remote_app_program: None,
+            remote_app_args: None,
+            remote_app_name: None,
+            mptcp: false,
+        }
+    }
 }
 
 impl RdpConfig {
@@ -2001,7 +2071,7 @@ impl VncClientMode {
     clippy::struct_excessive_bools,
     reason = "settings/flags struct mirrors persisted config 1:1; bools represent independent toggles, not a state machine"
 )]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VncConfig {
     /// VNC client mode (embedded or external)
     #[serde(default)]
@@ -2036,6 +2106,13 @@ pub struct VncConfig {
     /// Show local mouse cursor over embedded viewer (disable to avoid double cursor)
     #[serde(default = "default_true")]
     pub show_local_cursor: bool,
+    /// Remove the floating session toolbar and its reveal handle from the
+    /// embedded viewer (issue #260).
+    ///
+    /// See [`RdpConfig::hide_floating_toolbar`] for why this reads as "hide"
+    /// rather than "show".
+    #[serde(default)]
+    pub hide_floating_toolbar: bool,
     /// ID of an SSH connection to use as a jump host (SSH tunnel).
     /// The VNC connection is tunnelled through this SSH host via local
     /// port forwarding (`ssh -L`).
@@ -2054,6 +2131,32 @@ pub struct VncConfig {
     /// Only applies to Embedded mode; External viewers handle their own sockets.
     #[serde(default)]
     pub mptcp: bool,
+}
+
+/// Written out by hand rather than derived, for the reason given on
+/// [`RdpConfig`]'s `Default`: `scaling`, `clipboard_enabled` and
+/// `show_local_cursor` all deserialise to `true` from a stored profile that
+/// omits them, and a derived `Default` handed back `false`.
+impl Default for VncConfig {
+    fn default() -> Self {
+        Self {
+            client_mode: VncClientMode::default(),
+            performance_mode: VncPerformanceMode::default(),
+            encoding: None,
+            compression: None,
+            quality: None,
+            view_only: false,
+            scaling: default_true(),
+            clipboard_enabled: default_true(),
+            custom_args: Vec::new(),
+            scale_override: ScaleOverride::default(),
+            show_local_cursor: default_true(),
+            hide_floating_toolbar: false,
+            jump_host_id: None,
+            accept_certificate: false,
+            mptcp: false,
+        }
+    }
 }
 
 impl VncConfig {
@@ -3374,6 +3477,10 @@ impl Default for WebBrowserMode {
 /// `Serialize` is derived, but `Deserialize` is implemented manually to
 /// validate `user_agent` length (max 512 chars) and clamp `zoom_level`
 /// to the [0.3, 3.0] range at parse time.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "settings/flags struct mirrors persisted config 1:1; bools represent independent toggles, not a state machine"
+)]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct WebConfig {
     /// Custom browser command (None = system default via xdg-open / portal)
@@ -3395,6 +3502,14 @@ pub struct WebConfig {
     /// Useful for local services like Cockpit, Proxmox, or dev environments.
     #[serde(default)]
     pub accept_invalid_certs: bool,
+    /// Remove the floating navigation toolbar and its reveal handle from the
+    /// embedded browser (issue #260).
+    ///
+    /// See [`RdpConfig::hide_floating_toolbar`] for why this reads as "hide"
+    /// rather than "show". Only the embedded browser has a toolbar to remove;
+    /// the System and Custom modes hand the URL to another program.
+    #[serde(default)]
+    pub hide_floating_toolbar: bool,
 }
 
 // Manual Eq: zoom_level is always clamped to [0.3, 3.0] (finite, no NaN),
@@ -3411,6 +3526,7 @@ impl Default for WebConfig {
             user_agent: None,
             zoom_level: 1.0,
             accept_invalid_certs: false,
+            hide_floating_toolbar: false,
         }
     }
 }
@@ -3421,6 +3537,10 @@ impl<'de> Deserialize<'de> for WebConfig {
         D: serde::Deserializer<'de>,
     {
         /// Internal helper for raw deserialization before validation.
+        #[expect(
+            clippy::struct_excessive_bools,
+            reason = "mirrors WebConfig field for field; the whole point is to be a 1:1 wire shape"
+        )]
         #[derive(Deserialize)]
         struct WebConfigRaw {
             #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3437,6 +3557,8 @@ impl<'de> Deserialize<'de> for WebConfig {
             zoom_level: f64,
             #[serde(default)]
             accept_invalid_certs: bool,
+            #[serde(default)]
+            hide_floating_toolbar: bool,
         }
 
         let raw = WebConfigRaw::deserialize(deserializer)?;
@@ -3458,6 +3580,7 @@ impl<'de> Deserialize<'de> for WebConfig {
             user_agent: raw.user_agent,
             zoom_level: raw.zoom_level.clamp(0.3, 3.0),
             accept_invalid_certs: raw.accept_invalid_certs,
+            hide_floating_toolbar: raw.hide_floating_toolbar,
         })
     }
 }
@@ -3612,5 +3735,155 @@ mod erase_mode_tests {
             ..SshConfig::default()
         });
         assert_eq!(sftp.erase_modes(), defaults);
+    }
+}
+
+#[cfg(test)]
+mod floating_toolbar_tests {
+    use super::*;
+
+    /// Every stored profile written before issue #260 lacks the key, and all of
+    /// them must keep their toolbar. This is the whole reason the field reads as
+    /// "hide" rather than "show".
+    #[test]
+    fn rdp_config_without_the_key_keeps_the_toolbar() {
+        let json = r#"{"client_mode":"embedded","performance_mode":"balanced"}"#;
+        let config: RdpConfig =
+            serde_json::from_str(json).expect("legacy RDP JSON must still deserialize");
+        assert!(!config.hide_floating_toolbar);
+
+        let config: RdpConfig = toml::from_str("performance_mode = \"balanced\"\n")
+            .expect("legacy RDP TOML must still deserialize");
+        assert!(!config.hide_floating_toolbar);
+    }
+
+    #[test]
+    fn vnc_config_without_the_key_keeps_the_toolbar() {
+        let json = r#"{"client_mode":"embedded","view_only":false}"#;
+        let config: VncConfig =
+            serde_json::from_str(json).expect("legacy VNC JSON must still deserialize");
+        assert!(!config.hide_floating_toolbar);
+
+        let config: VncConfig =
+            toml::from_str("view_only = false\n").expect("legacy VNC TOML must still deserialize");
+        assert!(!config.hide_floating_toolbar);
+    }
+
+    /// `WebConfig` has a hand-written `Deserialize` going through `WebConfigRaw`,
+    /// so a new field has to be threaded through four places and a miss here is
+    /// silent rather than a compile error.
+    #[test]
+    fn web_config_without_the_key_keeps_the_toolbar() {
+        let json = r#"{"browser_mode":"embedded","javascript_enabled":true}"#;
+        let config: WebConfig =
+            serde_json::from_str(json).expect("legacy Web JSON must still deserialize");
+        assert!(!config.hide_floating_toolbar);
+
+        let config: WebConfig = toml::from_str("javascript_enabled = true\n")
+            .expect("legacy Web TOML must still deserialize");
+        assert!(!config.hide_floating_toolbar);
+    }
+
+    /// The importers, templates, wizard and `sync::inventory` all build their
+    /// protocol config from `Default`, so the derived default and the serde
+    /// default have to agree — for this field they do, by construction.
+    #[test]
+    fn default_agrees_with_the_serde_default() {
+        assert!(!RdpConfig::default().hide_floating_toolbar);
+        assert!(!VncConfig::default().hide_floating_toolbar);
+        assert!(!WebConfig::default().hide_floating_toolbar);
+    }
+
+    #[test]
+    fn hidden_toolbar_survives_a_round_trip() {
+        let rdp = RdpConfig {
+            hide_floating_toolbar: true,
+            ..RdpConfig::default()
+        };
+        let restored: RdpConfig =
+            serde_json::from_str(&serde_json::to_string(&rdp).expect("RdpConfig must serialize"))
+                .expect("RdpConfig must round-trip");
+        assert!(restored.hide_floating_toolbar);
+
+        let vnc = VncConfig {
+            hide_floating_toolbar: true,
+            ..VncConfig::default()
+        };
+        let restored: VncConfig =
+            serde_json::from_str(&serde_json::to_string(&vnc).expect("VncConfig must serialize"))
+                .expect("VncConfig must round-trip");
+        assert!(restored.hide_floating_toolbar);
+
+        let web = WebConfig {
+            hide_floating_toolbar: true,
+            ..WebConfig::default()
+        };
+        let restored: WebConfig =
+            serde_json::from_str(&serde_json::to_string(&web).expect("WebConfig must serialize"))
+                .expect("WebConfig must round-trip");
+        assert!(restored.hide_floating_toolbar);
+    }
+}
+
+#[cfg(test)]
+mod default_consistency_tests {
+    use super::*;
+
+    /// `Default::default()` and "deserialise an empty object" are two answers to
+    /// the same question, and every importer, template and wizard asks the first
+    /// one while every stored profile answers the second. They diverged for
+    /// `RdpConfig` and `VncConfig` until the hand-written `Default` impls above,
+    /// because `#[derive(Default)]` cannot see `#[serde(default = "…")]`.
+    ///
+    /// Comparing the two whole structs rather than naming fields is the point:
+    /// a field added later with a non-`Default` serde default fails here without
+    /// anyone remembering to extend the test.
+    #[test]
+    fn default_agrees_with_serde() {
+        let from_serde: RdpConfig =
+            serde_json::from_str("{}").expect("RdpConfig must deserialise from an empty object");
+        assert_eq!(RdpConfig::default(), from_serde);
+
+        let from_serde: VncConfig =
+            serde_json::from_str("{}").expect("VncConfig must deserialise from an empty object");
+        assert_eq!(VncConfig::default(), from_serde);
+
+        let from_serde: SpiceConfig =
+            serde_json::from_str("{}").expect("SpiceConfig must deserialise from an empty object");
+        assert_eq!(SpiceConfig::default(), from_serde);
+
+        let from_serde: WebConfig =
+            serde_json::from_str("{}").expect("WebConfig must deserialise from an empty object");
+        assert_eq!(WebConfig::default(), from_serde);
+    }
+
+    /// The values a Remmina or RoyalTS import used to arrive with. Named
+    /// separately from the struct comparison above so a regression says which
+    /// behaviour broke rather than printing two thirty-field structs.
+    #[test]
+    fn imported_rdp_connection_keeps_its_usable_defaults() {
+        let config = RdpConfig::default();
+        assert!(config.clipboard_enabled, "clipboard was silently off");
+        assert!(config.show_local_cursor, "local cursor was silently off");
+        assert!(
+            config.script_paste_via_clipboard,
+            "scripts fell back to character-by-character autotype"
+        );
+        assert_eq!(
+            config.autotype_delay_ms, 20,
+            "a 0 ms inter-character delay drops characters on slow gateways"
+        );
+        assert_eq!(config.jiggler_interval_secs, 60);
+        // The one this release added, stated negatively on purpose.
+        assert!(!config.hide_floating_toolbar);
+    }
+
+    #[test]
+    fn imported_vnc_connection_keeps_its_usable_defaults() {
+        let config = VncConfig::default();
+        assert!(config.scaling, "scaling to fit the window was silently off");
+        assert!(config.clipboard_enabled, "clipboard was silently off");
+        assert!(config.show_local_cursor, "local cursor was silently off");
+        assert!(!config.hide_floating_toolbar);
     }
 }

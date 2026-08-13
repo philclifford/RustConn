@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.19.22
+Version:        0.20.0
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -37,9 +37,13 @@ BuildRequires:  alsa-lib-devel
 %endif
 
 # Common build dependencies
+# The floors are the crate feature baselines in Cargo.toml — gtk4 v4_14,
+# vte4 v0_76, libadwaita v1_5. system-deps fails the build script rather than
+# the dependency solver when they are not met, which is a much less obvious
+# error, so state them here.
 BuildRequires:  pkgconfig(gtk4) >= 4.14
-BuildRequires:  pkgconfig(vte-2.91-gtk4)
-BuildRequires:  pkgconfig(libadwaita-1)
+BuildRequires:  pkgconfig(vte-2.91-gtk4) >= 0.76
+BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
 BuildRequires:  pkgconfig(dbus-1)
 # WebKitGTK 6.0 — only on distros that ship it (Tumbleweed, Fedora 43+)
 %if 0%{?suse_version} > 1600 || 0%{?fedora} >= 43
@@ -278,6 +282,47 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Thu Aug 13 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.0-0
+- Version bump to 0.20.0
+- Added: opening a cluster now labels every member tab with a tab group named
+  after the cluster, so it reads "[cluster] host"; Close All in Group on any
+  member closes the whole cluster
+- Added: signed build provenance for every .deb, .rpm, AppImage and Flatpak bundle
+  attached to a GitHub release — verify with
+  "gh attestation verify <file> --repo totoshko88/RustConn"
+- Added: Web embedded mode — auto-hide floating toolbar with reveal zone
+- Added: Settings > Interface > Rendering — Automatic, Hardware (GPU) or Software (Cairo) (#274)
+- Fixed: an RDP, VNC, SPICE or Web member of a cluster was never registered in
+  it, so "Disconnect all cluster sessions" could not close it
+- Fixed: a tab returning from a split pane lost its "[group]" title label
+- Fixed: the floating viewer toolbar was revealed but not clickable for its first
+  two seconds in RDP, VNC and Web sessions
+- Fixed: choosing a non-system interface language cost macOS users the tray icon —
+  applying the language re-executed the process; the re-exec is gone (#158)
+- Fixed: Web zoom shortcuts (Ctrl+/-/0) did not work in split view
+- Fixed: Web toolbar clipped instead of collapsing in a narrow split panel; the
+  collapse point is now measured rather than a fixed pixel breakpoint
+- Fixed: the Web reveal handle sat over the page's top centre, and the floating
+  toolbar ignored the local theme
+- Fixed: a failed Web page load left the toolbar logic unrun, and the load timeout reported nothing
+- Fixed: the header bar's busy spinner lost its accessible name
+- Fixed: macOS inside a virtual machine had input lag and stuttering scroll — the
+  automatic renderer choice now detects a hypervisor and selects Cairo (#274)
+- Fixed: seven translatable strings were in the source but in no catalogue; now
+  translated in all 16 locales
+- Fixed: POTFILES.in did not list the two modules extracted from terminal/mod.rs
+- Changed: the 60-second Web load timeout now reports itself in the reconnect banner
+- Improved: neither the X11 Cairo fallback nor the language selection re-execs the
+  process any more — both environment writes moved into the new rustconn-env-sys
+  crate, so startup spawns two processes fewer
+- Improved: terminal/mod.rs split into three modules — 4365 lines down to 3052
+- Improved: adw::Spinner where the runtime has it (opt-in adw-1-6), gtk4::Spinner where it does not; baseline stays libadwaita 1.5
+- Improved: build dependencies state the versions the crate features require (libadwaita >= 1.5, VTE >= 0.76)
+- Improved: the three FFI crates now inherit the workspace clippy lint set; they
+  had been the only crates in the workspace with no lints at all
+- Documentation: how to verify a downloaded release artifact, in docs/INSTALL.md
+  and SECURITY.md
+
 * Wed Aug 12 2026 Anton Isaiev <totoshko88@gmail.com> - 0.19.22-0
 - Version bump to 0.19.22
 - Fixed: KeePassXC "Don't save" mode did not unlock the database on demand (#273)

@@ -7,7 +7,21 @@
 //!
 //! - `types` - Data structures for sessions
 //! - `config` - Terminal appearance and behavior configuration
-
+//! - `tab_lifecycle` - Tab creation, parking for split view, restore, reparenting
+//! - `session_lifecycle` - Reconnect, VTE reset, status indicators, reconnect banner
+//!
+// ponytail: `TerminalNotebook` is still one type with ~156 methods; 0.20.0 moved
+// the tab- and session-lifecycle ones into the two modules named above, which cut
+// this file by 30% but did not reduce coupling — it only made it visible, since
+// the moved methods had to widen from private to `pub(super)`.
+//
+// The actual god object is the per-tab state those methods share: the notebook
+// holds parallel collections keyed by tab, and every method reaches across them.
+// The upgrade path is to extract that into a `TerminalTab` type owning its own
+// widget, session handle, connection and reconnect state, after which most of
+// these methods become methods on the tab and the notebook keeps only the ones
+// that are genuinely about the collection. Do that before splitting another file
+// off; a fourth module would move lines without moving the problem.
 mod config;
 mod detach;
 pub use detach::{DetachMonitor, DetachPresentation};
@@ -17,7 +31,9 @@ pub mod playback;
 pub mod pty_relay;
 pub mod pty_spawn;
 mod recording;
+mod session_lifecycle;
 pub mod tab_container;
+mod tab_lifecycle;
 mod tab_menu;
 mod types;
 
@@ -33,7 +49,10 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use rustconn_core::models::{AutomationConfig, BackspaceSends, DeleteSends};
 use rustconn_core::terminal_themes::TerminalTheme;
-pub use types::{SessionWidgetStorage, TerminalSession};
+pub use types::{
+    ClusterTabs, PendingCluster, SessionWidgetStorage, TerminalSession, group_still_in_use,
+    strip_group_prefix, tab_title,
+};
 use uuid::Uuid;
 use vte4::Terminal;
 use vte4::prelude::*;
@@ -268,17 +287,17 @@ pub struct TerminalNotebook {
     /// module), so the grid is compared against the size last pushed to the
     /// child. Removed together with the relay.
     pty_size_timers: Rc<RefCell<HashMap<Uuid, glib::SourceId>>>,
-    /// Cluster terminal tracking: cluster_id → Vec<session_id>
-    cluster_sessions: Rc<RefCell<HashMap<Uuid, Vec<Uuid>>>>,
+    /// Cluster tab tracking: cluster_id → its open tabs and their group name.
+    cluster_sessions: Rc<RefCell<HashMap<Uuid, ClusterTabs>>>,
     /// Reverse lookup: session_id → cluster_id
     session_to_cluster: Rc<RefCell<HashMap<Uuid, Uuid>>>,
     /// Pending cluster registrations awaiting their session_id.
     ///
-    /// When a connection is launched as part of a cluster but its terminal is
-    /// created asynchronously (e.g. after a TCP port check), we cannot register
-    /// the session_id at launch time. Instead we record the (connection_id →
-    /// cluster_id) pair here and resolve it the moment a tab is created.
-    cluster_pending: Rc<RefCell<HashMap<Uuid, Uuid>>>,
+    /// When a connection is launched as part of a cluster but its tab is created
+    /// asynchronously (e.g. after a TCP port check), we cannot register the
+    /// session_id at launch time. Instead we record connection_id →
+    /// [`PendingCluster`] here and resolve it the moment a tab is created.
+    cluster_pending: Rc<RefCell<HashMap<Uuid, PendingCluster>>>,
     /// Active recording sessions (tracked by session_id)
     active_recordings: Rc<RefCell<HashSet<Uuid>>>,
     /// Recording paths and start times: session_id → (data_path, timing_path, connection_name, start_time)
@@ -703,520 +722,10 @@ impl TerminalNotebook {
         });
     }
 
-    /// Creates the welcome tab content - uses the full welcome screen with features
-    fn create_welcome_tab() -> GtkBox {
-        let container = GtkBox::new(Orientation::Vertical, 0);
-        container.set_hexpand(true);
-        container.set_vexpand(true);
-
-        // Use the full welcome content from SplitViewBridge for consistency
-        let status_page = crate::split_view::SplitViewBridge::create_welcome_content_static();
-        container.append(&status_page);
-        container
-    }
-
-    /// Appends the Welcome tab to an empty `TabView`.
-    ///
-    /// Shared by both paths that can empty the tab bar: a normal tab close and
-    /// parking the last tab into a detached window (issue #236). The caller
-    /// checks the user preference and that no pages are left.
-    fn append_welcome_page(tab_view: &adw::TabView) {
-        let welcome = Self::create_welcome_tab();
-        let welcome_wrap = TabPageContainer::welcome(&welcome.upcast::<gtk4::Widget>());
-        let welcome_page = tab_view.append(welcome_wrap.widget());
-        welcome_page.set_title(&i18n("Welcome"));
-        welcome_page.set_icon(Some(&gio::ThemedIcon::new("go-home-symbolic")));
-    }
-
-    /// Gets the icon name for a protocol
-    fn get_protocol_icon(protocol: &str) -> &'static str {
-        rustconn_core::get_protocol_icon_by_name(protocol)
-    }
-
-    /// Removes the welcome page if it exists
-    fn remove_welcome_page(&self) {
-        if self.sessions.borrow().is_empty() && self.tab_view.n_pages() > 0 {
-            // Find and remove welcome page
-            for i in 0..self.tab_view.n_pages() {
-                let page = self.tab_view.nth_page(i);
-                if page.title() == i18n("Welcome") {
-                    self.tab_view.close_page(&page);
-                    break;
-                }
-            }
-        }
-    }
-
-    /// Restores the Welcome page when the configured empty-notebook conditions hold.
-    pub(super) fn ensure_welcome_page(&self) {
-        if self.show_welcome.get()
-            && self.sessions.borrow().is_empty()
-            && self.tab_view.n_pages() == 0
-        {
-            Self::append_welcome_page(&self.tab_view);
-        }
-    }
-
     /// Stops expect polling and scrubs resolved responses for a finished child.
     pub fn clear_automation_session(&self, session_id: Uuid) {
         self.automation_sessions.borrow_mut().remove(&session_id);
     }
-
-    /// Creates a new terminal tab for an SSH session with default settings
-    pub fn create_terminal_tab(
-        &self,
-        connection_id: Uuid,
-        title: &str,
-        protocol: &str,
-        automation: Option<&AutomationConfig>,
-    ) -> Uuid {
-        self.create_terminal_tab_with_settings(
-            connection_id,
-            title,
-            protocol,
-            automation,
-            &rustconn_core::config::TerminalSettings::default(),
-            None,
-            &[], // no variables for default tab
-        )
-    }
-
-    /// Creates a new terminal tab with specific settings
-    ///
-    /// When `theme_override` is `Some`, the per-connection colors are applied
-    /// on top of the global theme. When `None`, the global theme is used as-is.
-    ///
-    /// `global_variables` are used to substitute `${VAR}` references in
-    /// Expect-rule responses before the automation session is created.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "function parameters mirror upstream API or struct fields 1:1; bundling into a struct only restates the field list"
-    )]
-    pub fn create_terminal_tab_with_settings(
-        &self,
-        connection_id: Uuid,
-        title: &str,
-        protocol: &str,
-        automation: Option<&AutomationConfig>,
-        settings: &rustconn_core::config::TerminalSettings,
-        theme_override: Option<&rustconn_core::models::ConnectionThemeOverride>,
-        global_variables: &[rustconn_core::Variable],
-    ) -> Uuid {
-        let session_id = Uuid::new_v4();
-        self.remove_welcome_page();
-
-        let terminal = Terminal::new();
-        terminal.set_hexpand(true);
-        terminal.set_vexpand(true);
-
-        // Focus-based accelerator suspend (#197): when the VTE gains focus,
-        // single-Ctrl chords (Ctrl+F/P/N…) must reach the shell instead of the
-        // app accelerators; restore them when focus leaves. The actual
-        // suspend/restore (and the `terminal_passthrough_ctrl` setting) is
-        // decided by the listener wired via `set_on_terminal_focus`.
-        self.attach_focus_passthrough(&terminal);
-
-        // Build a VariableManager for substituting ${VAR} in Expect responses
-        let var_manager = {
-            let mut mgr = rustconn_core::variables::VariableManager::new();
-            for var in global_variables {
-                mgr.set_global(var.clone());
-            }
-            mgr
-        };
-
-        // Setup automation if configured
-        if let Some(cfg) = automation
-            && !cfg.expect_rules.is_empty()
-        {
-            let rules = prepare_rules_from_config(&cfg.expect_rules, &var_manager);
-
-            if !rules.is_empty() {
-                let session = AutomationSession::new(terminal.clone(), rules);
-                self.automation_sessions
-                    .borrow_mut()
-                    .insert(session_id, session);
-            }
-        }
-
-        // Apply user settings
-        config::configure_terminal_with_settings(&terminal, settings);
-
-        // Apply per-connection theme override (if present) on top of the global theme
-        if let Some(override_colors) = theme_override {
-            let base_theme = TerminalTheme::by_name(&settings.color_theme)
-                .unwrap_or_else(TerminalTheme::dark_theme);
-            config::apply_theme_override_with_base(&terminal, override_colors, &base_theme);
-        }
-
-        // VTE implements GtkScrollable natively — no ScrolledWindow needed.
-        // Wrapping in ScrolledWindow intercepts mouse events and breaks
-        // ncurses apps (mc, htop) that rely on VTE's internal mouse handling.
-        // Instead, pair VTE with a standalone GtkScrollbar connected to its
-        // vadjustment — the same approach used by GNOME Terminal.
-        let terminal_row = GtkBox::new(Orientation::Horizontal, 0);
-        terminal_row.set_hexpand(true);
-        terminal_row.set_vexpand(true);
-        terminal_row.append(&terminal);
-
-        if settings.show_scrollbar {
-            let scrollbar =
-                gtk4::Scrollbar::new(Orientation::Vertical, terminal.vadjustment().as_ref());
-            terminal_row.append(&scrollbar);
-        }
-
-        // Wrap terminal_row in an Overlay so the highlight DrawingArea can
-        // be layered on top without interfering with VTE input.
-        let terminal_overlay = gtk4::Overlay::new();
-        terminal_overlay.set_child(Some(&terminal_row));
-        terminal_overlay.set_hexpand(true);
-        terminal_overlay.set_vexpand(true);
-
-        // Outer vertical container: terminal row on top, monitoring bar below.
-        // get_session_container() returns this box so monitoring can append to it.
-        let container = GtkBox::new(Orientation::Vertical, 0);
-        container.set_hexpand(true);
-        container.set_vexpand(true);
-        container.append(&terminal_overlay);
-
-        // Right-click context menu actions installed on the terminal widget
-        // so they follow it when reparented between TabView and split view.
-        config::setup_context_menu(&terminal, &self.snippet_menu_section);
-
-        // Drag-and-drop: insert shell-escaped file paths when files are
-        // dragged from a file manager onto the terminal (GNOME Terminal behavior).
-        file_drop::setup_file_drop_target(&terminal);
-
-        // Wrap in TabPageContainer to guarantee non-zero allocation for TabOverview
-        let tab_container = TabPageContainer::single(&container);
-
-        // Add page to TabView — child is the TabPageContainer outer box
-        let page = self.tab_view.append(tab_container.widget());
-        page.set_title(title);
-        page.set_icon(Some(&gio::ThemedIcon::new(Self::get_protocol_icon(
-            protocol,
-        ))));
-        page.set_tooltip(title);
-
-        // Store session data
-        self.sessions.borrow_mut().insert(session_id, page.clone());
-        let terminal_for_focus = terminal.clone();
-        self.terminals.borrow_mut().insert(session_id, terminal);
-        self.terminal_overlays
-            .borrow_mut()
-            .insert(session_id, terminal_overlay);
-        self.tab_containers
-            .borrow_mut()
-            .insert(session_id, tab_container);
-
-        self.session_info.borrow_mut().insert(
-            session_id,
-            TerminalSession {
-                id: session_id,
-                connection_id,
-                name: title.to_string(),
-                protocol: protocol.to_string(),
-                is_embedded: true,
-                host: None,
-                log_file: None,
-                history_entry_id: None,
-                tab_group: None,
-                tab_color_index: None,
-                connected_at: chrono::Utc::now(),
-            },
-        );
-
-        // Select the new page
-        self.tab_view.set_selected_page(&page);
-
-        // Auto-focus the terminal so the user can type immediately (#79).
-        // Use idle_add_local_once so the focus request runs after the page
-        // is fully mapped, and only if this page is still selected (avoids
-        // focus-stealing when multiple tabs open in quick succession).
-        let tab_view_focus = self.tab_view.clone();
-        let page_focus = page.clone();
-        let terminal_focus = terminal_for_focus;
-        glib::idle_add_local_once(move || {
-            if tab_view_focus.selected_page().as_ref() == Some(&page_focus) {
-                terminal_focus.grab_focus();
-            }
-        });
-
-        // Apply protocol color indicator if enabled
-        if *self.color_tabs_by_protocol.borrow() {
-            self.apply_protocol_color(session_id, protocol);
-        }
-
-        // Resolve any pending cluster registration for this connection
-        self.resolve_cluster_pending(connection_id, session_id);
-
-        // Notify listeners that a new terminal session was created.
-        // Single choke point for per-session wiring (activity monitoring):
-        // fires for every terminal protocol and for both synchronous and
-        // async (port-checked) connection paths, regardless of which connect
-        // action started the session.
-        if let Some(ref callback) = *self.on_session_created.borrow() {
-            callback(session_id, connection_id);
-        }
-
-        self.notify_tab_added(session_id, connection_id);
-
-        session_id
-    }
-
-    /// Creates a new VNC session tab
-    pub fn create_vnc_session_tab(&self, connection_id: Uuid, title: &str) -> Uuid {
-        self.create_vnc_session_tab_with_host(connection_id, title, "")
-    }
-
-    /// Creates a new VNC session tab with host information
-    pub fn create_vnc_session_tab_with_host(
-        &self,
-        connection_id: Uuid,
-        title: &str,
-        host: &str,
-    ) -> Uuid {
-        let session_id = Uuid::new_v4();
-        self.remove_welcome_page();
-
-        let vnc_widget = Rc::new(VncSessionWidget::new());
-
-        // #197: suspend single-Ctrl accelerators while the viewer has focus.
-        self.attach_focus_passthrough(vnc_widget.widget());
-
-        let container = GtkBox::new(Orientation::Vertical, 0);
-        container.set_hexpand(true);
-        container.set_vexpand(true);
-        container.append(vnc_widget.widget());
-
-        let tab_container = TabPageContainer::single(&container);
-        let page = self.tab_view.append(tab_container.widget());
-        page.set_title(title);
-        page.set_icon(Some(&gio::ThemedIcon::new(
-            "video-joined-displays-symbolic",
-        )));
-        // The host is stored on the session below, so a tab rebuilt after a
-        // detach or a rename produces this very tooltip again.
-        let session_host = (!host.is_empty()).then(|| host.to_owned());
-        page.set_tooltip(&Self::tab_tooltip(title, session_host.as_deref(), None));
-
-        self.sessions.borrow_mut().insert(session_id, page.clone());
-        // Register the container so split (switch_tab_to_split) and unsplit /
-        // close-pane (reparent_terminal_to_tab) can swap this tab's content.
-        self.tab_containers
-            .borrow_mut()
-            .insert(session_id, tab_container);
-        self.session_widgets
-            .borrow_mut()
-            .insert(session_id, SessionWidgetStorage::Vnc(vnc_widget));
-
-        self.session_info.borrow_mut().insert(
-            session_id,
-            TerminalSession {
-                id: session_id,
-                connection_id,
-                name: title.to_string(),
-                protocol: "vnc".to_string(),
-                is_embedded: true,
-                host: session_host,
-                log_file: None,
-                history_entry_id: None,
-                tab_group: None,
-                tab_color_index: None,
-                connected_at: chrono::Utc::now(),
-            },
-        );
-
-        self.tab_view.set_selected_page(&page);
-        // Apply protocol color indicator if enabled
-        if *self.color_tabs_by_protocol.borrow() {
-            self.apply_protocol_color(session_id, "vnc");
-        }
-        self.notify_tab_added(session_id, connection_id);
-        session_id
-    }
-
-    /// Adds an embedded RDP tab with the EmbeddedRdpWidget
-    pub fn add_embedded_rdp_tab(
-        &self,
-        session_id: Uuid,
-        connection_id: Uuid,
-        title: &str,
-        widget: Rc<EmbeddedRdpWidget>,
-    ) {
-        self.remove_welcome_page();
-
-        // #197: suspend single-Ctrl accelerators while the viewer has focus.
-        self.attach_focus_passthrough(widget.widget());
-
-        // Wrap in ToastOverlay for file DnD notifications
-        let toast_overlay = libadwaita::ToastOverlay::new();
-        toast_overlay.set_child(Some(widget.widget()));
-        toast_overlay.set_hexpand(true);
-        toast_overlay.set_vexpand(true);
-        widget.set_toast_overlay(toast_overlay.clone());
-
-        let container = GtkBox::new(Orientation::Vertical, 0);
-        container.set_hexpand(true);
-        container.set_vexpand(true);
-        container.append(&toast_overlay);
-
-        let tab_container = TabPageContainer::single(&container);
-        let page = self.tab_view.append(tab_container.widget());
-        page.set_title(title);
-        page.set_icon(Some(&gio::ThemedIcon::new("computer-symbolic")));
-        page.set_tooltip(title);
-
-        self.sessions.borrow_mut().insert(session_id, page.clone());
-        // Register the container so split (switch_tab_to_split) and unsplit /
-        // close-pane (reparent_terminal_to_tab) can swap this tab's content.
-        self.tab_containers
-            .borrow_mut()
-            .insert(session_id, tab_container);
-        self.session_widgets
-            .borrow_mut()
-            .insert(session_id, SessionWidgetStorage::EmbeddedRdp(widget));
-
-        self.session_info.borrow_mut().insert(
-            session_id,
-            TerminalSession {
-                id: session_id,
-                connection_id,
-                name: title.to_string(),
-                protocol: "rdp".to_string(),
-                is_embedded: true,
-                host: None,
-                log_file: None,
-                history_entry_id: None,
-                tab_group: None,
-                tab_color_index: None,
-                connected_at: chrono::Utc::now(),
-            },
-        );
-
-        self.tab_view.set_selected_page(&page);
-        // Apply protocol color indicator if enabled
-        if *self.color_tabs_by_protocol.borrow() {
-            self.apply_protocol_color(session_id, "rdp");
-        }
-        self.notify_tab_added(session_id, connection_id);
-    }
-
-    /// Adds an embedded Web browser tab with the `EmbeddedWebWidget`.
-    ///
-    /// Creates a new tab page, stores the widget as
-    /// `SessionWidgetStorage::EmbeddedWeb`, and selects the page.
-    #[cfg(feature = "web-embedded")]
-    pub fn add_embedded_web_tab(
-        &self,
-        session_id: Uuid,
-        connection_id: Uuid,
-        title: &str,
-        widget: Rc<crate::embedded_web::EmbeddedWebWidget>,
-    ) {
-        self.remove_welcome_page();
-
-        // #197: suspend single-Ctrl accelerators while the viewer has focus.
-        self.attach_focus_passthrough(widget.widget());
-
-        let container = GtkBox::new(Orientation::Vertical, 0);
-        container.set_hexpand(true);
-        container.set_vexpand(true);
-        container.append(widget.widget());
-
-        let tab_container = TabPageContainer::single(&container);
-        let page = self.tab_view.append(tab_container.widget());
-        page.set_title(title);
-        page.set_icon(Some(&gio::ThemedIcon::new("web-browser-symbolic")));
-        page.set_tooltip(title);
-
-        self.sessions.borrow_mut().insert(session_id, page.clone());
-        self.tab_containers
-            .borrow_mut()
-            .insert(session_id, tab_container);
-        self.session_widgets
-            .borrow_mut()
-            .insert(session_id, SessionWidgetStorage::EmbeddedWeb(widget));
-
-        self.session_info.borrow_mut().insert(
-            session_id,
-            TerminalSession {
-                id: session_id,
-                connection_id,
-                name: title.to_string(),
-                protocol: "web".to_string(),
-                is_embedded: true,
-                host: None,
-                log_file: None,
-                history_entry_id: None,
-                tab_group: None,
-                tab_color_index: None,
-                connected_at: chrono::Utc::now(),
-            },
-        );
-
-        self.tab_view.set_selected_page(&page);
-        // Apply protocol color indicator if enabled
-        if *self.color_tabs_by_protocol.borrow() {
-            self.apply_protocol_color(session_id, "web");
-        }
-        self.notify_tab_added(session_id, connection_id);
-    }
-
-    /// Adds an embedded session tab (for RDP/VNC external processes)
-    pub fn add_embedded_session_tab(
-        &self,
-        session_id: Uuid,
-        connection_id: Uuid,
-        title: &str,
-        protocol: &str,
-        widget: &GtkBox,
-        process: Option<Rc<RefCell<Option<std::process::Child>>>>,
-    ) {
-        self.remove_welcome_page();
-
-        let tab_container = TabPageContainer::single(widget);
-        let page = self.tab_view.append(tab_container.widget());
-        page.set_title(title);
-        page.set_icon(Some(&gio::ThemedIcon::new(Self::get_protocol_icon(
-            protocol,
-        ))));
-        page.set_tooltip(title);
-
-        self.sessions.borrow_mut().insert(session_id, page.clone());
-
-        // Store external process for cleanup on tab close
-        if let Some(proc) = process {
-            self.session_widgets
-                .borrow_mut()
-                .insert(session_id, SessionWidgetStorage::ExternalProcess(proc));
-        }
-
-        self.session_info.borrow_mut().insert(
-            session_id,
-            TerminalSession {
-                id: session_id,
-                connection_id,
-                name: title.to_string(),
-                protocol: protocol.to_string(),
-                is_embedded: false,
-                host: None,
-                log_file: None,
-                history_entry_id: None,
-                tab_group: None,
-                tab_color_index: None,
-                connected_at: chrono::Utc::now(),
-            },
-        );
-
-        self.tab_view.set_selected_page(&page);
-        // Apply protocol color indicator if enabled
-        if *self.color_tabs_by_protocol.borrow() {
-            self.apply_protocol_color(session_id, protocol);
-        }
-        self.notify_tab_added(session_id, connection_id);
-    }
-
     /// Gets the VNC session widget for a session
     #[must_use]
     pub fn get_vnc_widget(&self, session_id: Uuid) -> Option<Rc<VncSessionWidget>> {
@@ -1969,472 +1478,6 @@ impl TerminalNotebook {
         }
     }
 
-    /// Prepares an existing disconnected tab for in-place reconnect.
-    ///
-    /// Instead of closing the old tab and creating a new one (which loses
-    /// tab position, scrollback, and causes visual flicker), this method:
-    /// 1. Removes the reconnect banner from the tab container
-    /// 2. Resets the VTE terminal (clears screen, resets state)
-    /// 3. Clears the disconnected indicator
-    /// 4. Removes stale automation sessions
-    /// 5. Cancels any background polling
-    ///
-    /// After calling this, the caller can re-use the same `session_id` to
-    /// spawn a new process in the existing terminal via `spawn_ssh()` etc.
-    ///
-    /// Returns `true` if the session was successfully prepared — in its tab or
-    /// in its detached window — and `false` if the session no longer exists
-    /// (closed by the user).
-    pub fn prepare_for_reconnect(&self, session_id: Uuid) -> bool {
-        // Check that the session still has a place to reconnect into: a tab, or
-        // a detached window (issue #236) — the latter keeps the reconnected
-        // session in the same window instead of falling back to close+create.
-        let page = self.sessions.borrow().get(&session_id).cloned();
-        if page.is_none() && !self.is_detached(session_id) {
-            return false;
-        }
-
-        // Cancel any background polling (auto-reconnect)
-        self.cancel_poll(session_id);
-
-        // Remove the reconnect banner from wherever the session currently lives
-        if let Some(container) = self.session_content_box(session_id) {
-            // Find and remove the reconnect-banner widget
-            let mut child = container.first_child();
-            while let Some(widget) = child {
-                let next = widget.next_sibling();
-                if widget.widget_name() == "reconnect-banner" {
-                    container.remove(&widget);
-                }
-                child = next;
-            }
-        }
-
-        // Reset the VTE terminal (clear screen, reset state machine)
-        if let Some(terminal) = self.terminals.borrow().get(&session_id) {
-            if self.keep_history_on_reconnect.get() {
-                self.reset_keeping_history(session_id, terminal);
-            } else {
-                terminal.reset(true, true);
-                // A cleared buffer restarts at row 0, so no baseline is needed.
-                self.cursor_row_base.borrow_mut().remove(&session_id);
-            }
-        }
-
-        // Clear disconnected indicator (a detached session has no tab to clear)
-        if let Some(ref page) = page {
-            page.set_indicator_icon(gio::Icon::NONE);
-        }
-
-        // Allow a new reconnect banner to be shown if this reconnect also fails
-        self.reconnect_shown.borrow_mut().remove(&session_id);
-        // The session is live again, so it becomes focusable by the smart
-        // double-click once more (issue #242).
-        self.disconnected_sessions.borrow_mut().remove(&session_id);
-
-        // Remove stale automation session (will be re-created by the caller)
-        self.automation_sessions.borrow_mut().remove(&session_id);
-
-        // Remove stale highlight rules (will be re-applied by the caller)
-        self.session_highlight_rules
-            .borrow_mut()
-            .remove(&session_id);
-
-        // Remove stale highlight overlay (will be re-created by set_highlight_rules)
-        self.highlight_overlays.borrow_mut().remove(&session_id);
-
-        // Remove stale VTE child PID entry — the process should have already
-        // exited (child-exited removes it), but if reconnect is triggered
-        // before child-exited fires (e.g. timeout disconnect), we must clean
-        // it to avoid killing a recycled PID later.
-        self.vte_child_pids.borrow_mut().remove(&session_id);
-
-        true
-    }
-
-    /// Resets a terminal for reconnect while keeping its scrollback (issue #253).
-    ///
-    /// VTE only drops the scrollback when `reset()` is called with
-    /// `clear_history`, so the preserved output is simply what the terminal
-    /// already holds — nothing is copied. Three details:
-    ///
-    /// - The alternate screen must be left explicitly (see
-    ///   [`LEAVE_ALTERNATE_SCREEN`] for rationale).
-    /// - The dead session's output may end mid-line, so a separator opens a
-    ///   fresh line and marks where the new session begins.
-    /// - The user may have scrolled up while reading the dead session; the
-    ///   viewport goes back to the bottom so the new output is visible without
-    ///   a manual scroll.
-    fn reset_keeping_history(&self, session_id: Uuid, terminal: &Terminal) {
-        // If a cap is set, trim the old scrollback by temporarily lowering VTE's
-        // limit. VTE drops the oldest lines when the cap shrinks, then restoring
-        // the original value lets the new session grow normally.
-        if let Some(max_lines) = self.max_scrollback_on_reconnect.get() {
-            let original = terminal.scrollback_lines();
-            if original > i64::from(max_lines) {
-                terminal.set_scrollback_lines(i64::from(max_lines));
-                terminal.set_scrollback_lines(original);
-            }
-        }
-
-        terminal.reset(true, false);
-        terminal.feed(LEAVE_ALTERNATE_SCREEN);
-
-        let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        terminal.feed(reconnect_separator(&i18n_f("Reconnected at {}", &[&stamp])).as_bytes());
-
-        // Everything fed above is processed asynchronously by VTE, so the
-        // cursor row is not final yet — mark the baseline as pending and let
-        // `get_terminal_cursor_row` capture it once the output has landed.
-        self.cursor_row_base.borrow_mut().insert(session_id, None);
-
-        if let Some(adjustment) = terminal.vadjustment() {
-            adjustment.set_value(adjustment.upper() - adjustment.page_size());
-        }
-    }
-
-    /// Registers a cancel token for a background polling task
-    pub fn register_poll_cancel(
-        &self,
-        key: Uuid,
-        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    ) {
-        self.poll_cancel_tokens.borrow_mut().insert(key, cancel);
-    }
-
-    /// Cancels and removes a background polling task by key
-    pub fn cancel_poll(&self, key: Uuid) {
-        if let Some(cancel) = self.poll_cancel_tokens.borrow_mut().remove(&key) {
-            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-            tracing::debug!(%key, "Cancelled background poll");
-        }
-    }
-
-    /// Marks a tab as disconnected (changes indicator)
-    ///
-    /// A detached session has no tab to carry the indicator, so its window is
-    /// marked instead: the reconnect banner only covers protocols that can
-    /// reconnect in place, which leaves an embedded RDP/VNC session with no
-    /// signal at all otherwise (issue #236).
-    pub fn mark_tab_disconnected(&self, session_id: Uuid) {
-        self.disconnected_sessions.borrow_mut().insert(session_id);
-        if self.is_detached(session_id) {
-            Self::mark_detached_window_disconnected(session_id, true);
-        }
-        if let Some(page) = self.sessions.borrow().get(&session_id) {
-            page.set_indicator_icon(Some(&gio::ThemedIcon::new("network-offline-symbolic")));
-            page.set_indicator_activatable(false);
-        }
-        // Reset VTE internal state to prevent use-after-free in libvte/pango
-        // during the next GTK snapshot cycle. After the child process exits,
-        // VTE may hold stale references to Pango font resources that get
-        // invalidated (e.g. on screen lock/unlock or GPU context loss).
-        // Calling reset(true, false) forces VTE to release internal state
-        // (including Pango layout caches) while preserving scrollback history
-        // for reconnect (#171). The preserved history is only readable on the
-        // normal screen, hence the explicit switch (#253).
-        if let Some(terminal) = self.terminals.borrow().get(&session_id) {
-            terminal.reset(true, false);
-            terminal.feed(LEAVE_ALTERNATE_SCREEN);
-        }
-    }
-
-    /// Marks a tab as connected (removes the disconnected indicator).
-    ///
-    /// A split owner's tab uses the same single `indicator-icon` slot to show
-    /// its split color, so preserve that here instead of clearing it — otherwise
-    /// connection-state events (RDP fires "connected" on every resolution change)
-    /// would wipe the split-color indicator.
-    pub fn mark_tab_connected(&self, session_id: Uuid) {
-        self.disconnected_sessions.borrow_mut().remove(&session_id);
-        if self.is_detached(session_id) {
-            Self::mark_detached_window_disconnected(session_id, false);
-        }
-        if let Some(&color_index) = self.split_session_colors.borrow().get(&session_id) {
-            if let Some(page) = self.sessions.borrow().get(&session_id)
-                && let Some(icon) = crate::split_view::create_colored_circle_icon(color_index, 16)
-            {
-                page.set_indicator_icon(Some(&icon));
-                page.set_indicator_activatable(false);
-            }
-            return;
-        }
-        if let Some(page) = self.sessions.borrow().get(&session_id) {
-            page.set_indicator_icon(gio::Icon::NONE);
-        }
-    }
-
-    /// Reveals or hides the disconnect banner of a detached session's window.
-    ///
-    /// Goes through the thread-local registry rather than a callback, because
-    /// the notebook is constructed before any window exists and holds no handle
-    /// to one. A session whose window has already gone (its close is what ended
-    /// the session) is simply not found.
-    fn mark_detached_window_disconnected(session_id: Uuid, disconnected: bool) {
-        let marked = crate::window::detached_window_registry()
-            .is_some_and(|registry| registry.set_session_disconnected(session_id, disconnected));
-        tracing::debug!(
-            session = %session_id,
-            disconnected,
-            marked,
-            "detached window connection state updated"
-        );
-    }
-
-    /// Forces every VTE terminal to drop and rebuild its cached font state.
-    ///
-    /// VTE reads `gtk-fontconfig-timestamp` only when it creates its cached
-    /// `FontInfo` (the timestamp is part of the font-cache key) and never
-    /// subscribes to changes. After a fontconfig update (font installation,
-    /// `fc-cache`, or KDE pushing `Fontconfig/Timestamp` via XSettings on
-    /// screen unlock) terminals keep Pango objects that may reference freed
-    /// fonts, which crashes with SIGSEGV inside `pango_itemize` during the
-    /// next GTK snapshot (#171). Re-applying the current font description
-    /// goes through `vte_terminal_set_font`, which deliberately recreates
-    /// the font even when the description is unchanged, picking up the new
-    /// timestamp and releasing the stale Pango state.
-    pub fn refresh_fonts_after_fontconfig_change(&self) {
-        for (session_id, terminal) in self.terminals.borrow().iter() {
-            let desc = terminal.font_desc();
-            terminal.set_font(desc.as_ref());
-            tracing::debug!(%session_id, "Refreshed VTE font after fontconfig change");
-        }
-    }
-
-    /// Shows a reconnect overlay banner at the bottom of a disconnected VTE tab
-    ///
-    /// Appends a horizontal bar with a "Session disconnected" label and a
-    /// "Reconnect" button to the tab's container. The button triggers the
-    /// `on_reconnect` callback with the session's connection ID.
-    ///
-    /// If `auto_reconnect_active` is true, an additional label is shown
-    /// indicating that automatic reconnection is in progress.
-    pub fn show_reconnect_overlay(&self, session_id: Uuid) {
-        self.show_reconnect_overlay_with_status(session_id, false);
-    }
-
-    /// Shows a reconnect overlay with optional auto-reconnect status indicator
-    pub fn show_reconnect_overlay_with_status(
-        &self,
-        session_id: Uuid,
-        auto_reconnect_active: bool,
-    ) {
-        // Guard: child-exited can fire twice for the same session; show only one
-        // banner. Checked without marking, so a session whose banner could not
-        // be placed yet is not locked out of ever showing one (issue #236).
-        if self.reconnect_shown.borrow().contains(&session_id) {
-            // If banner already shown but auto-reconnect just started, update it
-            if auto_reconnect_active {
-                self.update_reconnect_banner_status(session_id, true);
-            }
-            return;
-        }
-
-        let Some(info) = self.session_info.borrow().get(&session_id).cloned() else {
-            return;
-        };
-
-        // Only for VTE-based protocols (SSH, Telnet, Serial, Kubernetes)
-        if matches!(info.protocol.as_str(), "rdp" | "vnc" | "spice") {
-            return;
-        }
-
-        // Resolves the tab's content box, or the detached window's one for a
-        // session that currently lives outside the main window.
-        let Some(container) = self.session_content_box(session_id) else {
-            return;
-        };
-        self.reconnect_shown.borrow_mut().insert(session_id);
-
-        // Build the reconnect banner
-        let banner = GtkBox::new(Orientation::Horizontal, 6);
-        banner.set_margin_start(12);
-        banner.set_margin_end(12);
-        banner.set_margin_top(6);
-        banner.set_margin_bottom(6);
-        banner.set_halign(gtk4::Align::Center);
-        banner.set_widget_name("reconnect-banner");
-
-        let label = gtk4::Label::new(Some(&i18n("Session disconnected")));
-        label.add_css_class("dim-label");
-
-        banner.append(&label);
-
-        // Auto-reconnect status indicator
-        if auto_reconnect_active {
-            let status_label = gtk4::Label::new(Some(&i18n("Auto-reconnecting…")));
-            status_label.add_css_class("dim-label");
-            status_label.set_widget_name("reconnect-status");
-            banner.append(&status_label);
-        }
-
-        let button = gtk4::Button::with_label(&i18n("Reconnect"));
-        button.add_css_class("suggested-action");
-        button.set_tooltip_text(Some(&i18n("Reconnect to this session")));
-
-        banner.append(&button);
-        container.append(&banner);
-
-        // Wire up the reconnect button
-        let on_reconnect = self.on_reconnect.clone();
-        let connection_id = info.connection_id;
-        button.connect_clicked(move |_| {
-            if let Some(ref callback) = *on_reconnect.borrow() {
-                callback(session_id, connection_id);
-            }
-        });
-
-        tracing::info!(
-            %session_id,
-            protocol = %info.protocol,
-            "Reconnect overlay shown for disconnected session"
-        );
-    }
-
-    /// Updates the auto-reconnect status label in an existing reconnect banner
-    pub fn update_reconnect_banner_status(&self, session_id: Uuid, active: bool) {
-        let Some(container) = self.session_content_box(session_id) else {
-            return;
-        };
-
-        // Find the reconnect-banner widget
-        let mut child = container.first_child();
-        while let Some(widget) = child {
-            if widget.widget_name() == "reconnect-banner" {
-                if let Ok(banner) = widget.downcast::<GtkBox>() {
-                    // Check if status label already exists
-                    let mut has_status = false;
-                    let mut banner_child = banner.first_child();
-                    while let Some(bc) = banner_child {
-                        if bc.widget_name() == "reconnect-status" {
-                            has_status = true;
-                            if !active {
-                                banner.remove(&bc);
-                            }
-                            break;
-                        }
-                        banner_child = bc.next_sibling();
-                    }
-                    // Add status label if needed and not already present
-                    if active && !has_status {
-                        let status_label = gtk4::Label::new(Some(&i18n("Auto-reconnecting…")));
-                        status_label.add_css_class("dim-label");
-                        status_label.set_widget_name("reconnect-status");
-                        // Insert before the button (last child)
-                        if let Some(button) = banner.last_child() {
-                            banner
-                                .insert_child_after(&status_label, button.prev_sibling().as_ref());
-                        } else {
-                            banner.append(&status_label);
-                        }
-                    }
-                }
-                break;
-            }
-            child = widget.next_sibling();
-        }
-    }
-
-    /// Updates the auto-reconnect status label with attempt progress (N/M)
-    pub fn update_reconnect_banner_attempt(
-        &self,
-        session_id: Uuid,
-        attempt: u32,
-        max_attempts: u32,
-    ) {
-        let Some(container) = self.session_content_box(session_id) else {
-            return;
-        };
-
-        // Find the reconnect-banner widget
-        let mut child = container.first_child();
-        while let Some(widget) = child {
-            if widget.widget_name() == "reconnect-banner" {
-                if let Ok(banner) = widget.downcast::<GtkBox>() {
-                    // Find or create the status label
-                    let mut banner_child = banner.first_child();
-                    while let Some(bc) = banner_child {
-                        if bc.widget_name() == "reconnect-status" {
-                            if let Ok(label) = bc.downcast::<gtk4::Label>() {
-                                label.set_label(&i18n_f(
-                                    "Auto-reconnecting (attempt {}/{})",
-                                    &[&attempt.to_string(), &max_attempts.to_string()],
-                                ));
-                            }
-                            return;
-                        }
-                        banner_child = bc.next_sibling();
-                    }
-                    // Status label not found — create it
-                    let status_label = gtk4::Label::new(Some(&i18n_f(
-                        "Auto-reconnecting (attempt {}/{})",
-                        &[&attempt.to_string(), &max_attempts.to_string()],
-                    )));
-                    status_label.add_css_class("dim-label");
-                    status_label.set_widget_name("reconnect-status");
-                    if let Some(button) = banner.last_child() {
-                        banner.insert_child_after(&status_label, button.prev_sibling().as_ref());
-                    } else {
-                        banner.append(&status_label);
-                    }
-                }
-                break;
-            }
-            child = widget.next_sibling();
-        }
-    }
-
-    /// Sets the callback invoked when a reconnect button is clicked
-    ///
-    /// The callback receives `(session_id, connection_id)`.
-    pub fn set_on_reconnect<F>(&self, callback: F)
-    where
-        F: Fn(Uuid, Uuid) + 'static,
-    {
-        *self.on_reconnect.borrow_mut() = Some(Box::new(callback));
-    }
-
-    /// Returns a clone of the reconnect callback reference for use in auto-reconnect polling
-    #[must_use]
-    pub fn reconnect_callback(&self) -> Rc<RefCell<Option<Box<dyn Fn(Uuid, Uuid)>>>> {
-        self.on_reconnect.clone()
-    }
-
-    /// Returns `true` if the session currently has a reconnect banner displayed.
-    ///
-    /// Used by the network monitor to identify sessions that need immediate
-    /// reconnection after a network interface change.
-    #[must_use]
-    pub fn is_reconnect_shown(&self, session_id: Uuid) -> bool {
-        self.reconnect_shown.borrow().contains(&session_id)
-    }
-
-    /// Returns `true` if the session's connection has ended but its tab is still
-    /// open (issue #242).
-    ///
-    /// Such a session must not be treated as something to focus or to save for
-    /// restore: it is a readable transcript with a Reconnect button, not a live
-    /// connection.
-    #[must_use]
-    pub fn is_session_disconnected(&self, session_id: Uuid) -> bool {
-        self.disconnected_sessions.borrow().contains(&session_id)
-    }
-
-    /// Returns the sessions that are still live (tab open and connected).
-    ///
-    /// The counterpart of [`Self::get_all_sessions`] for every caller that means
-    /// "sessions I can hand the user" rather than "tabs that exist".
-    #[must_use]
-    pub fn live_sessions(&self) -> Vec<TerminalSession> {
-        let disconnected = self.disconnected_sessions.borrow();
-        self.session_info
-            .borrow()
-            .values()
-            .filter(|s| !disconnected.contains(&s.id))
-            .cloned()
-            .collect()
-    }
-
     /// Sets a color indicator on a tab to show it's in a split pane
     /// Applies a colored left border to the tab's title in the TabBar
     pub fn set_tab_split_color(&self, session_id: Uuid, color_index: usize) {
@@ -2906,173 +1949,6 @@ impl TerminalNotebook {
         self.tab_view.set_vexpand(true);
     }
 
-    /// Removes a session's standalone tab while it lives in another tab's split.
-    ///
-    /// The session's live widget already sits in the split panel, so this only
-    /// drops the now-redundant tab page — the session's data (widget, terminal,
-    /// history, monitoring state) stays alive. Keeping split guests out of the
-    /// tab bar and Tab Overview avoids redundant placeholder tabs. The tab is
-    /// recreated by [`Self::restore_session_tab`] when the session leaves the
-    /// split. No-op if the session has no tab (already parked).
-    pub fn park_session_tab(&self, session_id: Uuid) {
-        // A session that is already parked for another reason lives somewhere
-        // else entirely — a detached window today. Silently doing nothing would
-        // leave it marked detached while its widget moved into a split, so
-        // refuse loudly instead (issue #236).
-        if self.is_detached(session_id) {
-            tracing::warn!(
-                session = %session_id,
-                "refusing to park a session that lives in a detached window"
-            );
-            return;
-        }
-        if !self.sessions.borrow().contains_key(&session_id) {
-            tracing::debug!(session = %session_id, "park skipped: session has no tab");
-            return;
-        }
-        // Mark before closing so the close-page handler skips teardown and only
-        // removes the tab page (see `setup_tab_view_signals`).
-        self.parked_in_split.borrow_mut().insert(session_id);
-        if !self.park_tab_page(session_id) {
-            // Mirror `take_session_content`: an un-parkable session must not be
-            // left marked as parked.
-            self.parked_in_split.borrow_mut().remove(&session_id);
-            tracing::warn!(session = %session_id, "park failed: no tab page to close");
-        }
-    }
-
-    /// Closes a session's tab page without running session teardown.
-    ///
-    /// The shared half of parking: the caller must have already marked the
-    /// session in one of the park sets (`parked_in_split` today) so the
-    /// `close-page` handler drops only the page and its container mapping.
-    /// Returns `false` when the session has no tab page to close.
-    fn park_tab_page(&self, session_id: Uuid) -> bool {
-        let Some(page) = self.sessions.borrow().get(&session_id).cloned() else {
-            return false;
-        };
-        self.tab_view.close_page(&page);
-        true
-    }
-
-    /// Reports whether a session is currently parked for any reason.
-    ///
-    /// Read-only counterpart of [`Self::clear_park_marks`], so a caller can
-    /// validate before it changes any state.
-    fn is_parked(&self, session_id: Uuid) -> bool {
-        self.parked_in_split.borrow().contains(&session_id)
-            || self.detached.borrow().contains(&session_id)
-    }
-
-    /// Clears every park marker for a session, returning whether one was set.
-    ///
-    /// The set arithmetic lives in [`detach::take_park_mark`] so it can be
-    /// checked without a display; this method only hands it the two live sets.
-    fn clear_park_marks(&self, session_id: Uuid) -> bool {
-        detach::take_park_mark(
-            &mut self.parked_in_split.borrow_mut(),
-            &mut self.detached.borrow_mut(),
-            session_id,
-        )
-        .is_some()
-    }
-
-    /// Recreates the standalone tab for a session that was parked by
-    /// [`Self::park_session_tab`], so its widget has a home again after it
-    /// leaves the split. No-op if the session was not parked.
-    ///
-    /// The fresh tab starts with an empty single-mode container; the caller's
-    /// subsequent [`Self::reparent_terminal_to_tab`] moves the live widget in.
-    pub(crate) fn restore_session_tab(&self, session_id: Uuid) -> bool {
-        if !self.is_parked(session_id) {
-            return false;
-        }
-        // Resolve the metadata *before* touching the park marks: a session
-        // without metadata would otherwise lose its mark and gain no tab, which
-        // leaves it in no placement at all (issue #236).
-        let Some((title, protocol, group, host)) =
-            self.session_info.borrow().get(&session_id).map(|info| {
-                (
-                    info.name.clone(),
-                    info.protocol.clone(),
-                    info.tab_group.clone(),
-                    info.host.clone(),
-                )
-            })
-        else {
-            tracing::warn!(
-                session = %session_id,
-                "cannot restore a tab for a session without metadata; park mark kept"
-            );
-            return false;
-        };
-
-        let container = GtkBox::new(Orientation::Vertical, 0);
-        container.set_hexpand(true);
-        container.set_vexpand(true);
-        let tab_container = TabPageContainer::single(&container);
-        let page = self.tab_view.append(tab_container.widget());
-        page.set_title(&title);
-        page.set_icon(Some(&gio::ThemedIcon::new(Self::get_protocol_icon(
-            &protocol,
-        ))));
-        // The creation path sets a tooltip too, and a grouped tab carries the
-        // group name as a second line (Requirement 2.3).
-        page.set_tooltip(&Self::tab_tooltip(
-            &title,
-            host.as_deref(),
-            group.as_deref(),
-        ));
-
-        self.sessions.borrow_mut().insert(session_id, page);
-        self.tab_containers
-            .borrow_mut()
-            .insert(session_id, tab_container);
-        // The session has a home again, so the park mark may go.
-        self.clear_park_marks(session_id);
-        true
-    }
-
-    /// Builds a tab tooltip from a session title, its host, and its group.
-    ///
-    /// One place decides the layout — title, then the host line the embedded
-    /// creation paths add, then the group line `set_tab_group` appends — so a tab
-    /// recreated after a park or a rename is indistinguishable from the original
-    /// (Requirement 2.3).
-    fn tab_tooltip(title: &str, host: Option<&str>, group: Option<&str>) -> String {
-        use std::fmt::Write;
-
-        let mut tooltip = title.to_owned();
-        if let Some(host) = host.filter(|host| !host.is_empty()) {
-            tooltip.push('\n');
-            tooltip.push_str(host);
-        }
-        if let Some(group) = group {
-            // Writing into a String never fails; the result is discarded the
-            // same way the other string builders in the GUI do it.
-            let _ = write!(tooltip, "\n[{group}]");
-        }
-        tooltip
-    }
-
-    /// Closes (terminates) a session by id, running the standard tab-close
-    /// teardown regardless of whether it currently has a standalone tab.
-    ///
-    /// A split guest has no tab, so its tab is recreated first (unselected, so
-    /// the user sees no content switch) and then closed — the `close-page`
-    /// handler disconnects the live widget and kills the child process via the
-    /// session maps, which hold the widget wherever it currently lives. The
-    /// caller is responsible for having removed the session's split panel first
-    /// (e.g. via `close_pane`); `on_split_cleanup` clears any remaining split
-    /// membership as part of the close.
-    pub fn close_session(&self, session_id: Uuid) {
-        self.restore_session_tab(session_id);
-        let page = self.sessions.borrow().get(&session_id).cloned();
-        if let Some(page) = page {
-            self.tab_view.close_page(&page);
-        }
-    }
-
     /// Switches a session's tab page back to single-terminal mode.
     ///
     /// Removes the split widget and restores the single-terminal content.
@@ -3325,178 +2201,6 @@ impl TerminalNotebook {
         }
     }
 
-    /// Moves a session's content widget back into its `TabView` page.
-    ///
-    /// Used by the split close-pane / unsplit paths: when a session leaves a
-    /// split panel, the *same* widget instance is reparented back into its
-    /// single-session tab. For an embedded RDP/VNC/SPICE viewer this moves the
-    /// live viewer widget (never disconnecting or recreating the connection);
-    /// for a VTE session it rebuilds the terminal + scrollbar layout.
-    pub fn reparent_terminal_to_tab(&self, session_id: Uuid) {
-        // Option B: a split guest has no standalone tab (it was parked by
-        // `park_session_tab`). Recreate the tab first so the widget has a home;
-        // no-op for a session that still has its tab.
-        self.restore_session_tab(session_id);
-
-        // Rebuild a fresh single-session content box around the live widget and
-        // switch TabPageContainer back to single mode. This correctly handles the
-        // case where the tab was previously in split mode (TabPageContainer
-        // contained the split bridge widget).
-        let Some(content) = self.build_session_content(session_id) else {
-            return;
-        };
-
-        let mut containers = self.tab_containers.borrow_mut();
-        if let Some(tab_container) = containers.get_mut(&session_id) {
-            tab_container.switch_to_single(&content);
-        }
-    }
-
-    /// Builds a fresh single-session content box around a session's live widget.
-    ///
-    /// The widget instance is unparented from wherever it currently lives (split
-    /// panel, tab container) and rewrapped exactly as the creation path does, so
-    /// every caller ends up with an identical layout: a VTE terminal goes into a
-    /// horizontal `terminal_row` inside a `gtk4::Overlay` (re-registered in
-    /// `terminal_overlays` for highlight support), an embedded viewer is
-    /// appended directly. The live protocol connection is never touched.
-    ///
-    /// Returns `None` when the session has neither a terminal nor an embedded
-    /// widget, in which case nothing was moved.
-    fn build_session_content(&self, session_id: Uuid) -> Option<GtkBox> {
-        let container = GtkBox::new(Orientation::Vertical, 0);
-        container.set_hexpand(true);
-        container.set_vexpand(true);
-
-        // Embedded viewers have no VTE terminal — they travel as their own
-        // widget instance (carrying their in-container toolbar and reconnect
-        // banner). Handle them first; fall through to the VTE path otherwise.
-        if self.append_embedded_content(session_id, &container) {
-            return Some(container);
-        }
-
-        let Some(terminal) = self.terminals.borrow().get(&session_id).cloned() else {
-            tracing::warn!(
-                session = %session_id,
-                "no live widget for session, cannot build content"
-            );
-            return None;
-        };
-
-        // Remove terminal from current parent (split pane wrapper, etc.)
-        Self::detach_widget_from_parent(terminal.upcast_ref());
-
-        // Re-wrap terminal with scrollbar (matching create_terminal_tab_with_settings layout)
-        let terminal_row = GtkBox::new(Orientation::Horizontal, 0);
-        terminal_row.set_hexpand(true);
-        terminal_row.set_vexpand(true);
-        terminal_row.append(&terminal);
-
-        // Re-create overlay for highlight support
-        let terminal_overlay = gtk4::Overlay::new();
-        terminal_overlay.set_child(Some(&terminal_row));
-        terminal_overlay.set_hexpand(true);
-        terminal_overlay.set_vexpand(true);
-        container.append(&terminal_overlay);
-
-        // Update terminal overlay tracking
-        self.terminal_overlays
-            .borrow_mut()
-            .insert(session_id, terminal_overlay);
-
-        terminal.set_visible(true);
-
-        Some(container)
-    }
-
-    /// Appends a session's embedded viewer widget into a fresh content box.
-    ///
-    /// Returns `true` when `session_id` is an embedded RDP/VNC/Web viewer and
-    /// was handled; `false` when it is not embedded (the caller then falls back
-    /// to the VTE terminal path). The same widget instance is moved, so the
-    /// live protocol connection is preserved — nothing is disconnected.
-    fn append_embedded_content(&self, session_id: Uuid, container: &GtkBox) -> bool {
-        // Resolve the concrete widget while scoping the borrow, so no
-        // `session_widgets` borrow is held across GTK reparenting.
-        enum Embedded {
-            Vnc(Rc<VncSessionWidget>),
-            Rdp(Rc<EmbeddedRdpWidget>),
-            #[cfg(feature = "web-embedded")]
-            Web(Rc<crate::embedded_web::EmbeddedWebWidget>),
-        }
-        let embedded = {
-            let widgets = self.session_widgets.borrow();
-            match widgets.get(&session_id) {
-                Some(SessionWidgetStorage::Vnc(w)) => Embedded::Vnc(Rc::clone(w)),
-                Some(SessionWidgetStorage::EmbeddedRdp(w)) => Embedded::Rdp(Rc::clone(w)),
-                #[cfg(feature = "web-embedded")]
-                Some(SessionWidgetStorage::EmbeddedWeb(w)) => Embedded::Web(Rc::clone(w)),
-                _ => return false,
-            }
-        };
-
-        // Mirror the creation path so the embedded widget is wrapped exactly as
-        // when its tab was first built.
-        match embedded {
-            Embedded::Vnc(w) => {
-                let widget = w.widget();
-                Self::detach_widget_from_parent(widget);
-                widget.set_hexpand(true);
-                widget.set_vexpand(true);
-                container.append(widget);
-                widget.set_visible(true);
-            }
-            Embedded::Rdp(w) => {
-                let widget = w.widget();
-                Self::detach_widget_from_parent(widget.upcast_ref());
-                // Append the RDP container directly (mirroring the VNC
-                // arm). Wrapping it in a freshly-created `adw::ToastOverlay`
-                // here left the reparented `DrawingArea` unable to repaint (its
-                // draw func was never re-invoked, so live frames landed in the
-                // buffer but never reached the screen — a blank viewer). The
-                // file-drop ToastOverlay is only needed while DnD is active and
-                // is re-established elsewhere; a plain re-parent restores drawing.
-                widget.set_hexpand(true);
-                widget.set_vexpand(true);
-                container.append(widget);
-                widget.set_visible(true);
-            }
-            #[cfg(feature = "web-embedded")]
-            Embedded::Web(w) => {
-                let widget = w.widget();
-                Self::detach_widget_from_parent(widget.upcast_ref());
-                widget.set_hexpand(true);
-                widget.set_vexpand(true);
-                container.append(widget);
-                widget.set_visible(true);
-            }
-        }
-
-        // Nudge a repaint once the re-parented viewer has settled into its new
-        // allocation (the live frame lives in a Rust-side buffer, not GTK's
-        // surface cache). The idle runs after the caller has placed the content,
-        // so the queue_draw hits the final allocation.
-        let content = container.clone();
-        glib::idle_add_local_once(move || {
-            content.queue_draw();
-        });
-        true
-    }
-
-    /// Detaches a widget from its current parent so the same instance can be
-    /// re-attached elsewhere (GTK widgets may only have one parent).
-    ///
-    /// A `GtkBox` parent uses `remove`; any other parent uses `unparent`.
-    fn detach_widget_from_parent(widget: &Widget) {
-        if let Some(parent) = widget.parent() {
-            if let Some(box_widget) = parent.downcast_ref::<GtkBox>() {
-                box_widget.remove(widget);
-            } else {
-                widget.unparent();
-            }
-        }
-    }
-
     /// Shows TabView content area (for RDP/VNC/SPICE sessions)
     /// Call this when switching to a non-SSH session that displays in TabView
     pub fn show_tab_view_content(&self) {
@@ -3569,10 +2273,7 @@ impl TerminalNotebook {
             // GTK setters below.
             let page = self.sessions.borrow().get(session_id).cloned();
             if let Some(page) = page {
-                page.set_title(&match group {
-                    Some(group) => format!("[{group}] {new_name}"),
-                    None => new_name.to_owned(),
-                });
+                page.set_title(&tab_title(new_name, group.as_deref()));
                 page.set_tooltip(&Self::tab_tooltip(
                     new_name,
                     host.as_deref(),
@@ -3605,19 +2306,13 @@ impl TerminalNotebook {
             && let Some(info) = self.session_info.borrow().get(&session_id)
             && let Some(ref group_name) = info.tab_group
         {
+            // The rendered title is the only record of the base name here, so an
+            // existing prefix comes off before the new one goes on.
             let current_title = page.title().to_string();
-            // Remove any existing group prefix first
-            let base_title = current_title
-                .find("] ")
-                .and_then(|pos| {
-                    if current_title.starts_with('[') {
-                        Some(&current_title[pos + 2..])
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(&current_title);
-            page.set_title(&format!("[{group_name}] {base_title}"));
+            page.set_title(&tab_title(
+                strip_group_prefix(&current_title),
+                Some(group_name),
+            ));
         }
     }
 
@@ -3669,6 +2364,11 @@ impl TerminalNotebook {
 
     /// Fires the `on_tab_added` callback if set.
     fn notify_tab_added(&self, session_id: Uuid, connection_id: Uuid) {
+        // Cluster membership is resolved here rather than in each creation path
+        // so that every protocol is covered, and before the callback so an
+        // observer sees the tab already labelled with its cluster.
+        self.resolve_cluster_pending(connection_id, session_id);
+
         // Take the callback out to avoid holding a borrow across the call —
         // the callback may call `clear_on_tab_added()` which also borrows.
         let callback = self.on_tab_added.borrow_mut().take();
@@ -3845,62 +2545,113 @@ impl TerminalNotebook {
 
     // === Cluster terminal tracking ===
 
-    /// Registers a terminal session as part of a cluster
-    pub fn register_cluster_terminal(&self, cluster_id: Uuid, session_id: Uuid) {
+    /// Registers a session as part of a cluster, under the cluster's group name.
+    pub fn register_cluster_terminal(&self, cluster_id: Uuid, group: &str, session_id: Uuid) {
         self.cluster_sessions
             .borrow_mut()
             .entry(cluster_id)
-            .or_default()
+            .or_insert_with(|| ClusterTabs {
+                group: group.to_owned(),
+                sessions: Vec::new(),
+            })
+            .sessions
             .push(session_id);
         self.session_to_cluster
             .borrow_mut()
             .insert(session_id, cluster_id);
     }
 
-    /// Unregisters all terminals for a cluster
+    /// Unregisters all tabs of a cluster, retiring its tab group if it is unused.
+    ///
+    /// Called after the member tabs have been closed, so by now their sessions
+    /// are gone from `session_info` and the only sessions that could still be
+    /// wearing the name are unrelated ones — a tab a user labelled by hand, or a
+    /// second cluster with the same name. Without this, every cluster ever opened
+    /// would leave its name in the "Set Group…" chooser for the lifetime of the
+    /// window, which is a new problem created by naming groups automatically.
     pub fn unregister_cluster(&self, cluster_id: Uuid) {
-        if let Some(sessions) = self.cluster_sessions.borrow_mut().remove(&cluster_id) {
+        if let Some(tabs) = self.cluster_sessions.borrow_mut().remove(&cluster_id) {
             let mut reverse = self.session_to_cluster.borrow_mut();
-            for sid in &sessions {
+            for sid in &tabs.sessions {
                 reverse.remove(sid);
+            }
+            drop(reverse);
+
+            // The cluster's own sessions are excluded rather than assumed gone:
+            // `close_page` teardown is not guaranteed to have removed them from
+            // `session_info` by the time the caller unregisters, and the question
+            // being asked is whether anything *else* wears the name.
+            //
+            // ponytail: O(members × open tabs); a cluster is a handful of hosts,
+            // so a set would cost more than it saves.
+            let still_used = {
+                let info = self.session_info.borrow();
+                group_still_in_use(
+                    &tabs.group,
+                    info.iter()
+                        .filter(|(session_id, _)| !tabs.sessions.contains(session_id))
+                        .map(|(_, info)| info.tab_group.as_deref()),
+                )
+            };
+            if still_used {
+                tracing::debug!(
+                    group = tabs.group,
+                    "cluster closed; keeping its group name, other tabs still carry it"
+                );
+            } else {
+                self.tab_group_manager
+                    .borrow_mut()
+                    .remove_group(&tabs.group);
             }
         }
         // Clear any pending registrations for this cluster
         self.cluster_pending
             .borrow_mut()
-            .retain(|_, cid| *cid != cluster_id);
+            .retain(|_, pending| pending.cluster_id != cluster_id);
     }
 
     /// Marks a connection as pending cluster registration.
     ///
-    /// When the terminal tab for `connection_id` is eventually created
-    /// (synchronously or after an async port check), it will automatically
-    /// be registered as part of `cluster_id` and trigger the
-    /// `on_cluster_session_registered` callback.
-    pub fn mark_cluster_pending(&self, cluster_id: Uuid, connection_id: Uuid) {
-        self.cluster_pending
-            .borrow_mut()
-            .insert(connection_id, cluster_id);
+    /// When the tab for `connection_id` is eventually created — synchronously,
+    /// or after an async port check — it is registered as part of `cluster_id`
+    /// and labelled with the cluster's `group` name.
+    pub fn mark_cluster_pending(&self, cluster_id: Uuid, group: &str, connection_id: Uuid) {
+        self.cluster_pending.borrow_mut().insert(
+            connection_id,
+            PendingCluster {
+                cluster_id,
+                group: group.to_owned(),
+            },
+        );
     }
 
-    /// Resolves a pending cluster registration for a freshly created session.
+    /// Resolves a pending cluster registration for a freshly created tab.
     ///
-    /// Called internally by `create_terminal_tab_with_settings`. If the
-    /// connection had been marked as pending via `mark_cluster_pending`,
-    /// this registers the new `session_id` in the cluster's session list.
+    /// Called from [`Self::notify_tab_added`], which every tab-creation path goes
+    /// through — terminal, VNC, embedded RDP, embedded Web and external process
+    /// alike. It used to be called from the terminal path only, so an RDP or VNC
+    /// member of a cluster opened a tab that was never registered: it stayed in
+    /// `cluster_pending` forever and "Disconnect all cluster sessions" could not
+    /// see it.
+    ///
+    /// Labelling the tab with the cluster's name is what makes a cluster visible
+    /// after it is open: the tab reads `[cluster] host`, and every tab-group
+    /// operation — Close All in Group above all — then applies to the cluster
+    /// without needing a cluster-specific command.
     fn resolve_cluster_pending(&self, connection_id: Uuid, session_id: Uuid) {
-        let Some(cluster_id) = self.cluster_pending.borrow_mut().remove(&connection_id) else {
+        let Some(pending) = self.cluster_pending.borrow_mut().remove(&connection_id) else {
             return;
         };
-        self.register_cluster_terminal(cluster_id, session_id);
+        self.register_cluster_terminal(pending.cluster_id, &pending.group, session_id);
+        self.set_tab_group(session_id, &pending.group);
     }
 
-    /// Gets all terminal session IDs for a cluster
+    /// Gets all session IDs for a cluster
     pub fn get_cluster_sessions(&self, cluster_id: Uuid) -> Vec<Uuid> {
         self.cluster_sessions
             .borrow()
             .get(&cluster_id)
-            .cloned()
+            .map(|tabs| tabs.sessions.clone())
             .unwrap_or_default()
     }
 

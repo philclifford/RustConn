@@ -28,8 +28,16 @@ const ZOOM_DEFAULT: f64 = 1.0;
 ///
 /// Layout: [Back] [Forward] [Reload] [Home] | [URL Entry] | [Autofill] [Zoom+] [Zoom-] [Menu]
 ///
-/// When the toolbar is narrow (< 500px), secondary actions (Home, Autofill,
-/// Zoom In, Zoom Out) are hidden and available via the overflow menu.
+/// The toolbar floats as an overlay above the WebView and auto-hides after
+/// inactivity. A reveal zone (arrow button) appears at the top center when
+/// the toolbar is hidden, allowing the user to show it on hover or click.
+///
+/// When the panel is narrower than the assembled toolbar needs, the actions
+/// named by [`overflow_actions`](Self::overflow_actions) fold into a "⋯" popover
+/// so the menu and the URL bar keep their place — the same
+/// [`ToolbarOverflow`](crate::embedded_toolbar_overflow::ToolbarOverflow) the RDP
+/// and VNC toolbars use, which measures the toolbar rather than comparing
+/// against a fixed breakpoint.
 ///
 /// All icon-only buttons carry both `set_tooltip_text` and `update_property`
 /// for GNOME HIG accessibility compliance.
@@ -54,13 +62,6 @@ pub struct NavigationToolbar {
     zoom_out_button: gtk4::Button,
     /// Menu button for additional actions
     menu_button: gtk4::MenuButton,
-    /// Box containing secondary actions that collapse on narrow width.
-    /// Stored to prevent GTK from dropping the widget (it has no other owning reference).
-    #[expect(
-        dead_code,
-        reason = "field keeps the GTK widget alive; removing it destroys the box"
-    )]
-    secondary_box: gtk4::Box,
 }
 
 impl NavigationToolbar {
@@ -120,8 +121,10 @@ impl NavigationToolbar {
         container.append(&url_entry);
 
         // --- Right buttons: secondary (collapsible) + menu (always visible) ---
-
-        let secondary_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+        //
+        // Appended directly to the container rather than wrapped in a box:
+        // `ToolbarOverflow` reparents each secondary action into its popover
+        // individually, which it cannot do through an intermediate box.
 
         let autofill_button = gtk4::Button::from_icon_name("dialog-password-symbolic");
         autofill_button.add_css_class("flat");
@@ -129,21 +132,19 @@ impl NavigationToolbar {
         autofill_button.update_property(&[gtk4::accessible::Property::Label(&i18n(
             "Autofill credentials",
         ))]);
-        secondary_box.append(&autofill_button);
+        container.append(&autofill_button);
 
         let zoom_in_button = gtk4::Button::from_icon_name("zoom-in-symbolic");
         zoom_in_button.add_css_class("flat");
         zoom_in_button.set_tooltip_text(Some(&i18n("Zoom in")));
         zoom_in_button.update_property(&[gtk4::accessible::Property::Label(&i18n("Zoom in"))]);
-        secondary_box.append(&zoom_in_button);
+        container.append(&zoom_in_button);
 
         let zoom_out_button = gtk4::Button::from_icon_name("zoom-out-symbolic");
         zoom_out_button.add_css_class("flat");
         zoom_out_button.set_tooltip_text(Some(&i18n("Zoom out")));
         zoom_out_button.update_property(&[gtk4::accessible::Property::Label(&i18n("Zoom out"))]);
-        secondary_box.append(&zoom_out_button);
-
-        container.append(&secondary_box);
+        container.append(&zoom_out_button);
 
         let menu_button = gtk4::MenuButton::new();
         menu_button.set_icon_name("open-menu-symbolic");
@@ -151,25 +152,6 @@ impl NavigationToolbar {
         menu_button.set_tooltip_text(Some(&i18n("Menu")));
         menu_button.update_property(&[gtk4::accessible::Property::Label(&i18n("Menu"))]);
         container.append(&menu_button);
-
-        // --- Responsive overflow: hide secondary actions on narrow width ---
-        // Threshold: 500px. Secondary buttons + Home are hidden; actions
-        // remain reachable via the menu popover.
-        {
-            // Overflow threshold: below this width, hide secondary actions.
-            const OVERFLOW_THRESHOLD_PX: i32 = 500;
-            let secondary_for_overflow = secondary_box.clone();
-            let home_for_overflow = home_button.clone();
-            container.add_tick_callback(move |widget, _| {
-                let width = widget.width();
-                if width > 0 {
-                    let narrow = width < OVERFLOW_THRESHOLD_PX;
-                    secondary_for_overflow.set_visible(!narrow);
-                    home_for_overflow.set_visible(!narrow);
-                }
-                glib::ControlFlow::Continue
-            });
-        }
 
         Self {
             container,
@@ -182,8 +164,24 @@ impl NavigationToolbar {
             zoom_in_button,
             zoom_out_button,
             menu_button,
-            secondary_box,
         }
+    }
+
+    /// Returns the actions that fold into the overflow popover when the toolbar
+    /// no longer fits, in toolbar order.
+    ///
+    /// Back, Forward, Reload, the URL bar and the menu are primary and stay put:
+    /// the first three are how the user moves around, the URL bar is the only
+    /// way to reach an address that is not linked from the page, and the menu is
+    /// where the overflow itself lives.
+    #[must_use]
+    pub fn overflow_actions(&self) -> Vec<gtk4::Widget> {
+        vec![
+            self.home_button.clone().upcast(),
+            self.autofill_button.clone().upcast(),
+            self.zoom_in_button.clone().upcast(),
+            self.zoom_out_button.clone().upcast(),
+        ]
     }
 
     /// Returns the toolbar container widget.
@@ -213,11 +211,17 @@ impl NavigationToolbar {
     /// # Arguments
     /// * `web_view` - The WebKitGTK WebView to bind to
     /// * `home_url` - Shared reference to the original configured URL
-    pub fn bind_to_webview(&self, web_view: &webkit6::WebView, home_url: &Rc<RefCell<String>>) {
+    /// * `container` - The container widget for keyboard shortcuts (uses CAPTURE phase)
+    pub fn bind_to_webview(
+        &self,
+        web_view: &webkit6::WebView,
+        home_url: &Rc<RefCell<String>>,
+        container: &gtk4::Box,
+    ) {
         self.connect_navigation_buttons(web_view, home_url);
         self.connect_property_notifications(web_view);
         self.connect_zoom_buttons(web_view);
-        self.setup_keyboard_shortcuts(web_view);
+        self.setup_keyboard_shortcuts(web_view, container);
         self.setup_menu(web_view, home_url);
     }
 
@@ -338,8 +342,13 @@ impl NavigationToolbar {
     }
 
     /// Sets up keyboard shortcuts for zoom: Ctrl+Plus/Equal, Ctrl+Minus, Ctrl+0.
-    fn setup_keyboard_shortcuts(&self, web_view: &webkit6::WebView) {
+    ///
+    /// Uses CAPTURE propagation phase on the container to intercept events
+    /// before WebKitGTK's internal handlers consume them.
+    fn setup_keyboard_shortcuts(&self, web_view: &webkit6::WebView, container: &gtk4::Box) {
         let key_controller = gtk4::EventControllerKey::new();
+        // CAPTURE phase intercepts events before they reach WebKit's internal handlers
+        key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
 
         let wv = web_view.clone();
         let zoom_in_btn = self.zoom_in_button.clone();
@@ -402,7 +411,8 @@ impl NavigationToolbar {
             }
         });
 
-        web_view.add_controller(key_controller);
+        // Attach to container (not web_view) so CAPTURE phase works
+        container.add_controller(key_controller);
     }
 
     /// Sets up the menu button's popover menu with browser actions.

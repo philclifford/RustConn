@@ -59,30 +59,36 @@ pub fn init() {
 
 /// Reads the saved language from `config.toml` and applies it at startup.
 ///
-/// If a non-system language is configured and the `LANGUAGE` env var is
-/// not already set to it, this function re-executes the current process
-/// with `LANGUAGE` set. This is the only reliable way to make GNU gettext
-/// use a specific language without calling `std::env::set_var` (which is
-/// `unsafe` in Rust 2024 edition).
-///
-/// The re-exec happens before GTK or tokio start, so it is safe.
-/// A sentinel env var (`_RUSTCONN_LANG_SET`) prevents infinite re-exec loops.
+/// A non-system language is applied in two steps, both of which are needed: the
+/// `LANGUAGE` environment variable is set (gettext's primary lookup mechanism,
+/// written through [`rustconn_env_sys`] because `std::env::set_var` is `unsafe`
+/// in edition 2024), and then the locale is applied with `setlocale`, which is
+/// what makes gettext re-read the variable. See [`apply_configured_language`]
+/// for why neither half suffices alone.
 ///
 /// # Thread safety
 ///
 /// This is the **only** place that applies a locale after [`init`], and it must
 /// stay that way: `setlocale` mutates process-global locale state with no
 /// synchronisation, so it is only sound while the process is still
-/// single-threaded (RUSTSEC-2026-0244). Every path below therefore performs its
-/// locale change here, called from `main()` before GTK, tokio or the tracing
-/// subscriber exist. Applying a locale later — for example from the GTK
+/// single-threaded (RUSTSEC-2026-0244). The same is true of the environment
+/// write. Both therefore happen here, called from `main()` before GTK, tokio or
+/// the tracing subscriber exist. Applying either later — for example from the GTK
 /// `activate` handler, where the GIO worker thread is already running — would
 /// reintroduce the unsoundness.
 ///
-/// On return the locale is sealed, so that "later" is a panic during
-/// development rather than memory corruption in the field. The only path that
-/// does not seal is the successful re-exec, which replaces the process image and
-/// starts this sequence over in the child.
+/// On return the locale is sealed, so that "later" is a panic during development
+/// rather than memory corruption in the field. The environment is sealed
+/// separately, by [`crate::renderer::apply_renderer_preference`], which `main()`
+/// calls after this — the renderer choice is the other startup variable and has
+/// to be written before it can close the window for both.
+///
+/// # Panics
+///
+/// Panics if the environment write is refused, which means this ran outside the
+/// startup window: after a thread was spawned, from a thread other than the one
+/// `main()` runs on, or after the environment was sealed. All three are
+/// programming errors in `main()`'s ordering, not runtime conditions.
 pub fn apply_language_from_config() {
     apply_configured_language();
 
@@ -92,13 +98,11 @@ pub fn apply_language_from_config() {
     rustconn_locale_sys::seal_locale();
 }
 
-/// Applies the configured language, re-execing if that is the only way.
+/// Applies the configured language: `LANGUAGE` first, then the locale.
 ///
-/// Split from [`apply_language_from_config`] so that every one of its early
-/// returns is followed by the seal, without repeating the call five times.
+/// Split from [`apply_language_from_config`] so that both of its early returns
+/// are followed by the seal, without repeating the call.
 fn apply_configured_language() {
-    use std::os::unix::process::CommandExt;
-
     let lang = read_language_from_config().unwrap_or_default();
     if lang.is_empty() || lang == "system" {
         // `init()` already applied the system locale with
@@ -107,88 +111,54 @@ fn apply_configured_language() {
         return;
     }
 
-    // LANGUAGE is already correct — normally because this is the re-execed
-    // child, or because the desktop set it. The env var alone is not enough:
-    // gettext ignores LANGUAGE when LC_MESSAGES resolves to "C", which is what
-    // happens in a Flatpak sandbox when the host locale is not installed
-    // (issue #158). So the locale still has to be applied — and it is applied
-    // here, in main(), rather than later from the GTK activate handler.
-    if std::env::var("LANGUAGE").ok().as_deref() == Some(lang.as_str()) {
-        apply_language_setlocale(&lang);
-        return;
+    // `LANGUAGE` is gettext's primary lookup mechanism and there is no API for
+    // it — the variable is the interface, the same situation `GSK_RENDERER` is
+    // in. So the write goes through `rustconn-env-sys`, which is the sanctioned
+    // home for it: `std::env::set_var` is `unsafe` in edition 2024 and this
+    // crate forbids `unsafe`. The guard there refuses the call once this program
+    // has spawned a thread or the startup window has been sealed, which is
+    // exactly the condition that makes it sound; `main()` calls us before GTK,
+    // tokio and the tracing subscriber for that reason.
+    //
+    // Only `LANGUAGE` is set, never `LC_MESSAGES`/`LC_ALL`/`LANG`. Inside a
+    // Flatpak sandbox the chosen locale (say `fr_FR.UTF-8`) is very often not
+    // installed — the runtime ships only the host language via the
+    // `org.gnome.Platform.Locale` extension — and pointing `LC_MESSAGES` at an
+    // uninstalled locale makes glibc fall back to `C`, whereupon **gettext
+    // ignores `LANGUAGE`** and nothing is translated at all (issue #158).
+    // Leaving `LC_MESSAGES` inherited keeps it at a locale that does exist.
+    //
+    // Skipped when the variable already says what we want, which happens when
+    // the desktop session set it: a write that changes nothing is still a write
+    // to the process-global environment block, and this one has a guard to spend.
+    if std::env::var("LANGUAGE").ok().as_deref() != Some(lang.as_str()) {
+        rustconn_env_sys::set_startup_var("LANGUAGE", &lang);
     }
 
-    // Check sentinel to avoid infinite re-exec loop
-    if std::env::var("_RUSTCONN_LANG_SET").ok().as_deref() == Some("1") {
-        // We already re-execed once — don't loop. Fall through to
-        // best-effort setlocale below.
-        apply_language_setlocale(&lang);
-        return;
-    }
-
-    // Re-exec ourselves with LANGUAGE set. This replaces the current
-    // process image, so nothing after this line executes on success.
-    let exe = match std::env::current_exe() {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::warn!(?e, "Cannot determine current exe for language re-exec");
-            apply_language_setlocale(&lang);
-            return;
-        }
-    };
-
-    let args: Vec<String> = std::env::args().collect();
-
-    // Only set LANGUAGE — gettext uses it as the primary lookup mechanism.
+    // The variable alone is not enough, and this is the other half of #158:
+    // gettext caches the catalogue it resolved and only re-reads `LANGUAGE` when
+    // something bumps its internal counter, which `setlocale` does. This call is
+    // that bump as much as it is the locale change — and it is made here, in
+    // `main()`, rather than later from the GTK `activate` handler, because
+    // `setlocale` is only sound while the process is single-threaded.
     //
-    // We deliberately do NOT set LC_MESSAGES (or LC_ALL/LANG) here. Inside
-    // a Flatpak sandbox the user's chosen locale (e.g. `fr_FR.UTF-8`) is
-    // very often not installed: Flatpak ships only the host system's
-    // language via the `org.gnome.Platform.Locale` extension. If we set
-    // LC_MESSAGES to an uninstalled locale, glibc falls back to the C
-    // locale, and **gettext ignores LANGUAGE when LC_MESSAGES=C**. The
-    // result is no translation at all, regardless of the LANGUAGE value.
-    //
-    // By leaving LC_MESSAGES untouched, the child inherits the system
-    // locale (which is always installed) and gettext correctly applies
-    // translations selected via LANGUAGE.
-    //
-    // Issue #158 — language change had no effect in Flatpak builds.
-    let err = std::process::Command::new(exe)
-        .args(&args[1..])
-        .env("LANGUAGE", &lang)
-        .env("_RUSTCONN_LANG_SET", "1")
-        .exec();
-
-    // exec() only returns on error
-    tracing::warn!(?err, "Language re-exec failed; using setlocale fallback");
+    // This used to be reached by re-execing the process with `LANGUAGE` set in
+    // the child, which sidesteps `set_var` but costs a process and is actively
+    // harmful on macOS: replacing the process image destroys the LaunchServices
+    // scene registration `NSStatusItem` needs, so anyone running a non-system
+    // interface language silently lost the tray icon. That was the same defect
+    // #274 fixed for the renderer; the sentinel variable the loop-guard needed
+    // (`_RUSTCONN_LANG_SET`) is gone with it.
     apply_language_setlocale(&lang);
 }
 
 /// Reads just the `language` field from `~/.config/rustconn/config.toml`.
+///
+/// Shares the single-key scan with the renderer choice, which faces the same
+/// constraint — see [`crate::startup_config`] for why neither can wait for the
+/// application's own settings to load.
 fn read_language_from_config() -> Option<String> {
-    let config_dir = dirs::config_dir()?;
-    let path = config_dir.join("rustconn").join("config.toml");
-    let content = std::fs::read_to_string(path).ok()?;
-    // Simple TOML parsing: find `language = "xx"` under [ui] section
-    let mut in_ui_section = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            in_ui_section = trimmed == "[ui]";
-            continue;
-        }
-        if in_ui_section && let Some(rest) = trimmed.strip_prefix("language") {
-            let rest = rest.trim_start();
-            if let Some(rest) = rest.strip_prefix('=') {
-                let val = rest.trim().trim_matches('"');
-                if !val.is_empty() {
-                    return Some(val.to_string());
-                }
-            }
-        }
-    }
-    None
+    crate::startup_config::read_ui_string("language")
 }
 
 /// Checks whether a build-time locale directory actually contains at least
@@ -419,10 +389,12 @@ fn lang_to_locale(lang: &str) -> String {
 /// Applies a language override using `setlocale` only (best effort).
 ///
 /// It works when the target locale is installed on the system. For full gettext
-/// support (including uninstalled locales), the `LANGUAGE` env var must be set
-/// before process start — see [`apply_language_from_config`], which handles that
-/// via re-exec. This function is still needed alongside `LANGUAGE`, because
-/// gettext ignores `LANGUAGE` when `LC_MESSAGES` resolves to `"C"` (issue #158).
+/// support (including uninstalled locales) the `LANGUAGE` variable does the
+/// work — see [`apply_configured_language`], which sets it just before calling
+/// this. This function is still needed alongside `LANGUAGE` twice over: gettext
+/// ignores `LANGUAGE` when `LC_MESSAGES` resolves to `"C"` (issue #158), and
+/// `setlocale` is what invalidates the catalogue gettext has already resolved,
+/// so without it a variable set in-process would not be noticed.
 ///
 /// # Safety-adjacent invariant
 ///
