@@ -5,6 +5,16 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.1] - 2026-08-13
+
+### Added
+
+- **Settings ▸ Interface ▸ Window — show connection name in split panes (issue [#277](https://github.com/totoshko88/RustConn/issues/277))** — a new toggle adds a compact colored header at the top of each split-view pane displaying the connection name and protocol. Off by default; useful when 3+ panes are open side by side and the color indicator alone is not enough to identify which pane belongs to which connection at a glance. The header background matches the panel's color (15% opacity), shrinks in compact mode, and updates live when a session is moved between panes via drag-and-drop or Select Tab.
+
+### Fixed
+
+- **Split-view panel corner buttons (detach/close) were hidden for connections with a suppressed floating toolbar (issue #260 follow-up)** — issue #260 added a `floating_overlays_suppressed` gate that skipped the entire overlay, including the split-view panel actions (Remove from Split, Close session). Those buttons are part of the split infrastructure rather than the session toolbar, and their absence left no discoverable way to close a pane for RDP/VNC/Web sessions with the toolbar disabled. The overlay is now always created with the panel corner buttons; only the viewer's own reveal handle (which belongs to the viewer widget, not the split pane) respects the suppression.
+
 ## [0.20.0] - 2026-08-13
 
 ### Added

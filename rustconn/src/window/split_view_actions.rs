@@ -176,6 +176,14 @@ impl PanelPlacement {
             "session placed in panel"
         );
 
+        // Update the panel header with the connection name (issue #277).
+        // The session is not in the bridge's internal `sessions` map (move does
+        // not register it), so we resolve the name from the notebook.
+        if let Some(info) = self.notebook.get_session_info(session_id) {
+            self.bridge
+                .set_panel_label_by_uuid(panel_uuid, session_id, &info.name, &info.protocol);
+        }
+
         // The layout now has one more occupied pane, so the broadcast toggle may
         // need to appear.
         (self.refresh_broadcast)();
@@ -504,6 +512,11 @@ impl MainWindow {
                 &notebook_for_split_h.shared_terminals(),
             );
 
+            // Apply the pane labels setting from current config (issue #277).
+            if let Ok(s) = state_h.try_borrow() {
+                split_view.set_show_pane_labels(s.settings().ui.show_split_pane_labels);
+            }
+
             // Wire the content provider so the bridge can place any session's
             // display widget (VTE terminal or embedded RDP/VNC/SPICE viewer)
             // through the uniform content-widget path.
@@ -718,6 +731,11 @@ impl MainWindow {
                 &color_pool_v,
                 &notebook_for_split_v.shared_terminals(),
             );
+
+            // Apply the pane labels setting from current config (issue #277).
+            if let Ok(s) = state_v.try_borrow() {
+                split_view.set_show_pane_labels(s.settings().ui.show_split_pane_labels);
+            }
 
             // Wire the content provider so the bridge can place any session's
             // display widget (VTE terminal or embedded RDP/VNC/SPICE viewer)

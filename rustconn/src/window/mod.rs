@@ -3035,6 +3035,7 @@ impl MainWindow {
         monitoring: Rc<crate::monitoring::MonitoringCoordinator>,
         sidebar: SharedSidebar,
         overlay_split_view: adw::OverlaySplitView,
+        session_split_bridges: SessionSplitBridges,
     ) {
         let opened_at = std::time::Instant::now();
         tracing::debug!("settings action activated");
@@ -3115,6 +3116,14 @@ impl MainWindow {
 
                 // Apply monitoring settings to active bars
                 monitoring.apply_settings_to_all(&settings.monitoring);
+
+                // Apply split-pane connection name labels to all active bridges (issue #277)
+                {
+                    let bridges = session_split_bridges.borrow();
+                    for bridge in bridges.values() {
+                        bridge.set_show_pane_labels(settings.ui.show_split_pane_labels);
+                    }
+                }
 
                 // Apply window-title-shows-connection setting live (issue #211)
                 Self::update_window_title(

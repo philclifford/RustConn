@@ -47,6 +47,7 @@ pub fn create_ui_page() -> (
     adw::SwitchRow,
     adw::SwitchRow,
     adw::SwitchRow,
+    adw::SwitchRow,
     adw::ComboRow,
 ) {
     let page = adw::PreferencesPage::builder()
@@ -276,6 +277,17 @@ pub fn create_ui_page() -> (
         .build();
     window_group.add(&window_title_shows_connection);
 
+    // Show connection name as a compact header on each split-view pane (issue #277).
+    // Off by default — useful when 3+ panes are open side by side and the color
+    // indicator alone is not enough to tell them apart at a glance.
+    let show_split_pane_labels = adw::SwitchRow::builder()
+        .title(i18n("Show connection name in split panes"))
+        .subtitle(i18n(
+            "Display a compact header with the connection name at the top of each split-view pane",
+        ))
+        .build();
+    window_group.add(&show_split_pane_labels);
+
     page.add(&window_group);
 
     // === Connections Group ===
@@ -418,6 +430,7 @@ pub fn create_ui_page() -> (
         window_title_shows_connection,
         show_welcome_switch,
         double_click_opens_new_session,
+        show_split_pane_labels,
         // Last so that the neighbouring positional arguments in load/collect
         // are SwitchRows: a ComboRow cannot be swapped with one by mistake.
         renderer_row,
@@ -474,6 +487,7 @@ pub fn load_ui_settings(
     window_title_shows_connection: &adw::SwitchRow,
     show_welcome_switch: &adw::SwitchRow,
     double_click_opens_new_session: &adw::SwitchRow,
+    show_split_pane_labels: &adw::SwitchRow,
     renderer_row: &adw::ComboRow,
     settings: &UiSettings,
     connections: &[&Connection],
@@ -554,6 +568,8 @@ pub fn load_ui_settings(
 
     double_click_opens_new_session.set_active(settings.double_click_opens_new_session);
 
+    show_split_pane_labels.set_active(settings.show_split_pane_labels);
+
     // Sync the Rendering combo with the saved preference. An unknown variant
     // (a config from a newer build) falls back to the first row, Automatic.
     let renderer_index = RENDERER_ORDER
@@ -611,6 +627,7 @@ pub fn collect_ui_settings(
     window_title_shows_connection: &adw::SwitchRow,
     show_welcome_switch: &adw::SwitchRow,
     double_click_opens_new_session: &adw::SwitchRow,
+    show_split_pane_labels: &adw::SwitchRow,
     renderer_row: &adw::ComboRow,
     connections: &[&Connection],
 ) -> UiSettings {
@@ -680,5 +697,6 @@ pub fn collect_ui_settings(
         window_title_shows_connection: window_title_shows_connection.is_active(),
         show_welcome_on_startup: show_welcome_switch.is_active(),
         double_click_opens_new_session: double_click_opens_new_session.is_active(),
+        show_split_pane_labels: show_split_pane_labels.is_active(),
     }
 }

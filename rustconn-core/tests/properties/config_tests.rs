@@ -539,6 +539,7 @@ fn arb_full_settings() -> impl Strategy<Value = AppSettings> {
                         terminal_passthrough_ctrl: true,
                         window_title_shows_connection: false,
                         double_click_opens_new_session: false,
+                        show_split_pane_labels: false,
                     },
                     connection: rustconn_core::ConnectionSettings::default(),
                     global_variables: Vec::new(),

@@ -1424,7 +1424,9 @@ Embedded viewers adapt to narrow panels: the toolbar collapses its secondary act
 
 Each occupied panel has a small arrow indicator (◂) at the top-right corner. Hovering or clicking it reveals the panel action buttons: **Remove from Split** (returns the session to its own tab without closing it) and **Close** (terminates the session). The buttons hide automatically after a short delay, keeping the view uncluttered and avoiding overlap with the session toolbar.
 
-A session whose **Session Toolbar** / **Navigation Toolbar** is switched off gets no corner indicator either — a connection that asked for an unobstructed view means both overlays. Right-clicking the panel still offers **Remove from Split**, **Remove Split** and **Close Connection**, so nothing becomes unreachable.
+A session whose **Session Toolbar** / **Navigation Toolbar** is switched off still shows the split-view panel corner buttons (detach/close) — those are part of the split infrastructure, not the session toolbar. Right-clicking the panel also offers **Remove from Split**, **Remove Split** and **Close Connection**.
+
+**Connection name labels** — enable **Settings ▸ Interface ▸ Window ▸ Show connection name in split panes** to display a compact colored header at the top of each pane showing the connection name and protocol. This makes it easy to identify which pane belongs to which connection at a glance, especially useful with 3 or more panes side by side. The header color matches the panel's indicator color. In compact mode, the header shrinks automatically.
 
 ### Detached Session Windows
 
