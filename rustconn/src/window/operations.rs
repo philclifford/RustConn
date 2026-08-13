@@ -197,17 +197,28 @@ pub fn duplicate_selected_connection(
         return;
     };
 
-    let (conn, new_name) = if let Ok(state_ref) = state.try_borrow() {
+    let (conn, new_name, settings, groups) = if let Ok(state_ref) = state.try_borrow() {
         let Some(conn) = state_ref.get_connection(id).cloned() else {
             return;
         };
         // Generate unique name for duplicate
         let new_name = state_ref
             .generate_unique_connection_name(&format!("{} (copy)", conn.name), conn.protocol);
-        (conn, new_name)
+        // Needed to copy the vault credential once the duplicate exists; read
+        // here so the borrow is released before `create_connection_from`.
+        (
+            conn,
+            new_name,
+            state_ref.settings().clone(),
+            state_ref.list_groups_owned(),
+        )
     } else {
         return;
     };
+
+    // The source connection, kept whole: the vault entry is keyed by name and
+    // UUID, so copying the credential needs both sides of the pair.
+    let original = conn.clone();
 
     // Create duplicate with new ID and name
     let mut duplicate = conn;
@@ -215,6 +226,8 @@ pub fn duplicate_selected_connection(
     duplicate.name = new_name;
     duplicate.created_at = chrono::Utc::now();
     duplicate.updated_at = chrono::Utc::now();
+
+    let duplicate_for_vault = duplicate.clone();
 
     if let Ok(mut state_mut) = state.try_borrow_mut() {
         match state_mut
@@ -235,6 +248,35 @@ pub fn duplicate_selected_connection(
                         crate::toast::ToastType::Success,
                     );
                 });
+
+                // Carry the secret over. A duplicate that keeps
+                // `password_source = Vault` without an entry of its own looks
+                // configured but has none: connecting prompts for a password or
+                // fails outright. Paste, rename and move-to-group all migrate
+                // the credential — duplicate was the only name-changing path
+                // that did not.
+                if duplicate_for_vault.password_source
+                    == rustconn_core::models::PasswordSource::Vault
+                {
+                    crate::utils::spawn_blocking_with_callback(
+                        move || {
+                            crate::vault_ops::copy_vault_credential(
+                                &settings,
+                                &groups,
+                                &original,
+                                &duplicate_for_vault,
+                            )
+                        },
+                        |result| {
+                            if let Err(e) = result {
+                                tracing::warn!(
+                                    error = %e,
+                                    "Failed to copy vault credential on duplicate"
+                                );
+                            }
+                        },
+                    );
+                }
             }
             Err(e) => {
                 tracing::error!("Failed to duplicate connection: {e}");
