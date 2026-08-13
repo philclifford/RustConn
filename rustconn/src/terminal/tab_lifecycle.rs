@@ -280,9 +280,6 @@ impl TerminalNotebook {
             self.apply_protocol_color(session_id, protocol);
         }
 
-        // Resolve any pending cluster registration for this connection
-        self.resolve_cluster_pending(connection_id, session_id);
-
         // Notify listeners that a new terminal session was created.
         // Single choke point for per-session wiring (activity monitoring):
         // fires for every terminal protocol and for both synchronous and
@@ -674,7 +671,11 @@ impl TerminalNotebook {
         container.set_vexpand(true);
         let tab_container = TabPageContainer::single(&container);
         let page = self.tab_view.append(tab_container.widget());
-        page.set_title(&title);
+        // A grouped tab keeps its `[group] ` prefix. This used to set the bare
+        // name, so a tab that came back from a split pane silently lost its group
+        // label — visible only in the tooltip — while still being a member of the
+        // group for every operation. Nothing else re-applies it on this path.
+        page.set_title(&tab_title(&title, group.as_deref()));
         page.set_icon(Some(&gio::ThemedIcon::new(Self::get_protocol_icon(
             &protocol,
         ))));

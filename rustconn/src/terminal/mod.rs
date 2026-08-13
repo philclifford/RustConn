@@ -49,7 +49,10 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use rustconn_core::models::{AutomationConfig, BackspaceSends, DeleteSends};
 use rustconn_core::terminal_themes::TerminalTheme;
-pub use types::{SessionWidgetStorage, TerminalSession};
+pub use types::{
+    ClusterTabs, PendingCluster, SessionWidgetStorage, TerminalSession, group_still_in_use,
+    strip_group_prefix, tab_title,
+};
 use uuid::Uuid;
 use vte4::Terminal;
 use vte4::prelude::*;
@@ -284,17 +287,17 @@ pub struct TerminalNotebook {
     /// module), so the grid is compared against the size last pushed to the
     /// child. Removed together with the relay.
     pty_size_timers: Rc<RefCell<HashMap<Uuid, glib::SourceId>>>,
-    /// Cluster terminal tracking: cluster_id → Vec<session_id>
-    cluster_sessions: Rc<RefCell<HashMap<Uuid, Vec<Uuid>>>>,
+    /// Cluster tab tracking: cluster_id → its open tabs and their group name.
+    cluster_sessions: Rc<RefCell<HashMap<Uuid, ClusterTabs>>>,
     /// Reverse lookup: session_id → cluster_id
     session_to_cluster: Rc<RefCell<HashMap<Uuid, Uuid>>>,
     /// Pending cluster registrations awaiting their session_id.
     ///
-    /// When a connection is launched as part of a cluster but its terminal is
-    /// created asynchronously (e.g. after a TCP port check), we cannot register
-    /// the session_id at launch time. Instead we record the (connection_id →
-    /// cluster_id) pair here and resolve it the moment a tab is created.
-    cluster_pending: Rc<RefCell<HashMap<Uuid, Uuid>>>,
+    /// When a connection is launched as part of a cluster but its tab is created
+    /// asynchronously (e.g. after a TCP port check), we cannot register the
+    /// session_id at launch time. Instead we record connection_id →
+    /// [`PendingCluster`] here and resolve it the moment a tab is created.
+    cluster_pending: Rc<RefCell<HashMap<Uuid, PendingCluster>>>,
     /// Active recording sessions (tracked by session_id)
     active_recordings: Rc<RefCell<HashSet<Uuid>>>,
     /// Recording paths and start times: session_id → (data_path, timing_path, connection_name, start_time)
@@ -2270,10 +2273,7 @@ impl TerminalNotebook {
             // GTK setters below.
             let page = self.sessions.borrow().get(session_id).cloned();
             if let Some(page) = page {
-                page.set_title(&match group {
-                    Some(group) => format!("[{group}] {new_name}"),
-                    None => new_name.to_owned(),
-                });
+                page.set_title(&tab_title(new_name, group.as_deref()));
                 page.set_tooltip(&Self::tab_tooltip(
                     new_name,
                     host.as_deref(),
@@ -2306,19 +2306,13 @@ impl TerminalNotebook {
             && let Some(info) = self.session_info.borrow().get(&session_id)
             && let Some(ref group_name) = info.tab_group
         {
+            // The rendered title is the only record of the base name here, so an
+            // existing prefix comes off before the new one goes on.
             let current_title = page.title().to_string();
-            // Remove any existing group prefix first
-            let base_title = current_title
-                .find("] ")
-                .and_then(|pos| {
-                    if current_title.starts_with('[') {
-                        Some(&current_title[pos + 2..])
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(&current_title);
-            page.set_title(&format!("[{group_name}] {base_title}"));
+            page.set_title(&tab_title(
+                strip_group_prefix(&current_title),
+                Some(group_name),
+            ));
         }
     }
 
@@ -2370,6 +2364,11 @@ impl TerminalNotebook {
 
     /// Fires the `on_tab_added` callback if set.
     fn notify_tab_added(&self, session_id: Uuid, connection_id: Uuid) {
+        // Cluster membership is resolved here rather than in each creation path
+        // so that every protocol is covered, and before the callback so an
+        // observer sees the tab already labelled with its cluster.
+        self.resolve_cluster_pending(connection_id, session_id);
+
         // Take the callback out to avoid holding a borrow across the call —
         // the callback may call `clear_on_tab_added()` which also borrows.
         let callback = self.on_tab_added.borrow_mut().take();
@@ -2546,62 +2545,113 @@ impl TerminalNotebook {
 
     // === Cluster terminal tracking ===
 
-    /// Registers a terminal session as part of a cluster
-    pub fn register_cluster_terminal(&self, cluster_id: Uuid, session_id: Uuid) {
+    /// Registers a session as part of a cluster, under the cluster's group name.
+    pub fn register_cluster_terminal(&self, cluster_id: Uuid, group: &str, session_id: Uuid) {
         self.cluster_sessions
             .borrow_mut()
             .entry(cluster_id)
-            .or_default()
+            .or_insert_with(|| ClusterTabs {
+                group: group.to_owned(),
+                sessions: Vec::new(),
+            })
+            .sessions
             .push(session_id);
         self.session_to_cluster
             .borrow_mut()
             .insert(session_id, cluster_id);
     }
 
-    /// Unregisters all terminals for a cluster
+    /// Unregisters all tabs of a cluster, retiring its tab group if it is unused.
+    ///
+    /// Called after the member tabs have been closed, so by now their sessions
+    /// are gone from `session_info` and the only sessions that could still be
+    /// wearing the name are unrelated ones — a tab a user labelled by hand, or a
+    /// second cluster with the same name. Without this, every cluster ever opened
+    /// would leave its name in the "Set Group…" chooser for the lifetime of the
+    /// window, which is a new problem created by naming groups automatically.
     pub fn unregister_cluster(&self, cluster_id: Uuid) {
-        if let Some(sessions) = self.cluster_sessions.borrow_mut().remove(&cluster_id) {
+        if let Some(tabs) = self.cluster_sessions.borrow_mut().remove(&cluster_id) {
             let mut reverse = self.session_to_cluster.borrow_mut();
-            for sid in &sessions {
+            for sid in &tabs.sessions {
                 reverse.remove(sid);
+            }
+            drop(reverse);
+
+            // The cluster's own sessions are excluded rather than assumed gone:
+            // `close_page` teardown is not guaranteed to have removed them from
+            // `session_info` by the time the caller unregisters, and the question
+            // being asked is whether anything *else* wears the name.
+            //
+            // ponytail: O(members × open tabs); a cluster is a handful of hosts,
+            // so a set would cost more than it saves.
+            let still_used = {
+                let info = self.session_info.borrow();
+                group_still_in_use(
+                    &tabs.group,
+                    info.iter()
+                        .filter(|(session_id, _)| !tabs.sessions.contains(session_id))
+                        .map(|(_, info)| info.tab_group.as_deref()),
+                )
+            };
+            if still_used {
+                tracing::debug!(
+                    group = tabs.group,
+                    "cluster closed; keeping its group name, other tabs still carry it"
+                );
+            } else {
+                self.tab_group_manager
+                    .borrow_mut()
+                    .remove_group(&tabs.group);
             }
         }
         // Clear any pending registrations for this cluster
         self.cluster_pending
             .borrow_mut()
-            .retain(|_, cid| *cid != cluster_id);
+            .retain(|_, pending| pending.cluster_id != cluster_id);
     }
 
     /// Marks a connection as pending cluster registration.
     ///
-    /// When the terminal tab for `connection_id` is eventually created
-    /// (synchronously or after an async port check), it will automatically
-    /// be registered as part of `cluster_id` and trigger the
-    /// `on_cluster_session_registered` callback.
-    pub fn mark_cluster_pending(&self, cluster_id: Uuid, connection_id: Uuid) {
-        self.cluster_pending
-            .borrow_mut()
-            .insert(connection_id, cluster_id);
+    /// When the tab for `connection_id` is eventually created — synchronously,
+    /// or after an async port check — it is registered as part of `cluster_id`
+    /// and labelled with the cluster's `group` name.
+    pub fn mark_cluster_pending(&self, cluster_id: Uuid, group: &str, connection_id: Uuid) {
+        self.cluster_pending.borrow_mut().insert(
+            connection_id,
+            PendingCluster {
+                cluster_id,
+                group: group.to_owned(),
+            },
+        );
     }
 
-    /// Resolves a pending cluster registration for a freshly created session.
+    /// Resolves a pending cluster registration for a freshly created tab.
     ///
-    /// Called internally by `create_terminal_tab_with_settings`. If the
-    /// connection had been marked as pending via `mark_cluster_pending`,
-    /// this registers the new `session_id` in the cluster's session list.
+    /// Called from [`Self::notify_tab_added`], which every tab-creation path goes
+    /// through — terminal, VNC, embedded RDP, embedded Web and external process
+    /// alike. It used to be called from the terminal path only, so an RDP or VNC
+    /// member of a cluster opened a tab that was never registered: it stayed in
+    /// `cluster_pending` forever and "Disconnect all cluster sessions" could not
+    /// see it.
+    ///
+    /// Labelling the tab with the cluster's name is what makes a cluster visible
+    /// after it is open: the tab reads `[cluster] host`, and every tab-group
+    /// operation — Close All in Group above all — then applies to the cluster
+    /// without needing a cluster-specific command.
     fn resolve_cluster_pending(&self, connection_id: Uuid, session_id: Uuid) {
-        let Some(cluster_id) = self.cluster_pending.borrow_mut().remove(&connection_id) else {
+        let Some(pending) = self.cluster_pending.borrow_mut().remove(&connection_id) else {
             return;
         };
-        self.register_cluster_terminal(cluster_id, session_id);
+        self.register_cluster_terminal(pending.cluster_id, &pending.group, session_id);
+        self.set_tab_group(session_id, &pending.group);
     }
 
-    /// Gets all terminal session IDs for a cluster
+    /// Gets all session IDs for a cluster
     pub fn get_cluster_sessions(&self, cluster_id: Uuid) -> Vec<Uuid> {
         self.cluster_sessions
             .borrow()
             .get(&cluster_id)
-            .cloned()
+            .map(|tabs| tabs.sessions.clone())
             .unwrap_or_default()
     }
 

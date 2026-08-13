@@ -45,8 +45,8 @@ RustConn is a modern connection manager designed for Linux with Wayland-first ap
 7. [Productivity Tools](#productivity-tools)
    - [Templates](#templates)
    - [Snippets](#snippets)
-   - [Clusters & Broadcast](#clusters)
-   - [Ad-hoc Broadcast](#ad-hoc-broadcast)
+   - [Clusters](#clusters)
+   - [Broadcast Input](#broadcast-input)
    - [Command Palette](#command-palette)
    - [Global Variables](#global-variables)
    - [Password Generator](#password-generator)
@@ -2036,9 +2036,13 @@ The tab title changes to `[GroupName] ConnectionName` and the tooltip shows the 
 
 **Close All in Group:** Right-click a grouped tab → **Close All in Group** (with confirmation dialog)
 
+**Close All Ungrouped:** Right-click any tab → **Close All Ungrouped** — closes everything that is *not* in a group, which is the quick way to clear scratch tabs while keeping your labelled sets.
+
 **Monitor Mode Toggle:** Right-click any tab → **Monitor: Off/Activity/Silence** to cycle monitoring mode.
 
 Groups are visual only — they are session-scoped and not persisted across restarts.
+
+Opening a [cluster](#clusters) assigns its member tabs to a group named after the cluster automatically, so the operations above work on a cluster without any setup.
 
 ---
 
@@ -2127,21 +2131,36 @@ If all variables are resolved automatically, the snippet executes immediately wi
 
 ### Clusters
 
-Clusters group multiple connections for simultaneous management. The primary use case is broadcast mode: type a command once and it is sent to all connected cluster members at the same time.
+A cluster is a named set of connections you open together — a rack, a Kubernetes node pool, the three web servers behind one load balancer.
 
-**Create Cluster:**
-1. Menu → Tools → **Manage Clusters**
-2. Click **Create** → enter name → add connections → optionally enable **Broadcast by default**
-3. Save
+**Create a cluster:**
+1. Menu → Tools → **Clusters…**
+2. Click **New Cluster** → enter a name → tick the member connections → **Save**
 
-**Connect Cluster:** Open Manage Clusters → select a cluster → **Connect All**. RustConn opens a terminal tab for each member connection.
+You can also select several connections in the sidebar and use **Create Cluster** in the bulk-action bar.
 
-**Broadcast Mode:** When enabled, every keystroke you type in the focused terminal is sent to all connected cluster members simultaneously. Toggle the broadcast switch in the cluster toolbar.
+**Open a cluster:** Menu → Tools → **Clusters…** → the ▶ button on the cluster's row. RustConn opens a tab for every member, whatever their protocol.
+
+**Every tab of an open cluster joins a tab group named after the cluster.** The tab reads `[ClusterName] ConnectionName`, so you can see at a glance which tabs belong together, and every [tab group](#tab-grouping) operation applies to the cluster:
+
+- **Close All in Group** on any member closes the whole cluster
+- **Close All Ungrouped** closes everything *except* your open clusters
+- The tab switcher (**Ctrl+%**) shows the cluster name beside each member
+
+**Close a cluster:** either **Close All in Group** from any member tab, or the ■ button on the cluster's row in Clusters… (**Disconnect all cluster sessions**).
+
+Notes on the automatic group:
+- The group name is the cluster's name exactly as written. Renaming a cluster affects the *next* time you open it, not tabs that are already open.
+- A cluster whose name matches a group you created by hand merges into it — same name means same group, which is the rule two hand-labelled tabs already follow.
+- You can override it per tab: **Remove from Group**, or **Set Group…** to move one member elsewhere. The tab stays part of the cluster for the Disconnect button either way.
+- Groups are visual and session-scoped; they are not written to disk.
+
+**Broadcast:** typing into several hosts at once is *not* a cluster property. It is a split-view feature — arrange the members in a split layout and use the broadcast toggle in the header bar. See [Broadcast Input](#broadcast-input).
 
 **Use cases:**
 - Rolling out configuration changes across multiple servers
 - Running the same diagnostic command on all nodes
-- Updating packages on a fleet of machines
+- Opening and closing a whole environment as one unit
 
 ### Workspace Profiles
 
@@ -2183,22 +2202,22 @@ Port knocking allows you to open firewall ports by sending a specific sequence o
 - Inter-knock delay: 100ms
 - Post-knock settle: 200ms
 
-### Ad-hoc Broadcast
+### Broadcast Input
 
-Send keystrokes to multiple terminal sessions simultaneously without setting up a cluster.
+Type once and have the keystrokes reach several terminals at the same time.
+
+Broadcast is a property of a **split layout**, not of a cluster: whichever terminals share the active tab's split receive the input. That keeps the target set visible on screen — you are typing into exactly the panels you can see.
 
 **Usage:**
-1. Click the **Broadcast** toggle button in the toolbar
-2. Checkboxes appear on each terminal tab
-3. Select the terminals you want to broadcast to
-4. Type in any selected terminal — keystrokes are sent to all selected terminals
-5. Click the Broadcast button again to deactivate
+1. Put the terminals side by side in a split layout (see [Split View](#split-view))
+2. Focus one of the terminal panels
+3. Press **Ctrl+Shift+B**, or click the broadcast toggle in the header bar
+4. Type — the keystrokes are mirrored into the other terminal panels of that split
+5. Press **Ctrl+Shift+B** again to stop
 
-| Feature | Ad-hoc Broadcast | Cluster Broadcast |
-|---------|-----------------|-------------------|
-| Setup | No setup — select terminals on the fly | Requires pre-defined cluster |
-| Scope | Any open terminal tabs | Connections in a cluster |
-| Persistence | Session-only | Saved in configuration |
+The toggle only becomes available when the active tab's split holds at least two terminal sessions and a terminal panel has focus. Mirroring never targets an embedded RDP, VNC or SPICE panel — those are not terminals and receive their own input only.
+
+Opening a [cluster](#clusters) is the quick way to get the members on screen; from there, split them and toggle broadcast. Earlier releases had a separate cluster-owned broadcast mode with checkboxes on tabs. It was removed in 0.14.8 in favour of the split-view toggle, which has one visible target set instead of two competing ones. `Cluster` still carries a `broadcast_enabled` flag on disk for CLI compatibility; it does not affect the GUI.
 
 ### Command Palette
 

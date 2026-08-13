@@ -284,11 +284,17 @@ done
 %changelog
 * Thu Aug 13 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.0-0
 - Version bump to 0.20.0
+- Added: opening a cluster now labels every member tab with a tab group named
+  after the cluster, so it reads "[cluster] host"; Close All in Group on any
+  member closes the whole cluster
 - Added: signed build provenance for every .deb, .rpm, AppImage and Flatpak bundle
   attached to a GitHub release — verify with
   "gh attestation verify <file> --repo totoshko88/RustConn"
 - Added: Web embedded mode — auto-hide floating toolbar with reveal zone
 - Added: Settings > Interface > Rendering — Automatic, Hardware (GPU) or Software (Cairo) (#274)
+- Fixed: an RDP, VNC, SPICE or Web member of a cluster was never registered in
+  it, so "Disconnect all cluster sessions" could not close it
+- Fixed: a tab returning from a split pane lost its "[group]" title label
 - Fixed: the floating viewer toolbar was revealed but not clickable for its first
   two seconds in RDP, VNC and Web sessions
 - Fixed: choosing a non-system interface language cost macOS users the tray icon —
