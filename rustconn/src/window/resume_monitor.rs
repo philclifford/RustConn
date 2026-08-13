@@ -125,9 +125,7 @@ pub fn setup_resume_monitor(
                 &notebook_for_sweep,
             );
             if reconnecting > 0 {
-                toast_for_sweep.show_toast(&i18n(
-                    "Reconnecting sessions after sleep",
-                ));
+                toast_for_sweep.show_toast(&i18n("Reconnecting sessions after sleep"));
             }
         });
 
