@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A post-disconnect automation task froze the entire application for up to 60 seconds ([#281](https://github.com/totoshko88/RustConn/pull/281))** — the task ran via `block_on()` directly in the `child-exited` handler on the GTK main thread. An arbitrary user command (script, ssh, curl to an unreachable host) blocked every other terminal, RDP and VNC tab until it finished or the 60-second ceiling fired. The work now runs on a background thread via `spawn_blocking_with_callback`.
 
+- **Remote session recordings were lost when quitting the application ([#282](https://github.com/totoshko88/RustConn/pull/282))** — `flush_active_recordings` used `spawn_blocking_with_callback`, whose 16 ms poll callback is never reached once the main loop stops on the quit path. The SCP result was dropped, the `.meta.json` sidecar was never written, and the recording disappeared. A new `stop_recording_blocking` variant runs the retrieval inline on shutdown, bounded by `ConnectTimeout=5` so an unreachable host cannot hang the window.
+
+- **Web embedded: links requesting a new view (target="_blank", window.open) did nothing ([#288](https://github.com/totoshko88/RustConn/pull/288))** — nothing was connected to WebKit's `create` signal, so every request for a second web view was silently dropped. On SAPUI5-like pages whose links use `window.open()`, every link appeared broken. The requested URI is now loaded in the same view, preserving the authenticated session.
+
+- **Network monitor reported a false outage on every Flatpak launch ([#284](https://github.com/totoshko88/RustConn/pull/284))** — `GNetworkMonitorPortal` emits an initial `network-changed` signal ~6 ms after creation as it learns the host's real state. This was treated as a real transition, showing "reconnecting affected sessions" with nothing wrong. Additionally, the debounce erased a down→up flap shorter than 3 s, preventing the recovery sweep from running. The first signal is now treated as a baseline, and debounce only collapses signals that classify the same way.
+
+- **A session closed with `exit` was silently reconnected on the next Wi-Fi roam ([#285](https://github.com/totoshko88/RustConn/pull/285))** — the reconnect sweep picked victims by asking whether the reconnect banner was visible, but a banner is not consent: it is also shown for a shell the user closed with `exit`, for a failed login and for a rapid crash. The disconnect path now records its verdict, and the sweep requires explicit eligibility alongside the visible banner.
+
 ## [0.20.0] - 2026-08-13
 
 ### Added
