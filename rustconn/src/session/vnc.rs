@@ -263,6 +263,12 @@ impl VncSessionWidget {
             embedded_config.scale_override = config.scale_override;
             embedded_config.show_local_cursor = config.show_local_cursor;
             embedded_config.accept_certificate = config.accept_certificate;
+            // A connection can opt out of the floating toolbar entirely
+            // (issue #260). Applied before `connect`, which is what first
+            // reveals it, and before the split view can wrap this session in
+            // its own corner buttons.
+            self.embedded_widget
+                .set_toolbar_enabled(!config.hide_floating_toolbar);
 
             let embedded_config = if let Some(pwd) = password {
                 embedded_config.with_password(pwd)

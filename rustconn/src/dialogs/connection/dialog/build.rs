@@ -166,6 +166,7 @@ impl ConnectionDialog {
             ignore_certificate_check,
             rdp_clipboard_check,
             rdp_show_local_cursor_check,
+            rdp_floating_toolbar_check,
             rdp_jiggler_check,
             rdp_jiggler_interval_spin,
             rdp_autotype_delay_spin,
@@ -196,6 +197,7 @@ impl ConnectionDialog {
             vnc_scaling_check,
             vnc_clipboard_check,
             vnc_show_local_cursor_check,
+            vnc_floating_toolbar_check,
             vnc_scale_override_dropdown,
             vnc_custom_args_entry,
             vnc_jump_host_dropdown,
@@ -303,6 +305,7 @@ impl ConnectionDialog {
         let web_browser_mode_combo = web_options.browser_mode_combo;
         let web_javascript_switch = web_options.javascript_switch;
         let web_user_agent_row = web_options.user_agent_row;
+        let web_floating_toolbar_switch = web_options.floating_toolbar_switch;
 
         // MOSH now uses SSH tab with additional MOSH settings group
         // (mosh_port_range_entry, mosh_predict_dropdown, mosh_server_binary_entry
@@ -528,6 +531,7 @@ impl ConnectionDialog {
             &ignore_certificate_check,
             &rdp_clipboard_check,
             &rdp_show_local_cursor_check,
+            &rdp_floating_toolbar_check,
             &rdp_jiggler_check,
             &rdp_jiggler_interval_spin,
             &rdp_autotype_delay_spin,
@@ -552,6 +556,7 @@ impl ConnectionDialog {
             &vnc_scaling_check,
             &vnc_clipboard_check,
             &vnc_show_local_cursor_check,
+            &vnc_floating_toolbar_check,
             &vnc_scale_override_dropdown,
             &vnc_custom_args_entry,
             &vnc_jump_host_dropdown,
@@ -626,6 +631,7 @@ impl ConnectionDialog {
             &web_browser_mode_combo,
             &web_javascript_switch,
             &web_user_agent_row,
+            &web_floating_toolbar_switch,
             &variables_rows,
             &logging_tab_struct,
             &expect_rules,
@@ -749,6 +755,7 @@ impl ConnectionDialog {
             rdp_ignore_certificate_check: ignore_certificate_check,
             rdp_clipboard_check,
             rdp_show_local_cursor_check,
+            rdp_floating_toolbar_check,
             rdp_jiggler_check,
             rdp_jiggler_interval_spin,
             rdp_autotype_delay_spin,
@@ -774,6 +781,7 @@ impl ConnectionDialog {
             vnc_scaling_check,
             vnc_clipboard_check,
             vnc_show_local_cursor_check,
+            vnc_floating_toolbar_check,
             vnc_scale_override_dropdown,
             vnc_custom_args_entry,
             vnc_jump_host_dropdown,
@@ -852,6 +860,7 @@ impl ConnectionDialog {
             web_browser_mode_combo,
             web_javascript_switch,
             web_user_agent_row,
+            web_floating_toolbar_switch,
             mosh_port_range_entry,
             mosh_predict_dropdown,
             mosh_server_binary_entry,

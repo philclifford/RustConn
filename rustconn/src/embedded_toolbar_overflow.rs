@@ -276,6 +276,17 @@ pub struct ToolbarAutoHide {
     toolbar: GtkBox,
     reveal_button: Button,
     hide_timer: RefCell<Option<glib::SourceId>>,
+    /// Whether this connection wants a floating toolbar at all.
+    ///
+    /// Two gates rather than one because they answer different questions and
+    /// change on different schedules. `available` tracks the *session*: the
+    /// viewers switch it off when disconnected and back on for every
+    /// connecting/connected transition, which is why it cannot carry a user
+    /// preference — [`show_briefly`](Self::show_briefly) sets it to `true` and
+    /// every state change goes through there. `enabled` is the per-connection
+    /// choice from `hide_floating_toolbar`, set once before the session starts
+    /// and never flipped by a state change (issue #260).
+    enabled: Cell<bool>,
     available: Cell<bool>,
     pointer_in_reveal_button: Cell<bool>,
     pointer_in_toolbar: Cell<bool>,
@@ -319,6 +330,7 @@ impl ToolbarAutoHide {
             toolbar: toolbar.clone(),
             reveal_button: reveal_button.clone(),
             hide_timer: RefCell::new(None),
+            enabled: Cell::new(true),
             available: Cell::new(false),
             pointer_in_reveal_button: Cell::new(false),
             pointer_in_toolbar: Cell::new(false),
@@ -399,12 +411,43 @@ impl ToolbarAutoHide {
         controller
     }
 
+    /// Removes the toolbar and its reveal handle for the rest of the session.
+    ///
+    /// Called once, before the session connects, with the connection's
+    /// `hide_floating_toolbar` inverted. Passing `false` is permanent in
+    /// practice: nothing switches it back, because the setting cannot change
+    /// while the session is open.
+    ///
+    /// Everything the user could touch has to go, not just the toolbar: the
+    /// handle is hidden so there is no hot zone left to hit by accident, and the
+    /// revealer stops being targetable so it cannot swallow a click meant for
+    /// the remote desktop or the page beneath it. Both follow from
+    /// [`update_reveal_button`](Self::update_reveal_button), which is why they
+    /// are not repeated here.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.set(enabled);
+        if !enabled {
+            self.available.set(false);
+            self.cancel_hide();
+            self.revealer.set_reveal_child(false);
+            // A pointer or focus flag left set would keep `interaction_active`
+            // true and hold a rescheduling hide timer alive for nothing.
+            self.pointer_in_reveal_button.set(false);
+            self.pointer_in_toolbar.set(false);
+            self.focus_in_toolbar.set(false);
+        }
+        self.update_reveal_button();
+    }
+
     /// Reveals the toolbar and hides it after the standard inactivity delay.
     pub fn show_briefly(self: &Rc<Self>) {
+        if !self.enabled.get() {
+            return;
+        }
         self.available.set(true);
-        self.revealer.set_reveal_child(true);
-        self.update_reveal_button();
-        self.schedule_hide();
+        if self.reveal() {
+            self.schedule_hide();
+        }
     }
 
     /// Disables the toolbar until the next connected/connecting state.
@@ -417,12 +460,28 @@ impl ToolbarAutoHide {
     }
 
     fn show(&self) {
-        if !self.available.get() {
-            return;
-        }
         self.cancel_hide();
+        self.reveal();
+    }
+
+    /// The one place that reveals the toolbar, and the one place both gates are
+    /// checked. Returns whether it did.
+    ///
+    /// Four things reveal this toolbar — a click on the handle, a hover over it,
+    /// keyboard focus entering the toolbar, and a session state change — and
+    /// they do not share a caller: three go through [`show`](Self::show), the
+    /// fourth through [`show_briefly`](Self::show_briefly). That split is how
+    /// the toolbar once ended up revealed but untargetable (see
+    /// [`update_reveal_button`](Self::update_reveal_button)). Funnelling the
+    /// actual reveal through here means a fifth path cannot reintroduce either
+    /// that bug or a toolbar the user asked not to have.
+    fn reveal(&self) -> bool {
+        if !self.enabled.get() || !self.available.get() {
+            return false;
+        }
         self.revealer.set_reveal_child(true);
         self.update_reveal_button();
+        true
     }
 
     /// Brings the reveal arrow and the revealer's targetability in line with
@@ -445,7 +504,7 @@ impl ToolbarAutoHide {
     fn update_reveal_button(&self) {
         let toolbar_visible = self.revealer.reveals_child();
         self.reveal_button
-            .set_visible(self.available.get() && !toolbar_visible);
+            .set_visible(self.enabled.get() && self.available.get() && !toolbar_visible);
         self.revealer.set_can_target(toolbar_visible);
     }
 
@@ -478,6 +537,50 @@ impl ToolbarAutoHide {
             source_id.remove();
         }
     }
+}
+
+/// Marks a session viewer as carrying no floating overlay chrome.
+///
+/// Nothing in `assets/style.css` matches this class — it is *state* the widget
+/// carries, the same way `split_view::adapter` uses `pointer-in`. Naming it here
+/// once, behind [`set_floating_overlays_suppressed`] and
+/// [`floating_overlays_suppressed`], keeps the string out of the two modules
+/// that need to agree on it.
+///
+/// The widget itself has to be the channel because of who reads it.
+/// `SplitViewAdapter::set_panel_content` takes an opaque
+/// `&impl IsA<gtk4::Widget>`, has no access to the `Connection`, does not import
+/// `rustconn_core` at all, and runs again on every layout rebuild and every
+/// drop — so a flag handed to it as an argument would have to be threaded
+/// through five call sites and then stored somewhere for the sixth. A viewer
+/// that travels into a split panel carries its own answer instead.
+const NO_FLOATING_OVERLAYS_CSS_CLASS: &str = "no-floating-overlays";
+
+/// Records whether this session's viewer must carry no floating overlay chrome.
+///
+/// Set on the viewer's root container — the widget the notebook hands to the
+/// split view — alongside [`ToolbarAutoHide::set_enabled`]. The toolbar belongs
+/// to the viewer, but the split panel's corner buttons do not, and a connection
+/// that asked for an unobstructed desktop means both.
+pub fn set_floating_overlays_suppressed(root: &impl IsA<Widget>, suppressed: bool) {
+    if suppressed {
+        root.as_ref().add_css_class(NO_FLOATING_OVERLAYS_CSS_CLASS);
+    } else {
+        root.as_ref()
+            .remove_css_class(NO_FLOATING_OVERLAYS_CSS_CLASS);
+    }
+}
+
+/// Whether `widget` opted out of floating overlay chrome.
+///
+/// Read by the split view before it wraps a session in its corner-button
+/// overlay. The panel's context menu offers the same two actions, so suppressing
+/// the buttons costs reachability, not capability.
+#[must_use]
+pub fn floating_overlays_suppressed(widget: &impl IsA<Widget>) -> bool {
+    widget
+        .as_ref()
+        .has_css_class(NO_FLOATING_OVERLAYS_CSS_CLASS)
 }
 
 /// Applies the GNOME HIG minimum pointer/touch target to toolbar actions.

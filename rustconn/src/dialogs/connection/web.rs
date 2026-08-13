@@ -30,6 +30,8 @@ pub struct WebOptionsWidgets {
     pub javascript_switch: adw::SwitchRow,
     /// User agent string entry (optional)
     pub user_agent_row: adw::EntryRow,
+    /// Floating navigation toolbar toggle (issue #260)
+    pub floating_toolbar_switch: adw::SwitchRow,
 }
 
 /// Creates the Web bookmark options panel using libadwaita components.
@@ -86,6 +88,18 @@ pub fn create_web_options() -> WebOptionsWidgets {
     user_agent_row.set_show_apply_button(false);
     embedded_group.add(&user_agent_row);
 
+    // Floating navigation toolbar (issue #260). Positive here, stored as
+    // `hide_floating_toolbar`; see the RDP panel for why. Unlike the remote
+    // desktops, most of what this toolbar offers has a keyboard route, which is
+    // what the subtitle says.
+    let floating_toolbar_switch = SwitchRowBuilder::new("Navigation Toolbar")
+        .subtitle(
+            "Turn off to remove the floating toolbar and its reveal arrow. Keyboard shortcuts for back, forward, reload and zoom still work.",
+        )
+        .active(true)
+        .build();
+    embedded_group.add(&floating_toolbar_switch);
+
     content.append(&embedded_group);
 
     // === General Settings Group ===
@@ -128,6 +142,7 @@ pub fn create_web_options() -> WebOptionsWidgets {
         browser_mode_combo,
         javascript_switch,
         user_agent_row,
+        floating_toolbar_switch,
     }
 }
 

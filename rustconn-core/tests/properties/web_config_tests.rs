@@ -28,9 +28,18 @@ fn arb_web_config() -> impl Strategy<Value = WebConfig> {
         any::<bool>(),
         arb_user_agent(),
         0.3f64..=3.0f64,
+        any::<bool>(),
     )
         .prop_map(
-            |(browser, private_mode, browser_mode, javascript_enabled, user_agent, zoom_level)| {
+            |(
+                browser,
+                private_mode,
+                browser_mode,
+                javascript_enabled,
+                user_agent,
+                zoom_level,
+                hide_floating_toolbar,
+            )| {
                 WebConfig {
                     browser,
                     private_mode,
@@ -39,6 +48,7 @@ fn arb_web_config() -> impl Strategy<Value = WebConfig> {
                     user_agent,
                     zoom_level,
                     accept_invalid_certs: false,
+                    hide_floating_toolbar,
                 }
             },
         )
@@ -66,6 +76,7 @@ proptest! {
         prop_assert_eq!(config.browser_mode, deserialized.browser_mode, "browser_mode should be preserved");
         prop_assert_eq!(config.javascript_enabled, deserialized.javascript_enabled, "javascript_enabled should be preserved");
         prop_assert_eq!(&config.user_agent, &deserialized.user_agent, "user_agent should be preserved");
+        prop_assert_eq!(config.hide_floating_toolbar, deserialized.hide_floating_toolbar, "hide_floating_toolbar should be preserved");
     }
     // ========== Property 5: User Agent Length Validation ==========
     /// **Feature: embedded-web-browser, Property 5: User Agent Length Validation**

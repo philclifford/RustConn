@@ -336,11 +336,19 @@ impl EmbeddedWebWidget {
         // menu button — the last child, and the only route to Copy URL, Open in
         // System Browser, Zoom Reset and Clear Session Data — is what gets
         // clipped away.
-        crate::embedded_toolbar_overflow::ToolbarOverflow::new(
-            toolbar.widget(),
-            toolbar.overflow_actions(),
-        )
-        .attach_to_widget(&overlay);
+        //
+        // Skipped when the connection asked for no toolbar (issue #260): this
+        // variant of the controller reads the allocated width from a tick
+        // callback, so it would run once per frame for a toolbar that is never
+        // shown. The RDP and VNC variants watch a resize signal instead and are
+        // left alone.
+        if !config.hide_floating_toolbar {
+            crate::embedded_toolbar_overflow::ToolbarOverflow::new(
+                toolbar.widget(),
+                toolbar.overflow_actions(),
+            )
+            .attach_to_widget(&overlay);
+        }
 
         // Attach ToolbarAutoHide controller to the overlay. The reveal handle
         // goes to the trailing corner rather than the centre RDP and VNC use:
@@ -352,12 +360,21 @@ impl EmbeddedWebWidget {
             &toolbar_revealer,
             crate::embedded_toolbar_overflow::RevealHandle::TopTrailing,
         );
+        // Unlike RDP and VNC, this viewer has its `WebConfig` while it is being
+        // built, so the choice is applied here rather than through a setter.
+        toolbar_auto_hide.set_enabled(!config.hide_floating_toolbar);
 
         // Build main container: progress bar + reconnect banner + overlay (webview + toolbar)
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         container.append(&progress_bar);
         container.append(&reconnect_banner);
         container.append(&overlay);
+        // The marker travels with the container into a split panel, where the
+        // adapter reads it before adding its own corner-button overlay.
+        crate::embedded_toolbar_overflow::set_floating_overlays_suppressed(
+            &container,
+            config.hide_floating_toolbar,
+        );
 
         // No `set_focus_child` chain here on purpose. A pair of those calls used
         // to sit at this spot, justified as making `container.grab_focus()` reach

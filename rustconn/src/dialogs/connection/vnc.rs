@@ -32,6 +32,7 @@ pub(super) fn create_vnc_options() -> (
     adw::SwitchRow,
     adw::SwitchRow,
     adw::SwitchRow,
+    adw::SwitchRow,
     DropDown,
     Entry,
     DropDown,
@@ -244,6 +245,17 @@ pub(super) fn create_vnc_options() -> (
         .build();
     features_group.add(&show_local_cursor_switch);
 
+    // Floating session toolbar (issue #260). See the RDP panel for why the
+    // switch is positive while the stored field reads `hide_floating_toolbar`.
+    let floating_toolbar_switch = adw::SwitchRow::builder()
+        .title(i18n("Session Toolbar"))
+        .subtitle(i18n(
+            "Turn off to remove the floating toolbar and its reveal arrow. Ctrl+Alt+Del and the toolbar buttons go with it.",
+        ))
+        .active(true)
+        .build();
+    features_group.add(&floating_toolbar_switch);
+
     // Accept certificate (for VeNCrypt/TLS connections with self-signed certs)
     let accept_certificate_switch = adw::SwitchRow::builder()
         .title(i18n("Accept Certificate"))
@@ -338,6 +350,7 @@ pub(super) fn create_vnc_options() -> (
         scaling_switch,
         clipboard_switch,
         show_local_cursor_switch,
+        floating_toolbar_switch,
         scale_override_dropdown,
         custom_args_entry,
         vnc_jump_host_dropdown,

@@ -773,6 +773,12 @@ The embedded RDP session provides a floating toolbar with actions like Copy, Pas
 
 The toolbar is fully transparent and pass-through when hidden — it does not block interaction with the remote desktop or window controls. In narrow panels (split view or small windows), secondary actions collapse into an overflow "⋯" menu while Fit Resolution and Ctrl+Alt+Del stay directly visible.
 
+**Turning the toolbar off completely:** switch off **Session Toolbar** in the connection dialog's Features section. The toolbar and its arrow indicator are then absent for that connection — there is nothing left to reveal and nothing to hit by accident, which matters when the window behind the session has controls of its own near the top edge. In a split pane the panel's own corner buttons are suppressed for that session too (see [Split View](#split-view)).
+
+Know what goes with it. **Ctrl+Alt+Del has no keyboard route of its own**, and neither do Fit Resolution, Autotype, Scripts, Quick Actions or Save Files — all of those live only on the toolbar. Copy and Paste survive, because Ctrl+C / Ctrl+V reach the remote session directly, as does clipboard sync. Leave the toolbar on if you ever need to unlock a Windows login screen from inside the session.
+
+The setting is per connection and defaults to on, so existing connections are unaffected. Quick Connect, which has no saved profile, always keeps the toolbar. It can also be set from the CLI for VNC and Web connections (`--vnc-toolbar false`, `--web-toolbar false`); RDP has no CLI protocol options at all, so use the connection editor there.
+
 #### Mouse Jiggler
 
 Keeps the remote RDP session awake and prevents the remote desktop from locking by sending periodic input.
@@ -1027,6 +1033,8 @@ Create the `freerdp` directory first if it does not exist, make sure the JSON is
 
 VNC connections support embedded (vnc-rs) or external (TigerVNC) client modes. Configure encoding (Auto/Tight/ZRLE/Hextile/Raw/CopyRect), compression level, quality level, display scale override, view-only mode, scaling, and clipboard sharing in the VNC protocol tab.
 
+An embedded VNC session carries the same floating toolbar as RDP — Copy, Paste and Ctrl+Alt+Del behind an arrow indicator at the top centre — with the same **Session Toolbar** switch in the Features section to remove it entirely. See [Session Toolbar](#session-toolbar) under RDP for how the reveal works and what becomes unreachable when it is off.
+
 ### SPICE
 
 SPICE connections support TLS encryption, CA certificate validation, USB redirection, clipboard sharing, image compression (Auto/Off/GLZ/LZ/QUIC), proxy URL, and shared folders. SPICE opens in an external viewer (remote-viewer / virt-viewer).
@@ -1265,8 +1273,13 @@ The embedded browser provides a full browsing experience inside a RustConn tab o
 - **Zoom In / Zoom Out** buttons with dynamic tooltip showing current zoom percentage (e.g. "Zoom in (120%)")
 - **Menu (⋯)** button with: Copy URL, Open in System Browser, Zoom Reset (100%), Clear Session Data
 
+**Floating Toolbar:**
+The toolbar floats over the page rather than taking a strip of its own, so the page gets the full height of the tab. It appears briefly when the page connects and then hides after 2 seconds of inactivity; hover or click the arrow indicator in the top-right corner to bring it back. The corner rather than the centre on purpose — a site's logo, navigation and search live across the top centre, and an indicator there would swallow clicks meant for the page.
+
+To remove it entirely, switch off **Navigation Toolbar** in the connection dialog's Embedded Browser Settings. The address bar goes with it, but the keyboard routes do not: Alt+← / Alt+→ still navigate, Ctrl+R reloads, Ctrl+L copies the current URL, and Ctrl+Plus / Ctrl+Minus / Ctrl+0 still zoom. The setting applies to embedded mode only — System and Custom browser modes hand the URL to another program, which has its own chrome.
+
 **Responsive Toolbar:**
-When the toolbar is narrow (e.g. in split view, < 500px), secondary buttons (Home, Autofill, Zoom In, Zoom Out) are hidden automatically. All actions remain reachable via the "⋯" menu button.
+When the panel is too narrow for the assembled toolbar, secondary actions (Home, Autofill, Zoom In, Zoom Out) move into the "⋯" menu button instead of being clipped, so every action stays reachable at any width. Back, Forward, Reload, the URL bar and the menu itself stay in place. The threshold is measured from the toolbar's own requested width rather than being a fixed pixel count, so it follows your theme's button metrics.
 
 **Loading Progress Bar:**
 A thin progress bar appears under the toolbar during page loads, showing real-time load progress. It disappears automatically when the page finishes loading.
@@ -1410,6 +1423,8 @@ Sessions shown through an external viewer (xfreerdp, vncviewer, or an external S
 Embedded viewers adapt to narrow panels: the toolbar collapses its secondary actions into an overflow ("⋯") menu (Fit resolution and Ctrl+Alt+Del stay visible), and the remote desktop rescales to fully fill a small or oddly-shaped panel. The same adaptation applies to a single embedded tab in a small or narrow application window. Keystroke broadcast (Ctrl+Shift+B) applies only to terminals — its toggle appears when a split holds at least two terminal sessions and a terminal panel is focused, and mirroring never targets an embedded remote desktop.
 
 Each occupied panel has a small arrow indicator (◂) at the top-right corner. Hovering or clicking it reveals the panel action buttons: **Remove from Split** (returns the session to its own tab without closing it) and **Close** (terminates the session). The buttons hide automatically after a short delay, keeping the view uncluttered and avoiding overlap with the session toolbar.
+
+A session whose **Session Toolbar** / **Navigation Toolbar** is switched off gets no corner indicator either — a connection that asked for an unobstructed view means both overlays. Right-clicking the panel still offers **Remove from Split**, **Remove Split** and **Close Connection**, so nothing becomes unreachable.
 
 ### Detached Session Windows
 

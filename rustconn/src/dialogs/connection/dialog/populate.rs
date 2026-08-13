@@ -1134,6 +1134,9 @@ impl ConnectionDialog {
         self.rdp_clipboard_check.set_active(rdp.clipboard_enabled);
         self.rdp_show_local_cursor_check
             .set_active(rdp.show_local_cursor);
+        // Inverted: the switch offers the toolbar, the field hides it.
+        self.rdp_floating_toolbar_check
+            .set_active(!rdp.hide_floating_toolbar);
         self.rdp_jiggler_check.set_active(rdp.jiggler_enabled);
         self.rdp_jiggler_interval_spin
             .set_value(f64::from(rdp.jiggler_interval_secs));
@@ -1266,6 +1269,9 @@ impl ConnectionDialog {
         self.vnc_clipboard_check.set_active(vnc.clipboard_enabled);
         self.vnc_show_local_cursor_check
             .set_active(vnc.show_local_cursor);
+        // Inverted: the switch offers the toolbar, the field hides it.
+        self.vnc_floating_toolbar_check
+            .set_active(!vnc.hide_floating_toolbar);
         self.vnc_scale_override_dropdown
             .set_selected(vnc.scale_override.index());
 
@@ -1533,6 +1539,9 @@ impl ConnectionDialog {
             .set_selected(combo_index_from_browser_mode(web.browser_mode));
         self.web_javascript_switch
             .set_active(web.javascript_enabled);
+        // Inverted: the switch offers the toolbar, the field hides it.
+        self.web_floating_toolbar_switch
+            .set_active(!web.hide_floating_toolbar);
         if let Some(ref user_agent) = web.user_agent {
             self.web_user_agent_row.set_text(user_agent);
         }

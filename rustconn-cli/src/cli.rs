@@ -381,6 +381,10 @@ pub enum Commands {
         #[arg(long)]
         vnc_no_clipboard: bool,
 
+        /// Show the floating session toolbar in the embedded VNC viewer [default: true]
+        #[arg(long, value_name = "BOOL", num_args = 0..=1, default_missing_value = "false")]
+        vnc_toolbar: Option<bool>,
+
         /// Custom VNC client argument (repeatable)
         #[arg(long, value_name = "ARG")]
         vnc_custom_arg: Vec<String>,
@@ -476,6 +480,10 @@ pub enum Commands {
         /// Accept invalid TLS certificates (self-signed, expired) in embedded browser [true/false]
         #[arg(long, value_name = "BOOL", num_args = 0..=1, default_missing_value = "true")]
         accept_invalid_certs: Option<bool>,
+
+        /// Show the floating navigation toolbar in the embedded browser [default: true]
+        #[arg(long, value_name = "BOOL", num_args = 0..=1, default_missing_value = "false")]
+        web_toolbar: Option<bool>,
 
         /// Open in private/incognito mode (custom browser only)
         #[arg(long)]
@@ -879,6 +887,10 @@ pub enum Commands {
         #[arg(long)]
         vnc_no_clipboard: bool,
 
+        /// Show the floating session toolbar in the embedded VNC viewer [default: true]
+        #[arg(long, value_name = "BOOL", num_args = 0..=1, default_missing_value = "false")]
+        vnc_toolbar: Option<bool>,
+
         /// Custom VNC client argument (repeatable)
         #[arg(long, value_name = "ARG")]
         vnc_custom_arg: Vec<String>,
@@ -974,6 +986,10 @@ pub enum Commands {
         /// Accept invalid TLS certificates (self-signed, expired) in embedded browser [true/false]
         #[arg(long, value_name = "BOOL", num_args = 0..=1, default_missing_value = "true")]
         accept_invalid_certs: Option<bool>,
+
+        /// Show the floating navigation toolbar in the embedded browser [default: true]
+        #[arg(long, value_name = "BOOL", num_args = 0..=1, default_missing_value = "false")]
+        web_toolbar: Option<bool>,
 
         /// Open in private/incognito mode (custom browser only)
         #[arg(long)]

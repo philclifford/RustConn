@@ -186,6 +186,7 @@ pub struct ConnectionDialog {
     rdp_ignore_certificate_check: adw::SwitchRow,
     rdp_clipboard_check: adw::SwitchRow,
     rdp_show_local_cursor_check: adw::SwitchRow,
+    rdp_floating_toolbar_check: adw::SwitchRow,
     rdp_jiggler_check: adw::SwitchRow,
     rdp_jiggler_interval_spin: gtk4::SpinButton,
     rdp_autotype_delay_spin: gtk4::SpinButton,
@@ -212,6 +213,7 @@ pub struct ConnectionDialog {
     vnc_scaling_check: adw::SwitchRow,
     vnc_clipboard_check: adw::SwitchRow,
     vnc_show_local_cursor_check: adw::SwitchRow,
+    vnc_floating_toolbar_check: adw::SwitchRow,
     vnc_scale_override_dropdown: DropDown,
     vnc_custom_args_entry: Entry,
     vnc_jump_host_dropdown: DropDown,
@@ -307,6 +309,7 @@ pub struct ConnectionDialog {
     web_browser_mode_combo: adw::ComboRow,
     web_javascript_switch: adw::SwitchRow,
     web_user_agent_row: adw::EntryRow,
+    web_floating_toolbar_switch: adw::SwitchRow,
     // Variables fields
     variables_list: ListBox,
     variables_rows: Rc<RefCell<Vec<LocalVariableRow>>>,

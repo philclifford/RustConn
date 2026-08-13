@@ -156,6 +156,24 @@ impl EmbeddedVncWidget {
         &self.drawing_area
     }
 
+    /// Applies the connection's `hide_floating_toolbar` choice (issue #260).
+    ///
+    /// A setter rather than a constructor argument because the widget is built
+    /// before its config exists: `session::vnc` calls
+    /// [`EmbeddedVncWidget::new`] in its own constructor and only sees a
+    /// `VncConfig` when a connection is attempted. Call this before `connect`,
+    /// so no reveal path has run yet.
+    ///
+    /// The marker on the container is for the split view, which wraps a session
+    /// in its own corner-button overlay and cannot see the connection.
+    pub fn set_toolbar_enabled(&self, enabled: bool) {
+        self.toolbar_auto_hide.set_enabled(enabled);
+        crate::embedded_toolbar_overflow::set_floating_overlays_suppressed(
+            &self.container,
+            !enabled,
+        );
+    }
+
     /// Returns the current connection state
     #[must_use]
     pub fn state(&self) -> VncConnectionState {

@@ -706,6 +706,22 @@ impl SplitViewAdapter {
             widget.set_hexpand(true);
             widget.set_vexpand(true);
 
+            // A connection that turned off its floating toolbar gets no floating
+            // panel chrome either (issue #260). Both are the same complaint from
+            // the user's side — a small round button parked over the session,
+            // easy to hit by accident — and in a split pane there were two of
+            // them, the viewer's reveal handle and this one. The two actions stay
+            // available on the panel's right-click menu, which lives on
+            // `panel_widget` rather than on this overlay.
+            //
+            // The answer comes from the widget itself because this function
+            // cannot ask anything else: it takes an opaque widget, knows no
+            // protocol, and runs again on every layout rebuild and drop.
+            if crate::embedded_toolbar_overflow::floating_overlays_suppressed(widget) {
+                panel_widget.append(widget);
+                return;
+            }
+
             // Overlay the panel's corner buttons so a session shown in a split
             // pane can be acted on directly — a split guest has no standalone
             // tab to right-click.

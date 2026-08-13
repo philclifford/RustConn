@@ -2508,6 +2508,11 @@ impl TemplateDialog {
             ignore_certificate: false,
             clipboard_enabled: true,
             show_local_cursor: true,
+            // ponytail: the template editor does not expose the floating
+            // toolbar toggle (issue #260) — same reasoning as printer
+            // redirection above. A template produces a connection with the
+            // toolbar, and the connection editor turns it off.
+            hide_floating_toolbar: false,
             jiggler_enabled: false,
             jiggler_interval_secs: 60,
             jump_host_id: None,
@@ -2574,6 +2579,8 @@ impl TemplateDialog {
             custom_args,
             scale_override: ScaleOverride::default(),
             show_local_cursor: true,
+            // ponytail: not exposed in the template editor; see the RDP builder.
+            hide_floating_toolbar: false,
             jump_host_id: None,
             accept_certificate: false,
             mptcp: false,

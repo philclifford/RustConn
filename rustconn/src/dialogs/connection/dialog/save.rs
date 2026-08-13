@@ -97,6 +97,7 @@ impl ConnectionDialog {
         rdp_ignore_certificate_check: &adw::SwitchRow,
         rdp_clipboard_check: &adw::SwitchRow,
         rdp_show_local_cursor_check: &adw::SwitchRow,
+        rdp_floating_toolbar_check: &adw::SwitchRow,
         rdp_jiggler_check: &adw::SwitchRow,
         rdp_jiggler_interval_spin: &SpinButton,
         rdp_autotype_delay_spin: &SpinButton,
@@ -121,6 +122,7 @@ impl ConnectionDialog {
         vnc_scaling_check: &adw::SwitchRow,
         vnc_clipboard_check: &adw::SwitchRow,
         vnc_show_local_cursor_check: &adw::SwitchRow,
+        vnc_floating_toolbar_check: &adw::SwitchRow,
         vnc_scale_override_dropdown: &DropDown,
         vnc_custom_args_entry: &Entry,
         vnc_jump_host_dropdown: &DropDown,
@@ -195,6 +197,7 @@ impl ConnectionDialog {
         web_browser_mode_combo: &adw::ComboRow,
         web_javascript_switch: &adw::SwitchRow,
         web_user_agent_row: &adw::EntryRow,
+        web_floating_toolbar_switch: &adw::SwitchRow,
         variables_rows: &Rc<RefCell<Vec<LocalVariableRow>>>,
         logging_tab: &logging_tab::LoggingTab,
         expect_rules: &Rc<RefCell<Vec<ExpectRule>>>,
@@ -299,6 +302,7 @@ impl ConnectionDialog {
         let rdp_ignore_certificate_check = rdp_ignore_certificate_check.clone();
         let rdp_clipboard_check = rdp_clipboard_check.clone();
         let rdp_show_local_cursor_check = rdp_show_local_cursor_check.clone();
+        let rdp_floating_toolbar_check = rdp_floating_toolbar_check.clone();
         let rdp_jiggler_check = rdp_jiggler_check.clone();
         let rdp_jiggler_interval_spin = rdp_jiggler_interval_spin.clone();
         let rdp_autotype_delay_spin = rdp_autotype_delay_spin.clone();
@@ -323,6 +327,7 @@ impl ConnectionDialog {
         let vnc_scaling_check = vnc_scaling_check.clone();
         let vnc_clipboard_check = vnc_clipboard_check.clone();
         let vnc_show_local_cursor_check = vnc_show_local_cursor_check.clone();
+        let vnc_floating_toolbar_check = vnc_floating_toolbar_check.clone();
         let vnc_scale_override_dropdown = vnc_scale_override_dropdown.clone();
         let vnc_custom_args_entry = vnc_custom_args_entry.clone();
         let vnc_performance_mode_dropdown = vnc_performance_mode_dropdown.clone();
@@ -398,6 +403,7 @@ impl ConnectionDialog {
         let web_browser_mode_combo = web_browser_mode_combo.clone();
         let web_javascript_switch = web_javascript_switch.clone();
         let web_user_agent_row = web_user_agent_row.clone();
+        let web_floating_toolbar_switch = web_floating_toolbar_switch.clone();
         let variables_rows = variables_rows.clone();
         let logging_enabled_switch = logging_tab.enabled_switch.clone();
         let logging_path_entry = logging_tab.path_entry.clone();
@@ -515,6 +521,7 @@ impl ConnectionDialog {
                 rdp_ignore_certificate_check: &rdp_ignore_certificate_check,
                 rdp_clipboard_check: &rdp_clipboard_check,
                 rdp_show_local_cursor_check: &rdp_show_local_cursor_check,
+                rdp_floating_toolbar_check: &rdp_floating_toolbar_check,
                 rdp_jiggler_check: &rdp_jiggler_check,
                 rdp_jiggler_interval_spin: &rdp_jiggler_interval_spin,
                 rdp_autotype_delay_spin: &rdp_autotype_delay_spin,
@@ -538,6 +545,7 @@ impl ConnectionDialog {
                 vnc_scaling_check: &vnc_scaling_check,
                 vnc_clipboard_check: &vnc_clipboard_check,
                 vnc_show_local_cursor_check: &vnc_show_local_cursor_check,
+                vnc_floating_toolbar_check: &vnc_floating_toolbar_check,
                 vnc_scale_override_dropdown: &vnc_scale_override_dropdown,
                 vnc_custom_args_entry: &vnc_custom_args_entry,
                 vnc_jump_host_dropdown: &vnc_jump_host_dropdown,
@@ -612,6 +620,7 @@ impl ConnectionDialog {
                 web_browser_mode_combo: &web_browser_mode_combo,
                 web_javascript_switch: &web_javascript_switch,
                 web_user_agent_row: &web_user_agent_row,
+                web_floating_toolbar_switch: &web_floating_toolbar_switch,
                 local_variables: &local_variables,
                 logging_tab: &logging_tab::LoggingTab {
                     enabled_switch: logging_enabled_switch.clone(),

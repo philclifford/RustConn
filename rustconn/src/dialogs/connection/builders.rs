@@ -107,6 +107,7 @@ pub(super) struct ConnectionDialogData<'a> {
     pub rdp_ignore_certificate_check: &'a adw::SwitchRow,
     pub rdp_clipboard_check: &'a adw::SwitchRow,
     pub rdp_show_local_cursor_check: &'a adw::SwitchRow,
+    pub rdp_floating_toolbar_check: &'a adw::SwitchRow,
     pub rdp_jiggler_check: &'a adw::SwitchRow,
     pub rdp_jiggler_interval_spin: &'a SpinButton,
     pub rdp_autotype_delay_spin: &'a SpinButton,
@@ -131,6 +132,7 @@ pub(super) struct ConnectionDialogData<'a> {
     pub vnc_scaling_check: &'a adw::SwitchRow,
     pub vnc_clipboard_check: &'a adw::SwitchRow,
     pub vnc_show_local_cursor_check: &'a adw::SwitchRow,
+    pub vnc_floating_toolbar_check: &'a adw::SwitchRow,
     pub vnc_scale_override_dropdown: &'a DropDown,
     pub vnc_custom_args_entry: &'a Entry,
     pub vnc_jump_host_dropdown: &'a DropDown,
@@ -211,6 +213,7 @@ pub(super) struct ConnectionDialogData<'a> {
     pub web_browser_mode_combo: &'a adw::ComboRow,
     pub web_javascript_switch: &'a adw::SwitchRow,
     pub web_user_agent_row: &'a adw::EntryRow,
+    pub web_floating_toolbar_switch: &'a adw::SwitchRow,
     pub local_variables: &'a HashMap<String, Variable>,
     pub logging_tab: &'a logging_tab::LoggingTab,
     pub expect_rules: &'a Vec<ExpectRule>,
@@ -1268,6 +1271,7 @@ impl ConnectionDialogData<'_> {
             user_agent,
             zoom_level: 1.0,
             accept_invalid_certs: false,
+            hide_floating_toolbar: !self.web_floating_toolbar_switch.is_active(),
         }
     }
 
@@ -1564,6 +1568,7 @@ impl ConnectionDialogData<'_> {
             ignore_certificate: self.rdp_ignore_certificate_check.is_active(),
             clipboard_enabled: self.rdp_clipboard_check.is_active(),
             show_local_cursor: self.rdp_show_local_cursor_check.is_active(),
+            hide_floating_toolbar: !self.rdp_floating_toolbar_check.is_active(),
             jiggler_enabled: self.rdp_jiggler_check.is_active(),
             jiggler_interval_secs: self.rdp_jiggler_interval_spin.value() as u32,
             jump_host_id: {
@@ -1650,6 +1655,7 @@ impl ConnectionDialogData<'_> {
             custom_args,
             scale_override: ScaleOverride::from_index(self.vnc_scale_override_dropdown.selected()),
             show_local_cursor: self.vnc_show_local_cursor_check.is_active(),
+            hide_floating_toolbar: !self.vnc_floating_toolbar_check.is_active(),
             jump_host_id: {
                 let idx = self.vnc_jump_host_dropdown.selected() as usize;
                 let conns = self.vnc_connections_data.borrow();

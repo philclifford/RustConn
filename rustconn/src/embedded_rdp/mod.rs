@@ -1515,6 +1515,24 @@ impl EmbeddedRdpWidget {
         self.toolbar_auto_hide.show_briefly();
     }
 
+    /// Applies the connection's `hide_floating_toolbar` choice (issue #260).
+    ///
+    /// A setter rather than a constructor argument because the widget is built
+    /// before its config exists: `window::rdp_vnc` calls
+    /// [`EmbeddedRdpWidget::new`] and only then assembles the `RdpConfig`. Call
+    /// this before [`show_toolbar`](Self::show_toolbar) or `connect`, whichever
+    /// comes first, so no reveal path has run yet.
+    ///
+    /// The marker on the container is for the split view, which wraps a session
+    /// in its own corner-button overlay and cannot see the connection.
+    pub fn set_toolbar_enabled(&self, enabled: bool) {
+        self.toolbar_auto_hide.set_enabled(enabled);
+        crate::embedded_toolbar_overflow::set_floating_overlays_suppressed(
+            &self.container,
+            !enabled,
+        );
+    }
+
     /// Queues a redraw of the drawing area
     pub fn queue_draw(&self) {
         self.drawing_area.queue_draw();

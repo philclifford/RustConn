@@ -810,10 +810,22 @@ fn start_embedded_rdp_session(
     let sidebar_for_connect = sidebar.clone();
     let conn_name_owned = conn_name.to_string();
 
-    // Show the toolbar BEFORE measuring — its height must be accounted for in
-    // the initial resolution request. Otherwise the server allocates a desktop
-    // that is ~46px taller than the drawing area, requiring an immediate snap
-    // resize after connection (causing 3–4 redundant repaints and softened image).
+    // A connection can opt out of the floating toolbar entirely (issue #260).
+    // Applied before anything reveals it, and before the split view can wrap
+    // this session in its own corner buttons.
+    widget_for_connect.set_toolbar_enabled(!rdp_config.hide_floating_toolbar);
+
+    // Reveal the toolbar briefly so the user sees the actions that are
+    // available while the connection is being established; the auto-hide timer
+    // takes over once connected, and this is a no-op when the connection asked
+    // for no toolbar.
+    //
+    // This used to be justified by the measurement below — "its height must be
+    // accounted for in the initial resolution request, otherwise the server
+    // allocates a desktop ~46px taller than the drawing area". That stopped
+    // being true when the toolbar became an overlay child of the viewer
+    // (issue #259): it floats over the `DrawingArea` and consumes no vertical
+    // space, so revealing it cannot change the size measured 100 ms from now.
     widget_for_connect.show_toolbar();
 
     glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
