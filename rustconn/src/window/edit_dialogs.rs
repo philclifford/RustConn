@@ -346,9 +346,10 @@ pub fn rename_selected_item(
         }
 
         if is_group {
-            // Rename group
+            // Rename group — only check siblings under the same parent
             let state_ref = state_clone.borrow();
-            if state_ref.group_exists_by_name(&new_name) {
+            let parent_id = state_ref.get_group(id).and_then(|g| g.parent_id);
+            if state_ref.sibling_group_exists(&new_name, parent_id, Some(id)) {
                 drop(state_ref);
                 alert::show_validation_error(
                     &window_clone,

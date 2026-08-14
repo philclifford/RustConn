@@ -75,6 +75,60 @@ non-negotiable parts live here where they are always loaded.
   delegate the run to the `rust-quality-check` sub-agent, or write to a log file
   and read it with the file-reading tool.
 - Tests take ~120 s (argon2 property tests in debug). That is normal, not a hang.
+- **Never wait with `sleep`.** See the next section. A sleep cannot observe
+  another terminal, and if the terminal is busy the line queues behind the
+  running job instead of executing.
+- **Pass an explicit `timeout`** to any cargo build or test: the tool's default
+  is 120 000 ms and the workspace test run is ~120 s, so the default is a
+  coin flip on losing the output while the process stays alive.
+
+The `bash-serialization-guard` hook (`.kiro/hooks/`) enforces the four rules
+above that are mechanically checkable — sleep waiting, piped cargo output, a
+second concurrent cargo, and a cargo run with no timeout headroom. It fails open,
+so it is a faster failure, never a substitute for knowing the rules.
+
+## Waiting Without Blocking the Terminal
+
+The expensive failure is not a slow build, it is trying to wait for one. The
+sequence that burns a session: `cargo test --workspace` starts with the default
+120 s timeout → the tool returns while cargo is still running → the wait looks
+necessary → `sleep 115; echo W10` is sent to the *same* terminal → bash is not
+reading stdin while a foreground job runs, so the line sits in the tty buffer,
+and so do the next eighteen → cargo exits, bash drains the buffer and runs every
+queued sleep back to back. Nineteen queued `sleep 115` is 36 minutes of nothing,
+and each one looks like a command that legitimately timed out.
+
+Three ways out, cheapest first.
+
+**1. Wait inside the one tool call.** Almost always the right answer.
+
+```bash
+cd /home/totoshko88/Documents/RustConn || exit 1
+cargo test --workspace > /tmp/rc-test.log 2>&1
+```
+
+with `timeout=900000`, then read `/tmp/rc-test.log` with the file-reading tool
+(it takes line ranges, so a 20 k-line log costs nothing).
+
+**2. Take a handle when you want to keep working.** Poll the filesystem, never
+the clock — the run is finished exactly when the `.rc` file appears:
+
+```bash
+cd /home/totoshko88/Documents/RustConn || exit 1
+rm -f /tmp/rc-test.log /tmp/rc-test.rc
+nohup sh -c 'cargo test --workspace > /tmp/rc-test.log 2>&1; echo $? > /tmp/rc-test.rc' >/dev/null 2>&1 &
+```
+
+Check it by reading `/tmp/rc-test.rc` with the file-reading tool between other
+work. `control_bash_process` + `get_process_output` is the same idea with a
+managed terminal; if you use it, stop the process when done.
+
+**3. Delegate.** The `rust-quality-check` sub-agent owns its own terminal, which
+also removes the second-terminal problem entirely.
+
+Whatever the route: **once a terminal has a live foreground job, it is not
+yours.** Do not send it another command — not a status check, not an `echo`, not
+a `^C` follow-up. Read the log file instead.
 
 ## Cargo Traps in This Workspace
 

@@ -744,7 +744,7 @@ impl AppState {
         // Create parent group for this import source
         // Use generate_unique_group_name to handle duplicate names
         let base_group_name = format!("{source_name} Import");
-        let parent_group_name = self.generate_unique_group_name(&base_group_name);
+        let parent_group_name = self.generate_unique_group_name(&base_group_name, None);
         let parent_group_id = match self.connection_manager.create_group(parent_group_name) {
             Ok(id) => Some(id),
             Err(_) => {

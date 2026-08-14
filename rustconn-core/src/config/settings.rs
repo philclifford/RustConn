@@ -731,6 +731,14 @@ pub struct UiSettings {
     /// host (issue #242).
     #[serde(default)]
     pub double_click_opens_new_session: bool,
+    /// Show connection name as a compact header on each split-view pane.
+    ///
+    /// Default `false`. When enabled, a thin colored banner with the connection
+    /// name appears at the top of every pane in a split layout, making it easy
+    /// to identify which pane belongs to which connection at a glance — useful
+    /// with 3+ panes side by side (issue #277).
+    #[serde(default)]
+    pub show_split_pane_labels: bool,
 }
 
 impl UiSettings {
@@ -818,6 +826,7 @@ impl Default for UiSettings {
             terminal_passthrough_ctrl: true,
             window_title_shows_connection: false,
             double_click_opens_new_session: false,
+            show_split_pane_labels: false,
         }
     }
 }

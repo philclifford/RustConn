@@ -5,6 +5,45 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.1] - 2026-08-14
+
+### Added
+
+- **Settings ▸ Interface ▸ Window — show connection name in split panes (issue [#277](https://github.com/totoshko88/RustConn/issues/277))** — a new toggle adds a compact colored header at the top of each split-view pane displaying the connection name and protocol. Off by default; useful when 3+ panes are open side by side and the color indicator alone is not enough to identify which pane belongs to which connection at a glance. The header background matches the panel's color (15% opacity), shrinks in compact mode, and updates live when a session is moved between panes via drag-and-drop or Select Tab.
+
+### Fixed
+
+- **Group names are now unique per parent folder, not globally (issue [#291](https://github.com/totoshko88/RustConn/issues/291))** — RustConn rejected creating a group whose name existed anywhere in the tree, even under a different parent. Hierarchies like `Site A/RDP` + `Site B/RDP` were impossible, and CSV imports silently merged unrelated branches. Uniqueness is now enforced only among siblings sharing the same parent. Moving or renaming a group into a parent that already contains a child with the same name is still rejected.
+
+- **A split pane could not be closed at all when its connection had the floating toolbar switched off (issue [#260](https://github.com/totoshko88/RustConn/issues/260) follow-up)** — 0.20.0 gave RDP, VNC and the embedded browser a switch that removes the session toolbar, and marked the viewer with a `no-floating-overlays` CSS class so the split view would leave it alone too. The split view read that marker before adding its own corner-button overlay, so **Remove from Split** and **Close session** disappeared along with the toolbar. Those two buttons are the split view's, not the viewer's, and they are the only discoverable way to dismantle a pane: the right-click menu still carried the actions, but a pane the user cannot see a way out of is a pane they cannot close. The corner buttons are unconditional now, and the marker — which had exactly one reader — is gone with the gate rather than left behind as state nothing consumes. What #260 asked for is unaffected: the viewer's own toolbar and its 44×44 reveal handle are still switched off inside the viewer, before it ever reaches the split view.
+
+- **RDP: xrdp hosts no longer stop at their own greeter after a successful NLA exchange ([#290](https://github.com/totoshko88/RustConn/pull/290))** — the connector hardcoded `autologon: false`, so `INFO_AUTOLOGON` was never set in the Client Info PDU. Windows ignored this (session established via CredSSP/NLA), but xrdp only skips its login screen when the flag is present. Connecting to a Linux host got past authentication and then paused at the xrdp greeter asking for the same credentials again. FreeRDP sets the flag whenever credentials are supplied, which is why the same host logged straight in from Remmina. The flag is now set when both a username and a non-empty password are available.
+
+- **Opening the connection dialog crashed the application if an SSH agent key had a non-ASCII comment ([#278](https://github.com/totoshko88/RustConn/pull/278))** — `format_agent_key_short` sliced the comment at byte offsets, but agent key comments are free text from `ssh-keygen -C`. An accented letter or emoji at the 10-byte boundary panicked inside a GTK signal handler, aborting the entire process and taking every open session with it. The function now measures and cuts in characters.
+
+- **Vault credentials were not found for connections inside a group ([#289](https://github.com/totoshko88/RustConn/pull/289))** — saving stored the credential under the hierarchical key `RustConn/{group}/{name} ({protocol})`, but resolving searched only the flat `{name} ({protocol})`. Any connection in a folder prompted for a password on every connect attempt despite the secret sitting in the keyring. The hierarchical key is now tried first, with a fallback to the flat key for credentials written by older releases.
+
+- **Minimizing to tray silently destroyed port forwards, recordings and external viewers ([#279](https://github.com/totoshko88/RustConn/pull/279))** — the close handler ran `flush_active_recordings()`, `tunnel_manager.stop_all()` and `external_session_registry().shutdown()` unconditionally, before the minimize-to-tray decision was reached. Closing the window with tray enabled hid it and then tore down everything behind it. The tray decision now fires first, and the session snapshot is saved on that path so a subsequent force-kill does not lose session state.
+
+- **A post-disconnect automation task froze the entire application for up to 60 seconds ([#281](https://github.com/totoshko88/RustConn/pull/281))** — the task ran via `block_on()` directly in the `child-exited` handler on the GTK main thread. An arbitrary user command (script, ssh, curl to an unreachable host) blocked every other terminal, RDP and VNC tab until it finished or the 60-second ceiling fired. The work now runs on a background thread via `spawn_blocking_with_callback`.
+
+- **Remote session recordings were lost when quitting the application ([#282](https://github.com/totoshko88/RustConn/pull/282))** — `flush_active_recordings` used `spawn_blocking_with_callback`, whose 16 ms poll callback is never reached once the main loop stops on the quit path. The SCP result was dropped, the `.meta.json` sidecar was never written, and the recording disappeared. A new `stop_recording_blocking` variant runs the retrieval inline on shutdown, bounded by `ConnectTimeout=5` so an unreachable host cannot hang the window.
+
+- **Web embedded: links requesting a new view (target="_blank", window.open) did nothing ([#288](https://github.com/totoshko88/RustConn/pull/288))** — nothing was connected to WebKit's `create` signal, so every request for a second web view was silently dropped. On SAPUI5-like pages whose links use `window.open()`, every link appeared broken. The requested URI is now loaded in the same view, preserving the authenticated session.
+
+- **Network monitor reported a false outage on every Flatpak launch ([#284](https://github.com/totoshko88/RustConn/pull/284))** — `GNetworkMonitorPortal` emits an initial `network-changed` signal ~6 ms after creation as it learns the host's real state. This was treated as a real transition, showing "reconnecting affected sessions" with nothing wrong. Additionally, the debounce erased a down→up flap shorter than 3 s, preventing the recovery sweep from running. The first signal is now treated as a baseline, and debounce only collapses signals that classify the same way.
+
+- **A session closed with `exit` was silently reconnected on the next Wi-Fi roam ([#285](https://github.com/totoshko88/RustConn/pull/285))** — the reconnect sweep picked victims by asking whether the reconnect banner was visible, but a banner is not consent: it is also shown for a shell the user closed with `exit`, for a failed login and for a rapid crash. The disconnect path now records its verdict, and the sweep requires explicit eligibility alongside the visible banner.
+
+### Localisation
+
+- **Three strings added this release reached only Ukrainian** — the two "Show connection name in split panes" labels were translated in `uk` alone, so the other 15 locales rendered them in English; the resume toast "Reconnecting sessions after sleep" was worse off still, never having been extracted into `po/rustconn.pot` at all. Now in the POT and translated in all 16 locales. This is the third release in a row to find strings that shipped untranslated while `scripts/check-po-complete.sh` reported every catalogue at 100%, because that gate reads the committed `.po` files and never regenerates the POT to compare against — the gap 0.20.0's changelog recorded as "real and outliving this fix", and it still is.
+
+### Dependencies
+
+- **Updated**: cc 1.4.2 → 1.4.3, find-msvc-tools 0.1.10 → 0.1.11, inotify 0.11.4 → 0.11.5, libredox 0.1.19 → 0.1.20, pkg-config 0.3.33 → 0.3.34, safe_arch 1.1.0 → 1.2.0
+- **ICU / zerovec family**: icu_collections, icu_locale_core, icu_normalizer, icu_normalizer_data, icu_properties, icu_properties_data and icu_provider 2.2.0 → 2.3.0, alongside litemap 0.8.2 → 0.8.3, potential_utf 0.1.5 → 0.1.6, tinystr 0.8.3 → 0.8.4, writeable 0.6.3 → 0.6.4, zerotrie 0.2.4 → 0.2.5, zerovec 0.11.6 → 0.11.7 and zerovec-derive 0.11.3 → 0.11.4. All transitive, reached through `idna` → `url`; no direct dependency changed.
+
 ## [0.20.0] - 2026-08-13
 
 ### Added

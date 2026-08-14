@@ -164,14 +164,11 @@ impl EmbeddedVncWidget {
     /// `VncConfig` when a connection is attempted. Call this before `connect`,
     /// so no reveal path has run yet.
     ///
-    /// The marker on the container is for the split view, which wraps a session
-    /// in its own corner-button overlay and cannot see the connection.
+    /// Scoped to this viewer's own toolbar and reveal handle. The split view's
+    /// panel corner buttons are not affected: they are the only discoverable way
+    /// to close or detach a pane.
     pub fn set_toolbar_enabled(&self, enabled: bool) {
         self.toolbar_auto_hide.set_enabled(enabled);
-        crate::embedded_toolbar_overflow::set_floating_overlays_suppressed(
-            &self.container,
-            !enabled,
-        );
     }
 
     /// Returns the current connection state

@@ -477,6 +477,7 @@ impl MainWindow {
         let monitoring_clone = self.monitoring.clone();
         let sidebar_clone = sidebar.clone();
         let overlay_split_view_clone = self.overlay_split_view.clone();
+        let session_bridges_clone = self.session_split_bridges.clone();
         settings_action.connect_activate(move |_, _| {
             if let Some(win) = window_weak.upgrade() {
                 Self::show_settings_dialog(
@@ -486,6 +487,7 @@ impl MainWindow {
                     monitoring_clone.clone(),
                     sidebar_clone.clone(),
                     overlay_split_view_clone.clone(),
+                    session_bridges_clone.clone(),
                 );
             }
         });

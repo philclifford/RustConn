@@ -1728,8 +1728,9 @@ pub struct RdpConfig {
     /// [`Default`], so a positive `default_true` field would have arrived
     /// switched off through all of them.
     ///
-    /// This also suppresses the split view's own corner-button overlay for the
-    /// session; see `floating_overlays_suppressed` in the GUI crate.
+    /// Scoped to the viewer's own chrome. The split view's panel corner buttons
+    /// stay put: they are the only discoverable way to close or detach a pane,
+    /// and suppressing them left RDP, VNC and Web panes with no way out.
     #[serde(default)]
     pub hide_floating_toolbar: bool,
     /// Enable mouse jiggler to prevent idle disconnect

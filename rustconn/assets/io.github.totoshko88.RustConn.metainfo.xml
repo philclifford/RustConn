@@ -140,6 +140,26 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.20.1" date="2026-08-14">
+      <description>
+        <p>Version 0.20.1 - connection name labels in split panes, and a round of session-lifecycle fixes:</p>
+        <ul>
+          <li>Added: Settings, Interface, Window — Show connection name in split panes, a compact colored header with the connection name and protocol, off by default (#277)</li>
+          <li>Fixed: group names are now unique per parent folder rather than globally, so "Site A/RDP" and "Site B/RDP" can both exist and CSV imports no longer merge unrelated branches (#291)</li>
+          <li>Fixed: a split pane could not be closed at all when its connection had the floating toolbar switched off — the panel's own detach and close buttons were suppressed along with the session toolbar (#260)</li>
+          <li>Fixed: RDP — xrdp hosts no longer stop at their own greeter after a successful NLA exchange (#290)</li>
+          <li>Fixed: opening the connection dialog crashed the application when an SSH agent key had a non-ASCII comment (#278)</li>
+          <li>Fixed: vault credentials were not found for connections inside a group, so every one of them prompted for a password (#289)</li>
+          <li>Fixed: minimizing to tray silently destroyed port forwards, recordings and external viewers (#279)</li>
+          <li>Fixed: a post-disconnect automation task froze the entire application for up to 60 seconds (#281)</li>
+          <li>Fixed: remote session recordings were lost when quitting the application (#282)</li>
+          <li>Fixed: Web embedded — links requesting a new view (target _blank, window.open) did nothing (#288)</li>
+          <li>Fixed: the network monitor reported a false outage on every Flatpak launch, and its debounce erased short flaps so the recovery sweep never ran (#284)</li>
+          <li>Fixed: a session closed with "exit" was silently reconnected on the next Wi-Fi roam (#285)</li>
+          <li>Fixed: three strings new in this release reached only Ukrainian, one of them never extracted into the translation template at all; all 16 catalogues are complete again</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.0" date="2026-08-13">
       <description>
         <p>Version 0.20.0 - Web embedded mode floating toolbar, renderer choice, signed release artifacts:</p>

@@ -132,6 +132,8 @@ pub struct SettingsDialog {
     show_welcome_switch: adw::SwitchRow,
     // Always open a new session on a sidebar double-click (issue #242)
     double_click_opens_new_session: adw::SwitchRow,
+    // Show connection name header on split-view panes (issue #277)
+    show_split_pane_labels: adw::SwitchRow,
     // GSK renderer preference; applies from the next start (issue #274)
     renderer_row: adw::ComboRow,
     // SSH Agent settings
@@ -256,6 +258,7 @@ impl SettingsDialog {
             window_title_shows_connection,
             show_welcome_switch,
             double_click_opens_new_session,
+            show_split_pane_labels,
             renderer_row,
         ) = create_ui_page();
         mark("ui_page");
@@ -682,6 +685,7 @@ impl SettingsDialog {
             window_title_shows_connection,
             show_welcome_switch,
             double_click_opens_new_session,
+            show_split_pane_labels,
             renderer_row,
             ssh_agent_status_label,
             ssh_agent_socket_label,
@@ -1032,6 +1036,7 @@ impl SettingsDialog {
             &self.window_title_shows_connection,
             &self.show_welcome_switch,
             &self.double_click_opens_new_session,
+            &self.show_split_pane_labels,
             &self.renderer_row,
             &settings.ui,
             &conn_refs,
@@ -1183,6 +1188,7 @@ impl SettingsDialog {
         let window_title_shows_connection_clone = self.window_title_shows_connection.clone();
         let show_welcome_switch_clone = self.show_welcome_switch.clone();
         let double_click_opens_new_session_clone = self.double_click_opens_new_session.clone();
+        let show_split_pane_labels_clone = self.show_split_pane_labels.clone();
         let renderer_row_clone = self.renderer_row.clone();
         let connections_clone = self.connections.clone();
         let keybindings_overrides_clone = self.keybindings_overrides.clone();
@@ -1336,6 +1342,7 @@ impl SettingsDialog {
                 &window_title_shows_connection_clone,
                 &show_welcome_switch_clone,
                 &double_click_opens_new_session_clone,
+                &show_split_pane_labels_clone,
                 &renderer_row_clone,
                 &conn_refs,
             );

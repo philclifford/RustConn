@@ -321,6 +321,13 @@ pub struct SplitViewBridge {
     /// closing a guest must leave the layout alone. The map cannot tell the two
     /// apart, so the bridge records it.
     owner_session: Rc<std::cell::Cell<Option<Uuid>>>,
+    /// Cache of session display names for panel headers (issue #277).
+    ///
+    /// Populated by [`Self::set_panel_label_by_uuid`] and
+    /// [`Self::update_panel_label`]. Used by `restore_panel_contents` to
+    /// re-apply labels after a layout rebuild, since moved sessions are not
+    /// in the `sessions` map.
+    label_cache: Rc<RefCell<HashMap<Uuid, (String, String)>>>,
 }
 
 impl SplitViewBridge {
@@ -386,6 +393,7 @@ impl SplitViewBridge {
             broadcast_wired_sessions: Rc::new(RefCell::new(HashSet::new())),
             broadcast_busy: Rc::new(std::cell::Cell::new(false)),
             owner_session: Rc::new(std::cell::Cell::new(None)),
+            label_cache: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -878,6 +886,9 @@ impl SplitViewBridge {
             );
         }
 
+        // Update the panel header with the connection name (issue #277).
+        self.update_panel_label(panel_id, session_id);
+
         Ok(())
     }
 
@@ -946,6 +957,9 @@ impl SplitViewBridge {
         // Ensure the content widget is visible
         content.set_visible(true);
 
+        // Update the panel header with the connection name (issue #277).
+        self.update_panel_label(panel_id, session_id);
+
         Ok(())
     }
 
@@ -1013,6 +1027,59 @@ impl SplitViewBridge {
         self.show_scrollbar = show;
     }
 
+    /// Sets whether split panels show a connection name header (issue #277).
+    pub fn set_show_pane_labels(&self, show: bool) {
+        self.adapter.borrow().set_labels_visible(show);
+    }
+
+    /// Updates the panel header label from the session map.
+    ///
+    /// Call after placing a session in a panel to populate the connection name
+    /// header (issue #277). Safe to call unconditionally — when labels are
+    /// disabled the adapter hides the header regardless.
+    fn update_panel_label(&self, panel_id: rustconn_core::split::PanelId, session_id: Uuid) {
+        let sessions = self.sessions.borrow();
+        if let Some(session) = sessions.get(&session_id) {
+            self.adapter.borrow().set_panel_label(
+                panel_id,
+                Some(&session.name),
+                Some(&session.protocol),
+            );
+            self.label_cache
+                .borrow_mut()
+                .insert(session_id, (session.name.clone(), session.protocol.clone()));
+        } else if let Some((name, protocol)) = self.label_cache.borrow().get(&session_id) {
+            // Fallback: session was placed via move_session_to_panel and its
+            // label was cached by a prior set_panel_label_by_uuid call.
+            self.adapter
+                .borrow()
+                .set_panel_label(panel_id, Some(name), Some(protocol));
+        }
+    }
+
+    /// Updates the panel header with explicit name and protocol values.
+    ///
+    /// Use this when the session is not in the internal `sessions` map (e.g.
+    /// sessions placed via [`Self::move_session_to_panel`] which intentionally
+    /// does not register into the map). Issue #277.
+    pub fn set_panel_label_by_uuid(
+        &self,
+        panel_uuid: Uuid,
+        session_id: Uuid,
+        name: &str,
+        protocol: &str,
+    ) {
+        if let Some(&panel_id) = self.uuid_panel_map.borrow().get(&panel_uuid) {
+            self.adapter
+                .borrow()
+                .set_panel_label(panel_id, Some(name), Some(protocol));
+        }
+        // Cache so restore_panel_contents can re-apply after a layout rebuild.
+        self.label_cache
+            .borrow_mut()
+            .insert(session_id, (name.to_string(), protocol.to_string()));
+    }
+
     /// Clears a session from all panes
     pub fn clear_session_from_panes(&self, session_id: Uuid) {
         let session = SessionId::from_uuid(session_id);
@@ -1022,6 +1089,8 @@ impl SplitViewBridge {
         for panel_id in adapter.panel_ids() {
             if adapter.get_panel_session(panel_id) == Some(session) {
                 adapter.clear_panel(panel_id);
+                // Hide the panel header (issue #277).
+                adapter.set_panel_label(panel_id, None, None);
 
                 // Also clear current_session on the corresponding pane
                 if let Some(&pane_uuid) = self.panel_uuid_map.borrow().get(&panel_id) {
@@ -1182,6 +1251,26 @@ impl SplitViewBridge {
 
                     // Ensure the content widget is visible
                     content.set_visible(true);
+
+                    // Update the panel header with the connection name (issue #277).
+                    // Cannot call update_panel_label here because `adapter` is
+                    // already borrowed — inline the lookup with label_cache fallback.
+                    {
+                        let sessions = self.sessions.borrow();
+                        if let Some(session) = sessions.get(&session_uuid) {
+                            adapter.set_panel_label(
+                                panel_id,
+                                Some(&session.name),
+                                Some(&session.protocol),
+                            );
+                        } else {
+                            drop(sessions);
+                            let cache = self.label_cache.borrow();
+                            if let Some((name, protocol)) = cache.get(&session_uuid) {
+                                adapter.set_panel_label(panel_id, Some(name), Some(protocol));
+                            }
+                        }
+                    }
 
                     tracing::debug!(
                         "restore_panel_contents: restored content for session {} in panel {}",
@@ -1388,6 +1477,18 @@ impl SplitViewBridge {
                 content.set_visible(true);
             }
 
+            // Update the panel header with the connection name (issue #277).
+            {
+                let sessions = sessions_rc.borrow();
+                if let Some(session) = sessions.get(&session_uuid) {
+                    adapter_rc.borrow().set_panel_label(
+                        panel_id,
+                        Some(&session.name),
+                        Some(&session.protocol),
+                    );
+                }
+            }
+
             // Get the container color and call the on_drop callback
             // (adapter already knows about the session via place_in_panel above)
             let color_index = *container_color_rc.borrow();
@@ -1421,6 +1522,16 @@ impl SplitViewBridge {
             let adapter = self.adapter.borrow();
             let info_content = Self::create_info_content(connection);
             adapter.set_panel_content(panel_id, &info_content);
+            // Update the panel header with the connection name (issue #277).
+            // `as_str`, not `{:?}`: every other caller of `set_panel_label`
+            // passes `SessionInfo::protocol`, which is this same lowercase
+            // identifier. Debug would put the Rust variant name in the header —
+            // "Ssh", "ZeroTrust" — and only in this one pane.
+            adapter.set_panel_label(
+                panel_id,
+                Some(&connection.name),
+                Some(connection.protocol.as_str()),
+            );
         }
     }
 
@@ -2350,6 +2461,9 @@ impl SplitViewBridge {
         let placed = self.wrap_content_for_panel(content);
         self.adapter.borrow().set_panel_content(panel_id, &placed);
         content.set_visible(true);
+
+        // Update the panel header with the connection name (issue #277).
+        self.update_panel_label(panel_id, session_id);
 
         // Update pane's current_session for filtering in Select Tab
         {

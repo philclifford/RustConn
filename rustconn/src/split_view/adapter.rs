@@ -10,8 +10,8 @@ use std::rc::Rc;
 
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, DropTarget, EventControllerMotion, Orientation, Overlay, Paned,
-    Revealer, gdk, gio, glib,
+    Align, Box as GtkBox, Button, DropTarget, EventControllerMotion, Label, Orientation, Overlay,
+    Paned, Revealer, gdk, gio, glib,
 };
 use libadwaita as adw;
 use rustconn_core::split::{
@@ -83,6 +83,14 @@ pub struct SplitViewAdapter {
     /// then activates the window action that returns the panel's session to its
     /// own tab, keeping the connection alive (issue #252).
     pop_panel_callback: Rc<RefCell<Option<SelectTabCallback>>>,
+    /// Header widgets for each panel (connection name labels, issue #277).
+    ///
+    /// These are prepended to the panel container (above session content) and
+    /// toggled via [`Self::set_labels_visible`]. The map is cleared on rebuild
+    /// and repopulated by [`Self::create_panel_widget`].
+    panel_headers: Rc<RefCell<HashMap<PanelId, GtkBox>>>,
+    /// Whether split-pane connection name labels are visible.
+    show_labels: Rc<Cell<bool>>,
 }
 
 impl std::fmt::Debug for SplitViewAdapter {
@@ -98,6 +106,8 @@ impl std::fmt::Debug for SplitViewAdapter {
             .field("new_shell_callback", &"<callback>")
             .field("close_panel_callback", &"<callback>")
             .field("pop_panel_callback", &"<callback>")
+            .field("panel_headers", &self.panel_headers)
+            .field("show_labels", &self.show_labels)
             .finish()
     }
 }
@@ -122,6 +132,8 @@ impl SplitViewAdapter {
             new_shell_callback: Rc::new(RefCell::new(None)),
             close_panel_callback: Rc::new(RefCell::new(None)),
             pop_panel_callback: Rc::new(RefCell::new(None)),
+            panel_headers: Rc::new(RefCell::new(HashMap::new())),
+            show_labels: Rc::new(Cell::new(false)),
         };
 
         adapter.rebuild_widgets();
@@ -147,6 +159,8 @@ impl SplitViewAdapter {
             new_shell_callback: Rc::new(RefCell::new(None)),
             close_panel_callback: Rc::new(RefCell::new(None)),
             pop_panel_callback: Rc::new(RefCell::new(None)),
+            panel_headers: Rc::new(RefCell::new(HashMap::new())),
+            show_labels: Rc::new(Cell::new(false)),
         };
 
         adapter.rebuild_widgets();
@@ -696,8 +710,16 @@ impl SplitViewAdapter {
                 "set_panel_content: found panel widget for panel_id={}, clearing and setting content",
                 panel_id
             );
-            while let Some(child) = panel_widget.first_child() {
-                panel_widget.remove(&child);
+            // Remove all children except the pane header (issue #277).
+            // The header is prepended by create_panel_widget and must survive
+            // content replacements (drag-and-drop, Select Tab, reparent).
+            let mut child = panel_widget.first_child();
+            while let Some(c) = child {
+                let next = c.next_sibling();
+                if !c.has_css_class("split-pane-header") {
+                    panel_widget.remove(&c);
+                }
+                child = next;
             }
             // Only unparent if the widget has a parent to avoid GTK-CRITICAL warning
             if widget.parent().is_some() {
@@ -706,25 +728,21 @@ impl SplitViewAdapter {
             widget.set_hexpand(true);
             widget.set_vexpand(true);
 
-            // A connection that turned off its floating toolbar gets no floating
-            // panel chrome either (issue #260). Both are the same complaint from
-            // the user's side — a small round button parked over the session,
-            // easy to hit by accident — and in a split pane there were two of
-            // them, the viewer's reveal handle and this one. The two actions stay
-            // available on the panel's right-click menu, which lives on
-            // `panel_widget` rather than on this overlay.
-            //
-            // The answer comes from the widget itself because this function
-            // cannot ask anything else: it takes an opaque widget, knows no
-            // protocol, and runs again on every layout rebuild and drop.
-            if crate::embedded_toolbar_overflow::floating_overlays_suppressed(widget) {
-                panel_widget.append(widget);
-                return;
-            }
-
             // Overlay the panel's corner buttons so a session shown in a split
             // pane can be acted on directly — a split guest has no standalone
             // tab to right-click.
+            //
+            // Unconditional, including for a connection that switched its own
+            // session toolbar off (issue #260). These two buttons are the split
+            // view's, not the viewer's: Remove from Split and Close session are
+            // the only discoverable way to dismantle a pane, and #260 asked for
+            // an unobstructed *session*, not a pane that cannot be closed. The
+            // suppression that #260 introduced covered this overlay too, which
+            // left RDP, VNC and Web panes with no visible way out.
+            //
+            // What #260 does still remove is the viewer's own reveal handle —
+            // that one belongs to the viewer widget and is switched off inside
+            // it, before it ever reaches this function.
             let overlay = Overlay::new();
             overlay.set_hexpand(true);
             overlay.set_vexpand(true);
@@ -744,6 +762,85 @@ impl SplitViewAdapter {
                 panel_id,
                 self.panel_widgets.borrow().keys().collect::<Vec<_>>()
             );
+        }
+    }
+
+    /// Creates the compact header widget for a split pane (issue #277).
+    ///
+    /// The header shows the connection name on a colored background matching
+    /// the panel's color. It starts hidden and is shown when the user enables
+    /// "Show connection name in split panes" in settings.
+    fn create_pane_header(&self) -> GtkBox {
+        let header = GtkBox::new(Orientation::Horizontal, 4);
+        header.add_css_class("split-pane-header");
+        header.set_visible(self.show_labels.get());
+
+        let name_label = Label::new(None);
+        name_label.set_hexpand(true);
+        name_label.set_halign(Align::Start);
+        name_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        name_label.set_single_line_mode(true);
+        name_label.set_widget_name("pane-header-name");
+        header.append(&name_label);
+
+        let protocol_label = Label::new(None);
+        protocol_label.add_css_class("dim-label");
+        protocol_label.set_halign(Align::End);
+        protocol_label.set_single_line_mode(true);
+        protocol_label.set_widget_name("pane-header-protocol");
+        header.append(&protocol_label);
+
+        header
+    }
+
+    /// Sets the text content of a panel's header label.
+    ///
+    /// Call this after placing a session in a panel so the header shows the
+    /// connection name and protocol. When `name` is `None`, the header is
+    /// hidden for that panel (e.g. when the panel is empty).
+    pub fn set_panel_label(&self, panel_id: PanelId, name: Option<&str>, protocol: Option<&str>) {
+        let headers = self.panel_headers.borrow();
+        if let Some(header) = headers.get(&panel_id) {
+            if let Some(name) = name {
+                // Find the name label (first child)
+                if let Some(name_widget) = header.first_child()
+                    && let Some(name_label) = name_widget.downcast_ref::<Label>()
+                {
+                    name_label.set_label(name);
+                }
+                // Find the protocol label (second child)
+                if let Some(name_widget) = header.first_child()
+                    && let Some(next) = name_widget.next_sibling()
+                    && let Some(proto_label) = next.downcast_ref::<Label>()
+                {
+                    proto_label.set_label(protocol.unwrap_or(""));
+                }
+                // Show header only if labels are globally enabled
+                header.set_visible(self.show_labels.get());
+            } else {
+                // No session — hide the header regardless of global flag
+                header.set_visible(false);
+            }
+        }
+    }
+
+    /// Toggles visibility of all panel headers.
+    ///
+    /// Called when the user changes the "Show connection name in split panes"
+    /// setting. Only headers with a label text set are shown.
+    pub fn set_labels_visible(&self, visible: bool) {
+        self.show_labels.set(visible);
+        for header in self.panel_headers.borrow().values() {
+            // Only show if the header has text (i.e. a session is placed)
+            if visible {
+                if let Some(name_widget) = header.first_child()
+                    && let Some(name_label) = name_widget.downcast_ref::<Label>()
+                {
+                    header.set_visible(!name_label.label().is_empty());
+                }
+            } else {
+                header.set_visible(false);
+            }
         }
     }
 
@@ -897,8 +994,14 @@ impl SplitViewAdapter {
     /// Clears the content of a panel and shows the empty placeholder.
     pub fn clear_panel(&self, panel_id: PanelId) {
         if let Some(panel_widget) = self.panel_widgets.borrow().get(&panel_id).cloned() {
-            while let Some(child) = panel_widget.first_child() {
-                panel_widget.remove(&child);
+            // Remove all children except the pane header (issue #277).
+            let mut child = panel_widget.first_child();
+            while let Some(c) = child {
+                let next = c.next_sibling();
+                if !c.has_css_class("split-pane-header") {
+                    panel_widget.remove(&c);
+                }
+                child = next;
             }
             let placeholder = self.create_empty_placeholder(panel_id);
             panel_widget.append(&placeholder);
@@ -925,6 +1028,7 @@ impl SplitViewAdapter {
             self.root_widget.remove(&child);
         }
         self.panel_widgets.borrow_mut().clear();
+        self.panel_headers.borrow_mut().clear();
         self.paned_widgets.clear();
 
         let model = self.model.borrow();
@@ -1097,6 +1201,12 @@ impl SplitViewAdapter {
             let color_class = format!("split-panel-color-{}", color_id.index());
             container.add_css_class(&color_class);
         }
+
+        // Prepend a compact connection name header (issue #277).
+        // Hidden by default; toggled via set_labels_visible / show_labels flag.
+        let header = self.create_pane_header();
+        container.append(&header);
+        self.panel_headers.borrow_mut().insert(panel_id, header);
 
         // Set up drop target for drag-and-drop operations
         // Drop target with visual feedback
