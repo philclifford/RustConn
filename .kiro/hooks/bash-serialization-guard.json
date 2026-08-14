@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Bash Serialization Guard",
+      "trigger": "PreToolUse",
+      "description": "PreToolUse guard on the shell tool that breaks the sleep-polling failure mode: rejects sleep-based waiting and sleep loops, cargo output piped through a filter, a second cargo while one holds the target-dir lock, and a cargo build/test issued with the default 120 s timeout (shorter than this workspace's test run, so the output is lost and the terminal stays busy). Fails open on any internal error; R4 keeps a one-shot marker in $TMPDIR so it can never deadlock if the timeout field is spelled differently by the client. Logic lives in .kiro/hooks/bin/bash-serialization-guard.sh.",
+      "matcher": "^(execute_bash|executeBash|bash|shell|control_bash_process|controlBashProcess)$",
+      "action": {
+        "type": "command",
+        "command": ".kiro/hooks/bin/bash-serialization-guard.sh",
+        "timeout": 10
+      }
+    }
+  ]
+}

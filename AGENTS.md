@@ -142,3 +142,14 @@ build. Scopes: rustconn-core, rustconn-cli, rustconn (gui), i18n, packaging, ci.
 
 Releases are prepared by editing files only, then `./scripts/release.sh` performs
 merge → tag → push. Never run `git tag`/`git push` by hand for a release.
+
+**An agent prepares a release; it never cuts one.** `./scripts/release.sh
+--dry-run` is the agent action and is expected — it runs every gate and stops
+before the plan executes. Running the script for real, or passing `--yes`, is the
+maintainer's call: `--yes` exists so a human can confirm without a prompt, and an
+agent shell has no TTY, so passing it means standing in for the person who should
+be deciding. v0.20.1 was cut that way and reached a pushed tag and a published
+release with five artifacts while carrying a red CI job and unreviewed code
+deletions; undoing it meant deleting a published release. Report the dry-run gate
+list and the diff, then hand over. The `release-manual-only-guard` hook enforces
+this, including the by-hand `git tag`/`git push` route, but do not rely on it.

@@ -78,6 +78,27 @@ If a goal-loop can't reach this within its iterations, STOP and report what is
 blocking — never loosen the gate to "finish". Sanctioned workarounds for
 *external* blockers only: see the escape-hatch table in `project-rules.md`.
 
+## Releases: prepare, never cut
+
+An agent prepares a release and validates it. The maintainer cuts it.
+
+- `./scripts/release.sh --dry-run` is the agent action, and it is expected: it
+  runs every gate and stops before the plan is executed.
+- **Never** run `release.sh` without `--dry-run`, and never pass `--yes`. That
+  flag exists so a *human* can confirm without a prompt; an agent shell has no
+  TTY, so passing it means the agent has appointed itself the person who decides.
+- **Never** do it by hand either — no `git tag v<x.y.z>`, no pushing a release
+  tag. The tag push is what triggers the Release workflow, the artifact build and
+  the Flathub/OBS/Snap updates.
+- Finish by reporting: the gate list from the dry run, the diff, and what is left
+  to decide. Then stop.
+
+Why this is a rule and not a preference: v0.20.1 was cut by an agent with
+`release.sh --yes`. It merged to main, pushed a tag and published a GitHub
+release with five artifacts, carrying a red CI job and code deletions the
+maintainer had never read. Undoing it meant deleting a published release. The
+`release-manual-only-guard` hook blocks all three routes, but do not rely on it.
+
 ## Quick Commands
 
 ```
