@@ -364,6 +364,18 @@ pub struct TerminalNotebook {
     /// Some terminal clients (e.g. telnet) do not exit on PTY close (SIGHUP),
     /// so an explicit kill is needed (#172).
     vte_child_pids: Rc<RefCell<HashMap<Uuid, i32>>>,
+    /// The live `child-exited` handler of each session, with the terminal it is
+    /// attached to.
+    ///
+    /// An in-place reconnect calls `connect_child_exited` again on the *same*
+    /// VTE widget, so without this the previous handler stays attached and the
+    /// entire disconnect path runs once per handler: one post-disconnect task,
+    /// one host-probe poll and one sidebar decrement for every reconnect the
+    /// session has ever had. The terminal is kept beside the id because a
+    /// handler id is only meaningful to the widget it came from — disconnecting
+    /// a stale one from a fresh widget is a GLib error, hence the weak ref.
+    child_exited_handlers:
+        Rc<RefCell<HashMap<Uuid, (glib::WeakRef<Terminal>, glib::SignalHandlerId)>>>,
     /// Whether to show the Welcome tab when no sessions are open (issue #232).
     /// Shared with signal handlers via `Rc<Cell<bool>>`.
     show_welcome: Rc<std::cell::Cell<bool>>,
@@ -477,6 +489,7 @@ impl TerminalNotebook {
             monitoring: Rc::new(RefCell::new(None)),
             snippet_menu_section: Rc::new(gio::Menu::new()),
             vte_child_pids: Rc::new(RefCell::new(HashMap::new())),
+            child_exited_handlers: Rc::new(RefCell::new(HashMap::new())),
             show_welcome: Rc::new(std::cell::Cell::new(show_welcome)),
         };
 
@@ -509,6 +522,7 @@ impl TerminalNotebook {
         let on_session_ended = Rc::clone(&self.on_session_ended);
         let vte_child_pids = self.vte_child_pids.clone();
         let auto_reconnect_on_close = Rc::clone(&self.auto_reconnect_eligible);
+        let child_exited_on_close = Rc::clone(&self.child_exited_handlers);
         let show_welcome_on_close = self.show_welcome.clone();
         let disconnected_on_close = Rc::clone(&self.disconnected_sessions);
         let cursor_row_base_on_close = Rc::clone(&self.cursor_row_base);
@@ -650,6 +664,9 @@ impl TerminalNotebook {
                 output_observers_on_close.borrow_mut().remove(&session_id);
                 commit_forwarded_on_close.borrow_mut().remove(&session_id);
                 auto_reconnect_on_close.borrow_mut().remove(&session_id);
+                // The widget goes with the tab, so the handler dies with it —
+                // this only keeps the map from growing for the app's lifetime.
+                child_exited_on_close.borrow_mut().remove(&session_id);
 
                 // Kill VTE child process group explicitly (#172).
                 // Some CLI clients (notably telnet) do not exit on SIGHUP
@@ -2065,12 +2082,30 @@ impl TerminalNotebook {
         F: Fn(i32) + 'static,
     {
         if let Some(terminal) = self.get_terminal(session_id) {
+            // Drop whatever a previous connection left on this widget. An
+            // in-place reconnect lands here again on the same terminal, and a
+            // second handler would mean the whole disconnect path runs twice:
+            // two post-disconnect tasks, two host-probe polls, and the
+            // sidebar's active-session count decremented twice for one exit —
+            // which drops a connection to "no active sessions" while another
+            // of its tabs is still live.
+            if let Some((previous_terminal, handler)) =
+                self.child_exited_handlers.borrow_mut().remove(&session_id)
+                && let Some(previous_terminal) = previous_terminal.upgrade()
+            {
+                previous_terminal.disconnect(handler);
+            }
+
             let pids = self.vte_child_pids.clone();
-            terminal.connect_child_exited(move |_terminal, status| {
+            let handler = terminal.connect_child_exited(move |_terminal, status| {
                 // Remove PID — process already exited, no need to kill on tab close
                 pids.borrow_mut().remove(&session_id);
                 callback(status);
             });
+
+            self.child_exited_handlers
+                .borrow_mut()
+                .insert(session_id, (terminal.downgrade(), handler));
         }
     }
 
