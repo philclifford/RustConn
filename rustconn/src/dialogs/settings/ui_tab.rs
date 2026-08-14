@@ -48,6 +48,7 @@ pub fn create_ui_page() -> (
     adw::SwitchRow,
     adw::SwitchRow,
     adw::SwitchRow,
+    adw::SwitchRow,
     adw::ComboRow,
 ) {
     let page = adw::PreferencesPage::builder()
