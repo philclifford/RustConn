@@ -539,49 +539,14 @@ impl ToolbarAutoHide {
     }
 }
 
-/// Marks a session viewer as carrying no floating overlay chrome.
-///
-/// Nothing in `assets/style.css` matches this class — it is *state* the widget
-/// carries, the same way `split_view::adapter` uses `pointer-in`. Naming it here
-/// once, behind [`set_floating_overlays_suppressed`] and
-/// [`floating_overlays_suppressed`], keeps the string out of the two modules
-/// that need to agree on it.
-///
-/// The widget itself has to be the channel because of who reads it.
-/// `SplitViewAdapter::set_panel_content` takes an opaque
-/// `&impl IsA<gtk4::Widget>`, has no access to the `Connection`, does not import
-/// `rustconn_core` at all, and runs again on every layout rebuild and every
-/// drop — so a flag handed to it as an argument would have to be threaded
-/// through five call sites and then stored somewhere for the sixth. A viewer
-/// that travels into a split panel carries its own answer instead.
-const NO_FLOATING_OVERLAYS_CSS_CLASS: &str = "no-floating-overlays";
-
-/// Records whether this session's viewer must carry no floating overlay chrome.
-///
-/// Set on the viewer's root container — the widget the notebook hands to the
-/// split view — alongside [`ToolbarAutoHide::set_enabled`]. The toolbar belongs
-/// to the viewer, but the split panel's corner buttons do not, and a connection
-/// that asked for an unobstructed desktop means both.
-pub fn set_floating_overlays_suppressed(root: &impl IsA<Widget>, suppressed: bool) {
-    if suppressed {
-        root.as_ref().add_css_class(NO_FLOATING_OVERLAYS_CSS_CLASS);
-    } else {
-        root.as_ref()
-            .remove_css_class(NO_FLOATING_OVERLAYS_CSS_CLASS);
-    }
-}
-
-/// Whether `widget` opted out of floating overlay chrome.
-///
-/// Read by the split view before it wraps a session in its corner-button
-/// overlay. The panel's context menu offers the same two actions, so suppressing
-/// the buttons costs reachability, not capability.
-#[must_use]
-pub fn floating_overlays_suppressed(widget: &impl IsA<Widget>) -> bool {
-    widget
-        .as_ref()
-        .has_css_class(NO_FLOATING_OVERLAYS_CSS_CLASS)
-}
+// A `no-floating-overlays` CSS class used to be stamped on a viewer's root
+// container here so that `SplitViewAdapter::set_panel_content` could skip the
+// split panel's corner buttons for a connection that had switched its session
+// toolbar off (issue #260). The split view no longer asks: those two buttons are
+// the only discoverable way to dismantle a pane, so they are unconditional now,
+// and with the sole reader gone the marker had nothing left to tell anyone.
+// `ToolbarAutoHide::set_enabled` is what actually implements #260, on the
+// viewer's own toolbar and reveal handle.
 
 /// Applies the GNOME HIG minimum pointer/touch target to toolbar actions.
 fn ensure_touch_targets(widget: &Widget) {

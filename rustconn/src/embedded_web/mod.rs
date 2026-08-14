@@ -369,12 +369,6 @@ impl EmbeddedWebWidget {
         container.append(&progress_bar);
         container.append(&reconnect_banner);
         container.append(&overlay);
-        // The marker travels with the container into a split panel, where the
-        // adapter reads it before adding its own corner-button overlay.
-        crate::embedded_toolbar_overflow::set_floating_overlays_suppressed(
-            &container,
-            config.hide_floating_toolbar,
-        );
 
         // No `set_focus_child` chain here on purpose. A pair of those calls used
         // to sit at this spot, justified as making `container.grab_focus()` reach

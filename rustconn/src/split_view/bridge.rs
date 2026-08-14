@@ -1523,10 +1523,14 @@ impl SplitViewBridge {
             let info_content = Self::create_info_content(connection);
             adapter.set_panel_content(panel_id, &info_content);
             // Update the panel header with the connection name (issue #277).
+            // `as_str`, not `{:?}`: every other caller of `set_panel_label`
+            // passes `SessionInfo::protocol`, which is this same lowercase
+            // identifier. Debug would put the Rust variant name in the header —
+            // "Ssh", "ZeroTrust" — and only in this one pane.
             adapter.set_panel_label(
                 panel_id,
                 Some(&connection.name),
-                Some(&format!("{:?}", connection.protocol)),
+                Some(connection.protocol.as_str()),
             );
         }
     }

@@ -728,35 +728,21 @@ impl SplitViewAdapter {
             widget.set_hexpand(true);
             widget.set_vexpand(true);
 
-            // A connection that turned off its floating toolbar gets no floating
-            // panel chrome either (issue #260). Both are the same complaint from
-            // the user's side — a small round button parked over the session,
-            // easy to hit by accident — and in a split pane there were two of
-            // them, the viewer's reveal handle and this one. The two actions stay
-            // available on the panel's right-click menu, which lives on
-            // `panel_widget` rather than on this overlay.
-            //
-            // However, the split-view panel corner buttons (detach/close) must
-            // remain accessible (issue #277 follow-up): without them the user
-            // has no discoverable way to remove the pane. So we still create the
-            // overlay with corner buttons — we just skip the viewer's own reveal
-            // handle (which is part of the viewer widget, not ours).
-            if crate::embedded_toolbar_overflow::floating_overlays_suppressed(widget) {
-                let overlay = Overlay::new();
-                overlay.set_hexpand(true);
-                overlay.set_vexpand(true);
-                overlay.set_child(Some(widget));
-
-                let (reveal_container, _revealer) = self.panel_corner_buttons_autohide(panel_id);
-                overlay.add_overlay(&reveal_container);
-
-                panel_widget.append(&overlay);
-                return;
-            }
-
             // Overlay the panel's corner buttons so a session shown in a split
             // pane can be acted on directly — a split guest has no standalone
             // tab to right-click.
+            //
+            // Unconditional, including for a connection that switched its own
+            // session toolbar off (issue #260). These two buttons are the split
+            // view's, not the viewer's: Remove from Split and Close session are
+            // the only discoverable way to dismantle a pane, and #260 asked for
+            // an unobstructed *session*, not a pane that cannot be closed. The
+            // suppression that #260 introduced covered this overlay too, which
+            // left RDP, VNC and Web panes with no visible way out.
+            //
+            // What #260 does still remove is the viewer's own reveal handle —
+            // that one belongs to the viewer widget and is switched off inside
+            // it, before it ever reaches this function.
             let overlay = Overlay::new();
             overlay.set_hexpand(true);
             overlay.set_vexpand(true);
