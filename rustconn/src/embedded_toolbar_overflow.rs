@@ -279,14 +279,6 @@ pub struct ToolbarAutoHide {
 impl ToolbarAutoHide {
     /// Attaches auto-hide behavior and a touch/keyboard reveal control to an overlay.
     ///
-    /// The reveal trigger is a small arrow indicator at the top centre of the
-    /// overlay — hovering or clicking it reveals the full toolbar. The centre is
-    /// not negotiable; see the comment above this type for what happens in the
-    /// corners.
-    /// The reveal trigger is a small arrow indicator along the top edge —
-    /// hovering or clicking it reveals the full toolbar. `handle` decides which
-    /// part of that edge it sits on; see [`RevealHandle`] for why the viewers do
-    /// not agree.
     /// The reveal trigger is a small arrow indicator along the top edge —
     /// hovering or clicking it reveals the full toolbar. `handle` decides which
     /// part of that edge it sits on; see [`RevealHandle`] for why the viewers do

@@ -132,9 +132,9 @@ pub fn set_compact_prefs(manual: bool, auto: bool) {
 
 /// Stores whether hovering the session-toolbar handle reveals the toolbar.
 ///
-/// Call after the settings toggle changes. Sessions opened from here on pick it
-/// up; an embedded view already on screen keeps the behaviour it was built with,
-/// which is what the settings row tells the user.
+/// Call after the settings toggle changes. Existing embedded views pick up
+/// the new value immediately — the preference is read per pointer event, not
+/// captured at construction time.
 pub fn set_reveal_toolbar_on_hover(enabled: bool) {
     REVEAL_TOOLBAR_ON_HOVER.with(|pref| pref.set(enabled));
 }

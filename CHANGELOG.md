@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.20.2] - 2026-08-15
 
+A polish release that merges all outstanding community pull requests and closes
+the last rough edges from 0.20.0/0.20.1. Special thanks to
+[Felipe Schneider](https://github.com/sch-felipe) — his first contribution to
+RustConn brought three well-researched fixes that made this release possible.
+
 ### Added
 
 - **Settings ▸ Interface — reveal session toolbar on hover or click only ([PR #286](https://github.com/totoshko88/RustConn/pull/286))** — a new switch under Settings ▸ Interface ▸ Appearance controls whether the floating RDP/VNC toolbar opens on pointer proximity or only on an explicit click. Default: hover (existing behaviour unchanged). The handle at the top centre of the remote view sits right where the remote window's own title bar and close button are, so dragging the pointer there to reach the remote UI opens a panel over the exact spot being aimed at. Turning the switch off keeps the handle, its focus ring and every toolbar action — only the accidental trigger goes away. The preference is read per event rather than captured when the view is built, so toggling it takes effect on sessions already open. Contributed by Felipe Schneider.
