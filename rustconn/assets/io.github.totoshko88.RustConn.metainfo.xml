@@ -140,6 +140,16 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.20.2" date="2026-08-15">
+      <description>
+        <p>Version 0.20.2 - polish release merging community pull requests:</p>
+        <ul>
+          <li>Added: Settings, Interface — reveal session toolbar on hover or click only (PR #286)</li>
+          <li>Fixed: duplicating a connection with vault credentials left the duplicate without a stored secret (PR #280)</li>
+          <li>Fixed: a reconnected terminal stacked child-exited handlers, running the disconnect path multiple times (PR #283)</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.1" date="2026-08-14">
       <description>
         <p>Version 0.20.1 - connection name labels in split panes, and a round of session-lifecycle fixes:</p>

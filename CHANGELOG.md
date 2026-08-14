@@ -5,6 +5,33 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.2] - 2026-08-15
+
+A polish release that merges all outstanding community pull requests and closes
+the last rough edges from 0.20.0/0.20.1. Special thanks to
+[Felipe Schneider](https://github.com/sch-felipe) — his first contribution to
+RustConn brought three well-researched fixes that made this release possible.
+
+### Added
+
+- **Settings ▸ Interface — reveal session toolbar on hover or click only ([PR #286](https://github.com/totoshko88/RustConn/pull/286))** — a new switch under Settings ▸ Interface ▸ Appearance controls whether the floating RDP/VNC toolbar opens on pointer proximity or only on an explicit click. Default: hover (existing behaviour unchanged). The handle at the top centre of the remote view sits right where the remote window's own title bar and close button are, so dragging the pointer there to reach the remote UI opens a panel over the exact spot being aimed at. Turning the switch off keeps the handle, its focus ring and every toolbar action — only the accidental trigger goes away. The preference is read per event rather than captured when the view is built, so toggling it takes effect on sessions already open. Contributed by Felipe Schneider.
+
+### Fixed
+
+- **Duplicating a connection with vault credentials left the duplicate without a stored secret ([PR #280](https://github.com/totoshko88/RustConn/pull/280))** — `duplicate_selected_connection` copied every field of the source connection, including `password_source = Vault`, but never copied the vault entry itself. The duplicate looked fully configured while having no stored secret: connecting to it prompted for a password or failed to authenticate. Every other name-changing path (paste, rename, move-to-group) already migrated the credential; duplicate was the only one that did not. The secret is now copied on a background thread immediately after the duplicate is created. Contributed by Felipe Schneider.
+
+- **A reconnected terminal session stacked `child-exited` handlers, running the disconnect path N+1 times after N reconnects ([PR #283](https://github.com/totoshko88/RustConn/pull/283))** — `connect_child_exited` connected a fresh handler on every reconnect (Reconnect button, auto-reconnect, network-change sweep) without disconnecting the previous one. After two reconnects the next disconnect ran three post-disconnect tasks, decremented the sidebar session count three times, and spawned three host-probe polls. The handler id is now stored per session and the previous one is disconnected before connecting the new. Contributed by Felipe Schneider.
+
+- **Duplicate `http-body-util` entry in 0.20.0 CHANGELOG Dependencies section** — the first bullet listed only `http-body-util 0.1.4→0.1.5`, while the second included it alongside `clap_mangen` and `font-types`. The redundant first bullet is removed.
+
+### Documentation
+
+- **Group name uniqueness rule documented in `docs/USER_GUIDE.md`** — 0.20.1 changed group names from globally unique to unique per parent folder (issue #291), but the user guide did not mention the naming constraint at all. The "Create Group" section now states that names must be unique among siblings, and that identically named groups under different parents (e.g. `Site A/RDP` + `Site B/RDP`) are allowed.
+
+### Localisation
+
+- **Two strings from PR #286 translated in all 16 locales** — the "Open session toolbar on hover" switch title and its subtitle shipped untranslated; now in the POT and all catalogues.
+
 ## [0.20.1] - 2026-08-14
 
 ### Added
@@ -183,7 +210,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
-- **Updated**: http-body-util 0.1.4→0.1.5. The GTK stack is already at the newest published bindings (gtk4 0.11.4, libadwaita 0.9.2, vte4 0.10.0, webkit6 0.6.1), and their version features cannot rise while Ubuntu 24.04 (libadwaita 1.5.0, VTE 0.76.0) and snap `core24` are supported targets.
 - **Removed**: `tracing-subscriber` as a direct dependency of `rustconn-core`. It had no reference anywhere in that crate — the subscriber is installed by the application entry points, which declare it themselves, and `rustconn-core/src/tracing/mod.rs` said as much in its own doc comment. Found by `cargo machete` on its first run. A library pulling in a subscriber is also an invitation to end up with two in one process, so it is documented as "do not re-add" rather than merely deleted. `md-5`, `vnc-rs`, `gettext-rs` and `native-tls` are declared as machete exceptions in the same pass: the first three are used under an import path that differs from the package name, and `native-tls` is present only to pin a version away from 0.2.17's `Tlsv13` compile bug.
 - **Updated**: http-body-util 0.1.4→0.1.5, clap_mangen 0.3.2→0.3.3 (`rustconn-cli`'s man-page generator, build-time only), font-types 0.12.2→0.12.3 (transitively, through read-fonts for `harfrust` and `skrifa`). The GTK stack is already at the newest published bindings (gtk4 0.11.4, libadwaita 0.9.2, vte4 0.10.0, webkit6 0.6.1), and their version features cannot rise while Ubuntu 24.04 (libadwaita 1.5.0, VTE 0.76.0) and snap `core24` are supported targets.
 

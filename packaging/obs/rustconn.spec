@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.20.1
+Version:        0.20.2
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -282,6 +282,12 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Sat Aug 15 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.2-0
+- Version bump to 0.20.2
+- Added: toolbar hover/click setting (PR #286)
+- Fixed: vault credential not copied on duplicate (PR #280)
+- Fixed: child-exited handler stacking on reconnect (PR #283)
+
 * Fri Aug 14 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.1-0
 - Version bump to 0.20.1
 - Added: Settings > Interface > Window > Show connection name in split panes — a

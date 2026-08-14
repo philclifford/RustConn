@@ -1,3 +1,19 @@
+rustconn (0.20.2-1) unstable; urgency=medium
+
+  * Version bump to 0.20.2
+  * A polish release merging all outstanding community pull requests.
+  * Added: Settings > Interface > Open session toolbar on hover — controls
+    whether the floating RDP/VNC toolbar opens on pointer proximity or requires
+    an explicit click (PR #286, contributed by Felipe Schneider)
+  * Fixed: duplicating a connection with vault credentials left the duplicate
+    without a stored secret — connecting prompted for a password (PR #280,
+    contributed by Felipe Schneider)
+  * Fixed: a reconnected terminal stacked child-exited handlers, running the
+    disconnect path N+1 times after N reconnects (PR #283, contributed by
+    Felipe Schneider)
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Sat, 15 Aug 2026 00:00:00 +0300
+
 rustconn (0.20.1-1) unstable; urgency=medium
 
   * Version bump to 0.20.1

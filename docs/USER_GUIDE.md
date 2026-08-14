@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.20.1** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.20.2** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -1682,6 +1682,8 @@ Override terminal colors (background, foreground, cursor) on a per-connection ba
 - **Ctrl+Shift+G** or click folder icon
 - Right-click in sidebar → **New Group**
 - Right-click on group → **New Subgroup**
+
+Group names must be unique among siblings sharing the same parent folder. You can have identically named groups under different parents (e.g. `Site A/RDP` and `Site B/RDP`). Moving or renaming a group into a parent that already contains a child with the same name is rejected.
 
 #### Group Operations
 
