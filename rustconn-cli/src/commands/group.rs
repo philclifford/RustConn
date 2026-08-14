@@ -350,15 +350,24 @@ fn cmd_group_create(
         .load_groups()
         .map_err(|e| CliError::Group(format!("Failed to load groups: {e}")))?;
 
-    if groups.iter().any(|g| g.name.eq_ignore_ascii_case(name)) {
+    let parent_id = if let Some(parent_name) = parent {
+        Some(find_group(&groups, parent_name)?.id)
+    } else {
+        None
+    };
+
+    // Check for duplicate name only among siblings under the same parent
+    if groups
+        .iter()
+        .any(|g| g.parent_id == parent_id && g.name.eq_ignore_ascii_case(name))
+    {
         return Err(CliError::Group(format!(
             "Group with name '{name}' already exists"
         )));
     }
 
-    let mut group = if let Some(parent_name) = parent {
-        let parent_group = find_group(&groups, parent_name)?;
-        ConnectionGroup::with_parent(name.to_string(), parent_group.id)
+    let mut group = if let Some(pid) = parent_id {
+        ConnectionGroup::with_parent(name.to_string(), pid)
     } else {
         ConnectionGroup::new(name.to_string())
     };

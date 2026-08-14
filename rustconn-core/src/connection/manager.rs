@@ -538,6 +538,30 @@ impl ConnectionManager {
         Ok(id)
     }
 
+    /// Checks whether a sibling group with the same name already exists.
+    ///
+    /// Two groups are siblings when they share the same `parent_id` (including
+    /// both being root-level, i.e. `parent_id == None`).
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — the name to check (case-insensitive)
+    /// * `parent_id` — the parent under which to look for siblings
+    /// * `exclude_id` — optional group ID to exclude (useful during rename)
+    #[must_use]
+    pub fn sibling_group_name_exists(
+        &self,
+        name: &str,
+        parent_id: Option<Uuid>,
+        exclude_id: Option<Uuid>,
+    ) -> bool {
+        self.groups.values().any(|g| {
+            g.parent_id == parent_id
+                && g.name.eq_ignore_ascii_case(name)
+                && exclude_id != Some(g.id)
+        })
+    }
+
     /// Updates an existing group
     ///
     /// Preserves the original ID and creation timestamp.
@@ -849,6 +873,15 @@ impl ConnectionManager {
                     reason: "Moving group would create a cycle in the hierarchy".to_string(),
                 });
             }
+        }
+
+        // Reject if the destination already has a child with the same name
+        let group_name = self.groups[&group_id].name.clone();
+        if self.sibling_group_name_exists(&group_name, new_parent_id, Some(group_id)) {
+            return Err(ConfigError::Validation {
+                field: "name".to_string(),
+                reason: format!("Destination already contains a folder named '{group_name}'"),
+            });
         }
 
         // Perform the move

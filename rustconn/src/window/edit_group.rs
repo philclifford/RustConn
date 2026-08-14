@@ -1491,10 +1491,15 @@ pub fn show_edit_group_dialog(
             && !secrecy::ExposeSecret::expose_secret(&password).is_empty()
             && password_source_idx == 1;
 
-        // Check for duplicate name (but allow keeping same name)
-        if new_name != old_name {
+        // Check for duplicate name among siblings under the target parent.
+        // Needed when the name changes or the group is reparented.
+        {
             let state_ref = state_clone.borrow();
-            if state_ref.group_exists_by_name(&new_name) {
+            let current_parent = state_ref.get_group(group_id).and_then(|g| g.parent_id);
+            let needs_check = new_name != old_name || current_parent != new_parent_id;
+            if needs_check
+                && state_ref.sibling_group_exists(&new_name, new_parent_id, Some(group_id))
+            {
                 drop(state_ref);
                 alert::show_validation_error(
                     &window_clone,
@@ -1502,7 +1507,6 @@ pub fn show_edit_group_dialog(
                 );
                 return;
             }
-            drop(state_ref);
         }
 
         if let Ok(mut state_mut) = state_clone.try_borrow_mut() {

@@ -39,12 +39,18 @@ impl AppState {
             .any(|c| c.name.eq_ignore_ascii_case(name))
     }
 
-    /// Checks if a group with the given name exists
-    pub fn group_exists_by_name(&self, name: &str) -> bool {
+    /// Checks if a sibling group with the given name exists under the same parent.
+    ///
+    /// Two groups are siblings when they share the same `parent_id`.
+    /// `exclude_id` allows ignoring a specific group (useful during rename).
+    pub fn sibling_group_exists(
+        &self,
+        name: &str,
+        parent_id: Option<Uuid>,
+        exclude_id: Option<Uuid>,
+    ) -> bool {
         self.connection_manager
-            .list_groups()
-            .iter()
-            .any(|g| g.name.eq_ignore_ascii_case(name))
+            .sibling_group_name_exists(name, parent_id, exclude_id)
     }
 
     /// Generates a unique name by appending a protocol suffix and/or number if needed
@@ -318,16 +324,16 @@ impl AppState {
         self.connection_manager.empty_trash()
     }
 
-    /// Generates a unique group name by appending a number if needed
-    pub fn generate_unique_group_name(&self, base_name: &str) -> String {
-        if !self.group_exists_by_name(base_name) {
+    /// Generates a unique group name among siblings by appending a number if needed
+    pub fn generate_unique_group_name(&self, base_name: &str, parent_id: Option<Uuid>) -> String {
+        if !self.sibling_group_exists(base_name, parent_id, None) {
             return base_name.to_string();
         }
 
         let mut counter = 1;
         loop {
             let new_name = format!("{base_name} ({counter})");
-            if !self.group_exists_by_name(&new_name) {
+            if !self.sibling_group_exists(&new_name, parent_id, None) {
                 return new_name;
             }
             counter += 1;
@@ -398,8 +404,8 @@ impl AppState {
 
     /// Creates a new group
     pub fn create_group(&mut self, name: String) -> Result<Uuid, String> {
-        // Check for duplicate name
-        if self.group_exists_by_name(&name) {
+        // Check for duplicate name among root-level siblings
+        if self.sibling_group_exists(&name, None, None) {
             return Err(format!("Group with name '{name}' already exists"));
         }
 
@@ -415,6 +421,13 @@ impl AppState {
         name: String,
         parent_id: Uuid,
     ) -> Result<Uuid, String> {
+        // Check for duplicate name among siblings under the same parent
+        if self.sibling_group_exists(&name, Some(parent_id), None) {
+            return Err(format!(
+                "Group with name '{name}' already exists in this folder"
+            ));
+        }
+
         self.connection_manager
             .create_group_with_parent(name, parent_id)
             .map_err(|e| format!("Failed to create group: {e}"))
