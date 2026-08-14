@@ -51,6 +51,17 @@ first. A repeat `cargo clippy` with nothing changed prints `Finished ... in 0.2s
 and reports zero warnings **without checking anything**; force a real re-check
 before claiming it passed.
 
+**Never wait with `sleep`.** The test run is ~120 s and the shell tool's default
+timeout is 120 s, so a plain `cargo test` tends to return while cargo is still
+alive. Give the call explicit headroom (`timeout` ≈ 900 000 ms) and redirect to a
+log file, or start it in the background with a sentinel — `sh -c 'cargo test
+--workspace > /tmp/rc.log 2>&1; echo $? > /tmp/rc.rc' &` — and poll for
+`/tmp/rc.rc` by reading the file. A `sleep` cannot see another terminal, and a
+terminal that already has a live foreground job is not yours: bash is not reading
+stdin, so extra commands queue in the tty buffer and all run, one after another,
+once the job ends. The `bash-serialization-guard` hook blocks the obvious cases,
+but do not rely on it.
+
 The toolchain is pinned in `rust-toolchain.toml`. MSRV is a separate, older
 number in `Cargo.toml` (`rust-version`).
 
