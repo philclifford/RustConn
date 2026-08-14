@@ -5,6 +5,16 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.2] - 2026-08-15
+
+### Fixed
+
+- **Duplicate `http-body-util` entry in 0.20.0 CHANGELOG Dependencies section** — the first bullet listed only `http-body-util 0.1.4→0.1.5`, while the second included it alongside `clap_mangen` and `font-types`. The redundant first bullet is removed.
+
+### Documentation
+
+- **Group name uniqueness rule documented in `docs/USER_GUIDE.md`** — 0.20.1 changed group names from globally unique to unique per parent folder (issue #291), but the user guide did not mention the naming constraint at all. The "Create Group" section now states that names must be unique among siblings, and that identically named groups under different parents (e.g. `Site A/RDP` + `Site B/RDP`) are allowed.
+
 ## [0.20.1] - 2026-08-14
 
 ### Added
@@ -183,7 +193,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
-- **Updated**: http-body-util 0.1.4→0.1.5. The GTK stack is already at the newest published bindings (gtk4 0.11.4, libadwaita 0.9.2, vte4 0.10.0, webkit6 0.6.1), and their version features cannot rise while Ubuntu 24.04 (libadwaita 1.5.0, VTE 0.76.0) and snap `core24` are supported targets.
 - **Removed**: `tracing-subscriber` as a direct dependency of `rustconn-core`. It had no reference anywhere in that crate — the subscriber is installed by the application entry points, which declare it themselves, and `rustconn-core/src/tracing/mod.rs` said as much in its own doc comment. Found by `cargo machete` on its first run. A library pulling in a subscriber is also an invitation to end up with two in one process, so it is documented as "do not re-add" rather than merely deleted. `md-5`, `vnc-rs`, `gettext-rs` and `native-tls` are declared as machete exceptions in the same pass: the first three are used under an import path that differs from the package name, and `native-tls` is present only to pin a version away from 0.2.17's `Tlsv13` compile bug.
 - **Updated**: http-body-util 0.1.4→0.1.5, clap_mangen 0.3.2→0.3.3 (`rustconn-cli`'s man-page generator, build-time only), font-types 0.12.2→0.12.3 (transitively, through read-fonts for `harfrust` and `skrifa`). The GTK stack is already at the newest published bindings (gtk4 0.11.4, libadwaita 0.9.2, vte4 0.10.0, webkit6 0.6.1), and their version features cannot rise while Ubuntu 24.04 (libadwaita 1.5.0, VTE 0.76.0) and snap `core24` are supported targets.
 
