@@ -156,6 +156,7 @@
           <li>Fixed: Web embedded — links requesting a new view (target _blank, window.open) did nothing (#288)</li>
           <li>Fixed: the network monitor reported a false outage on every Flatpak launch, and its debounce erased short flaps so the recovery sweep never ran (#284)</li>
           <li>Fixed: a session closed with "exit" was silently reconnected on the next Wi-Fi roam (#285)</li>
+          <li>Fixed: Web embedded — the toolbar's reveal handle was unreachable in a split pane, buried under the split view's own panel arrow at the same corner; the handle is back at the top centre for every viewer</li>
           <li>Fixed: three strings new in this release reached only Ukrainian, one of them never extracted into the translation template at all; all 16 catalogues are complete again</li>
         </ul>
       </description>

@@ -1274,7 +1274,7 @@ The embedded browser provides a full browsing experience inside a RustConn tab o
 - **Menu (⋯)** button with: Copy URL, Open in System Browser, Zoom Reset (100%), Clear Session Data
 
 **Floating Toolbar:**
-The toolbar floats over the page rather than taking a strip of its own, so the page gets the full height of the tab. It appears briefly when the page connects and then hides after 2 seconds of inactivity; hover or click the arrow indicator in the top-right corner to bring it back. The corner rather than the centre on purpose — a site's logo, navigation and search live across the top centre, and an indicator there would swallow clicks meant for the page.
+The toolbar floats over the page rather than taking a strip of its own, so the page gets the full height of the tab. It appears briefly when the page connects and then hides after 2 seconds of inactivity; hover or click the arrow indicator at the top centre to bring it back — the same place RDP and VNC put theirs. The trailing corner would sit better over a web page, whose logo and navigation run across the top centre, but that corner already belongs to the split view's own panel arrow, which covered the toolbar indicator completely in a split pane. If the indicator is in your way on a particular site, switch the toolbar off for that connection (below).
 
 To remove it entirely, switch off **Navigation Toolbar** in the connection dialog's Embedded Browser Settings. The address bar goes with it, but the keyboard routes do not: Alt+← / Alt+→ still navigate, Ctrl+R reloads, Ctrl+L copies the current URL, and Ctrl+Plus / Ctrl+Minus / Ctrl+0 still zoom. The setting applies to embedded mode only — System and Custom browser modes hand the URL to another program, which has its own chrome.
 

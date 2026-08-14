@@ -653,6 +653,37 @@ for i18n_check in check-potfiles.sh check-i18n-escapes.sh; do
 done
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 9c. Spell check — the CI `Hygiene` job runs `typos` and fails the build on it
+#
+# The i18n gates above were added because a red CI on the release commit is
+# discovered after the tag, not before. `typos` is the same story and was left
+# out: v0.20.1 was tagged, pushed and published with a red Hygiene job, over a
+# Spanish word in a test fixture. Config lives in typos.toml, which documents how
+# to allow a legitimate word rather than "correct" it.
+# ──────────────────────────────────────────────────────────────────────────────
+# `cargo install typos-cli` puts it in ~/.cargo/bin, which is not on PATH in
+# every shell this script gets run from. Resolved explicitly rather than left to
+# `command -v` alone: a gate that silently skips is worse than no gate, because
+# it reports nothing and is believed.
+TYPOS_BIN=""
+if command -v typos >/dev/null; then
+    TYPOS_BIN="typos"
+elif [[ -x "$HOME/.cargo/bin/typos" ]]; then
+    TYPOS_BIN="$HOME/.cargo/bin/typos"
+fi
+
+if [[ -n "$TYPOS_BIN" ]]; then
+    if TYPOS_OUTPUT="$("$TYPOS_BIN" 2>&1)"; then
+        ok "typos found no spelling errors"
+    else
+        printf '%s\n' "$TYPOS_OUTPUT" >&2
+        fail "typos failed — the CI Hygiene job enforces this and will fail the release commit"
+    fi
+else
+    warn "typos not installed — skipping spell check (CI still enforces it)"
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 10. cargo fmt + clippy + tests
 # ──────────────────────────────────────────────────────────────────────────────
 if $SKIP_CHECKS; then

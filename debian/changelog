@@ -33,8 +33,13 @@ rustconn (0.20.1-1) unstable; urgency=medium
   * Fixed: a session closed with "exit" was silently reconnected on the next
     Wi-Fi roam — the sweep now requires explicit eligibility, not just a
     visible reconnect banner (#285)
+  * Fixed: Web embedded — the toolbar's reveal handle was unreachable in a split
+    pane, buried under the split view's own panel arrow at the same corner; the
+    handle is back at the top centre for every viewer
   * Fixed: three strings new in this release reached only Ukrainian, one of them
     never extracted into the POT at all; all 16 catalogues are complete again
+  * Improved: scripts/release.sh now runs "typos", the last CI gate it did not,
+    so a red Hygiene job cannot reach a tag
   * Dependencies: cc 1.4.3, inotify 0.11.5, pkg-config 0.3.34, safe_arch 1.2.0
     and the ICU/zerovec family at 2.3.0, all transitive
 

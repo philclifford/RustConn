@@ -227,41 +227,24 @@ const TOOLBAR_HIDE_DELAY: std::time::Duration = std::time::Duration::from_secs(2
 /// GNOME HIG minimum pointer/touch target, in pixels.
 const TOUCH_TARGET_PX: i32 = 44;
 
-/// Where the reveal handle sits along the top edge of the viewer.
-///
-/// The handle is the one piece of the auto-hide toolbar that stays on screen
-/// while the toolbar is away, so it always covers a little of what is underneath.
-/// Which part of the edge hurts least depends on what that content is, which is
-/// why this is the caller's decision rather than a constant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RevealHandle {
-    /// Top centre — RDP, VNC and SPICE.
-    ///
-    /// The surface underneath is a remote desktop, whose own top edge is a menu
-    /// bar or panel the user is not aiming at mid-session, and the centre keeps
-    /// the handle clear of the window controls and split-view buttons that live
-    /// in the corners.
-    TopCentre,
-    /// Top trailing corner — the embedded Web viewer.
-    ///
-    /// A web page puts its logo, primary navigation and search across the top
-    /// centre, which is exactly where a 44×44 button would swallow clicks meant
-    /// for the page. The trailing corner is also where the toolbar's own menu
-    /// button appears once revealed, so the handle sits where its controls are
-    /// about to be. Trailing rather than right: GTK flips `Align::End` in an RTL
-    /// locale, and so does the page.
-    TopTrailing,
-}
-
-impl RevealHandle {
-    /// Returns the `halign` that places the handle.
-    const fn halign(self) -> gtk4::Align {
-        match self {
-            Self::TopCentre => gtk4::Align::Center,
-            Self::TopTrailing => gtk4::Align::End,
-        }
-    }
-}
+// The reveal handle sits at the top *centre* for every viewer, RDP, VNC, SPICE
+// and Web alike. It used to be the caller's choice, through a `RevealHandle`
+// enum whose second variant put the Web handle in the trailing corner: a web
+// page keeps its logo, primary navigation and search across the top centre,
+// which is where a 44×44 button swallows clicks meant for the page.
+//
+// The trailing corner turned out to be already taken. `SplitViewAdapter`
+// overlays the panel's own reveal arrow there — `Align::End` + `Align::Start`,
+// the same corner — so in a split pane the two stacked and the Web handle was
+// unreachable behind the panel's. Nothing in either widget could notice: they
+// are added to different overlays by different modules.
+//
+// So the choice is back to a constant, and it is the centre, which is what the
+// old `TopCentre` documentation already gave as its reason — "keeps the handle
+// clear of the window controls and split-view buttons that live in the corners".
+// The page-content cost is real but recoverable: a connection that wants an
+// unobstructed page switches the Navigation Toolbar off (issue #260) and gets no
+// handle at all. A handle hidden underneath another widget is not recoverable.
 
 /// Controls reveal and focus-safe auto-hide for a floating embedded toolbar.
 ///
@@ -296,17 +279,12 @@ pub struct ToolbarAutoHide {
 impl ToolbarAutoHide {
     /// Attaches auto-hide behavior and a touch/keyboard reveal control to an overlay.
     ///
-    /// The reveal trigger is a small arrow indicator along the top edge —
-    /// hovering or clicking it reveals the full toolbar. `handle` decides which
-    /// part of that edge it sits on; see [`RevealHandle`] for why the viewers do
-    /// not agree.
+    /// The reveal trigger is a small arrow indicator at the top centre of the
+    /// overlay — hovering or clicking it reveals the full toolbar. The centre is
+    /// not negotiable; see the comment above this type for what happens in the
+    /// corners.
     #[must_use]
-    pub fn attach(
-        overlay: &Overlay,
-        toolbar: &GtkBox,
-        revealer: &Revealer,
-        handle: RevealHandle,
-    ) -> Rc<Self> {
+    pub fn attach(overlay: &Overlay, toolbar: &GtkBox, revealer: &Revealer) -> Rc<Self> {
         ensure_touch_targets(toolbar.upcast_ref());
 
         let reveal_button = Button::from_icon_name("pan-down-symbolic");
@@ -316,7 +294,7 @@ impl ToolbarAutoHide {
         // The GNOME HIG minimum tap target, stated here rather than in CSS so
         // there is one number to find. The stylesheet only paints the handle.
         reveal_button.set_size_request(TOUCH_TARGET_PX, TOUCH_TARGET_PX);
-        reveal_button.set_halign(handle.halign());
+        reveal_button.set_halign(gtk4::Align::Center);
         reveal_button.set_valign(gtk4::Align::Start);
         reveal_button.set_tooltip_text(Some(&i18n("Show session toolbar")));
         reveal_button.update_property(&[gtk4::accessible::Property::Label(&i18n(
