@@ -124,6 +124,7 @@ pub struct SettingsDialog {
     compact_ui: adw::SwitchRow,
     // Automatic compact interface on small windows
     compact_auto: adw::SwitchRow,
+    reveal_toolbar_on_hover: adw::SwitchRow,
     // Send terminal control shortcuts to the session toggle (focus-based suspend)
     terminal_passthrough_ctrl: adw::SwitchRow,
     // Show active connection name in the window title (issue #211)
@@ -259,6 +260,7 @@ impl SettingsDialog {
             show_welcome_switch,
             double_click_opens_new_session,
             show_split_pane_labels,
+            reveal_toolbar_on_hover,
             renderer_row,
         ) = create_ui_page();
         mark("ui_page");
@@ -686,6 +688,7 @@ impl SettingsDialog {
             show_welcome_switch,
             double_click_opens_new_session,
             show_split_pane_labels,
+            reveal_toolbar_on_hover,
             renderer_row,
             ssh_agent_status_label,
             ssh_agent_socket_label,
@@ -1037,6 +1040,7 @@ impl SettingsDialog {
             &self.show_welcome_switch,
             &self.double_click_opens_new_session,
             &self.show_split_pane_labels,
+            &self.reveal_toolbar_on_hover,
             &self.renderer_row,
             &settings.ui,
             &conn_refs,
@@ -1189,6 +1193,7 @@ impl SettingsDialog {
         let show_welcome_switch_clone = self.show_welcome_switch.clone();
         let double_click_opens_new_session_clone = self.double_click_opens_new_session.clone();
         let show_split_pane_labels_clone = self.show_split_pane_labels.clone();
+        let reveal_toolbar_on_hover_clone = self.reveal_toolbar_on_hover.clone();
         let renderer_row_clone = self.renderer_row.clone();
         let connections_clone = self.connections.clone();
         let keybindings_overrides_clone = self.keybindings_overrides.clone();
@@ -1343,6 +1348,7 @@ impl SettingsDialog {
                 &show_welcome_switch_clone,
                 &double_click_opens_new_session_clone,
                 &show_split_pane_labels_clone,
+                &reveal_toolbar_on_hover_clone,
                 &renderer_row_clone,
                 &conn_refs,
             );
@@ -1375,6 +1381,14 @@ impl SettingsDialog {
             }
             drop(conn_refs);
             drop(conn_list);
+
+            // Applied on save, not on toggle. The compact switches above are a
+            // live preview — their effect is a CSS class, instantly reversible
+            // and visible while the dialog is still open. This one only changes
+            // how the *next* session is built, so previewing it would buy
+            // nothing and a cancelled dialog would leave the running process
+            // disagreeing with what is on disk.
+            crate::app::set_reveal_toolbar_on_hover(ui.reveal_session_toolbar_on_hover);
 
             // Create new settings
             let new_settings = AppSettings {

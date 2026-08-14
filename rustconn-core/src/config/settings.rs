@@ -676,6 +676,17 @@ pub struct UiSettings {
     /// (issue #232).
     #[serde(default = "default_true")]
     pub show_welcome_on_startup: bool,
+    /// Reveal the floating session toolbar when the pointer touches its handle
+    ///
+    /// Default `true`, the long-standing behaviour. The handle sits at the top
+    /// centre of an embedded RDP/VNC view, so moving the pointer towards the
+    /// top of the remote screen — reaching for the remote window's own title
+    /// bar, its close button, or a maximised app's menu — opens the toolbar
+    /// over exactly the area being aimed at. Set to `false` to require a click
+    /// on the handle instead: the handle and every action stay where they are,
+    /// only the accidental trigger goes away.
+    #[serde(default = "default_true")]
+    pub reveal_session_toolbar_on_hover: bool,
     /// Color tab indicators by protocol type
     #[serde(default)]
     pub color_tabs_by_protocol: bool,
@@ -818,6 +829,7 @@ impl Default for UiSettings {
             search_history: Vec::new(),
             startup_action: StartupAction::default(),
             show_welcome_on_startup: true,
+            reveal_session_toolbar_on_hover: true,
             color_tabs_by_protocol: false,
             show_protocol_filters: false,
             show_smart_folders: false,
