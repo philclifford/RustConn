@@ -117,7 +117,6 @@ impl EmbeddedVncWidget {
             &overlay,
             &toolbar,
             &toolbar_revealer,
-            crate::embedded_toolbar_overflow::RevealHandle::TopCentre,
         );
 
         // Reconnect banner (shown when disconnected, at bottom like VTE sessions)

@@ -80,6 +80,14 @@ unparseable = "unparseable"
 # The typo IS the demonstration.
 prodction = "prodction"
 
+# Spanish for "client", in the SSH agent key comment
+# `backup-señor-cliente-final` used by the #278 regression tests. The fixture has
+# to be non-ASCII text a real person would type — that is the entire bug: the
+# comment is free text from `ssh-keygen -C`, and slicing it at a byte offset
+# panicked inside a GTK signal handler. Anglicising the fixture would keep the
+# spell checker quiet and cost the test its point.
+cliente = "cliente"
+
 [default.extend-identifiers]
 # Field name in the vnc-rs crate's event struct. The source already flags it
 # (`bottons: buttons, // Note: typo in vnc-rs library`); it is upstream's

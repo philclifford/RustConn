@@ -351,15 +351,11 @@ impl EmbeddedWebWidget {
         }
 
         // Attach ToolbarAutoHide controller to the overlay. The reveal handle
-        // goes to the trailing corner rather than the centre RDP and VNC use:
-        // the surface underneath is a web page, and its top centre is where the
-        // logo, navigation and search live.
-        let toolbar_auto_hide = ToolbarAutoHide::attach(
-            &overlay,
-            toolbar.widget(),
-            &toolbar_revealer,
-            crate::embedded_toolbar_overflow::RevealHandle::TopTrailing,
-        );
+        // sits at the top centre, like RDP's and VNC's — the trailing corner it
+        // used to take is where the split view puts its own panel arrow, which
+        // covered this one completely in a split pane.
+        let toolbar_auto_hide =
+            ToolbarAutoHide::attach(&overlay, toolbar.widget(), &toolbar_revealer);
         // Unlike RDP and VNC, this viewer has its `WebConfig` while it is being
         // built, so the choice is applied here rather than through a setter.
         toolbar_auto_hide.set_enabled(!config.hide_floating_toolbar);
