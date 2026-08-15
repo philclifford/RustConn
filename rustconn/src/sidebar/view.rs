@@ -46,6 +46,23 @@ fn apply_split_marker(marker: &GtkBox, split_color: i32) {
     }
 }
 
+/// Builds the ancestor path for a `TreeListRow` by walking up `parent()`.
+///
+/// Returns a `›`-separated string of group names leading to the current item
+/// (excluding the item itself). Empty when the item is at the root level.
+fn ancestor_path(row: &TreeListRow) -> String {
+    let mut segments: Vec<String> = Vec::new();
+    let mut current = row.parent();
+    while let Some(parent_row) = current {
+        if let Some(parent_item) = parent_row.item().and_downcast::<ConnectionItem>() {
+            segments.push(parent_item.name());
+        }
+        current = parent_row.parent();
+    }
+    segments.reverse();
+    segments.join(" › ")
+}
+
 /// Finds a direct child widget with a given CSS class.
 fn find_child_by_css_class(parent: &GtkBox, class: &str) -> Option<gtk4::Widget> {
     let mut child = parent.first_child();
@@ -487,17 +504,21 @@ pub fn bind_list_item(
             note_icon.set_visible(false);
         }
 
-        // Show connection count in tooltip
+        // Show connection count and ancestor path in tooltip
         let child_count = if let Some(children) = row.children() {
             children.n_items()
         } else {
             0
         };
-        if child_count > 0 {
-            expander.set_tooltip_text(Some(&format!("{} ({child_count})", item.name())));
-        } else {
-            expander.set_tooltip_text(Some(&item.name().clone()));
-        }
+        let path_prefix = ancestor_path(&row);
+        let name = item.name();
+        let tooltip = match (path_prefix.is_empty(), child_count > 0) {
+            (true, true) => format!("{name} ({child_count})"),
+            (true, false) => name.clone(),
+            (false, true) => format!("{path_prefix} › {name} ({child_count})"),
+            (false, false) => format!("{path_prefix} › {name}"),
+        };
+        expander.set_tooltip_text(Some(&tooltip));
 
         // Hide stale emoji label if icon is not emoji
         if let Some(first) = content_box.first_child()
@@ -543,15 +564,18 @@ pub fn bind_list_item(
                 sync_icon.update_property(&[gtk4::accessible::Property::Label(&tooltip)]);
 
                 // Override group tooltip to include sync info
-                if child_count > 0 {
-                    expander.set_tooltip_text(Some(&format!(
-                        "{} ({child_count}) — {}",
-                        item.name(),
-                        tooltip
-                    )));
+                let base = if path_prefix.is_empty() {
+                    if child_count > 0 {
+                        format!("{} ({child_count})", item.name())
+                    } else {
+                        item.name()
+                    }
+                } else if child_count > 0 {
+                    format!("{path_prefix} › {} ({child_count})", item.name())
                 } else {
-                    expander.set_tooltip_text(Some(&format!("{} — {}", item.name(), tooltip)));
-                }
+                    format!("{path_prefix} › {}", item.name())
+                };
+                expander.set_tooltip_text(Some(&format!("{base} — {tooltip}")));
             } else {
                 // Error state — show warning indicator
                 sync_icon.set_icon_name(Some("dialog-warning-symbolic"));
@@ -562,15 +586,18 @@ pub fn bind_list_item(
                 sync_icon.set_tooltip_text(Some(&tooltip));
                 sync_icon.update_property(&[gtk4::accessible::Property::Label(&tooltip)]);
 
-                if child_count > 0 {
-                    expander.set_tooltip_text(Some(&format!(
-                        "{} ({child_count}) — {}",
-                        item.name(),
-                        tooltip
-                    )));
+                let base = if path_prefix.is_empty() {
+                    if child_count > 0 {
+                        format!("{} ({child_count})", item.name())
+                    } else {
+                        item.name()
+                    }
+                } else if child_count > 0 {
+                    format!("{path_prefix} › {} ({child_count})", item.name())
                 } else {
-                    expander.set_tooltip_text(Some(&format!("{} — {}", item.name(), tooltip)));
-                }
+                    format!("{path_prefix} › {}", item.name())
+                };
+                expander.set_tooltip_text(Some(&format!("{base} — {tooltip}")));
             }
             sync_icon.set_visible(true);
         } else if let Some(existing) = sync_indicator {
@@ -626,14 +653,17 @@ pub fn bind_list_item(
 
         set_label_text(&label, &item.name());
 
-        // Show full connection name and host in tooltip
+        // Show full connection path and host in tooltip for deeply nested items
         let name = item.name();
         let host = item.host();
-        if host.is_empty() || host == name {
-            expander.set_tooltip_text(Some(&name));
-        } else {
-            expander.set_tooltip_text(Some(&format!("{name}\n{host}")));
-        }
+        let path_prefix = ancestor_path(&row);
+        let tooltip = match (path_prefix.is_empty(), host.is_empty() || host == name) {
+            (true, true) => name.clone(),
+            (true, false) => format!("{name}\n{host}"),
+            (false, true) => format!("{path_prefix} › {name}"),
+            (false, false) => format!("{path_prefix} › {name}\n{host}"),
+        };
+        expander.set_tooltip_text(Some(&tooltip));
 
         // Show pin icon for pinned connections
         if let Some(ref pin) = pin_icon {
