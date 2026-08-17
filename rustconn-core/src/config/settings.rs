@@ -750,6 +750,14 @@ pub struct UiSettings {
     /// with 3+ panes side by side (issue #277).
     #[serde(default)]
     pub show_split_pane_labels: bool,
+    /// Remember keyboard passthrough state across restarts.
+    ///
+    /// Default `false`. When `true` at startup the global passthrough mode
+    /// (`win.toggle-passthrough`) is re-engaged, disabling all accelerators
+    /// except quit, fullscreen, and the toggle itself. Stored on window close
+    /// so the mode survives a restart (issue #274 follow-up).
+    #[serde(default)]
+    pub keyboard_passthrough: bool,
 }
 
 impl UiSettings {
@@ -839,6 +847,7 @@ impl Default for UiSettings {
             window_title_shows_connection: false,
             double_click_opens_new_session: false,
             show_split_pane_labels: false,
+            keyboard_passthrough: false,
         }
     }
 }

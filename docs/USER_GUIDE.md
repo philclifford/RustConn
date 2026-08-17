@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.20.2** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.20.3** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -2632,6 +2632,8 @@ When working in remote sessions with TUI applications (nvim, tmux, htop, mc), Ru
 - The menu item shows a checkmark when active
 
 **Customization:** The list of shortcuts that remain active in passthrough mode can be configured in `config.toml` under `[keybindings] passthrough_exceptions`.
+
+**Persistence (0.20.3+):** The passthrough state is saved when the window closes and restored on the next start. If passthrough was active when you quit, it will be active again when you reopen RustConn — no need to toggle it every session. The setting is stored in `config.toml` under `[ui] keyboard_passthrough = true/false`.
 
 **Automatic focus-based shortcut management (0.18.8+):**
 

@@ -5,6 +5,20 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.3] - 2026-08-17
+
+### Added
+
+- **Keyboard passthrough state is now saved across restarts (issue #274 follow-up)** — the global keyboard passthrough toggle (Ctrl+Shift+Backspace) previously reset to off on every launch, forcing users who work primarily in TUI applications (nvim, tmux, mc) to re-enable it each time. The state is now persisted in `config.toml` under `[ui] keyboard_passthrough` and restored on the next start. A new switch in Settings ▸ Interface ("Remember keyboard passthrough") controls the behavior. Default remains off so existing workflows are unchanged.
+
+### Improved
+
+- **Sidebar tooltips now show full tree path for nested items** — hovering over a deeply nested connection or group in a narrow sidebar reveals the complete ancestor path (e.g. "Client › UK / WORK01 › server.example.com"), making truncated names readable without widening the panel.
+
+### Dependencies
+
+- **Updated**: cpal 0.18.1→0.18.2, h2 0.4.15→0.4.16, uuid 1.24.0→1.24.1, zvariant_utils 4.0.0→4.1.0
+
 ## [0.20.2] - 2026-08-15
 
 A polish release that merges all outstanding community pull requests and closes
