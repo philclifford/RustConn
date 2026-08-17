@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: rustconn 0.12.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-17 17:09+0300\n"
+"POT-Creation-Date: 2026-08-17 17:55+0300\n"
 "PO-Revision-Date: 2026-04-25 10:46+0000\n"
 "Last-Translator: RustConn Team\n"
 "Language-Team: Danish\n"
@@ -28,7 +28,7 @@ msgstr "OK"
 #: rustconn/src/dialogs/history.rs:199 rustconn/src/dialogs/kdbx_unlock.rs:95
 #: rustconn/src/dialogs/recording.rs:508 rustconn/src/dialogs/recording.rs:578
 #: rustconn/src/dialogs/settings/keybindings_tab.rs:173
-#: rustconn/src/dialogs/settings/mod.rs:539
+#: rustconn/src/dialogs/settings/mod.rs:542
 #: rustconn/src/dialogs/settings/terminal_tab.rs:763
 #: rustconn/src/dialogs/settings/terminal_tab.rs:813
 #: rustconn/src/dialogs/statistics.rs:85
@@ -225,7 +225,7 @@ msgstr "Klyngedetaljer"
 #: rustconn/src/dialogs/connection/advanced_tab.rs:845
 #: rustconn/src/dialogs/connection/general_tab.rs:82
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:101
-#: rustconn/src/dialogs/export.rs:374 rustconn/src/dialogs/settings/mod.rs:1569
+#: rustconn/src/dialogs/export.rs:374 rustconn/src/dialogs/settings/mod.rs:1576
 #: rustconn/src/dialogs/smart_folder.rs:121 rustconn/src/dialogs/snippet.rs:175
 #: rustconn/src/dialogs/template.rs:511
 #: rustconn/src/dialogs/tunnel_builder/step_review.rs:78
@@ -244,7 +244,7 @@ msgid "Select at least one connection"
 msgstr "Vælg mindst én forbindelse"
 
 #: rustconn/src/dialogs/cluster.rs:191
-#: rustconn/src/dialogs/settings/ui_tab.rs:309
+#: rustconn/src/dialogs/settings/ui_tab.rs:321
 #: rustconn/src/dialogs/shortcuts.rs:627
 msgid "Connections"
 msgstr "Forbindelser"
@@ -624,7 +624,7 @@ msgid "IP address to authorize in the SPA packet"
 msgstr "IP-adresse, der skal autoriseres i SPA-pakken"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:589
-#: rustconn/src/dialogs/settings/mod.rs:339
+#: rustconn/src/dialogs/settings/mod.rs:342
 msgid "Highlight Rules"
 msgstr "Fremhævningsregler"
 
@@ -633,13 +633,13 @@ msgid "Regex-based text highlighting for this connection"
 msgstr "Regex-baseret tekstfremhævning for denne forbindelse"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:604
-#: rustconn/src/dialogs/settings/mod.rs:354
+#: rustconn/src/dialogs/settings/mod.rs:357
 msgid "No highlight rules"
 msgstr "Ingen fremhævningsregler"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:616
 #: rustconn/src/dialogs/connection/automation_tab.rs:155
-#: rustconn/src/dialogs/settings/mod.rs:344
+#: rustconn/src/dialogs/settings/mod.rs:347
 #: rustconn/src/window/edit_group.rs:1146
 msgid "Add Rule"
 msgstr "Tilføj regel"
@@ -698,7 +698,7 @@ msgid "Rule name"
 msgstr "Regelnavn"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:854
-#: rustconn/src/dialogs/settings/mod.rs:1589
+#: rustconn/src/dialogs/settings/mod.rs:1596
 msgid "Pattern (regex)"
 msgstr "Mønster (regex)"
 
@@ -707,22 +707,22 @@ msgid "Regex pattern to match"
 msgstr "Regex-mønster til matchning"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:864
-#: rustconn/src/dialogs/settings/mod.rs:1533
-#: rustconn/src/dialogs/settings/mod.rs:1535
+#: rustconn/src/dialogs/settings/mod.rs:1540
+#: rustconn/src/dialogs/settings/mod.rs:1542
 msgid "Enable rule"
 msgstr "Aktivér regel"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:871
 #: rustconn/src/dialogs/connection/dialog/rows.rs:285
 #: rustconn/src/dialogs/connection/dialog/rows.rs:287
-#: rustconn/src/dialogs/settings/mod.rs:1550
+#: rustconn/src/dialogs/settings/mod.rs:1557
 #: rustconn/src/window/edit_group.rs:1941
 #: rustconn/src/window/edit_group.rs:1943
 msgid "Delete rule"
 msgstr "Slet regel"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:875
-#: rustconn/src/dialogs/settings/mod.rs:1554
+#: rustconn/src/dialogs/settings/mod.rs:1561
 msgid "Delete highlight rule"
 msgstr "Slet fremhævningsregel"
 
@@ -1583,7 +1583,7 @@ msgid "Timeout in milliseconds (0 = no timeout)"
 msgstr "Timeout i millisekunder (0 = ingen timeout)"
 
 #: rustconn/src/dialogs/connection/dialog/rows.rs:447
-#: rustconn/src/dialogs/settings/ui_tab.rs:397
+#: rustconn/src/dialogs/settings/ui_tab.rs:409
 #: rustconn/src/window/edit_group.rs:2105
 msgid "Enabled"
 msgstr "Aktiveret"
@@ -1701,7 +1701,7 @@ msgstr "Zero Trust"
 #: rustconn/src/dialogs/connection/telnet.rs:36
 #: rustconn/src/dialogs/connection/vnc.rs:315
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:98
-#: rustconn/src/dialogs/settings/mod.rs:384
+#: rustconn/src/dialogs/settings/mod.rs:387
 #: rustconn/src/dialogs/template.rs:686
 #: rustconn/src/dialogs/tunnel_builder/step_connection.rs:86
 #: rustconn/src/dialogs/tunnel_builder/step_review.rs:84
@@ -2034,7 +2034,7 @@ msgid "Additional kubectl arguments"
 msgstr "Yderligere kubectl-argumenter"
 
 #: rustconn/src/dialogs/connection/logging_tab.rs:65
-#: rustconn/src/dialogs/settings/mod.rs:305
+#: rustconn/src/dialogs/settings/mod.rs:308
 msgid "Session Logging"
 msgstr "Sessionslogning"
 
@@ -3499,7 +3499,7 @@ msgid "Choose key file"
 msgstr "Vælg nøglefil"
 
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:135
-#: rustconn/src/dialogs/settings/ui_tab.rs:61
+#: rustconn/src/dialogs/settings/ui_tab.rs:62
 msgid "Appearance"
 msgstr "Udseende"
 
@@ -5526,124 +5526,124 @@ msgstr "Tidsstempler"
 msgid "Prepend [HH:MM:SS] to each line in session logs"
 msgstr "Tilføj [HH:MM:SS] foran hver linje i sessionslogfiler"
 
-#: rustconn/src/dialogs/settings/mod.rs:306
+#: rustconn/src/dialogs/settings/mod.rs:309
 msgid "Configure session log persistence and content"
 msgstr "Konfigurér sessionslogpersistens og indhold"
 
-#: rustconn/src/dialogs/settings/mod.rs:313
+#: rustconn/src/dialogs/settings/mod.rs:316
 msgid "Directory"
 msgstr "Mappe"
 
-#: rustconn/src/dialogs/settings/mod.rs:319
+#: rustconn/src/dialogs/settings/mod.rs:322
 msgid "Retention"
 msgstr "Opbevaring"
 
-#: rustconn/src/dialogs/settings/mod.rs:320
+#: rustconn/src/dialogs/settings/mod.rs:323
 msgid "Days to keep logs"
 msgstr "Dage at beholde logfiler"
 
-#: rustconn/src/dialogs/settings/mod.rs:340
+#: rustconn/src/dialogs/settings/mod.rs:343
 msgid "Global regex-based text highlighting rules"
 msgstr "Globale regex-baserede tekstfremhævningsregler"
 
-#: rustconn/src/dialogs/settings/mod.rs:412
+#: rustconn/src/dialogs/settings/mod.rs:415
 msgid "Backup & Restore"
 msgstr "Sikkerhedskopiering og gendannelse"
 
-#: rustconn/src/dialogs/settings/mod.rs:413
+#: rustconn/src/dialogs/settings/mod.rs:416
 msgid "Export or import all settings as a ZIP archive"
 msgstr "Eksportér eller importér alle indstillinger som ZIP-arkiv"
 
-#: rustconn/src/dialogs/settings/mod.rs:417
+#: rustconn/src/dialogs/settings/mod.rs:420
 msgid "Backup Settings…"
 msgstr "Sikkerhedskopiér indstillinger…"
 
-#: rustconn/src/dialogs/settings/mod.rs:418
+#: rustconn/src/dialogs/settings/mod.rs:421
 msgid "Save all configuration files to a ZIP archive"
 msgstr "Gem alle konfigurationsfiler i et ZIP-arkiv"
 
-#: rustconn/src/dialogs/settings/mod.rs:421
+#: rustconn/src/dialogs/settings/mod.rs:424
 msgid "Restore Settings…"
 msgstr "Gendan indstillinger…"
 
-#: rustconn/src/dialogs/settings/mod.rs:423
+#: rustconn/src/dialogs/settings/mod.rs:426
 msgid "Load configuration from a ZIP archive (restart required)"
 msgstr "Indlæs konfiguration fra et ZIP-arkiv (genstart påkrævet)"
 
-#: rustconn/src/dialogs/settings/mod.rs:451
+#: rustconn/src/dialogs/settings/mod.rs:454
 msgid "Save Backup"
 msgstr "Gem sikkerhedskopi"
 
-#: rustconn/src/dialogs/settings/mod.rs:456
-#: rustconn/src/dialogs/settings/mod.rs:520
+#: rustconn/src/dialogs/settings/mod.rs:459
+#: rustconn/src/dialogs/settings/mod.rs:523
 msgid "ZIP archives"
 msgstr "ZIP-arkiver"
 
-#: rustconn/src/dialogs/settings/mod.rs:469
+#: rustconn/src/dialogs/settings/mod.rs:472
 msgid "Backup saved ({} files)"
 msgstr "Sikkerhedskopi gemt ({} filer)"
 
-#: rustconn/src/dialogs/settings/mod.rs:482
-#: rustconn/src/dialogs/settings/mod.rs:491
+#: rustconn/src/dialogs/settings/mod.rs:485
+#: rustconn/src/dialogs/settings/mod.rs:494
 msgid "Backup failed"
 msgstr "Sikkerhedskopiering mislykkedes"
 
-#: rustconn/src/dialogs/settings/mod.rs:493
-#: rustconn/src/dialogs/settings/mod.rs:626
+#: rustconn/src/dialogs/settings/mod.rs:496
+#: rustconn/src/dialogs/settings/mod.rs:629
 msgid "Cannot access the configuration directory: {}"
 msgstr "Kan ikke få adgang til konfigurationsmappen: {}"
 
-#: rustconn/src/dialogs/settings/mod.rs:516
+#: rustconn/src/dialogs/settings/mod.rs:519
 msgid "Open Backup"
 msgstr "Åbn sikkerhedskopi"
 
-#: rustconn/src/dialogs/settings/mod.rs:534
+#: rustconn/src/dialogs/settings/mod.rs:537
 msgid "Restore Settings?"
 msgstr "Gendan indstillinger?"
 
-#: rustconn/src/dialogs/settings/mod.rs:536
+#: rustconn/src/dialogs/settings/mod.rs:539
 msgid ""
 "This will overwrite current settings. A restart is required to apply changes."
 msgstr "Dette overskriver de aktuelle indstillinger. En genstart er påkrævet."
 
-#: rustconn/src/dialogs/settings/mod.rs:540
+#: rustconn/src/dialogs/settings/mod.rs:543
 #: rustconn/src/window/session_restore.rs:186
 msgid "Restore"
 msgstr "Gendan"
 
-#: rustconn/src/dialogs/settings/mod.rs:572
+#: rustconn/src/dialogs/settings/mod.rs:575
 msgid "Restored files but failed to reload settings. Please restart."
 msgstr ""
 "Filer gendannet, men indstillinger kunne ikke genindlæses. Genstart venligst."
 
-#: rustconn/src/dialogs/settings/mod.rs:587
+#: rustconn/src/dialogs/settings/mod.rs:590
 msgid "Settings restored"
 msgstr "Indstillinger gendannet"
 
-#: rustconn/src/dialogs/settings/mod.rs:589
+#: rustconn/src/dialogs/settings/mod.rs:592
 msgid "Restored {} files. Restart RustConn to apply the restored settings."
 msgstr ""
 "{} filer gendannet. Genstart RustConn for at anvende de gendannede "
 "indstillinger."
 
-#: rustconn/src/dialogs/settings/mod.rs:593
+#: rustconn/src/dialogs/settings/mod.rs:596
 msgid "Restart later"
 msgstr "Genstart senere"
 
-#: rustconn/src/dialogs/settings/mod.rs:594
+#: rustconn/src/dialogs/settings/mod.rs:597
 msgid "Quit now"
 msgstr "Afslut nu"
 
-#: rustconn/src/dialogs/settings/mod.rs:615
-#: rustconn/src/dialogs/settings/mod.rs:624
+#: rustconn/src/dialogs/settings/mod.rs:618
+#: rustconn/src/dialogs/settings/mod.rs:627
 msgid "Restore failed"
 msgstr "Gendannelse mislykkedes"
 
-#: rustconn/src/dialogs/settings/mod.rs:944
+#: rustconn/src/dialogs/settings/mod.rs:948
 msgid "Failed to start"
 msgstr "Kunne ikke starte"
 
-#: rustconn/src/dialogs/settings/mod.rs:1516
+#: rustconn/src/dialogs/settings/mod.rs:1523
 msgid "Untitled rule"
 msgstr "Unavngiven regel"
 
@@ -6389,8 +6389,8 @@ msgid "Colors"
 msgstr "Farver"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:86
-#: rustconn/src/dialogs/settings/ui_tab.rs:92
-#: rustconn/src/dialogs/settings/ui_tab.rs:147
+#: rustconn/src/dialogs/settings/ui_tab.rs:93
+#: rustconn/src/dialogs/settings/ui_tab.rs:148
 msgid "Theme"
 msgstr "Tema"
 
@@ -6445,8 +6445,8 @@ msgstr "Til"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:278
 #: rustconn/src/dialogs/settings/terminal_tab.rs:315
-#: rustconn/src/dialogs/settings/ui_tab.rs:68
-#: rustconn/src/dialogs/settings/ui_tab.rs:109
+#: rustconn/src/dialogs/settings/ui_tab.rs:69
+#: rustconn/src/dialogs/settings/ui_tab.rs:110
 msgid "System"
 msgstr "System"
 
@@ -6566,8 +6566,8 @@ msgid "Send Escape prefix instead of composed characters (for vim/emacs)"
 msgstr "Send Escape-præfiks i stedet for sammensatte tegn (til vim/emacs)"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:469
-#: rustconn/src/dialogs/settings/ui_tab.rs:335
-#: rustconn/src/dialogs/settings/ui_tab.rs:604
+#: rustconn/src/dialogs/settings/ui_tab.rs:347
+#: rustconn/src/dialogs/settings/ui_tab.rs:619
 #: rustconn/src/split_view/adapter.rs:1443 rustconn/src/tray.rs:229
 #: rustconn/src/tray.rs:587 rustconn/src/window/ui.rs:240
 msgid "Local Shell"
@@ -6669,62 +6669,62 @@ msgstr "Lys cyan"
 msgid "Bright White"
 msgstr "Lys hvid"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:55
+#: rustconn/src/dialogs/settings/ui_tab.rs:56
 msgid "Interface"
 msgstr "Brugerflade"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:69
-#: rustconn/src/dialogs/settings/ui_tab.rs:114
+#: rustconn/src/dialogs/settings/ui_tab.rs:70
+#: rustconn/src/dialogs/settings/ui_tab.rs:115
 msgid "Light"
 msgstr "Lys"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:70
-#: rustconn/src/dialogs/settings/ui_tab.rs:119
+#: rustconn/src/dialogs/settings/ui_tab.rs:71
+#: rustconn/src/dialogs/settings/ui_tab.rs:120
 msgid "Dark"
 msgstr "Mørk"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:164
+#: rustconn/src/dialogs/settings/ui_tab.rs:165
 msgid "Language"
 msgstr "Sprog"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:165
-#: rustconn/src/dialogs/settings/ui_tab.rs:181
+#: rustconn/src/dialogs/settings/ui_tab.rs:166
+#: rustconn/src/dialogs/settings/ui_tab.rs:182
 msgid "Restart required to apply"
 msgstr "Genstart påkrævet for at anvende"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:180
+#: rustconn/src/dialogs/settings/ui_tab.rs:181
 msgid "Rendering"
 msgstr "Gengivelse"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:188
+#: rustconn/src/dialogs/settings/ui_tab.rs:189
 msgid "Color tabs by protocol"
 msgstr "Farv faner efter protokol"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:190
+#: rustconn/src/dialogs/settings/ui_tab.rs:191
 msgid "Show colored indicator on tabs based on protocol type"
 msgstr "Vis farvet indikator på faner baseret på protokoltype"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:197
+#: rustconn/src/dialogs/settings/ui_tab.rs:198
 msgid "Show protocol filters"
 msgstr "Vis protokolfiltre"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:198
+#: rustconn/src/dialogs/settings/ui_tab.rs:199
 msgid "Display protocol filter bar in sidebar"
 msgstr "Vis protokolfilterlinje i sidebjælken"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:204
+#: rustconn/src/dialogs/settings/ui_tab.rs:205
 msgid "Sidebar width"
 msgstr "Sidebjælkebredde"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:205
+#: rustconn/src/dialogs/settings/ui_tab.rs:206
 msgid "Width of the connection sidebar in pixels"
 msgstr "Bredde af forbindelsessidebjælken i pixels"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:214
+#: rustconn/src/dialogs/settings/ui_tab.rs:215
 msgid "Compact interface"
 msgstr "Kompakt grænseflade"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:216
+#: rustconn/src/dialogs/settings/ui_tab.rs:217
 msgid ""
 "Reduce header bar, tab bar, and toolbar height. Applied instantly; useful on "
 "small screens, macOS and KDE"
@@ -6732,11 +6732,11 @@ msgstr ""
 "Reducer højden på overskriftsbjælken, fanebjælken og værktøjslinjen. "
 "Anvendes øjeblikkeligt; nyttigt på små skærme, macOS og KDE"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:223
+#: rustconn/src/dialogs/settings/ui_tab.rs:224
 msgid "Compact automatically on small windows"
 msgstr "Kompakt automatisk på små vinduer"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:225
+#: rustconn/src/dialogs/settings/ui_tab.rs:226
 msgid ""
 "Switch to compact chrome when the window becomes short or narrow, and back "
 "when it grows"
@@ -6744,11 +6744,11 @@ msgstr ""
 "Skift til kompakt udseende når vinduet bliver lille eller smalt, og tilbage "
 "når det vokser"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:236
+#: rustconn/src/dialogs/settings/ui_tab.rs:237
 msgid "Open session toolbar on hover"
 msgstr "Åbn sessionspanelet ved svæv"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:238
+#: rustconn/src/dialogs/settings/ui_tab.rs:239
 msgid ""
 "Reveal the floating RDP/VNC toolbar when the pointer touches its handle. "
 "When off, the handle must be clicked"
@@ -6756,11 +6756,11 @@ msgstr ""
 "Vis den flydende RDP/VNC-værktøjslinje når markøren berører dens håndtag. "
 "Når slået fra, kræves et klik"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:263
+#: rustconn/src/dialogs/settings/ui_tab.rs:264
 msgid "Send terminal control shortcuts to the session"
 msgstr "Send terminalens kontrolgenveje til sessionen"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:265
+#: rustconn/src/dialogs/settings/ui_tab.rs:266
 msgid ""
 "While a terminal or remote viewer is focused, let Ctrl+F/P/N and similar "
 "chords reach the session instead of the app"
@@ -6768,23 +6768,31 @@ msgstr ""
 "Når en terminal eller fjernfremviser er i fokus, så lad Ctrl+F/P/N og "
 "lignende genveje nå sessionen i stedet for appen"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:274
+#: rustconn/src/dialogs/settings/ui_tab.rs:275
+msgid "Remember keyboard passthrough"
+msgstr "Husk tastaturgennemgang"
+
+#: rustconn/src/dialogs/settings/ui_tab.rs:277
+msgid "Restore the passthrough state (Ctrl+Shift+Backspace) on the next start"
+msgstr "Gendan gennemgangstilstanden (Ctrl+Shift+Backspace) ved næste start"
+
+#: rustconn/src/dialogs/settings/ui_tab.rs:286
 msgid "Window"
 msgstr "Vindue"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:278
+#: rustconn/src/dialogs/settings/ui_tab.rs:290
 msgid "Remember size"
 msgstr "Husk størrelse"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:279
+#: rustconn/src/dialogs/settings/ui_tab.rs:291
 msgid "Restore window geometry on startup"
 msgstr "Gendan vinduesgeometri ved opstart"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:287
+#: rustconn/src/dialogs/settings/ui_tab.rs:299
 msgid "Show connection in window title"
 msgstr "Vis forbindelse i vinduestitel"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:289
+#: rustconn/src/dialogs/settings/ui_tab.rs:301
 msgid ""
 "Append the active connection name to the window title, so time-tracking "
 "tools can identify it"
@@ -6792,11 +6800,11 @@ msgstr ""
 "Tilføj det aktive forbindelsesnavn til vinduestitlen, så "
 "tidssporingsværktøjer kan identificere det"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:298
+#: rustconn/src/dialogs/settings/ui_tab.rs:310
 msgid "Show connection name in split panes"
 msgstr "Vis forbindelsesnavn i opdelte paneler"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:300
+#: rustconn/src/dialogs/settings/ui_tab.rs:312
 msgid ""
 "Display a compact header with the connection name at the top of each split-"
 "view pane"
@@ -6804,15 +6812,15 @@ msgstr ""
 "Vis en kompakt overskrift med forbindelsesnavnet øverst i hvert panel i den "
 "opdelte visning"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:310
+#: rustconn/src/dialogs/settings/ui_tab.rs:322
 msgid "Behavior when opening a connection from the sidebar"
 msgstr "Adfærd når en forbindelse åbnes fra sidebjælken"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:316
+#: rustconn/src/dialogs/settings/ui_tab.rs:328
 msgid "Open a new session on every double-click"
 msgstr "Åbn en ny session ved hvert dobbeltklik"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:318
+#: rustconn/src/dialogs/settings/ui_tab.rs:330
 msgid ""
 "Double-clicking a connection always starts another session instead of "
 "focusing the one already open"
@@ -6820,84 +6828,84 @@ msgstr ""
 "Dobbeltklik på en forbindelse starter altid endnu en session i stedet for at "
 "skifte til den, der allerede er åben"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:327
+#: rustconn/src/dialogs/settings/ui_tab.rs:339
 msgid "Startup"
 msgstr "Opstart"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:328
+#: rustconn/src/dialogs/settings/ui_tab.rs:340
 msgid "Action to perform when the application starts"
 msgstr "Handling ved programstart"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:334
-#: rustconn/src/dialogs/settings/ui_tab.rs:604
+#: rustconn/src/dialogs/settings/ui_tab.rs:346
+#: rustconn/src/dialogs/settings/ui_tab.rs:619
 msgid "Do nothing"
 msgstr "Gør intet"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:341
+#: rustconn/src/dialogs/settings/ui_tab.rs:353
 msgid "On startup"
 msgstr "Ved opstart"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:342
+#: rustconn/src/dialogs/settings/ui_tab.rs:354
 msgid "Open session automatically"
 msgstr "Åbn session automatisk"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:350
+#: rustconn/src/dialogs/settings/ui_tab.rs:362
 msgid "Show Welcome tab"
 msgstr "Vis Velkommen-fanen"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:351
+#: rustconn/src/dialogs/settings/ui_tab.rs:363
 msgid "Display Welcome tab when no session opens at startup"
 msgstr "Vis Velkommen-fanen, når ingen session åbnes ved opstart"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:361
+#: rustconn/src/dialogs/settings/ui_tab.rs:373
 msgid "System Tray"
 msgstr "Systembakke"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:362
+#: rustconn/src/dialogs/settings/ui_tab.rs:374
 msgid "Requires desktop environment with tray support"
 msgstr "Kræver skrivebordsmiljø med understøttelse af systembakke"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:367
+#: rustconn/src/dialogs/settings/ui_tab.rs:379
 msgid "Show icon"
 msgstr "Vis ikon"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:368
+#: rustconn/src/dialogs/settings/ui_tab.rs:380
 msgid "Display icon in system tray"
 msgstr "Vis ikon i systembakken"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:373
+#: rustconn/src/dialogs/settings/ui_tab.rs:385
 msgid "Minimize to tray"
 msgstr "Minimér til systembakke"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:374
+#: rustconn/src/dialogs/settings/ui_tab.rs:386
 msgid "Hide window instead of closing"
 msgstr "Skjul vindue i stedet for at lukke"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:391
+#: rustconn/src/dialogs/settings/ui_tab.rs:403
 msgid "Session Restore"
 msgstr "Sessionsgendannelse"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:392
+#: rustconn/src/dialogs/settings/ui_tab.rs:404
 msgid "Restore previous connections on startup"
 msgstr "Gendan tidligere forbindelser ved opstart"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:398
+#: rustconn/src/dialogs/settings/ui_tab.rs:410
 msgid "Reconnect to previous sessions on startup"
 msgstr "Genopret forbindelse til tidligere sessioner ved opstart"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:403
+#: rustconn/src/dialogs/settings/ui_tab.rs:415
 msgid "Ask first"
 msgstr "Spørg først"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:404
+#: rustconn/src/dialogs/settings/ui_tab.rs:416
 msgid "Prompt before restoring sessions"
 msgstr "Spørg før gendannelse af sessioner"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:409
+#: rustconn/src/dialogs/settings/ui_tab.rs:421
 msgid "Max age"
 msgstr "Maks. alder"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:410
+#: rustconn/src/dialogs/settings/ui_tab.rs:422
 msgid "Hours before sessions expire"
 msgstr "Timer før sessioner udløber"
 
@@ -10572,11 +10580,11 @@ msgstr "Tastaturgennemgang aktiveret — genveje deaktiveret"
 msgid "Keyboard passthrough disabled — shortcuts restored"
 msgstr "Tastaturgennemgang deaktiveret — genveje genoprettet"
 
-#: rustconn/src/window/navigation_actions.rs:258
+#: rustconn/src/window/navigation_actions.rs:257
 msgid "Broadcast enabled — keystrokes mirrored to all split panels"
 msgstr "Udsendelse aktiveret — tastetryk spejles til alle opdelte paneler"
 
-#: rustconn/src/window/navigation_actions.rs:260
+#: rustconn/src/window/navigation_actions.rs:259
 msgid "Broadcast disabled — keystrokes go to focused panel only"
 msgstr "Udsendelse deaktiveret — tastetryk går kun til det aktive panel"
 

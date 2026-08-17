@@ -49,6 +49,7 @@ pub fn create_ui_page() -> (
     adw::SwitchRow,
     adw::SwitchRow,
     adw::SwitchRow,
+    adw::SwitchRow,
     adw::ComboRow,
 ) {
     let page = adw::PreferencesPage::builder()
@@ -267,6 +268,17 @@ pub fn create_ui_page() -> (
         .build();
     appearance_group.add(&terminal_passthrough_ctrl);
 
+    // Global keyboard passthrough: remembers the Ctrl+Shift+Backspace toggle
+    // state across restarts so users working primarily in TUI applications
+    // don't need to re-enable it every session (issue #274 follow-up).
+    let keyboard_passthrough = adw::SwitchRow::builder()
+        .title(i18n("Remember keyboard passthrough"))
+        .subtitle(i18n(
+            "Restore the passthrough state (Ctrl+Shift+Backspace) on the next start",
+        ))
+        .build();
+    appearance_group.add(&keyboard_passthrough);
+
     page.add(&appearance_group);
 
     // === Window Group ===
@@ -441,6 +453,7 @@ pub fn create_ui_page() -> (
         compact_ui,
         compact_auto,
         terminal_passthrough_ctrl,
+        keyboard_passthrough,
         window_title_shows_connection,
         show_welcome_switch,
         double_click_opens_new_session,
@@ -499,6 +512,7 @@ pub fn load_ui_settings(
     compact_ui: &adw::SwitchRow,
     compact_auto: &adw::SwitchRow,
     terminal_passthrough_ctrl: &adw::SwitchRow,
+    keyboard_passthrough: &adw::SwitchRow,
     window_title_shows_connection: &adw::SwitchRow,
     show_welcome_switch: &adw::SwitchRow,
     double_click_opens_new_session: &adw::SwitchRow,
@@ -577,6 +591,7 @@ pub fn load_ui_settings(
     crate::app::set_compact_prefs(settings.compact_ui, settings.compact_auto);
 
     terminal_passthrough_ctrl.set_active(settings.terminal_passthrough_ctrl);
+    keyboard_passthrough.set_active(settings.keyboard_passthrough);
 
     window_title_shows_connection.set_active(settings.window_title_shows_connection);
 
@@ -645,6 +660,7 @@ pub fn collect_ui_settings(
     compact_ui: &adw::SwitchRow,
     compact_auto: &adw::SwitchRow,
     terminal_passthrough_ctrl: &adw::SwitchRow,
+    keyboard_passthrough: &adw::SwitchRow,
     window_title_shows_connection: &adw::SwitchRow,
     show_welcome_switch: &adw::SwitchRow,
     double_click_opens_new_session: &adw::SwitchRow,
@@ -721,6 +737,6 @@ pub fn collect_ui_settings(
         double_click_opens_new_session: double_click_opens_new_session.is_active(),
         show_split_pane_labels: show_split_pane_labels.is_active(),
         reveal_session_toolbar_on_hover: reveal_toolbar_on_hover.is_active(),
-        keyboard_passthrough: false, // Passthrough state is managed by the toggle action, not settings dialog
+        keyboard_passthrough: keyboard_passthrough.is_active(),
     }
 }

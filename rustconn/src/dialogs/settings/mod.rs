@@ -127,6 +127,8 @@ pub struct SettingsDialog {
     reveal_toolbar_on_hover: adw::SwitchRow,
     // Send terminal control shortcuts to the session toggle (focus-based suspend)
     terminal_passthrough_ctrl: adw::SwitchRow,
+    // Remember keyboard passthrough state across restarts (issue #274)
+    keyboard_passthrough: adw::SwitchRow,
     // Show active connection name in the window title (issue #211)
     window_title_shows_connection: adw::SwitchRow,
     // Show Welcome tab on startup (issue #232)
@@ -256,6 +258,7 @@ impl SettingsDialog {
             compact_ui,
             compact_auto,
             terminal_passthrough_ctrl,
+            keyboard_passthrough,
             window_title_shows_connection,
             show_welcome_switch,
             double_click_opens_new_session,
@@ -684,6 +687,7 @@ impl SettingsDialog {
             compact_ui,
             compact_auto,
             terminal_passthrough_ctrl,
+            keyboard_passthrough,
             window_title_shows_connection,
             show_welcome_switch,
             double_click_opens_new_session,
@@ -1036,6 +1040,7 @@ impl SettingsDialog {
             &self.compact_ui,
             &self.compact_auto,
             &self.terminal_passthrough_ctrl,
+            &self.keyboard_passthrough,
             &self.window_title_shows_connection,
             &self.show_welcome_switch,
             &self.double_click_opens_new_session,
@@ -1189,6 +1194,7 @@ impl SettingsDialog {
         let compact_ui_clone = self.compact_ui.clone();
         let compact_auto_clone = self.compact_auto.clone();
         let terminal_passthrough_ctrl_clone = self.terminal_passthrough_ctrl.clone();
+        let keyboard_passthrough_clone = self.keyboard_passthrough.clone();
         let window_title_shows_connection_clone = self.window_title_shows_connection.clone();
         let show_welcome_switch_clone = self.show_welcome_switch.clone();
         let double_click_opens_new_session_clone = self.double_click_opens_new_session.clone();
@@ -1344,6 +1350,7 @@ impl SettingsDialog {
                 &compact_ui_clone,
                 &compact_auto_clone,
                 &terminal_passthrough_ctrl_clone,
+                &keyboard_passthrough_clone,
                 &window_title_shows_connection_clone,
                 &show_welcome_switch_clone,
                 &double_click_opens_new_session_clone,
@@ -1364,7 +1371,6 @@ impl SettingsDialog {
                 ui.window_maximized = cur.ui.window_maximized;
                 ui.expanded_groups = cur.ui.expanded_groups.clone();
                 ui.search_history = cur.ui.search_history.clone();
-                ui.keyboard_passthrough = cur.ui.keyboard_passthrough;
                 // A file-based startup action (an RDP/.vv file passed on the CLI)
                 // has no dropdown slot — it shares index 0 with "Do nothing" — so
                 // a Settings round-trip would otherwise collapse it to None.
