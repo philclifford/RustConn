@@ -140,7 +140,7 @@
     <control>touch</control>
   </supports>
   <releases>
-    <release version="0.20.3" date="2026-08-15">
+    <release version="0.20.3" date="2026-08-17">
       <description>
         <p>Version 0.20.3 - keyboard passthrough persistence and sidebar tooltip paths:</p>
         <ul>
