@@ -211,6 +211,17 @@ impl MainWindow {
         });
         window.add_action(&toggle_passthrough_action);
 
+        // Restore saved passthrough state from the previous session. If the
+        // user had passthrough active at last close, re-engage it now so the
+        // mode survives a restart (issue #274 follow-up). The action is
+        // already on the window so we can activate it normally.
+        {
+            let saved_passthrough = with_state(state, |s| s.settings().ui.keyboard_passthrough);
+            if saved_passthrough {
+                toggle_passthrough_action.activate(None);
+            }
+        }
+
         // Toggle cluster broadcast mode (stateful, per active tab's cluster).
         // Toggle split-view broadcast mode (stateful).
         // The action is enabled only when the active tab has a split layout with ≥2 sessions.

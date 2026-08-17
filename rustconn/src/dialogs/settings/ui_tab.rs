@@ -721,5 +721,6 @@ pub fn collect_ui_settings(
         double_click_opens_new_session: double_click_opens_new_session.is_active(),
         show_split_pane_labels: show_split_pane_labels.is_active(),
         reveal_session_toolbar_on_hover: reveal_toolbar_on_hover.is_active(),
+        keyboard_passthrough: false, // Passthrough state is managed by the toggle action, not settings dialog
     }
 }

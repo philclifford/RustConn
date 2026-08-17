@@ -1364,6 +1364,7 @@ impl SettingsDialog {
                 ui.window_maximized = cur.ui.window_maximized;
                 ui.expanded_groups = cur.ui.expanded_groups.clone();
                 ui.search_history = cur.ui.search_history.clone();
+                ui.keyboard_passthrough = cur.ui.keyboard_passthrough;
                 // A file-based startup action (an RDP/.vv file passed on the CLI)
                 // has no dropdown slot — it shares index 0 with "Do nothing" — so
                 // a Settings round-trip would otherwise collapse it to None.

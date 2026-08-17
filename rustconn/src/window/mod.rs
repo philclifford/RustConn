@@ -1648,9 +1648,19 @@ impl MainWindow {
                     settings.ui.window_height = Some(height);
                     settings.ui.window_maximized = is_maximized;
                     settings.ui.sidebar_width = Some(sidebar_width);
-                    if let Err(e) = state.update_settings(settings) {
-                        tracing::warn!(?e, "Failed to update settings");
-                    }
+                }
+
+                // Persist the keyboard passthrough toggle so it survives a
+                // restart (issue #274 follow-up). Read the action state from
+                // the window — the action is stateful and always present.
+                settings.ui.keyboard_passthrough = win
+                    .lookup_action("toggle-passthrough")
+                    .and_then(|a| a.state())
+                    .and_then(|v| v.get::<bool>())
+                    .unwrap_or(false);
+
+                if let Err(e) = state.update_settings(settings) {
+                    tracing::warn!(?e, "Failed to update settings");
                 }
             }
 

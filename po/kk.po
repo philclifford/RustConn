@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: rustconn 0.12.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-15 00:44+0300\n"
+"POT-Creation-Date: 2026-08-17 17:09+0300\n"
 "PO-Revision-Date: 2026-04-25 10:46+0000\n"
 "Last-Translator: RustConn Team\n"
 "Language-Team: Kazakh\n"
@@ -41,7 +41,7 @@ msgstr "OK"
 #: rustconn/src/window/batch_edit.rs:63
 #: rustconn/src/window/connection_dialogs.rs:1054
 #: rustconn/src/window/edit_group.rs:1775
-#: rustconn/src/window/edit_group.rs:1823 rustconn/src/window/mod.rs:3383
+#: rustconn/src/window/edit_group.rs:1823 rustconn/src/window/mod.rs:3393
 #: rustconn/src/window/operations.rs:82 rustconn/src/window/operations.rs:457
 #: rustconn/src/window/operations.rs:634 rustconn/src/window/sessions.rs:339
 #: rustconn/src/window/workspaces.rs:548
@@ -244,7 +244,7 @@ msgid "Select at least one connection"
 msgstr "Кемінде бір қосылымды таңдаңыз"
 
 #: rustconn/src/dialogs/cluster.rs:191
-#: rustconn/src/dialogs/settings/ui_tab.rs:308
+#: rustconn/src/dialogs/settings/ui_tab.rs:309
 #: rustconn/src/dialogs/shortcuts.rs:627
 msgid "Connections"
 msgstr "Қосылымдар"
@@ -1587,7 +1587,7 @@ msgid "Timeout in milliseconds (0 = no timeout)"
 msgstr "Уақыт шегі миллисекундпен (0 = шексіз)"
 
 #: rustconn/src/dialogs/connection/dialog/rows.rs:447
-#: rustconn/src/dialogs/settings/ui_tab.rs:396
+#: rustconn/src/dialogs/settings/ui_tab.rs:397
 #: rustconn/src/window/edit_group.rs:2105
 msgid "Enabled"
 msgstr "Қосылған"
@@ -3513,7 +3513,7 @@ msgid "Choose key file"
 msgstr "Кілт файлын таңдау"
 
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:135
-#: rustconn/src/dialogs/settings/ui_tab.rs:60
+#: rustconn/src/dialogs/settings/ui_tab.rs:61
 msgid "Appearance"
 msgstr "Сыртқы түрі"
 
@@ -4264,7 +4264,7 @@ msgstr ""
 #: rustconn/src/dialogs/settings/cloud_sync_tab.rs:238
 #: rustconn/src/dialogs/tunnel_builder/mod.rs:618
 #: rustconn/src/dialogs/widgets.rs:460 rustconn/src/terminal/tab_menu.rs:407
-#: rustconn/src/vault_ops.rs:62 rustconn/src/window/mod.rs:3384
+#: rustconn/src/vault_ops.rs:62 rustconn/src/window/mod.rs:3394
 msgid "Close"
 msgstr "Жабу"
 
@@ -6224,7 +6224,7 @@ msgstr "Дерекқор таңдалмаған"
 
 #: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1479
 #: rustconn/src/embedded_rdp/ui.rs:167 rustconn/src/embedded_trait.rs:324
-#: rustconn/src/sidebar/view.rs:658
+#: rustconn/src/sidebar/view.rs:688
 msgid "Connected"
 msgstr "Қосылған"
 
@@ -6410,8 +6410,8 @@ msgid "Colors"
 msgstr "Түстер"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:86
-#: rustconn/src/dialogs/settings/ui_tab.rs:91
-#: rustconn/src/dialogs/settings/ui_tab.rs:146
+#: rustconn/src/dialogs/settings/ui_tab.rs:92
+#: rustconn/src/dialogs/settings/ui_tab.rs:147
 msgid "Theme"
 msgstr "Тақырып"
 
@@ -6466,8 +6466,8 @@ msgstr "Қосулы"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:278
 #: rustconn/src/dialogs/settings/terminal_tab.rs:315
-#: rustconn/src/dialogs/settings/ui_tab.rs:67
-#: rustconn/src/dialogs/settings/ui_tab.rs:108
+#: rustconn/src/dialogs/settings/ui_tab.rs:68
+#: rustconn/src/dialogs/settings/ui_tab.rs:109
 msgid "System"
 msgstr "Жүйе"
 
@@ -6588,8 +6588,8 @@ msgid "Send Escape prefix instead of composed characters (for vim/emacs)"
 msgstr "Құрама таңбалардың орнына Escape префиксін жіберу (vim/emacs үшін)"
 
 #: rustconn/src/dialogs/settings/terminal_tab.rs:469
-#: rustconn/src/dialogs/settings/ui_tab.rs:334
-#: rustconn/src/dialogs/settings/ui_tab.rs:603
+#: rustconn/src/dialogs/settings/ui_tab.rs:335
+#: rustconn/src/dialogs/settings/ui_tab.rs:604
 #: rustconn/src/split_view/adapter.rs:1443 rustconn/src/tray.rs:229
 #: rustconn/src/tray.rs:587 rustconn/src/window/ui.rs:240
 msgid "Local Shell"
@@ -6691,62 +6691,62 @@ msgstr "Ашық көгілдір"
 msgid "Bright White"
 msgstr "Ашық ақ"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:54
+#: rustconn/src/dialogs/settings/ui_tab.rs:55
 msgid "Interface"
 msgstr "Интерфейс"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:68
-#: rustconn/src/dialogs/settings/ui_tab.rs:113
+#: rustconn/src/dialogs/settings/ui_tab.rs:69
+#: rustconn/src/dialogs/settings/ui_tab.rs:114
 msgid "Light"
 msgstr "Жарық"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:69
-#: rustconn/src/dialogs/settings/ui_tab.rs:118
+#: rustconn/src/dialogs/settings/ui_tab.rs:70
+#: rustconn/src/dialogs/settings/ui_tab.rs:119
 msgid "Dark"
 msgstr "Қараңғы"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:163
+#: rustconn/src/dialogs/settings/ui_tab.rs:164
 msgid "Language"
 msgstr "Тіл"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:164
-#: rustconn/src/dialogs/settings/ui_tab.rs:180
+#: rustconn/src/dialogs/settings/ui_tab.rs:165
+#: rustconn/src/dialogs/settings/ui_tab.rs:181
 msgid "Restart required to apply"
 msgstr "Қолдану үшін қайта іске қосу қажет"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:179
+#: rustconn/src/dialogs/settings/ui_tab.rs:180
 msgid "Rendering"
 msgstr "Көрсету"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:187
+#: rustconn/src/dialogs/settings/ui_tab.rs:188
 msgid "Color tabs by protocol"
 msgstr "Қойындыларды хаттама бойынша бояу"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:189
+#: rustconn/src/dialogs/settings/ui_tab.rs:190
 msgid "Show colored indicator on tabs based on protocol type"
 msgstr "Хаттама түріне қарай қойындыларда түсті көрсеткішті көрсету"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:196
+#: rustconn/src/dialogs/settings/ui_tab.rs:197
 msgid "Show protocol filters"
 msgstr "Хаттама сүзгілерін көрсету"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:197
+#: rustconn/src/dialogs/settings/ui_tab.rs:198
 msgid "Display protocol filter bar in sidebar"
 msgstr "Бүйір панелінде хаттама сүзгі жолағын көрсету"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:203
+#: rustconn/src/dialogs/settings/ui_tab.rs:204
 msgid "Sidebar width"
 msgstr "Бүйір панелінің ені"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:204
+#: rustconn/src/dialogs/settings/ui_tab.rs:205
 msgid "Width of the connection sidebar in pixels"
 msgstr "Қосылымдар бүйір панелінің ені пиксельмен"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:213
+#: rustconn/src/dialogs/settings/ui_tab.rs:214
 msgid "Compact interface"
 msgstr "Ықшам интерфейс"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:215
+#: rustconn/src/dialogs/settings/ui_tab.rs:216
 msgid ""
 "Reduce header bar, tab bar, and toolbar height. Applied instantly; useful on "
 "small screens, macOS and KDE"
@@ -6754,31 +6754,33 @@ msgstr ""
 "Тақырып жолағы, қойынды жолағы және құрал жолағының биіктігін азайту. Бірден "
 "қолданылады; кіші экрандарда, macOS және KDE-де пайдалы"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:222
+#: rustconn/src/dialogs/settings/ui_tab.rs:223
 msgid "Compact automatically on small windows"
 msgstr "Кіші терезелерде автоматты түрде тығыздау"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:224
+#: rustconn/src/dialogs/settings/ui_tab.rs:225
 msgid ""
 "Switch to compact chrome when the window becomes short or narrow, and back "
 "when it grows"
 msgstr "Терезе кіші немесе тар болғанда тығыз көрініске ауысу, ұлғайғанда кері"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:235
+#: rustconn/src/dialogs/settings/ui_tab.rs:236
 msgid "Open session toolbar on hover"
 msgstr "Сеанс құралдар тақтасын меңзер апарғанда ашу"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:237
+#: rustconn/src/dialogs/settings/ui_tab.rs:238
 msgid ""
 "Reveal the floating RDP/VNC toolbar when the pointer touches its handle. "
 "When off, the handle must be clicked"
-msgstr "Меңзер тұтқасына тиген кезде жылжымалы RDP/VNC құралдар тақтасын көрсету. Өшірілгенде басу қажет"
+msgstr ""
+"Меңзер тұтқасына тиген кезде жылжымалы RDP/VNC құралдар тақтасын көрсету. "
+"Өшірілгенде басу қажет"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:262
+#: rustconn/src/dialogs/settings/ui_tab.rs:263
 msgid "Send terminal control shortcuts to the session"
 msgstr "Терминалды басқару жылдам пернелерін сеансқа жіберу"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:264
+#: rustconn/src/dialogs/settings/ui_tab.rs:265
 msgid ""
 "While a terminal or remote viewer is focused, let Ctrl+F/P/N and similar "
 "chords reach the session instead of the app"
@@ -6786,23 +6788,23 @@ msgstr ""
 "Терминал немесе қашықтағы көрініс белсенді болғанда, Ctrl+F/P/N және ұқсас "
 "тіркесімдер қолданбаға емес, сеансқа жетуіне рұқсат ету"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:273
+#: rustconn/src/dialogs/settings/ui_tab.rs:274
 msgid "Window"
 msgstr "Терезе"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:277
+#: rustconn/src/dialogs/settings/ui_tab.rs:278
 msgid "Remember size"
 msgstr "Өлшемді есте сақтау"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:278
+#: rustconn/src/dialogs/settings/ui_tab.rs:279
 msgid "Restore window geometry on startup"
 msgstr "Іске қосылғанда терезе геометриясын қалпына келтіру"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:286
+#: rustconn/src/dialogs/settings/ui_tab.rs:287
 msgid "Show connection in window title"
 msgstr "Терезе тақырыбында қосылуды көрсету"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:288
+#: rustconn/src/dialogs/settings/ui_tab.rs:289
 msgid ""
 "Append the active connection name to the window title, so time-tracking "
 "tools can identify it"
@@ -6810,11 +6812,11 @@ msgstr ""
 "Белсенді қосылу атауын терезе тақырыбына қосу, уақыт бақылау құралдары "
 "анықтай алуы үшін"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:297
+#: rustconn/src/dialogs/settings/ui_tab.rs:298
 msgid "Show connection name in split panes"
 msgstr "Бөлінген панельдерде қосылым атауын көрсету"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:299
+#: rustconn/src/dialogs/settings/ui_tab.rs:300
 msgid ""
 "Display a compact header with the connection name at the top of each split-"
 "view pane"
@@ -6822,99 +6824,99 @@ msgstr ""
 "Бөлінген көріністің әр панелінің жоғарғы жағында қосылым атауы бар ықшам "
 "тақырып көрсетеді"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:309
+#: rustconn/src/dialogs/settings/ui_tab.rs:310
 msgid "Behavior when opening a connection from the sidebar"
 msgstr "Бүйір тақтадан қосылымды ашу тәртібі"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:315
+#: rustconn/src/dialogs/settings/ui_tab.rs:316
 msgid "Open a new session on every double-click"
 msgstr "Әр екі рет басқанда жаңа сеанс ашу"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:317
+#: rustconn/src/dialogs/settings/ui_tab.rs:318
 msgid ""
 "Double-clicking a connection always starts another session instead of "
 "focusing the one already open"
 msgstr ""
 "Қосылымды екі рет басу әрқашан жаңа сеанс ашады, ашық сеансқа ауыспайды"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:326
+#: rustconn/src/dialogs/settings/ui_tab.rs:327
 msgid "Startup"
 msgstr "Іске қосу"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:327
+#: rustconn/src/dialogs/settings/ui_tab.rs:328
 msgid "Action to perform when the application starts"
 msgstr "Қолданба іске қосылғанда орындалатын әрекет"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:333
-#: rustconn/src/dialogs/settings/ui_tab.rs:603
+#: rustconn/src/dialogs/settings/ui_tab.rs:334
+#: rustconn/src/dialogs/settings/ui_tab.rs:604
 msgid "Do nothing"
 msgstr "Ештеңе жасамау"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:340
+#: rustconn/src/dialogs/settings/ui_tab.rs:341
 msgid "On startup"
 msgstr "Іске қосылғанда"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:341
+#: rustconn/src/dialogs/settings/ui_tab.rs:342
 msgid "Open session automatically"
 msgstr "Сеансты автоматты түрде ашу"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:349
+#: rustconn/src/dialogs/settings/ui_tab.rs:350
 msgid "Show Welcome tab"
 msgstr "«Қош келдіңіз» қойындысын көрсету"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:350
+#: rustconn/src/dialogs/settings/ui_tab.rs:351
 msgid "Display Welcome tab when no session opens at startup"
 msgstr "Іске қосылғанда сеанс ашылмаса «Қош келдіңіз» қойындысын көрсету"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:360
+#: rustconn/src/dialogs/settings/ui_tab.rs:361
 msgid "System Tray"
 msgstr "Жүйелік науа"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:361
+#: rustconn/src/dialogs/settings/ui_tab.rs:362
 msgid "Requires desktop environment with tray support"
 msgstr "Науа қолдауы бар жұмыс үстелі ортасы қажет"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:366
+#: rustconn/src/dialogs/settings/ui_tab.rs:367
 msgid "Show icon"
 msgstr "Белгішені көрсету"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:367
+#: rustconn/src/dialogs/settings/ui_tab.rs:368
 msgid "Display icon in system tray"
 msgstr "Жүйелік науада белгішені көрсету"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:372
+#: rustconn/src/dialogs/settings/ui_tab.rs:373
 msgid "Minimize to tray"
 msgstr "Науаға жіберу"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:373
+#: rustconn/src/dialogs/settings/ui_tab.rs:374
 msgid "Hide window instead of closing"
 msgstr "Жабудың орнына терезені жасыру"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:390
+#: rustconn/src/dialogs/settings/ui_tab.rs:391
 msgid "Session Restore"
 msgstr "Сеансты қалпына келтіру"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:391
+#: rustconn/src/dialogs/settings/ui_tab.rs:392
 msgid "Restore previous connections on startup"
 msgstr "Іске қосылғанда алдыңғы қосылымдарды қалпына келтіру"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:397
+#: rustconn/src/dialogs/settings/ui_tab.rs:398
 msgid "Reconnect to previous sessions on startup"
 msgstr "Іске қосылғанда алдыңғы сеанстарға қайта қосылу"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:402
+#: rustconn/src/dialogs/settings/ui_tab.rs:403
 msgid "Ask first"
 msgstr "Алдымен сұрау"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:403
+#: rustconn/src/dialogs/settings/ui_tab.rs:404
 msgid "Prompt before restoring sessions"
 msgstr "Сеанстарды қалпына келтіру алдында сұрау"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:408
+#: rustconn/src/dialogs/settings/ui_tab.rs:409
 msgid "Max age"
 msgstr "Ең көп жас"
 
-#: rustconn/src/dialogs/settings/ui_tab.rs:409
+#: rustconn/src/dialogs/settings/ui_tab.rs:410
 msgid "Hours before sessions expire"
 msgstr "Сеанстардың мерзімі аяқталғанға дейінгі сағаттар"
 
@@ -8688,7 +8690,7 @@ msgid "RDP session running in FreeRDP window"
 msgstr "RDP сеансы FreeRDP терезесінде жұмыс істеуде"
 
 #: rustconn/src/embedded_rdp/ui.rs:175 rustconn/src/session/vnc.rs:337
-#: rustconn/src/sidebar/view.rs:669
+#: rustconn/src/sidebar/view.rs:699
 msgid "Connection failed"
 msgstr "Қосылу сәтсіз"
 
@@ -8735,8 +8737,8 @@ msgstr "{} серверіне қосылды"
 msgid "More actions"
 msgstr "Қосымша әрекеттер"
 
-#: rustconn/src/embedded_toolbar_overflow.rs:314
-#: rustconn/src/embedded_toolbar_overflow.rs:316
+#: rustconn/src/embedded_toolbar_overflow.rs:306
+#: rustconn/src/embedded_toolbar_overflow.rs:308
 msgid "Show session toolbar"
 msgstr "Сеанс құралдар тақтасын көрсету"
 
@@ -9310,39 +9312,39 @@ msgstr "Смарт қалталарды қосу/өшіру"
 msgid "Show or hide smart folders panel"
 msgstr "Ақылды бумалар панелін көрсету немесе жасыру"
 
-#: rustconn/src/sidebar/view.rs:175
+#: rustconn/src/sidebar/view.rs:192
 msgid "Pinned"
 msgstr "Бекітілген"
 
-#: rustconn/src/sidebar/view.rs:186
+#: rustconn/src/sidebar/view.rs:203
 msgid "Has notes"
 msgstr "Жазбалары бар"
 
-#: rustconn/src/sidebar/view.rs:195 rustconn/src/sidebar/view.rs:197
+#: rustconn/src/sidebar/view.rs:212 rustconn/src/sidebar/view.rs:214
 msgid "Recording session"
 msgstr "Сессия жазылып жатыр"
 
-#: rustconn/src/sidebar/view.rs:212 rustconn/src/sidebar/view.rs:214
+#: rustconn/src/sidebar/view.rs:229 rustconn/src/sidebar/view.rs:231
 msgid "Running in external window"
 msgstr "Сыртқы терезеде жұмыс істеп тұр"
 
-#: rustconn/src/sidebar/view.rs:231 rustconn/src/sidebar/view.rs:233
+#: rustconn/src/sidebar/view.rs:248 rustconn/src/sidebar/view.rs:250
 msgid "Part of a split view"
 msgstr "Бөлінген көріністің бөлігі"
 
-#: rustconn/src/sidebar/view.rs:538
+#: rustconn/src/sidebar/view.rs:559
 msgid "Master — synced to cloud"
 msgstr "Негізгі — бұлтқа синхрондалған"
 
-#: rustconn/src/sidebar/view.rs:540
+#: rustconn/src/sidebar/view.rs:561
 msgid "Import — synced from cloud"
 msgstr "Импорт — бұлттан синхрондалған"
 
-#: rustconn/src/sidebar/view.rs:561
+#: rustconn/src/sidebar/view.rs:585
 msgid "Sync error: {}"
 msgstr "Синхрондау қатесі: {}"
 
-#: rustconn/src/sidebar/view.rs:663
+#: rustconn/src/sidebar/view.rs:693
 msgid "Connecting"
 msgstr "Қосылуда"
 
@@ -9532,7 +9534,7 @@ msgid "Tab Overview"
 msgstr "Қойындылар шолуы"
 
 #: rustconn/src/terminal/mod.rs:436 rustconn/src/terminal/tab_lifecycle.rs:35
-#: rustconn/src/terminal/tab_lifecycle.rs:50 rustconn/src/window/mod.rs:3036
+#: rustconn/src/terminal/tab_lifecycle.rs:50 rustconn/src/window/mod.rs:3046
 msgid "Welcome"
 msgstr "Қош келдіңіз"
 
@@ -10512,43 +10514,43 @@ msgstr ""
 msgid "Dismiss"
 msgstr "Елемеу"
 
-#: rustconn/src/window/mod.rs:2001
+#: rustconn/src/window/mod.rs:2011
 msgid "Already running in an external window"
 msgstr "Сыртқы терезеде әлдеқашан жұмыс істеп тұр"
 
-#: rustconn/src/window/mod.rs:2140
+#: rustconn/src/window/mod.rs:2150
 msgid "Connection to ‘{}’ failed"
 msgstr "‘{}’ қосылу сәтсіз аяқталды"
 
-#: rustconn/src/window/mod.rs:2366 rustconn/src/window/mod.rs:2380
+#: rustconn/src/window/mod.rs:2376 rustconn/src/window/mod.rs:2390
 msgid "Pre-connect task failed: {}"
 msgstr "Қосылым алдындағы тапсырма сәтсіз: {}"
 
-#: rustconn/src/window/mod.rs:2414
+#: rustconn/src/window/mod.rs:2424
 msgid "Port knock failed: {}"
 msgstr "Port knock сәтсіз аяқталды: {}"
 
-#: rustconn/src/window/mod.rs:2463
+#: rustconn/src/window/mod.rs:2473
 msgid "SPA failed: {}"
 msgstr "SPA сәтсіз аяқталды: {}"
 
-#: rustconn/src/window/mod.rs:2662 rustconn/src/window/mod.rs:2837
+#: rustconn/src/window/mod.rs:2672 rustconn/src/window/mod.rs:2847
 msgid "Connection “{}” created"
 msgstr "“{}” қосылымы жасалды"
 
-#: rustconn/src/window/mod.rs:3041
+#: rustconn/src/window/mod.rs:3051
 msgid "RustConn - {}"
 msgstr "RustConn — {}"
 
-#: rustconn/src/window/mod.rs:3166
+#: rustconn/src/window/mod.rs:3176
 msgid "Settings saved"
 msgstr "Баптаулар сақталды"
 
-#: rustconn/src/window/mod.rs:3196
+#: rustconn/src/window/mod.rs:3206
 msgid "Credentials Not Saved to Keyring"
 msgstr "Тіркелгі деректері кілттер қоймасына сақталмады"
 
-#: rustconn/src/window/mod.rs:3198
+#: rustconn/src/window/mod.rs:3208
 msgid ""
 "The system keyring did not accept the credentials, so they are kept for this "
 "session only and will be gone after a restart. Check that your keyring "
@@ -10559,31 +10561,31 @@ msgstr ""
 "қоймасы қызметінің іске қосылғанын және құлпы ашылғанын тексеріп, "
 "баптауларды қайта сақтаңыз."
 
-#: rustconn/src/window/mod.rs:3377
+#: rustconn/src/window/mod.rs:3387
 msgid "Close RustConn?"
 msgstr "RustConn жабылсын ба?"
 
-#: rustconn/src/window/mod.rs:3379
+#: rustconn/src/window/mod.rs:3389
 msgid "{} session tab(s) are open. Active connections will be disconnected."
 msgstr "{} сессия қойындысы ашық. Белсенді қосылымдар ажыратылады."
 
-#: rustconn/src/window/mod.rs:3414
+#: rustconn/src/window/mod.rs:3424
 msgid "Cloud sync failed for '{}': {}"
 msgstr "«{}» үшін бұлтпен синхрондау сәтсіз аяқталды: {}"
 
-#: rustconn/src/window/mod.rs:3595
+#: rustconn/src/window/mod.rs:3605
 msgid "Startup connection not found"
 msgstr "Іске қосу қосылымы табылмады"
 
-#: rustconn/src/window/mod.rs:3631
+#: rustconn/src/window/mod.rs:3641
 msgid "Failed to open .rdp file"
 msgstr ".rdp файлын ашу сәтсіз"
 
-#: rustconn/src/window/mod.rs:3667
+#: rustconn/src/window/mod.rs:3677
 msgid "Failed to open .vv file"
 msgstr ".vv файлын ашу сәтсіз"
 
-#: rustconn/src/window/mod.rs:4066
+#: rustconn/src/window/mod.rs:4076
 msgid "Successfully exported {} connection(s). {} skipped."
 msgstr "{} қосылым сәтті экспортталды. {} өткізіп жіберілді."
 
@@ -10595,11 +10597,11 @@ msgstr "Пернетақта тікелей өтуі қосылды — тірк
 msgid "Keyboard passthrough disabled — shortcuts restored"
 msgstr "Пернетақта тікелей өтуі өшірілді — тіркесімдер қалпына келтірілді"
 
-#: rustconn/src/window/navigation_actions.rs:246
+#: rustconn/src/window/navigation_actions.rs:258
 msgid "Broadcast enabled — keystrokes mirrored to all split panels"
 msgstr "Тарату қосылған — пернелер басу барлық бөлінген тақталарға айналанады"
 
-#: rustconn/src/window/navigation_actions.rs:248
+#: rustconn/src/window/navigation_actions.rs:260
 msgid "Broadcast disabled — keystrokes go to focused panel only"
 msgstr "Тарату өшірілген — пернелер басу тек белсенді тақтаға барады"
 
