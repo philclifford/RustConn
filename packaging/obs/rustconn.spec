@@ -282,6 +282,11 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Sat Aug 15 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.3-0
+- Version bump to 0.20.3
+- Added: keyboard passthrough state is now saved across restarts
+- Improved: sidebar tooltips show full tree path for nested items
+
 * Sat Aug 15 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.2-0
 - Version bump to 0.20.2
 - Added: toolbar hover/click setting (PR #286)

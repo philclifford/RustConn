@@ -140,6 +140,15 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.20.3" date="2026-08-15">
+      <description>
+        <p>Version 0.20.3 - keyboard passthrough persistence and sidebar tooltip paths:</p>
+        <ul>
+          <li>Keyboard passthrough state saved across restarts</li>
+          <li>Sidebar tooltips show full tree path for deeply nested items</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.2" date="2026-08-15">
       <description>
         <p>Version 0.20.2 - polish release merging community pull requests:</p>
