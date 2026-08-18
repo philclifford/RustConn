@@ -246,6 +246,13 @@ ruby -c packaging/macos/rustconn.rb
 brew install --build-from-source ./packaging/macos/rustconn.rb
 ```
 
+The formula builds its own `.app` under `#{prefix}/RustConn.app`, and it must obey the same rule as the canonical producer: `CFBundleExecutable` names a real binary inside `Contents/MacOS`, never a wrapper that `exec`s one from the keg's `bin`. Re-exec destroys the bundle identity — generic Dock tile, wrong name, and no LaunchServices scene for `NSStatusItem`. Because that copy is not reached by `scripts/macos-build.sh`, verify the formula's bundle separately after changing it:
+
+```bash
+plutil -p "$(brew --prefix)/opt/rustconn/RustConn.app/Contents/Info.plist" | grep CFBundleExecutable
+file "$(brew --prefix)/opt/rustconn/RustConn.app/Contents/MacOS/rustconn"   # must be Mach-O, not a script
+```
+
 ## Troubleshooting
 
 ### Local Shell Is Empty

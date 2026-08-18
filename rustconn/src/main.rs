@@ -310,10 +310,11 @@ const DOCK_ICON_PNG: &[u8] =
 ///
 /// macOS reads the Dock icon from the launched bundle's `Info.plist`, so a
 /// process with no bundle behind it gets the generic Unix-executable tile, which
-/// reads as a terminal window. Two launch paths land there: `rustconn` started
-/// from a shell, and the Homebrew formula's `.app`, whose `CFBundleExecutable` is
-/// a wrapper that `exec`s `$(brew --prefix)/bin/rustconn` from outside the
-/// bundle. Both are fixed by setting the tile image at runtime.
+/// reads as a terminal window. `rustconn` started from a shell is the launch path
+/// that lands there — the common case during development, and the one a user hits
+/// after `brew install rustconn` if they run the binary rather than the `.app`.
+/// Setting the tile image at runtime is the only fix available to a process
+/// without a bundle.
 ///
 /// Skipped inside a real bundle. There the `.icns` is strictly better: it carries
 /// every representation from 16px to 1024px, and it preserves a custom icon a
