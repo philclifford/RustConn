@@ -191,6 +191,15 @@ pub struct AppState {
     /// Distinguishes a missing client from an unresponsive Secret Service so
     /// the startup check can surface an accurate, actionable warning (#201).
     secret_backend_availability: Option<rustconn_core::secret::BackendAvailability>,
+
+    /// Backends whose "remember this on the machine" request the last settings
+    /// save could not honour.
+    ///
+    /// Set by [`Self::update_settings`] and read once by the Settings save path.
+    /// It is state rather than a return value because `update_settings` has eight
+    /// callers and only one of them can put a dialog on screen; the rest would
+    /// have had to thread a value they cannot act on.
+    persistence_failures: Vec<&'static str>,
     /// Cloud Sync manager for export/import operations
     sync_manager: SyncManager,
     /// Simple Sync deletion tombstones (only populated when Simple Sync is on)
@@ -446,6 +455,56 @@ impl AppState {
                     }
                 }
             }
+            rustconn_core::config::SecretBackendType::PortableEncryptedFile => {
+                // Restore the portable store passphrase so the first connection
+                // of the session does not have to prompt. Without this the
+                // "Save passphrase" choice in Settings had no effect at all:
+                // the blob was written and never read back.
+                if settings.secrets.portable_passphrase_encrypted.is_some()
+                    && settings.secrets.decrypt_portable_passphrase()
+                {
+                    tracing::info!("Portable file passphrase restored from encrypted storage");
+                }
+                if settings.secrets.portable_passphrase.is_none()
+                    && settings.secrets.portable_save_to_keyring
+                {
+                    match with_runtime(|rt| {
+                        rt.block_on(async {
+                            tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                rustconn_core::secret::get_portable_passphrase_from_keyring(),
+                            )
+                            .await
+                        })
+                    }) {
+                        Ok(Ok(Ok(Some(passphrase)))) => {
+                            settings.secrets.portable_passphrase = Some(passphrase);
+                            tracing::info!("Portable file passphrase restored from system keyring");
+                        }
+                        Ok(Ok(Ok(None))) => {
+                            tracing::debug!("No portable file passphrase found in system keyring");
+                        }
+                        Ok(Ok(Err(e))) => {
+                            tracing::warn!(
+                                error = %e,
+                                "Failed to load the portable file passphrase from system keyring"
+                            );
+                        }
+                        Ok(Err(_elapsed)) => {
+                            tracing::warn!(
+                                "Keyring query timed out after 5s — the portable file \
+                                 passphrase will be asked for on first connect"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "Runtime error loading the portable file passphrase from keyring"
+                            );
+                        }
+                    }
+                }
+            }
             _ => {
                 // Bitwarden: handled in app.rs idle_add_local_once
                 // KeePass: handled above
@@ -520,6 +579,7 @@ impl AppState {
             history_dirty_tx: None,
             secret_backend_available: None,
             secret_backend_availability: None,
+            persistence_failures: Vec::new(),
             sync_manager,
             tombstones,
             simple_sync_dirty: std::cell::Cell::new(false),
@@ -758,6 +818,34 @@ impl AppState {
         }
     }
 
+    /// Reports that the portable store must be unlocked before resolving.
+    ///
+    /// Returns `None` when the preferred backend is not the portable file, or
+    /// when the session passphrase is already in hand. Both credential paths
+    /// (variable-sourced and vault-sourced) ask before doing any lookup, because
+    /// a locked backend can only answer `PassphraseRequired` and that would
+    /// surface as a bare failure rather than a prompt.
+    fn portable_unlock_request(
+        secret_settings: &rustconn_core::config::SecretSettings,
+        connection_id: uuid::Uuid,
+    ) -> Option<rustconn_core::sync::CredentialResolutionResult> {
+        if !matches!(
+            secret_settings.preferred_backend,
+            rustconn_core::config::SecretBackendType::PortableEncryptedFile
+        ) || secret_settings.portable_passphrase.is_some()
+        {
+            return None;
+        }
+        Some(
+            rustconn_core::sync::CredentialResolutionResult::PortableFileLocked {
+                file_path: rustconn_core::secret::resolve_portable_store_path(
+                    secret_settings.portable_file_path.as_deref(),
+                ),
+                connection_id,
+            },
+        )
+    }
+
     /// Internal blocking credential resolution (runs in background thread)
     ///
     /// This is extracted from `resolve_credentials` to be callable from a background
@@ -822,6 +910,15 @@ impl AppState {
                     kdbx_path: kdbx_path.clone().expect("checked is_some above"),
                     connection_id: connection.id,
                 });
+            }
+
+            // Check if the portable encrypted file needs to be unlocked.
+            if let Some(locked) = Self::portable_unlock_request(&secret_settings, connection.id) {
+                tracing::debug!(
+                    var_name,
+                    "[resolve_credentials_blocking] Portable passphrase unavailable, requesting unlock"
+                );
+                return Ok(locked);
             }
 
             // Look up the variable's custom kdbx_entry_path if configured
@@ -970,6 +1067,14 @@ impl AppState {
                     | rustconn_core::config::SecretBackendType::KdbxFile
             )
         {
+            // Check if the portable encrypted file needs to be unlocked first.
+            if let Some(locked) = Self::portable_unlock_request(&secret_settings, connection.id) {
+                tracing::debug!(
+                    "[resolve_credentials_blocking] Portable passphrase unavailable for Vault source, requesting unlock"
+                );
+                return Ok(locked);
+            }
+
             let backend_type = select_backend_for_load(&secret_settings);
             let protocol_str = connection
                 .protocol_config
@@ -1311,6 +1416,68 @@ impl AppState {
         &mut self.settings
     }
 
+    /// Records a verified portable-store passphrase for the rest of the session.
+    ///
+    /// Both destinations are required. The settings field is what the GUI's own
+    /// credential paths read and what the "Save passphrase" choice persists from;
+    /// the secret manager holds the live backend, and nothing would otherwise
+    /// hand it the passphrase — `rebuild_from_settings` only runs when
+    /// `SecretSettings` compares unequal, and the runtime passphrase is
+    /// deliberately excluded from that comparison. Updating one and not the other
+    /// is why unlocking appeared to succeed and the next lookup still failed.
+    pub fn unlock_portable_store(&mut self, passphrase: secrecy::SecretString) {
+        self.settings.secrets.portable_passphrase = Some(passphrase.clone());
+        if !self.secret_manager.set_portable_passphrase(passphrase) {
+            tracing::debug!(
+                "Portable passphrase stored in settings; no portable backend is configured"
+            );
+        }
+    }
+
+    /// Reports whether the portable credential store is unlocked this session.
+    ///
+    /// `false` also when no portable backend is configured, which reads as "no
+    /// unlock needed" — callers should only consult this when the portable
+    /// backend is the preferred one.
+    #[must_use]
+    pub fn portable_store_unlocked(&self) -> bool {
+        self.secret_manager.portable_unlocked()
+    }
+
+    /// Takes the local-encryption failures recorded by the last settings save.
+    ///
+    /// Draining is deliberate: the failure is reported once, on the save that
+    /// produced it, and a later unrelated save must not repeat a stale warning.
+    pub fn take_persistence_failures(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut self.persistence_failures)
+    }
+
+    /// Locks the portable credential store, dropping the session passphrase.
+    ///
+    /// Clears both copies the unlock set — the settings field the GUI reads and
+    /// the live backend's own passphrase and cached data key — so the next
+    /// credential lookup prompts again. Used by the explicit lock action and on
+    /// shutdown; without a caller the passphrase simply lived for the whole
+    /// process, which is the one thing a "remember for this session only" choice
+    /// is supposed to bound.
+    pub fn lock_portable_store(&mut self) {
+        self.settings.secrets.portable_passphrase = None;
+        // Synchronously, so this is complete even when called from the window's
+        // close handler: once `lock_portable` returns, neither the passphrase nor
+        // the derived key is left in memory.
+        self.secret_manager.lock_portable();
+
+        // Clearing the credential cache needs the cache's async lock, so it is
+        // spawned. On the shutdown path the main loop can stop before this future
+        // runs — which is exactly why the part that matters is the synchronous
+        // call above. The cache is behind an `Arc`, so the clone clears the same
+        // map.
+        let manager = self.secret_manager.clone();
+        gtk4::glib::spawn_future_local(async move {
+            manager.clear_cache().await;
+        });
+    }
+
     /// Saves current settings to disk
     ///
     /// # Errors
@@ -1330,8 +1497,11 @@ impl AppState {
         // explicit choice — the runtime password is kept in memory only and
         // written to the keyring by the Settings dialog (issue #272). Until
         // 0.19.19 only KDBX honoured that; the rule now lives in one pure,
-        // test-covered method so it stays symmetric across all four backends.
-        settings.secrets.apply_storage_persistence();
+        // test-covered method so it stays symmetric across all five backends.
+        // A backend whose local encryption failed is recorded rather than
+        // ignored: the user asked for the secret to be remembered, and for the
+        // portable store that secret is the key to every credential in the file.
+        self.persistence_failures = settings.secrets.apply_storage_persistence();
 
         self.config_manager
             .save_settings(&settings)
@@ -1341,27 +1511,6 @@ impl AppState {
         if settings.logging.enabled != self.settings.logging.enabled {
             self.session_manager
                 .set_logging_enabled(settings.logging.enabled);
-        }
-
-        // Rebuild secret manager backends if secret settings changed
-        if self.settings.secrets != settings.secrets {
-            self.secret_manager.rebuild_from_settings(&settings.secrets);
-            // Invalidate cache so next check re-evaluates availability
-            self.secret_backend_available = None;
-            self.secret_backend_availability = None;
-        }
-
-        // Keep the sync manager's settings copy in step (sync_dir, device
-        // identity, retention, simple_sync toggle) so Simple/Group Sync use
-        // the current configuration without an app restart.
-        if self.settings.sync != settings.sync {
-            self.sync_manager.set_settings(settings.sync.clone());
-        }
-
-        // Simple Sync: a change to the (non-secret) global variables must be
-        // republished. Compared against the still-current `self.settings`.
-        if self.settings.global_variables != settings.global_variables {
-            self.mark_simple_sync_dirty();
         }
 
         // Preserve runtime-only secret fields (#[serde(skip)]) that the
@@ -1393,6 +1542,43 @@ impl AppState {
         if settings.secrets.passbolt_passphrase.is_none() {
             settings.secrets.passbolt_passphrase =
                 self.settings.secrets.passbolt_passphrase.clone();
+        }
+        // The portable passphrase is the one runtime secret that can also arrive
+        // from outside the Settings dialog: `unlock_portable_store` records it
+        // when a connection prompts for it mid-session. Under the default
+        // "Don't save" choice the dialog collects `None` for it, so without this
+        // line pressing Save re-locked the session — the GUI prompted again on
+        // the next connection while the manager's backend was still unlocked and
+        // would have answered.
+        if settings.secrets.portable_passphrase.is_none() {
+            settings.secrets.portable_passphrase =
+                self.settings.secrets.portable_passphrase.clone();
+        }
+
+        // Runtime-only secret restoration happens *before* the rebuild below,
+        // not after. `rebuild_from_settings` hands the portable passphrase to the
+        // new backend, so restoring it afterwards left the rebuilt backend locked
+        // while `settings.secrets.portable_passphrase` said otherwise: the next
+        // connection prompted for a passphrase the session already had.
+        // Rebuild secret manager backends if secret settings changed
+        if self.settings.secrets != settings.secrets {
+            self.secret_manager.rebuild_from_settings(&settings.secrets);
+            // Invalidate cache so next check re-evaluates availability
+            self.secret_backend_available = None;
+            self.secret_backend_availability = None;
+        }
+
+        // Keep the sync manager's settings copy in step (sync_dir, device
+        // identity, retention, simple_sync toggle) so Simple/Group Sync use
+        // the current configuration without an app restart.
+        if self.settings.sync != settings.sync {
+            self.sync_manager.set_settings(settings.sync.clone());
+        }
+
+        // Simple Sync: a change to the (non-secret) global variables must be
+        // republished. Compared against the still-current `self.settings`.
+        if self.settings.global_variables != settings.global_variables {
+            self.mark_simple_sync_dirty();
         }
 
         self.settings = settings;

@@ -900,6 +900,10 @@ pub fn get_password_manager_launch_command(
             // launch. (Correct as-is; not a 2.5 placeholder.)
             None
         }
+        crate::config::SecretBackendType::PortableEncryptedFile => {
+            // Portable encrypted file: no external app to launch.
+            None
+        }
     }
 }
 

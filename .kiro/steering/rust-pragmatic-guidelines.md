@@ -77,10 +77,14 @@ Library functions in `rustconn-core` MUST still use `thiserror::Error`
 ### M-UNSAFE — `unsafe` is confined to the `-sys` crates
 
 Workspace `[lints.rust] unsafe_code = "deny"`, re-opened only by a crate-level
-`#![expect(unsafe_code, reason = "…")]` in the three sanctioned FFI crates:
+`#![expect(unsafe_code, reason = "…")]` in the four sanctioned FFI crates:
 `rustconn-pty-sys` (macOS PTY controlling terminal), `rustconn-locale-sys` (the
-startup `setlocale` call) and `rustconn-env-sys` (the startup `GSK_RENDERER` and
-`LANGUAGE` writes). `deny` rather than `forbid` because `forbid` cannot be
+startup `setlocale` call), `rustconn-env-sys` (the startup `GSK_RENDERER` and
+`LANGUAGE` writes) and `rustconn-dock-sys` (the macOS Dock tile image via
+`-[NSApplication setApplicationIconImage:]`; its `expect` is wrapped in
+`cfg_attr(target_os = "macos", …)`, since off macOS the crate contains no
+`unsafe` and a bare `expect` would fire `unfulfilled_lint_expectations`).
+`deny` rather than `forbid` because `forbid` cannot be
 overridden at any level, which forced each helper to declare its own `[lints]`
 table — and a crate-local `[lints]` table replaces the inherited one, so those
 three ended up as the only crates in the workspace running without

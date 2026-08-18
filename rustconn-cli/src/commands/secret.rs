@@ -184,9 +184,15 @@ fn parse_backend(b: &str) -> Result<rustconn_core::config::SecretBackendType, Cl
         "1password" | "onepassword" | "op" => Ok(SecretBackendType::OnePassword),
         "passbolt" => Ok(SecretBackendType::Passbolt),
         "pass" => Ok(SecretBackendType::Pass),
+        // Both file backends already have handlers in get/set/delete; until now
+        // there was simply no spelling that reached them.
+        "encrypted-file" | "encrypted_file" | "file" => Ok(SecretBackendType::EncryptedFile),
+        "portable" | "portable-file" | "portable_file" => {
+            Ok(SecretBackendType::PortableEncryptedFile)
+        }
         _ => Err(CliError::Secret(format!(
             "Unknown backend: {b}. Use: keyring, keepass, bitwarden, \
-             1password, passbolt, or pass"
+             1password, passbolt, pass, encrypted-file, or portable"
         ))),
     }
 }
@@ -476,6 +482,35 @@ fn cmd_secret_get(
                     connection.name
                 ))),
                 Err(e) => Err(CliError::Secret(format!("Encrypted file error: {e}"))),
+            }
+        }
+        SecretBackendType::PortableEncryptedFile => {
+            let backend = open_portable_backend(&settings.secrets)?;
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| CliError::Secret(format!("Runtime error: {e}")))?;
+            let result: Result<Option<Credentials>, _> = rt.block_on(backend.retrieve(&lookup_key));
+
+            match result {
+                Ok(Some(creds)) => {
+                    println!("Connection: {}", connection.name);
+                    if let Some(ref user) = creds.username {
+                        println!("Username:   {user}");
+                    }
+                    if creds.expose_password().is_some() {
+                        println!(
+                            "Password:   ******** \
+                             (stored in portable encrypted file)"
+                        );
+                    } else {
+                        println!("Password:   (not set)");
+                    }
+                    Ok(())
+                }
+                Ok(None) => Err(CliError::Secret(format!(
+                    "No credentials found in the portable encrypted file for '{}'",
+                    connection.name
+                ))),
+                Err(e) => Err(CliError::Secret(format!("Portable file error: {e}"))),
             }
         }
     }
@@ -773,6 +808,31 @@ fn cmd_secret_set(
             );
             Ok(())
         }
+        SecretBackendType::PortableEncryptedFile => {
+            use rustconn_core::models::Credentials;
+            use rustconn_core::secret::SecretBackend;
+
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| CliError::Secret(format!("Runtime error: {e}")))?;
+
+            let backend = open_portable_backend(&settings.secrets)?;
+            let creds = Credentials {
+                username: Some(username_value.clone()),
+                password: Some(password_value),
+                key_passphrase: None,
+                domain: connection.domain.clone(),
+            };
+
+            rt.block_on(backend.store(&lookup_key, &creds))
+                .map_err(|e| CliError::Secret(format!("Portable file error: {e}")))?;
+
+            println!(
+                "Stored credentials for '{}' in the portable encrypted file \
+                 (user: {})",
+                connection.name, username_value
+            );
+            Ok(())
+        }
     }
 }
 
@@ -946,6 +1006,129 @@ fn cmd_secret_delete(
                 connection.name
             );
             Ok(())
+        }
+        SecretBackendType::PortableEncryptedFile => {
+            let backend = open_portable_backend(&settings.secrets)?;
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| CliError::Secret(format!("Runtime error: {e}")))?;
+            rt.block_on(backend.delete(&lookup_key))
+                .map_err(|e| CliError::Secret(format!("Portable file error: {e}")))?;
+
+            println!(
+                "Deleted credentials for '{}' from the portable encrypted file",
+                connection.name
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Builds an unlocked portable backend from settings, prompting if needed.
+///
+/// Resolution order mirrors what the GUI does at startup: the machine-local
+/// encrypted copy first, then the system keyring, then an interactive prompt.
+/// The passphrase is verified against the store before the caller uses it, so a
+/// typo fails with "incorrect passphrase" instead of creating a second key
+/// inside a file that already has one.
+///
+/// # Errors
+/// Returns [`CliError::Secret`] if no passphrase can be obtained (for example a
+/// non-interactive shell with nothing persisted) or if it does not open the file.
+fn open_portable_backend(
+    settings: &rustconn_core::config::SecretSettings,
+) -> Result<rustconn_core::secret::PortableEncryptedFileBackend, CliError> {
+    use rustconn_core::secret::{
+        PortableEncryptedFileBackend, resolve_portable_store_path, verify_portable_passphrase,
+    };
+    use zeroize::Zeroizing;
+
+    let path = resolve_portable_store_path(settings.portable_file_path.as_deref());
+
+    let passphrase = if let Some(ref existing) = settings.portable_passphrase {
+        existing.clone()
+    } else if let Some(restored) = restore_portable_passphrase(settings) {
+        restored
+    } else {
+        if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            return Err(CliError::Secret(
+                "The portable credential file needs a passphrase and there is no terminal \
+                 to ask on. Store it with \"Save passphrase\" in Settings ▸ Secrets, or run \
+                 this command interactively."
+                    .to_string(),
+            ));
+        }
+        eprint!("Enter passphrase for '{}': ", path.display());
+        let prompted = Zeroizing::new(
+            rpassword::read_password()
+                .map_err(|e| CliError::Secret(format!("Failed to read passphrase: {e}")))?,
+        );
+
+        // Creating a new store means whatever was typed becomes the passphrase,
+        // with nothing to check it against. A typo there is unrecoverable: the
+        // file is written, the intended passphrase never opens it, and there is
+        // no recovery path. The GUI guards this with a confirmation entry; the
+        // CLI has to ask twice for the same reason.
+        if !path.exists() {
+            eprintln!(
+                "'{}' does not exist yet and will be created. There is no way to recover \
+                 this passphrase if it is lost.",
+                path.display()
+            );
+            eprint!("Confirm passphrase: ");
+            let confirm = Zeroizing::new(
+                rpassword::read_password()
+                    .map_err(|e| CliError::Secret(format!("Failed to read passphrase: {e}")))?,
+            );
+            if confirm.as_str() != prompted.as_str() {
+                return Err(CliError::Secret(
+                    "The two passphrases do not match; nothing was written.".to_string(),
+                ));
+            }
+        }
+
+        secrecy::SecretString::from(prompted.as_str())
+    };
+
+    verify_portable_passphrase(&path, &passphrase)
+        .map_err(|e| CliError::Secret(format!("Cannot open portable credential file: {e}")))?;
+
+    let backend = PortableEncryptedFileBackend::with_path(path);
+    backend.set_passphrase(passphrase);
+    Ok(backend)
+}
+
+/// Recovers a stored portable passphrase without prompting.
+///
+/// Tries the machine-local encrypted copy, then the system keyring under the
+/// same 5-second ceiling the GUI uses, so an unresponsive Secret Service falls
+/// through to the prompt instead of hanging the command.
+fn restore_portable_passphrase(
+    settings: &rustconn_core::config::SecretSettings,
+) -> Option<secrecy::SecretString> {
+    let mut probe = settings.clone();
+    if probe.decrypt_portable_passphrase() {
+        return probe.portable_passphrase;
+    }
+    if !settings.portable_save_to_keyring {
+        return None;
+    }
+
+    let rt = tokio::runtime::Runtime::new().ok()?;
+    match rt.block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            rustconn_core::secret::get_portable_passphrase_from_keyring(),
+        )
+        .await
+    }) {
+        Ok(Ok(found)) => found,
+        Ok(Err(e)) => {
+            tracing::debug!(error = %e, "Portable passphrase lookup failed");
+            None
+        }
+        Err(_elapsed) => {
+            tracing::warn!("Keyring query for the portable passphrase timed out after 5s");
+            None
         }
     }
 }

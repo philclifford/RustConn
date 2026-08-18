@@ -393,6 +393,26 @@ pub struct SecretSettings {
     /// Pass password store directory (defaults to ~/.password-store)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pass_store_dir: Option<PathBuf>,
+    /// Path to the portable encrypted credential file.
+    ///
+    /// Can point to a cloud-synced directory (Dropbox, Syncthing, etc.) so the
+    /// same file is accessible from multiple machines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_file_path: Option<PathBuf>,
+    /// Portable file passphrase (NOT serialized — runtime only).
+    ///
+    /// Set after the user unlocks the portable file at the start of a session.
+    #[serde(skip)]
+    pub portable_passphrase: Option<SecretString>,
+    /// Machine-local encrypted copy of the portable passphrase for convenience.
+    ///
+    /// Encrypted with the machine key (same as other `*_encrypted` fields) so
+    /// the user does not have to re-enter the passphrase every session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_passphrase_encrypted: Option<String>,
+    /// Whether to save the portable passphrase to the system keyring.
+    #[serde(default)]
+    pub portable_save_to_keyring: bool,
 }
 
 const fn default_true() -> bool {
@@ -444,6 +464,10 @@ impl Default for SecretSettings {
             passbolt_save_to_keyring: false,
             passbolt_server_url: None,
             pass_store_dir: None,
+            portable_file_path: None,
+            portable_passphrase: None,
+            portable_passphrase_encrypted: None,
+            portable_save_to_keyring: false,
         }
     }
 }
@@ -471,10 +495,13 @@ impl PartialEq for SecretSettings {
             && self.passbolt_save_to_keyring == other.passbolt_save_to_keyring
             && self.passbolt_server_url == other.passbolt_server_url
             && self.pass_store_dir == other.pass_store_dir
+            && self.portable_file_path == other.portable_file_path
+            && self.portable_passphrase_encrypted == other.portable_passphrase_encrypted
+            && self.portable_save_to_keyring == other.portable_save_to_keyring
         // Note: runtime-only SecretString fields (kdbx_password, bitwarden_password,
         // bitwarden_client_id, bitwarden_client_secret, onepassword_service_account_token,
-        // passbolt_passphrase) are intentionally excluded — they are #[serde(skip)]
-        // and not persisted, so they shouldn't affect settings equality.
+        // passbolt_passphrase, portable_passphrase) are intentionally excluded — they are
+        // #[serde(skip)] and not persisted, so they shouldn't affect settings equality.
     }
 }
 
@@ -502,6 +529,8 @@ pub struct KeyringRevocations {
     pub onepassword_token: bool,
     /// The Passbolt GPG passphrase entry is stale.
     pub passbolt_passphrase: bool,
+    /// The portable encrypted file passphrase entry is stale.
+    pub portable_passphrase: bool,
 }
 
 impl KeyringRevocations {
@@ -513,6 +542,7 @@ impl KeyringRevocations {
             || self.bitwarden_api_credentials
             || self.onepassword_token
             || self.passbolt_passphrase
+            || self.portable_passphrase
     }
 }
 
@@ -543,6 +573,13 @@ pub enum SecretBackendType {
     /// as `"encrypted_file"` via `#[serde(rename_all = "snake_case")]`. Kept
     /// last so existing configs round-trip unchanged.
     EncryptedFile,
+    /// Portable encrypted file — passphrase-based, cloud-syncable.
+    ///
+    /// Same AES-256-GCM per-entry blob format as [`Self::EncryptedFile`], but
+    /// the encryption key is derived from a user-supplied passphrase (Argon2id)
+    /// instead of a machine-specific key. The file can live in a cloud-synced
+    /// directory and be opened on any machine with the same passphrase.
+    PortableEncryptedFile,
 }
 
 /// Color scheme preference
@@ -1018,6 +1055,34 @@ impl SecretSettings {
         }
     }
 
+    /// Reads the canonical credential storage choice for the portable
+    /// encrypted file passphrase.
+    #[must_use]
+    pub fn portable_storage(&self) -> CredentialStorage {
+        CredentialStorage::from_legacy(
+            self.portable_passphrase_encrypted.is_some(),
+            self.portable_save_to_keyring,
+        )
+    }
+
+    /// Writes the canonical credential storage choice for the portable
+    /// encrypted file passphrase.
+    pub fn set_portable_storage(&mut self, storage: CredentialStorage) {
+        match storage {
+            CredentialStorage::None => {
+                self.portable_save_to_keyring = false;
+                self.portable_passphrase_encrypted = None;
+            }
+            CredentialStorage::EncryptedFile => {
+                self.portable_save_to_keyring = false;
+            }
+            CredentialStorage::SystemKeyring => {
+                self.portable_save_to_keyring = true;
+                self.portable_passphrase_encrypted = None;
+            }
+        }
+    }
+
     /// Reports whether `self` carries a runtime secret that `previous` lacks.
     ///
     /// The runtime `SecretString` fields are `#[serde(skip)]` and deliberately
@@ -1061,11 +1126,15 @@ impl SecretSettings {
                 self.passbolt_passphrase.as_ref(),
                 previous.passbolt_passphrase.as_ref(),
             )
+            || is_new(
+                self.portable_passphrase.as_ref(),
+                previous.portable_passphrase.as_ref(),
+            )
     }
 
     /// Applies every backend's storage choice to its persisted blob.
     ///
-    /// One rule, identical for all four backends:
+    /// One rule, identical for all five backends:
     /// [`CredentialStorage::SystemKeyring`] makes the keyring the persistence
     /// layer, so no encrypted blob is written — duplicating the secret on disk
     /// would contradict the user's explicit choice (issue #272);
@@ -1077,18 +1146,32 @@ impl SecretSettings {
     /// Clearing a runtime secret here is safe for the GUI caller: it restores
     /// runtime-only fields from the previous settings afterwards, so the session
     /// keeps working while nothing lands on disk.
-    pub fn apply_storage_persistence(&mut self) {
+    ///
+    /// Returns the backends whose requested local encryption failed, so the
+    /// caller can say so. An empty result means every "remember this on the
+    /// machine" request was honoured. Local encryption fails when no machine key
+    /// can be derived, and the user's request is then silently not carried out —
+    /// which for the portable store means the key to every credential in the
+    /// file is gone at the next start, with nothing on screen to explain it.
+    pub fn apply_storage_persistence(&mut self) -> Vec<&'static str> {
         // Read every choice up front — the per-backend steps below mutate the
         // very blobs the `*_storage()` helpers derive their answer from.
         let kdbx = self.kdbx_storage();
         let bitwarden = self.bitwarden_storage();
         let onepassword = self.onepassword_storage();
         let passbolt = self.passbolt_storage();
+        let portable = self.portable_storage();
 
         self.apply_kdbx_persistence(kdbx);
         self.apply_bitwarden_persistence(bitwarden);
         self.apply_onepassword_persistence(onepassword);
         self.apply_passbolt_persistence(passbolt);
+
+        let mut failed = Vec::new();
+        if !self.apply_portable_persistence(portable) {
+            failed.push("Portable encrypted file");
+        }
+        failed
     }
 
     /// KDBX half of [`Self::apply_storage_persistence`].
@@ -1172,6 +1255,43 @@ impl SecretSettings {
         }
     }
 
+    /// Portable-file half of [`Self::apply_storage_persistence`].
+    ///
+    /// The passphrase this persists is the key to every credential in the
+    /// portable store, so "Don't save" has to clear both copies: leaving a blob
+    /// behind after the user asked for no persistence would keep the whole file
+    /// openable from disk alone.
+    /// Returns `false` if an encrypted copy was requested and could not be
+    /// written — the one outcome the caller has to report rather than absorb.
+    fn apply_portable_persistence(&mut self, storage: CredentialStorage) -> bool {
+        match storage {
+            CredentialStorage::None => {
+                self.portable_passphrase = None;
+                self.portable_passphrase_encrypted = None;
+                true
+            }
+            CredentialStorage::EncryptedFile => {
+                if self.portable_passphrase.is_none() {
+                    return true;
+                }
+                if self.encrypt_portable_passphrase() {
+                    return true;
+                }
+                // Drop the placeholder the dialog planted. Leaving it would make
+                // `portable_storage()` keep answering "EncryptedFile" for a blob
+                // that is not there, so the next start would try to decrypt a
+                // placeholder and report a corrupt store rather than a missing
+                // one.
+                self.portable_passphrase_encrypted = None;
+                false
+            }
+            CredentialStorage::SystemKeyring => {
+                self.portable_passphrase_encrypted = None;
+                true
+            }
+        }
+    }
+
     /// Carries runtime secrets the dialog could not collect over from
     /// `previous`, so changing the storage mode alone never strands a secret.
     ///
@@ -1218,6 +1338,12 @@ impl SecretSettings {
         {
             self.passbolt_passphrase = previous.passbolt_passphrase.clone();
         }
+
+        if self.portable_storage() == CredentialStorage::SystemKeyring
+            && self.portable_passphrase.is_none()
+        {
+            self.portable_passphrase = previous.portable_passphrase.clone();
+        }
     }
 
     /// Reports which system-keyring entries the move from `previous` to `self`
@@ -1242,6 +1368,8 @@ impl SecretSettings {
                 && !self.onepassword_save_to_keyring,
             passbolt_passphrase: previous.passbolt_save_to_keyring
                 && !self.passbolt_save_to_keyring,
+            portable_passphrase: previous.portable_save_to_keyring
+                && !self.portable_save_to_keyring,
         }
     }
 
@@ -1434,8 +1562,60 @@ impl SecretSettings {
     /// Gets a machine-specific key for encryption.
     ///
     /// Delegates to [`crate::secret::local_crypto::get_machine_key`].
-    fn get_machine_key() -> Vec<u8> {
+    fn get_machine_key() -> zeroize::Zeroizing<Vec<u8>> {
         crate::secret::local_crypto::get_machine_key()
+    }
+
+    /// Encrypts the portable file passphrase for local storage using AES-256-GCM.
+    ///
+    /// The passphrase itself is encrypted with the machine key so it can be
+    /// restored without user interaction on this machine. The portable
+    /// credential file remains decryptable on other machines because it uses
+    /// the passphrase (not the machine key) as input to its own KDF.
+    /// Returns whether the encrypted copy was written.
+    pub fn encrypt_portable_passphrase(&mut self) -> bool {
+        use secrecy::ExposeSecret;
+        let Some(ref passphrase) = self.portable_passphrase else {
+            return false;
+        };
+        match encrypt_credential(
+            passphrase.expose_secret().as_bytes(),
+            &Self::get_machine_key(),
+        ) {
+            Ok(encrypted) => {
+                self.portable_passphrase_encrypted = Some(hex_encode(&encrypted));
+                true
+            }
+            Err(e) => {
+                // Logged *and* returned: the log is for the maintainer, the
+                // return value is what reaches the user. A warning alone left
+                // the next session prompting with nothing on screen to explain
+                // why the passphrase it was told to remember was gone.
+                tracing::warn!(
+                    error = %e,
+                    "Could not encrypt the portable file passphrase for local storage"
+                );
+                false
+            }
+        }
+    }
+
+    /// Decrypts the stored portable file passphrase.
+    ///
+    /// Returns true if decryption was successful.
+    pub fn decrypt_portable_passphrase(&mut self) -> bool {
+        if let Some(ref encrypted) = self.portable_passphrase_encrypted
+            && let Some(decoded) = hex_decode(encrypted)
+        {
+            let key = Self::get_machine_key();
+            if let Ok(plaintext) = decrypt_credential(&decoded, &key)
+                && let Ok(pass_str) = std::str::from_utf8(&plaintext)
+            {
+                self.portable_passphrase = Some(SecretString::from(pass_str.to_owned()));
+                return true;
+            }
+        }
+        false
     }
 }
 

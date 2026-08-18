@@ -1174,6 +1174,12 @@ impl SettingsDialog {
         let onepassword_storage_combo_clone =
             self.secrets_widgets.onepassword_storage_combo.clone();
         let pass_store_dir_entry_clone = self.secrets_widgets.pass_store_dir_entry.clone();
+        // Portable encrypted file — collect-only widgets.
+        let portable_path_entry_clone = self.secrets_widgets.portable_path_entry.clone();
+        let portable_passphrase_entry_clone =
+            self.secrets_widgets.portable_passphrase_entry.clone();
+        let portable_confirm_entry_clone = self.secrets_widgets.portable_confirm_entry.clone();
+        let portable_storage_combo_clone = self.secrets_widgets.portable_storage_combo.clone();
         // Which backends the keyring could not supply a secret for when the
         // dialog opened — part of the dirty check below.
         let keyring_gaps_clone = self.secrets_widgets.keyring_gaps.clone();
@@ -1328,6 +1334,12 @@ impl SettingsDialog {
                 pass_store_dir_entry: pass_store_dir_entry_clone.clone(),
                 pass_store_dir_browse_button: Button::new(), // dummy, не використовується при збиранні
                 pass_status_label: Label::new(None), // dummy, не використовується при збиранні
+                portable_group: adw::PreferencesGroup::new(), // dummy
+                portable_path_entry: portable_path_entry_clone.clone(),
+                portable_browse_button: Button::new(), // dummy, не використовується при збиранні
+                portable_passphrase_entry: portable_passphrase_entry_clone.clone(),
+                portable_confirm_entry: portable_confirm_entry_clone.clone(),
+                portable_storage_combo: portable_storage_combo_clone.clone(),
             };
             let secrets = collect_secret_settings(&secrets_widgets_for_collect, &settings_clone);
 

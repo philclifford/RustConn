@@ -419,6 +419,19 @@ impl ConnectionDialog {
                                                 .map_err(|e| format!("{e}"))
                                         })?
                                     }
+                                    SecretBackendType::PortableEncryptedFile => {
+                                        // Portable encrypted file: same flat key
+                                        // scheme, but the backend has to be
+                                        // unlocked with the session passphrase.
+                                        let backend =
+                                            crate::vault_ops::portable_backend_from_settings(
+                                                &secret_settings,
+                                            );
+                                        crate::async_utils::with_runtime(|rt| {
+                                            rt.block_on(backend.retrieve(&flat_lookup_key))
+                                                .map_err(|e| format!("{e}"))
+                                        })?
+                                    }
                                 }
                             },
                             move |result: Result<

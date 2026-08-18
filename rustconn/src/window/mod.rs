@@ -1690,6 +1690,16 @@ impl MainWindow {
             // before any teardown, while the notebook still knows what is live.
             session_restore::save_snapshot(&state_clone, &notebook_for_close);
 
+            // Drop the portable store's passphrase and derived key. Below the
+            // tray decision on purpose: a tray-minimize leaves the application
+            // running, and locking the store there would make every connection
+            // opened from the tray prompt for a passphrase the user had already
+            // given. On a real close it is the synchronous half of the lock that
+            // matters — see `AppState::lock_portable_store`.
+            if let Ok(mut state_mut) = state_clone.try_borrow_mut() {
+                state_mut.lock_portable_store();
+            }
+
             // Flush all active session recordings before shutdown
             notebook_for_close.flush_active_recordings();
 
@@ -1741,6 +1751,13 @@ impl MainWindow {
             | rustconn_core::config::SecretBackendType::Passbolt
             | rustconn_core::config::SecretBackendType::Pass
             | rustconn_core::config::SecretBackendType::EncryptedFile => (true, true),
+            // Configured but unusable while locked — see the matching arm in
+            // `app::refresh_sidebar_secret_status`. The backend's own
+            // `is_available()` is its unlock state, so hardcoding "ready" here
+            // made the indicator disagree with the resolution chain.
+            rustconn_core::config::SecretBackendType::PortableEncryptedFile => {
+                (true, state_ref.portable_store_unlocked())
+            }
             rustconn_core::config::SecretBackendType::KeePassXc
             | rustconn_core::config::SecretBackendType::KdbxFile => {
                 let kdbx_enabled = settings.secrets.kdbx_enabled;
@@ -3177,10 +3194,46 @@ impl MainWindow {
                             crate::toast::ToastType::Success,
                         );
 
+                        // A "remember this on the machine" request that could not
+                        // be honoured. Same data-loss shape as the keyring failure
+                        // below — the secret exists in memory only and is gone
+                        // after a restart — so the same blocking dialog, not a
+                        // toast that has already been replaced by "Settings
+                        // saved".
+                        let persistence_failures = state_mut.take_persistence_failures();
+                        if !persistence_failures.is_empty() {
+                            tracing::warn!(
+                                backends = ?persistence_failures,
+                                "Could not write the local encrypted copy of a secret"
+                            );
+                            crate::alert::show_error(
+                                &window_clone,
+                                &crate::i18n::i18n("Passphrase Not Saved on This Computer"),
+                                &crate::i18n::i18n(
+                                    "The passphrase could not be encrypted for local storage, so it is kept for this session only and you will be asked for it again after a restart. Choose \"System keyring\" instead, or check that RustConn can write to its data directory.",
+                                ),
+                            );
+                        }
+
                         // Deferred keyring credential saves — run on a background
                         // thread so D-Bus round-trips don't block the UI.
                         let window_for_keyring = window_clone.clone();
+                        let secrets_for_portable = secrets_for_keyring.clone();
+                        let state_for_portable = state.clone();
                         glib::spawn_future_local(async move {
+                            // Check the portable passphrase against the store it
+                            // is supposed to open, before anything relies on it.
+                            // Nothing used to: a typo here surfaced much later as
+                            // a password prompt on the next connection, because
+                            // `SecretManager::retrieve` reported a wrong
+                            // passphrase as "no stored password".
+                            verify_portable_passphrase_after_save(
+                                &window_for_keyring,
+                                &state_for_portable,
+                                secrets_for_portable,
+                            )
+                            .await;
+
                             let outcome = gtk4::gio::spawn_blocking(move || {
                                 crate::dialogs::settings::save_pending_keyring_credentials(
                                     &secrets_before_save,
@@ -3253,7 +3306,8 @@ impl MainWindow {
                                 | rustconn_core::config::SecretBackendType::OnePassword
                                 | rustconn_core::config::SecretBackendType::Passbolt
                                 | rustconn_core::config::SecretBackendType::Pass
-                                | rustconn_core::config::SecretBackendType::EncryptedFile => true,
+                                | rustconn_core::config::SecretBackendType::EncryptedFile
+                                | rustconn_core::config::SecretBackendType::PortableEncryptedFile => true,
                                 rustconn_core::config::SecretBackendType::KeePassXc
                                 | rustconn_core::config::SecretBackendType::KdbxFile => {
                                     keepass_enabled && kdbx_path_exists
@@ -4093,6 +4147,75 @@ impl MainWindow {
             dialog.show();
         }
     }
+}
+
+/// Checks a freshly saved portable passphrase against the store it must open.
+///
+/// Silent when the portable backend is not the preferred one, when no passphrase
+/// was supplied, or when the store does not exist yet — the first write creates
+/// it under whatever was typed, which is the intended first-machine flow.
+///
+/// The derivation runs on a blocking thread: it is Argon2id with the file's own
+/// parameters, and the settings save happens on the GTK main thread.
+#[expect(
+    clippy::future_not_send,
+    reason = "borrows a GTK window; awaited only from glib::spawn_future_local on the main thread"
+)]
+async fn verify_portable_passphrase_after_save(
+    window: &adw::ApplicationWindow,
+    state: &SharedAppState,
+    secrets: rustconn_core::config::SecretSettings,
+) {
+    use rustconn_core::config::SecretBackendType;
+
+    if secrets.preferred_backend != SecretBackendType::PortableEncryptedFile {
+        return;
+    }
+    let Some(passphrase) = secrets.portable_passphrase.clone() else {
+        return;
+    };
+    let path =
+        rustconn_core::secret::resolve_portable_store_path(secrets.portable_file_path.as_deref());
+    if !path.exists() {
+        return;
+    }
+
+    let outcome = gtk4::gio::spawn_blocking(move || {
+        rustconn_core::secret::verify_portable_passphrase(&path, &passphrase)
+    })
+    .await;
+
+    let Ok(Err(e)) = outcome else {
+        // `Ok(Ok(()))` is the good path; a join error means the check itself did
+        // not run, which is not evidence the passphrase is wrong and is not worth
+        // a dialog the user cannot act on.
+        return;
+    };
+    if !matches!(e, rustconn_core::error::SecretError::IncorrectPassphrase) {
+        tracing::warn!(error = %e, "Could not check the portable store passphrase");
+        return;
+    }
+
+    tracing::warn!("The saved portable passphrase does not open the portable credential file");
+
+    // Drop the passphrase that was just proven wrong. Keeping it would leave the
+    // backend "unlocked" with a key that opens nothing, and `retrieve` no longer
+    // walks past `IncorrectPassphrase` — so every credential lookup would fail
+    // for the rest of the session, including the ones the machine-bound store
+    // could still answer. Locked is a state the rest of the app handles: the
+    // backend reports itself unavailable, the fallback is reachable again, and a
+    // connection that needs the file raises the unlock dialog.
+    if let Ok(mut state_mut) = state.try_borrow_mut() {
+        state_mut.lock_portable_store();
+    }
+
+    crate::alert::show_error(
+        window,
+        &crate::i18n::i18n("Passphrase Does Not Open the Portable File"),
+        &crate::i18n::i18n(
+            "The passphrase you saved does not decrypt the portable credential file, so none of the passwords in it can be read. Open Settings ▸ Secrets and enter the passphrase the file was created with.",
+        ),
+    );
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 # RustConn Architecture Guide
 
-**Version 0.20.3** | Last updated: August 2026
+**Version 0.20.4** | Last updated: August 2026
 
 This document describes the internal architecture of RustConn for contributors and maintainers.
 
@@ -15,6 +15,7 @@ rustconn-cli/        # Command-line interface
 rustconn-pty-sys/    # Isolated FFI helper (PTY + controlling terminal)
 rustconn-locale-sys/ # Isolated FFI helper (startup setlocale)
 rustconn-env-sys/    # Isolated FFI helper (startup GSK_RENDERER write)
+rustconn-dock-sys/   # Isolated FFI helper (macOS Dock tile image)
 ```
 
 ### Dependency Graph
@@ -35,6 +36,7 @@ rustconn-env-sys/    # Isolated FFI helper (startup GSK_RENDERER write)
        └──────────────▶│  rustconn-pty-sys    │
                        │  rustconn-locale-sys │
                        │  rustconn-env-sys    │
+                       │  rustconn-dock-sys   │
                        │    (FFI, no GUI)     │
                        └──────────────────────┘
 ```
@@ -52,6 +54,7 @@ Only `rustconn` depends on the `-sys` crates. `rustconn-cli` depends on
 | `rustconn-pty-sys` | FFI helper: give a spawned child its PTY slave as a controlling terminal (`setsid` + `TIOCSCTTY`) for the macOS native PTY ([#175](https://github.com/totoshko88/RustConn/issues/175)) | `libc` only — NO GTK |
 | `rustconn-locale-sys` | FFI helper: the startup `setlocale` call, refused once this program spawns a thread of its own, once a call arrives from a second thread, or once the startup window is sealed ([#267](https://github.com/totoshko88/RustConn/issues/267)) | `gettext-rs` only — NO GTK |
 | `rustconn-env-sys` | FFI helper: the startup `GSK_RENDERER` and `LANGUAGE` writes, guarded the same way. Neither GTK nor gettext offers an API, so the environment is the only interface and it has to be written before `gtk_init` ([#274](https://github.com/totoshko88/RustConn/issues/274), [#158](https://github.com/totoshko88/RustConn/issues/158)) | No dependencies — NO GTK |
+| `rustconn-dock-sys` | FFI helper: `-[NSApplication setApplicationIconImage:]`, so the macOS Dock shows RustConn's icon when no `.app` bundle is behind the process. GDK exposes no Dock API and `set_icon_name` is a no-op on its macOS backend | `objc2` + AppKit bindings, macOS-gated — NO GTK |
 
 **Decision Rule:** "Does this code need GTK widgets?" → No → `rustconn-core` / Yes → `rustconn`
 
@@ -174,6 +177,23 @@ disappears — so the macOS guest-VM case
 write moved in-process — and anyone running a non-system interface language lost
 the tray icon for the same reason, since the language re-exec was not
 platform-gated. Startup now spawns two processes fewer than it used to.
+
+`rustconn-dock-sys` is the fourth, and the only one whose contract is not about
+memory soundness. macOS reads the Dock icon from the launched bundle's
+`Info.plist`, never from the running program, so a process with nothing behind it
+gets the generic Unix-executable tile — the case for a shell launch, and for the
+Homebrew formula's `.app`, whose `CFBundleExecutable` is a wrapper that `exec`s a
+binary outside the bundle. GDK has no Dock API and `gtk_window_set_icon_name` is
+an X11/Wayland concept that the macOS backend ignores, leaving
+`-[NSApplication setApplicationIconImage:]` as the only interface. Its
+precondition is AppKit's main-thread rule, which `objc2::MainThreadMarker` proves
+by asking the runtime; a violation is reported as an outcome rather than a panic,
+because a wrong Dock tile is cosmetic and taking the process down over it would
+be the worse failure. `rustconn/src/app.rs` calls it once from `run()`, after
+`gtk4::init()` has created the `NSApplication` singleton, and only when
+`macos_bundle_resources_dir()` reports no bundle — inside a real one the `.icns`
+is strictly better, since it carries every size from 16px to 1024px and preserves
+a custom icon a user pasted on in Finder.
 
 ### Who Owns a Session's PTY
 
@@ -832,8 +852,57 @@ Each backend wraps these generic functions with typed helpers:
 - 1Password: `store_token_in_keyring()` / `get_token_from_keyring()`
 - Passbolt: `store_passphrase_in_keyring()` / `get_passphrase_from_keyring()`
 - KeePassXC: `store_kdbx_password_in_keyring()` / `get_kdbx_password_from_keyring()`
+- Portable file: `store_portable_passphrase_in_keyring()` / `get_portable_passphrase_from_keyring()`
 
 On settings load, backends with "Save to system keyring" enabled automatically restore credentials from the keyring (auto-unlock for Bitwarden, token/passphrase/password pre-fill for others). Pass uses GPG encryption natively and does not require keyring integration.
+
+### Portable Encrypted File (KEK/DEK)
+
+`portable_encrypted_file.rs` is the only backend whose key comes from the user
+rather than from the machine or a vendor's vault, which is what makes the file
+movable between machines (issue #293). It uses a two-level key hierarchy:
+
+```
+passphrase ──Argon2id(kdf_salt, kdf_params)──▶ KEK
+                                                │
+                         wrapped_key ──open──▶ DEK ──▶ every entry
+```
+
+One Argon2id derivation unlocks the whole file; each entry then costs a single
+AES-256-GCM pass. Deriving per entry — the shape the machine-bound
+`encrypted_file.rs` uses, where the key input is high-entropy and the cost is
+therefore low — would make a single `retrieve` pay a full ~0.5 s KDF. The split
+also makes the passphrase verifiable (unwrap the key) and a passphrase change
+cheap (rewrap 32 bytes instead of re-encrypting every credential).
+
+On-disk header: `format_version`, `kdf`, `kdf_params`, `kdf_salt`,
+`wrapped_key`, `entries`. Because the file arrives from a shared folder, the
+header is treated as untrusted input: `check_header` rejects an unknown format
+version or KDF, and `check_kdf_cost` caps the Argon2 parameters so a hostile
+file cannot demand gigabytes before anyone types a passphrase. Entry blobs and
+the wrapped key are bound to their roles by AAD, so moving one into the other's
+slot fails authentication rather than silently decrypting.
+
+Unlock state lives in the backend behind a `std` lock (never held across an
+`await`), which keeps `set_passphrase` synchronous — `SecretManager::build_from_settings`
+is synchronous and has to be able to seed a passphrase it already holds.
+`SecretManager` keeps a typed handle to this one backend alongside the erased
+`Vec<Arc<dyn SecretBackend>>`, because it is the only backend that is unlocked
+*after* construction: `rebuild_from_settings` fires only when `SecretSettings`
+compares unequal, and the runtime passphrase is deliberately excluded from that
+comparison, so `set_portable_passphrase()` is the only route in.
+
+The DEK is cached per session, fingerprinted by `(kdf_salt, wrapped_key)`. Both
+halves are needed: rewrapping produces a fresh DEK under the *same* salt, so a
+salt-only cache would seal new entries with a superseded key and write them to a
+file that can never open them again.
+
+**Cloud-sync ceiling.** Every write is a read-modify-write of the whole JSON
+file, so two machines writing while offline resolve as last-writer-wins. The
+salt fingerprint means a file *replaced* by the sync client is noticed rather
+than misdecrypted, but concurrent edits are not merged. Splitting the map into
+one file per entry would let the sync client merge them; that is the documented
+upgrade path if multi-writer use becomes real.
 
 #### Flatpak Compatibility
 
@@ -1342,6 +1411,8 @@ rustconn-core/src/
 │   ├── pass.rs            # Pass (passwordstore.org) backend
 │   ├── macos_keychain.rs  # macOS Keychain backend (Security.framework)
 │   ├── encrypted_file.rs  # App-managed AES-256-GCM file (no keyring needed)
+│   ├── portable_encrypted_file.rs # Passphrase-keyed KEK/DEK store (cloud-syncable)
+│   ├── migration.rs       # Bulk transfer between the two file backends
 │   ├── local_crypto.rs    # AES-256-GCM + Argon2id primitives
 │   ├── detection.rs       # Password manager detection
 │   ├── status.rs          # KeePass status detection

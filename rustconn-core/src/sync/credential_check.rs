@@ -73,6 +73,22 @@ pub enum CredentialResolutionResult {
         /// can retry after successful unlock.
         connection_id: uuid::Uuid,
     },
+
+    /// The portable encrypted credential file needs to be unlocked.
+    ///
+    /// This occurs when the preferred backend is `PortableEncryptedFile` and
+    /// the user's passphrase is not yet available in memory for this session.
+    ///
+    /// The UI should show an `AdwAlertDialog` prompting for the passphrase.
+    /// On success the passphrase is set on the backend and kept in
+    /// `SecretSettings.portable_passphrase` for the session, then the
+    /// credential lookup is retried automatically.
+    PortableFileLocked {
+        /// Path to the portable credential file (displayed to the user).
+        file_path: std::path::PathBuf,
+        /// The connection ID that triggered the unlock request.
+        connection_id: uuid::Uuid,
+    },
 }
 
 // The `CredentialResolutionResult` enum is consumed by the GUI layer in

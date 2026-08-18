@@ -140,6 +140,18 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.20.4" date="2026-08-18">
+      <description>
+        <p>Version 0.20.4 - cloud-syncable credential storage:</p>
+        <ul>
+          <li>Added: portable encrypted file backend — one passphrase-protected credential file that syncs between your machines via cloud storage, including across Linux and macOS (issue #293)</li>
+          <li>Fixed: terminal starts at the real window size instead of 24x80 (issue #294)</li>
+          <li>Fixed: keyboard shortcuts window shows remapped bindings instead of defaults, and lists the shortcuts that cannot be rebound (issue #295)</li>
+          <li>Improved: rustconn-cli --backend accepts encrypted-file and portable</li>
+          <li>Localisation: new strings translated in all 16 locales</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.3" date="2026-08-17">
       <description>
         <p>Version 0.20.3 - keyboard passthrough persistence and sidebar tooltip paths:</p>

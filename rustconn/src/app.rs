@@ -1079,6 +1079,14 @@ fn refresh_sidebar_secret_status(
         | rustconn_core::config::SecretBackendType::Passbolt
         | rustconn_core::config::SecretBackendType::Pass
         | rustconn_core::config::SecretBackendType::EncryptedFile => (true, true),
+        // The portable store is configured but unusable while locked, and a
+        // locked store is the normal state at startup when the passphrase is not
+        // remembered. Reporting it as ready would put a green indicator next to a
+        // backend that cannot answer a single lookup; the second flag is the
+        // "store is reachable" one, so the unlock state belongs there.
+        rustconn_core::config::SecretBackendType::PortableEncryptedFile => {
+            (true, state_ref.portable_store_unlocked())
+        }
         rustconn_core::config::SecretBackendType::KeePassXc
         | rustconn_core::config::SecretBackendType::KdbxFile => {
             let kdbx_enabled = settings.secrets.kdbx_enabled;
@@ -1289,9 +1297,16 @@ fn setup_app_actions(
     // Keyboard shortcuts action
     let shortcuts_action = gio::SimpleAction::new("shortcuts", None);
     let window_weak = window.gtk_window().downgrade();
+    let state_for_shortcuts = state.clone();
     shortcuts_action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
-            let dialog = crate::dialogs::ShortcutsDialog::new(Some(&window));
+            // Read the bindings from settings, not from the application: while a
+            // terminal has focus the single-modifier accelerators are suspended
+            // (issue #216), so the live registration is not what the user has
+            // configured.
+            let keybindings =
+                with_state(&state_for_shortcuts, |s| s.settings().keybindings.clone());
+            let dialog = crate::dialogs::ShortcutsDialog::new(Some(&window), Some(&keybindings));
             dialog.show(Some(&window));
         }
     });
@@ -1633,6 +1648,13 @@ pub fn run() -> glib::ExitCode {
         tracing::error!(%e, "Failed to initialize libadwaita");
         return glib::ExitCode::FAILURE;
     }
+
+    // macOS: put RustConn's icon on the Dock tile when no bundle can supply one.
+    // After gtk4::init() on purpose — the NSApplication this needs is created by
+    // the GDK macOS backend when the display is opened, and this is still the
+    // thread that ran main(), which AppKit requires.
+    #[cfg(target_os = "macos")]
+    crate::apply_macos_dock_icon();
 
     let app = create_application();
     app.run()

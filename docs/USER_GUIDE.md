@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.20.3** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.20.4** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -3126,8 +3126,69 @@ Instead of storing passwords directly per-connection, you can use **Global Varia
 | Pass (passwordstore.org) | CLI-oriented users, git-synced passwords | High — GPG-encrypted files |
 | KDBX File | Offline/air-gapped environments | High — AES-256, local file only |
 | Encrypted-file fallback | Systems with no usable keyring (headless, minimal desktops) | Medium — AES-256-GCM, but key sits on the same disk (obfuscation at rest, not a boundary) |
+| Portable encrypted file | Sharing one password set across your own machines, including Linux ↔ macOS | High — AES-256-GCM under an Argon2id passphrase; the key is never written to disk |
 
 Configure your preferred backend in Settings → Secrets. RustConn falls back to the system keyring if the preferred backend is unavailable.
+
+### Portable Encrypted File (cloud-syncable)
+
+Every other backend ties credentials to one machine or one vendor's vault. This
+one puts them in a single file that you control the key to, so it can live in
+Dropbox, Google Drive, Nextcloud or Syncthing and open on any machine — Linux and
+macOS included.
+
+**Setting it up on the first machine**
+
+1. Settings → Secrets → **Preferred Backend** → *Portable encrypted file
+   (cloud-syncable)*
+2. **File path** — Browse to a folder your cloud client syncs, and name the file
+   (the default name is `credentials-portable.enc`)
+3. **Passphrase** — choose one, then repeat it in **Confirm passphrase**
+4. **Save passphrase** — optional; see below
+5. **Existing passwords → Copy Credentials** — re-encrypts the passwords already
+   stored on this machine with your passphrase and writes them into the portable
+   file. The originals are kept, so nothing is lost either way.
+
+**Setting it up on the second machine**
+
+Wait for the file to sync, then point Settings → Secrets at it and enter the same
+passphrase. There is nothing to import: the file already contains everything.
+
+**Saving the passphrase**
+
+The **Save passphrase** selector decides whether you retype it every session:
+
+| Choice | Effect |
+|--------|--------|
+| Don't save | Asked once per session, on the first connection that needs a credential |
+| Encrypted file | Stored on *this* machine, encrypted with this machine's key. The portable file stays portable; only the convenience copy is local |
+| System keyring | Stored in GNOME Keyring / KDE Wallet / macOS Keychain |
+
+Choosing "Don't save" removes any copy that was previously stored.
+
+**If the passphrase is not available**, the first connection that needs a stored
+password shows an unlock dialog. Enter the passphrase and the connection
+continues; it is kept in memory for the rest of the session.
+
+**What to know before relying on it**
+
+- **There is no recovery.** The passphrase is the only key. RustConn cannot reset
+  it, and no copy of it exists in the file. This is why the setup asks you to
+  type it twice.
+- **Use one machine at a time.** Each save rewrites the whole file. If two
+  machines both save while offline, the sync client keeps one version and the
+  other machine's additions are lost. Adding passwords on one machine at a time
+  avoids this entirely.
+- **The file is safe to sync, but it is still a file.** Anyone who obtains it can
+  attempt to guess the passphrase offline. Argon2id makes that slow and expensive
+  — a long passphrase makes it impractical.
+- **Keep the machine-bound copy.** "Copy Credentials" does not delete the
+  originals on purpose: they are your fallback on this machine if the passphrase
+  is ever lost.
+
+`rustconn-cli secret get`, `set` and `delete` work with this backend too. If the
+passphrase is not saved locally, the CLI prompts for it; in a script or a shell
+with no terminal it reports that it cannot ask, rather than hanging.
 
 **Fallback Behavior:**
 

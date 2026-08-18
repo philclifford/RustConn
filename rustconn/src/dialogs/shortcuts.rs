@@ -1,359 +1,187 @@
 //! Keyboard shortcuts help dialog
 //!
-//! Displays all available keyboard shortcuts grouped by category.
+//! Displays all available keyboard shortcuts grouped by category, reflecting
+//! any user-customized bindings from Settings → Keybindings.
 //!
 //! When built with the `adw-1-8` feature (libadwaita ≥ 1.8), uses the native
 //! `AdwShortcutsDialog` with `AdwShortcutsSection` / `AdwShortcutsItem` widgets.
-//! Otherwise falls back to a custom `adw::Window` with a searchable `ListBox`.
+//! Otherwise falls back to a custom `adw::Dialog` with a searchable `ListBox`.
+//!
+//! The source of truth for all shortcuts is [`rustconn_core::default_keybindings()`]
+//! combined with the user's keybinding overrides from settings.
 
-/// Keyboard shortcut entry definition
-#[allow(
-    dead_code,
-    reason = "`accel` used only with `adw-1-8`; `keys` used only without it"
-)]
-struct ShortcutEntry {
-    /// GTK accelerator string (e.g., "`<Control>`n")
-    accel: &'static str,
-    /// Human-readable key combo for the legacy fallback (e.g., "Ctrl+N")
-    keys: &'static str,
-    /// Translatable description of what the shortcut does
-    description: &'static str,
-    /// Category for grouping
-    category: &'static str,
+use rustconn_core::config::keybindings::{
+    KeybindingCategory, KeybindingDef, KeybindingSettings, default_keybindings,
+};
+
+use crate::i18n::i18n;
+
+/// One line in the help dialog: a GTK accelerator and a translated label.
+struct HelpEntry {
+    /// GTK accelerator string, pipe-separated when the action has several.
+    accel: String,
+    /// Already-translated description.
+    label: String,
 }
 
-/// All keyboard shortcuts in the application
-const SHORTCUTS: &[ShortcutEntry] = &[
-    // Connection shortcuts
-    ShortcutEntry {
-        accel: "<Control>n",
-        keys: "Ctrl+N",
-        description: "New connection",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>n",
-        keys: "Ctrl+Shift+N",
-        description: "New connection (advanced)",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>g",
-        keys: "Ctrl+Shift+G",
-        description: "New group",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>q",
-        keys: "Ctrl+Shift+Q",
-        description: "Quick connect",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "<Control>i",
-        keys: "Ctrl+I",
-        description: "Import connections",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>e",
-        keys: "Ctrl+Shift+E",
-        description: "Export connections",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "<Control>e",
-        keys: "Ctrl+E",
-        description: "Edit selected connection (sidebar)",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "Delete",
-        keys: "Delete",
-        description: "Delete selected connection/group (sidebar)",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "F2",
-        keys: "F2",
-        description: "Rename selected item",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "<Control>d",
-        keys: "Ctrl+D",
-        description: "Duplicate connection (sidebar)",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "<Control>c",
-        keys: "Ctrl+C",
-        description: "Copy connection",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "<Control>v",
-        keys: "Ctrl+V",
-        description: "Paste connection",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "<Control>m",
-        keys: "Ctrl+M",
-        description: "Move to group (sidebar)",
-        category: "Connections",
-    },
-    ShortcutEntry {
-        accel: "Return",
-        keys: "Enter",
-        description: "Connect to selected",
-        category: "Connections",
-    },
-    // Terminal shortcuts
-    ShortcutEntry {
-        accel: "<Control><Shift>c",
-        keys: "Ctrl+Shift+C",
-        description: "Copy from terminal",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>v",
-        keys: "Ctrl+Shift+V",
-        description: "Paste to terminal",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>f",
-        keys: "Ctrl+Shift+F",
-        description: "Search in terminal",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control>w",
-        keys: "Ctrl+W",
-        description: "Close current tab",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>w",
-        keys: "Ctrl+Shift+W",
-        description: "Close current tab",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control>Tab",
-        keys: "Ctrl+Tab",
-        description: "Next tab",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>Tab",
-        keys: "Ctrl+Shift+Tab",
-        description: "Previous tab",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>o",
-        keys: "Ctrl+Shift+O",
-        description: "Tab overview",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control>percent",
-        keys: "Ctrl+%",
-        description: "Switch to open tab",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>t",
-        keys: "Ctrl+Shift+T",
-        description: "Open local shell",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control>plus",
-        keys: "Ctrl+Plus",
-        description: "Zoom in (font size)",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control>minus",
-        keys: "Ctrl+Minus",
-        description: "Zoom out (font size)",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control>0",
-        keys: "Ctrl+0",
-        description: "Reset zoom",
-        category: "Terminal",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>m",
-        keys: "Ctrl+Shift+M",
-        description: "Move session to new window",
-        category: "Terminal",
-    },
-    // Split view shortcuts
-    ShortcutEntry {
-        accel: "<Control><Shift>h",
-        keys: "Ctrl+Shift+H",
-        description: "Split horizontal",
-        category: "Split View",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>s",
-        keys: "Ctrl+Shift+S",
-        description: "Split vertical",
-        category: "Split View",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>x",
-        keys: "Ctrl+Shift+X",
-        description: "Close pane",
-        category: "Split View",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>r",
-        keys: "Ctrl+Shift+R",
-        description: "Remove pane from split (keep session)",
-        category: "Split View",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>j",
-        keys: "Ctrl+Shift+J",
-        description: "Remove split (keep all sessions)",
-        category: "Split View",
-    },
-    ShortcutEntry {
-        accel: "<Control>grave",
-        keys: "Ctrl+`",
-        description: "Focus next pane",
-        category: "Split View",
-    },
-    // Navigation shortcuts
-    ShortcutEntry {
-        accel: "<Control>f",
-        keys: "Ctrl+F",
-        description: "Search",
-        category: "Navigation",
-    },
-    ShortcutEntry {
-        accel: "<Control>1",
-        keys: "Ctrl+1",
-        description: "Focus sidebar",
-        category: "Navigation",
-    },
-    ShortcutEntry {
-        accel: "<Control>2",
-        keys: "Ctrl+2",
-        description: "Focus terminal",
-        category: "Navigation",
-    },
-    ShortcutEntry {
-        accel: "<Control>p",
-        keys: "Ctrl+P",
-        description: "Command palette",
-        category: "Navigation",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>p",
-        keys: "Ctrl+Shift+P",
-        description: "Command palette (commands)",
-        category: "Navigation",
-    },
-    ShortcutEntry {
-        accel: "<Control>comma",
-        keys: "Ctrl+,",
-        description: "Open settings",
-        category: "Navigation",
-    },
-    // Application shortcuts
-    ShortcutEntry {
-        accel: "<Control>q",
-        keys: "Ctrl+Q",
-        description: "Quit application",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "<Control>question",
-        keys: "Ctrl+?",
-        description: "Keyboard shortcuts",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "F1",
-        keys: "F1",
-        description: "Keyboard shortcuts",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "F11",
-        keys: "F11",
-        description: "Toggle fullscreen",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "F9",
-        keys: "F9",
-        description: "Toggle sidebar",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>d",
-        keys: "Ctrl+Shift+D",
-        description: "Toggle compact interface",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>BackSpace",
-        keys: "Ctrl+Shift+Backspace",
-        description: "Toggle keyboard passthrough",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>b",
-        keys: "Ctrl+Shift+B",
-        description: "Toggle split broadcast",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "<Control>h",
-        keys: "Ctrl+H",
-        description: "Connection history",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>i",
-        keys: "Ctrl+Shift+I",
-        description: "Statistics",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "<Control>g",
-        keys: "Ctrl+G",
-        description: "Password generator",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "<Control><Shift>l",
-        keys: "Ctrl+Shift+L",
-        description: "Wake On LAN",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "<Control>t",
-        keys: "Ctrl+T",
-        description: "SSH tunnel manager",
-        category: "Application",
-    },
-    ShortcutEntry {
-        accel: "F10",
-        keys: "F10",
-        description: "Open primary menu",
-        category: "Application",
-    },
-];
+/// Returns the effective accelerator for an action from the user's keybinding
+/// settings, falling back to the definition's default when it is not overridden.
+///
+/// The settings are the source of truth rather than `accels_for_action` on the
+/// live application, which is what this originally read. The application's
+/// registration is not stable: [`crate::app::suspend_terminal_accels`] strips
+/// every single-modifier accelerator while a terminal has focus (issue #216), and
+/// the terminal usually *does* have focus when this dialog is opened. Reading the
+/// live value there returned an empty list, which fell back to the default and
+/// reintroduced the very bug this dialog was fixed for — a user override that the
+/// help window does not show (issue #295).
+fn effective_accel(overrides: Option<&KeybindingSettings>, def: &KeybindingDef) -> String {
+    overrides.map_or_else(
+        || def.default_accels.clone(),
+        |settings| settings.get_accel(def).to_owned(),
+    )
+}
+
+/// Shortcuts the application implements but does not offer for rebinding.
+///
+/// The keybinding registry exists to drive the *Settings ▸ Keybindings* page, so
+/// it only holds actions the user can remap. These eleven are handled by widget
+/// key controllers — sidebar row activation, VTE font zoom, the primary menu —
+/// and never reach `set_accels_for_action`, so a dialog built purely from the
+/// registry silently stopped documenting them. `F10` is one the project's own
+/// GNOME HIG notes list as mandatory.
+///
+/// The labels are wrapped here rather than stored as bare `&'static str` on
+/// purpose: `xgettext` only sees a string when it is an argument to `i18n()` at
+/// the call site, and this file is in `POTFILES.in` while
+/// `rustconn-core/src/config/keybindings.rs` is not.
+fn fixed_shortcuts(category: KeybindingCategory) -> Vec<HelpEntry> {
+    let entry = |accel: &str, label: String| HelpEntry {
+        accel: accel.to_owned(),
+        label,
+    };
+    match category {
+        KeybindingCategory::Connections => vec![
+            entry("<Control>e", i18n("Edit selected connection (sidebar)")),
+            entry(
+                "Delete",
+                i18n("Delete selected connection or group (sidebar)"),
+            ),
+            entry("F2", i18n("Rename selected item")),
+            entry("<Control>d", i18n("Duplicate connection (sidebar)")),
+            entry("<Control>c", i18n("Copy connection")),
+            entry("<Control>v", i18n("Paste connection")),
+            entry("Return", i18n("Connect to selected")),
+        ],
+        KeybindingCategory::Terminal => vec![
+            entry("<Control>plus", i18n("Zoom In (font size)")),
+            entry("<Control>minus", i18n("Zoom Out (font size)")),
+            entry("<Control>0", i18n("Reset Zoom")),
+        ],
+        KeybindingCategory::Application => {
+            vec![entry("F10", i18n("Open Primary Menu"))]
+        }
+        KeybindingCategory::Navigation
+        | KeybindingCategory::SplitView
+        | KeybindingCategory::View => Vec::new(),
+    }
+}
+
+/// Every line the dialog shows for one category: registry entries first, then
+/// the fixed ones, so a remappable shortcut is never buried under a static list.
+fn entries_for(
+    overrides: Option<&KeybindingSettings>,
+    category: KeybindingCategory,
+    defs: &[KeybindingDef],
+) -> Vec<HelpEntry> {
+    let mut entries: Vec<HelpEntry> = defs
+        .iter()
+        .filter(|def| def.category == category)
+        .map(|def| HelpEntry {
+            accel: effective_accel(overrides, def),
+            label: i18n(&def.label),
+        })
+        .collect();
+    entries.extend(fixed_shortcuts(category));
+    entries
+}
+
+/// Makes the registry's own labels visible to `xgettext`.
+///
+/// [`default_keybindings`] and [`KeybindingCategory::label`] live in
+/// `rustconn-core`, which is not in `POTFILES.in` — `xgettext` is pointed at the
+/// GUI crate, and pointing it at core would drag in a great deal that is not
+/// user-facing. The dialog therefore renders `i18n(&def.label)` against strings
+/// that have no msgid unless they also appear literally in a file the extractor
+/// reads. This function is that file.
+///
+/// Never called. Keep it in step with [`default_keybindings`]; the test at the
+/// bottom of this file fails when the two drift.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "exists so xgettext can see labels that rustconn-core owns"
+    )
+)]
+fn i18n_markers() -> Vec<String> {
+    vec![
+        // Categories
+        i18n("Application"),
+        i18n("Connections"),
+        i18n("Navigation"),
+        i18n("Terminal"),
+        i18n("Split View"),
+        i18n("View"),
+        // Application
+        i18n("Quit"),
+        i18n("Keyboard Shortcuts"),
+        i18n("Connection History"),
+        i18n("Statistics"),
+        i18n("Password Generator"),
+        i18n("Wake On LAN"),
+        i18n("SSH Tunnel Manager"),
+        // Connections
+        i18n("New Connection"),
+        i18n("New Connection (Advanced)"),
+        i18n("New Group"),
+        i18n("Import"),
+        i18n("Export"),
+        i18n("Quick Connect"),
+        i18n("Local Shell"),
+        i18n("Move to Group"),
+        // Navigation
+        i18n("Search"),
+        i18n("Focus Sidebar"),
+        i18n("Focus Terminal"),
+        i18n("Command Palette"),
+        i18n("Command Palette (Commands)"),
+        i18n("Settings"),
+        // Terminal
+        i18n("Copy"),
+        i18n("Paste"),
+        i18n("Find in Terminal"),
+        i18n("Close Tab"),
+        i18n("Next Tab"),
+        i18n("Previous Tab"),
+        i18n("Tab Overview"),
+        i18n("Switch Tab"),
+        i18n("Move Session to New Window"),
+        // Split View
+        i18n("Split Horizontal"),
+        i18n("Split Vertical"),
+        i18n("Close Pane"),
+        i18n("Remove from Split"),
+        i18n("Remove Split"),
+        i18n("Focus Next Pane"),
+        // View
+        i18n("Toggle Fullscreen"),
+        i18n("Toggle Sidebar"),
+        i18n("Toggle Compact Interface"),
+        i18n("Toggle Keyboard Passthrough"),
+        i18n("Toggle Split Broadcast"),
+    ]
+}
 
 // ============================================================
 // Native AdwShortcutsDialog (libadwaita >= 1.8)
@@ -361,10 +189,11 @@ const SHORTCUTS: &[ShortcutEntry] = &[
 
 #[cfg(feature = "adw-1-8")]
 mod native {
-    use adw::prelude::*;
+    use gtk4::prelude::*;
     use libadwaita as adw;
+    use rustconn_core::config::keybindings::{KeybindingCategory, KeybindingSettings};
 
-    use super::SHORTCUTS;
+    use super::{default_keybindings, entries_for};
     use crate::i18n::i18n;
 
     /// Keyboard shortcuts help dialog using native `AdwShortcutsDialog`
@@ -373,31 +202,42 @@ mod native {
     }
 
     impl ShortcutsDialog {
-        /// Creates a new shortcuts dialog
+        /// Creates a new shortcuts dialog reflecting current user overrides.
         #[must_use]
-        pub fn new(_parent: Option<&impl IsA<gtk4::Window>>) -> Self {
+        pub fn new(
+            _parent: Option<&impl IsA<gtk4::Window>>,
+            overrides: Option<&KeybindingSettings>,
+        ) -> Self {
             let dialog = adw::ShortcutsDialog::new();
 
-            let mut current_category = "";
-            let mut section: Option<adw::ShortcutsSection> = None;
+            let defaults = default_keybindings();
 
-            for shortcut in SHORTCUTS {
-                if shortcut.category != current_category {
-                    if let Some(s) = section.take() {
-                        dialog.add(s);
-                    }
-                    current_category = shortcut.category;
-                    section = Some(adw::ShortcutsSection::new(Some(&i18n(current_category))));
+            // Driven by `KeybindingCategory::all()` rather than by walking the
+            // registry and breaking on each category change: the fixed
+            // shortcuts have to land in their own category's section, and the
+            // registry is not guaranteed to be grouped (its "Application
+            // (additional)" block already is not).
+            for category in KeybindingCategory::all() {
+                let entries = entries_for(overrides, *category, &defaults);
+                if entries.is_empty() {
+                    continue;
                 }
-
-                if let Some(ref s) = section {
-                    let item = adw::ShortcutsItem::new(&i18n(shortcut.description), shortcut.accel);
-                    s.add(item);
+                let section = adw::ShortcutsSection::new(Some(&i18n(category.label())));
+                for entry in entries {
+                    // `AdwShortcutsItem` takes the accelerator in the format
+                    // `AdwShortcutLabel` accepts, which is GTK's: alternatives are
+                    // separated by a *space*. Our own registry joins them with `|`
+                    // (that is what `set_accels_for_action` is fed after a split),
+                    // and handing that string over unchanged made
+                    // `gtk_accelerator_parse` reject the whole thing — six items
+                    // rendered with no keys at all, in exactly the builds that use
+                    // this path, since `adw-1-8` is on for every package.
+                    section.add(adw::ShortcutsItem::new(
+                        &entry.label,
+                        &entry.accel.replace('|', " "),
+                    ));
                 }
-            }
-
-            if let Some(s) = section {
-                dialog.add(s);
+                dialog.add(section);
             }
 
             Self { dialog }
@@ -412,7 +252,7 @@ mod native {
 }
 
 // ============================================================
-// Legacy fallback (custom adw::Window with searchable ListBox)
+// Legacy fallback (custom adw::Dialog with searchable ListBox)
 // ============================================================
 
 #[cfg(not(feature = "adw-1-8"))]
@@ -423,8 +263,9 @@ mod legacy {
         Box as GtkBox, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow, SearchEntry,
     };
     use libadwaita as adw;
+    use rustconn_core::config::keybindings::{KeybindingCategory, KeybindingSettings};
 
-    use super::SHORTCUTS;
+    use super::{default_keybindings, entries_for};
     use crate::i18n::i18n;
 
     /// Keyboard shortcuts help dialog (legacy fallback)
@@ -433,9 +274,12 @@ mod legacy {
     }
 
     impl ShortcutsDialog {
-        /// Creates a new shortcuts dialog
+        /// Creates a new shortcuts dialog reflecting current user overrides.
         #[must_use]
-        pub fn new(_parent: Option<&impl IsA<gtk4::Window>>) -> Self {
+        pub fn new(
+            _parent: Option<&impl IsA<gtk4::Window>>,
+            overrides: Option<&KeybindingSettings>,
+        ) -> Self {
             let dialog = adw::Dialog::builder()
                 .title(i18n("Keyboard Shortcuts"))
                 .content_width(600)
@@ -478,15 +322,22 @@ mod legacy {
                 .css_classes(["boxed-list"])
                 .build();
 
-            let mut current_category = "";
-            for shortcut in SHORTCUTS {
-                if shortcut.category != current_category {
-                    current_category = shortcut.category;
-                    let header_row = Self::create_category_header(&i18n(current_category));
-                    list_box.append(&header_row);
+            let defaults = default_keybindings();
+
+            // Same category-driven order as the native path — see the comment
+            // there for why it is not a walk over the registry.
+            for category in KeybindingCategory::all() {
+                let entries = entries_for(overrides, *category, &defaults);
+                if entries.is_empty() {
+                    continue;
                 }
-                let row = Self::create_shortcut_row(shortcut.keys, &i18n(shortcut.description));
-                list_box.append(&row);
+                let header_row = Self::create_category_header(&i18n(category.label()));
+                list_box.append(&header_row);
+                for entry in entries {
+                    let keys = accel_key_parts(&entry.accel);
+                    let row = Self::create_shortcut_row(&keys, &entry.label);
+                    list_box.append(&row);
+                }
             }
 
             scrolled.set_child(Some(&list_box));
@@ -520,7 +371,14 @@ mod legacy {
             row
         }
 
-        fn create_shortcut_row(keys: &str, description: &str) -> ListBoxRow {
+        /// Builds one row from the already-split key parts.
+        ///
+        /// Takes the parts rather than the joined string on purpose: splitting
+        /// `"Ctrl++"` back on `'+'` yields `["Ctrl", "", ""]` and rendered two
+        /// empty keycaps for `<Control>plus`, which is a real binding (terminal
+        /// zoom in). The separator cannot be recovered from the display string,
+        /// so it is never collapsed into one.
+        fn create_shortcut_row(keys: &[String], description: &str) -> ListBoxRow {
             let row = ListBoxRow::new();
             row.set_activatable(false);
 
@@ -538,22 +396,21 @@ mod legacy {
             hbox.append(&desc_label);
 
             let keys_box = GtkBox::new(Orientation::Horizontal, 4);
-            for key in keys.split('+') {
-                let key_label = Label::builder().label(key).css_classes(["keycap"]).build();
-                keys_box.append(&key_label);
-
-                if key != keys.split('+').next_back().unwrap_or("") {
+            for (index, key) in keys.iter().enumerate() {
+                if index > 0 {
                     let plus = Label::new(Some("+"));
                     plus.add_css_class("dim-label");
                     keys_box.append(&plus);
                 }
+                let key_label = Label::builder().label(key).css_classes(["keycap"]).build();
+                keys_box.append(&key_label);
             }
             hbox.append(&keys_box);
 
             row.set_child(Some(&hbox));
             row.set_widget_name(&format!(
                 "shortcut:{}:{}",
-                keys.to_lowercase(),
+                keys.join("+").to_lowercase(),
                 description.to_lowercase()
             ));
             row
@@ -607,6 +464,89 @@ mod legacy {
             self.dialog.present(parent);
         }
     }
+
+    /// Joined view of [`accel_key_parts`], for the tests to assert against.
+    ///
+    /// The widget builds from the parts instead: once joined, a `+` key cannot be
+    /// told from the separator.
+    #[cfg(test)]
+    pub(super) fn accel_to_human_readable(accel: &str) -> String {
+        accel_key_parts(accel).join("+")
+    }
+
+    /// Splits a GTK accelerator into its display parts, in order.
+    ///
+    /// Pipe-separated multi-accels show only the first one for brevity.
+    ///
+    /// An unrecognised modifier token is passed through as written rather than
+    /// relabelled. The previous fallback printed every unknown token as `Ctrl`,
+    /// so a binding the parser did not know about was displayed as a different,
+    /// plausible-looking shortcut — worse than showing the raw token, because the
+    /// user has no way to tell it apart from a correct line.
+    pub(super) fn accel_key_parts(accel: &str) -> Vec<String> {
+        // Take only the first accelerator when multiple are pipe-separated.
+        let first = accel.split('|').next().unwrap_or(accel);
+
+        let mut parts: Vec<String> = Vec::new();
+        let mut rest = first.trim();
+
+        while let Some(after_open) = rest.strip_prefix('<') {
+            let Some(close) = after_open.find('>') else {
+                break;
+            };
+            let token = &after_open[..close];
+            rest = &after_open[close + 1..];
+
+            let rendered = match token.to_ascii_lowercase().as_str() {
+                "control" | "ctrl" | "primary" => "Ctrl".to_owned(),
+                "shift" => "Shift".to_owned(),
+                "alt" | "mod1" => "Alt".to_owned(),
+                "super" | "meta" => "Super".to_owned(),
+                // Unknown token: show it, do not guess.
+                _ => token.to_owned(),
+            };
+            parts.push(rendered);
+        }
+
+        // The remainder is the key name.
+        let key_display = match rest.to_ascii_lowercase().as_str() {
+            "return" | "kp_enter" => "Enter",
+            "escape" => "Esc",
+            "backspace" => "Backspace",
+            "tab" | "iso_left_tab" => "Tab",
+            "space" => "Space",
+            "delete" | "kp_delete" => "Delete",
+            "home" | "kp_home" => "Home",
+            "end" | "kp_end" => "End",
+            "page_up" | "kp_page_up" => "Page Up",
+            "page_down" | "kp_page_down" => "Page Down",
+            "up" | "kp_up" => "↑",
+            "down" | "kp_down" => "↓",
+            "left" | "kp_left" => "←",
+            "right" | "kp_right" => "→",
+            "plus" | "kp_add" => "+",
+            "minus" | "kp_subtract" => "−",
+            "comma" => ",",
+            "period" => ".",
+            "question" => "?",
+            "exclam" => "!",
+            "at" => "@",
+            "grave" => "`",
+            "percent" => "%",
+            _ => rest,
+        };
+
+        // GTK writes letter keys lowercase (`<Control><Shift>c`), but a shortcut
+        // is conventionally shown as `Ctrl+Shift+C`, which is what the previous
+        // hand-written table did. Only single letters are touched: `F10` and
+        // `Page Up` are already correct, and uppercasing them would not be.
+        if key_display.len() == 1 && key_display.chars().all(char::is_alphabetic) {
+            parts.push(key_display.to_uppercase());
+        } else {
+            parts.push(key_display.to_owned());
+        }
+        parts
+    }
 }
 
 // ============================================================
@@ -618,105 +558,234 @@ pub use legacy::ShortcutsDialog;
 #[cfg(feature = "adw-1-8")]
 pub use native::ShortcutsDialog;
 
-/// Marker function for xgettext to discover shortcut descriptions and categories.
-/// These strings are defined as static `&str` in the `SHORTCUTS` array and wrapped
-/// in `i18n()` when building the UI, but xgettext cannot trace this indirection.
-fn _i18n_markers() {
-    use crate::i18n::i18n;
-    // Categories
-    i18n("Connections");
-    i18n("Terminal");
-    i18n("Split View");
-    i18n("Navigation");
-    i18n("Application");
-    // Shortcut descriptions
-    i18n("New connection");
-    i18n("New connection (advanced)");
-    i18n("New group");
-    i18n("Quick connect");
-    i18n("Import connections");
-    i18n("Export connections");
-    i18n("Edit selected connection (sidebar)");
-    i18n("Delete selected connection/group (sidebar)");
-    i18n("Rename selected item");
-    i18n("Duplicate connection (sidebar)");
-    i18n("Copy connection");
-    i18n("Paste connection");
-    i18n("Move to group (sidebar)");
-    i18n("Connect to selected");
-    i18n("Copy from terminal");
-    i18n("Paste to terminal");
-    i18n("Search in terminal");
-    i18n("Close current tab");
-    i18n("Next tab");
-    i18n("Previous tab");
-    i18n("Tab overview");
-    i18n("Switch to open tab");
-    i18n("Open local shell");
-    i18n("Zoom in (font size)");
-    i18n("Zoom out (font size)");
-    i18n("Reset zoom");
-    i18n("Move session to new window");
-    i18n("Split horizontal");
-    i18n("Split vertical");
-    i18n("Close pane");
-    i18n("Remove pane from split (keep session)");
-    i18n("Remove split (keep all sessions)");
-    i18n("Focus next pane");
-    i18n("Search");
-    i18n("Focus sidebar");
-    i18n("Focus terminal");
-    i18n("Command palette");
-    i18n("Command palette (commands)");
-    i18n("Open settings");
-    i18n("Quit application");
-    i18n("Keyboard shortcuts");
-    i18n("Toggle fullscreen");
-    i18n("Toggle sidebar");
-    i18n("Toggle compact interface");
-    i18n("Toggle keyboard passthrough");
-    i18n("Connection history");
-    i18n("Statistics");
-    i18n("Password generator");
-    i18n("Wake On LAN");
-    i18n("SSH tunnel manager");
-    i18n("Open primary menu");
-}
-
-// ============================================================
-// Tests
-// ============================================================
-
 #[cfg(test)]
 mod tests {
-    use rustconn_core::default_keybindings;
+    use super::*;
 
-    use super::SHORTCUTS;
-
-    /// Every default (non-overridden) accelerator registered in the core
-    /// keybinding registry must be visible in the help dialog.
+    /// Every accelerator the application implements, whether or not the user can
+    /// rebind it.
     ///
-    /// This guards against the three shortcut sources drifting apart:
-    /// `default_keybindings()` (the source of truth for rebindable actions),
-    /// the `SHORTCUTS` array (this dialog), and the user-facing docs.
-    /// Pipe-separated alternatives (e.g. `<Control>w|<Control><Shift>w`) are
-    /// satisfied if at least one alternative is listed.
-    #[test]
-    fn registry_accelerators_are_documented_in_dialog() {
-        let listed: Vec<&str> = SHORTCUTS.iter().map(|s| s.accel).collect();
+    /// This is the list the help dialog is supposed to document, and it exists
+    /// because the dialog cannot be inspected from a test without a display. It
+    /// replaces `registry_accelerators_are_documented_in_dialog`, which asserted
+    /// that the registry was a subset of a hand-written array — the direction
+    /// that became trivially true when the dialog started being *built* from the
+    /// registry, at which point the array and the test were deleted together and
+    /// eleven shortcuts stopped being documented with nothing to notice.
+    ///
+    /// A new shortcut belongs in `default_keybindings()` when the user should be
+    /// able to remap it, and in `fixed_shortcuts()` when it is owned by a widget
+    /// key controller. Either way it belongs here.
+    const EXPECTED_ACCELS: &[&str] = &[
+        // Application
+        "<Control>q",
+        "<Control>question|F1",
+        "<Control>h",
+        "<Control><Shift>i",
+        "<Control>g",
+        "<Control><Shift>l",
+        "<Control>t",
+        "F10",
+        // Connections
+        "<Control>n",
+        "<Control><Shift>n",
+        "<Control><Shift>g",
+        "<Control>i",
+        "<Control><Shift>e",
+        "<Control><Shift>q",
+        "<Control><Shift>t",
+        "<Control>m",
+        "<Control>e",
+        "Delete",
+        "F2",
+        "<Control>d",
+        "<Control>c",
+        "<Control>v",
+        "Return",
+        // Navigation
+        "<Control>f",
+        "<Control>1|<Alt>1",
+        "<Control>2|<Alt>2",
+        "<Control>p",
+        "<Control><Shift>p",
+        "<Control>comma",
+        // Terminal
+        "<Control><Shift>c",
+        "<Control><Shift>v",
+        "<Control><Shift>f",
+        "<Control>w|<Control><Shift>w",
+        "<Control>Tab|<Control>Page_Down",
+        "<Control><Shift>Tab|<Control>Page_Up",
+        "<Control><Shift>o",
+        "<Control>percent",
+        "<Control><Shift>m",
+        "<Control>plus",
+        "<Control>minus",
+        "<Control>0",
+        // Split View
+        "<Control><Shift>h",
+        "<Control><Shift>s",
+        "<Control><Shift>x",
+        "<Control><Shift>r",
+        "<Control><Shift>j",
+        "<Control>grave",
+        // View
+        "F11",
+        "F9",
+        "<Control><Shift>d",
+        "<Control><Shift>BackSpace",
+        "<Control><Shift>b",
+    ];
 
-        let mut missing = Vec::new();
-        for def in default_keybindings() {
-            let alternatives: Vec<&str> = def.default_accels.split('|').collect();
-            let covered = alternatives.iter().any(|alt| listed.contains(alt));
-            if !covered {
-                missing.push(format!("{} ({})", def.action, def.default_accels));
+    /// Collects what the dialog would render, without needing a display.
+    ///
+    /// `None` for the application stands in for "not yet realised", which makes
+    /// every registry entry fall back to its default accelerator — the same
+    /// values `EXPECTED_ACCELS` records.
+    fn documented_accels() -> Vec<String> {
+        let defaults = default_keybindings();
+        KeybindingCategory::all()
+            .iter()
+            .flat_map(|category| entries_for(None, *category, &defaults))
+            .map(|entry| entry.accel)
+            .collect()
+    }
+
+    #[test]
+    fn every_implemented_shortcut_is_documented() {
+        let documented = documented_accels();
+        for expected in EXPECTED_ACCELS {
+            assert!(
+                documented.iter().any(|accel| accel == expected),
+                "accelerator '{expected}' is implemented but the shortcuts dialog does not \
+                 list it — add it to default_keybindings() or fixed_shortcuts()"
+            );
+        }
+    }
+
+    #[test]
+    fn the_dialog_lists_nothing_undocumented() {
+        // The other direction: a registry entry nobody recorded in
+        // EXPECTED_ACCELS means the two lists have drifted, and the next person
+        // to lose a shortcut will not be able to tell which side is right.
+        for accel in documented_accels() {
+            assert!(
+                EXPECTED_ACCELS.contains(&accel.as_str()),
+                "the dialog lists '{accel}', which EXPECTED_ACCELS does not — update the \
+                 list so it stays the record of what the application implements"
+            );
+        }
+    }
+
+    #[test]
+    fn no_shortcut_is_listed_twice() {
+        let documented = documented_accels();
+        let unique: std::collections::BTreeSet<&String> = documented.iter().collect();
+        assert_eq!(
+            unique.len(),
+            documented.len(),
+            "the dialog lists the same accelerator more than once: {documented:?}"
+        );
+    }
+
+    #[test]
+    fn fixed_shortcuts_are_not_in_the_rebindable_registry() {
+        // A fixed shortcut that also reaches the registry would appear twice and,
+        // worse, would be presented as remappable when it is not.
+        let registry: Vec<String> = default_keybindings()
+            .into_iter()
+            .map(|def| def.default_accels)
+            .collect();
+        for category in KeybindingCategory::all() {
+            for entry in fixed_shortcuts(*category) {
+                assert!(
+                    !registry.contains(&entry.accel),
+                    "'{}' is in both fixed_shortcuts() and default_keybindings()",
+                    entry.accel
+                );
             }
         }
+    }
 
-        assert!(
-            missing.is_empty(),
-            "registry actions missing from the shortcuts dialog: {missing:?}"
-        );
+    #[test]
+    fn every_category_with_fixed_shortcuts_also_has_registry_entries() {
+        // Not a hard requirement, but a category that exists only for fixed
+        // shortcuts would render a section the Settings page cannot show, and
+        // that asymmetry is worth failing on rather than discovering visually.
+        let defaults = default_keybindings();
+        for category in KeybindingCategory::all() {
+            if fixed_shortcuts(*category).is_empty() {
+                continue;
+            }
+            assert!(
+                defaults.iter().any(|def| def.category == *category),
+                "category {category:?} has fixed shortcuts but no registry entries"
+            );
+        }
+    }
+
+    #[test]
+    fn i18n_markers_cover_every_registry_label() {
+        // The markers function is the only reason the registry's labels have
+        // msgids at all. Nothing calls it, so nothing would notice a label added
+        // to `rustconn-core` and not mirrored here — it would simply render in
+        // English in all 16 locales, which is exactly what happened when the
+        // previous marker block was deleted.
+        let markers = i18n_markers();
+        for def in default_keybindings() {
+            let translated = i18n(&def.label);
+            assert!(
+                markers.contains(&translated),
+                "registry label '{}' has no i18n_markers() entry, so it has no msgid",
+                def.label
+            );
+        }
+        for category in KeybindingCategory::all() {
+            let translated = i18n(category.label());
+            assert!(
+                markers.contains(&translated),
+                "category label '{}' has no i18n_markers() entry",
+                category.label()
+            );
+        }
+    }
+
+    #[cfg(not(feature = "adw-1-8"))]
+    mod human_readable {
+        use super::super::legacy::accel_to_human_readable;
+
+        #[test]
+        fn renders_modifiers_and_named_keys() {
+            assert_eq!(accel_to_human_readable("<Control><Shift>c"), "Ctrl+Shift+C");
+            assert_eq!(accel_to_human_readable("<Control>question"), "Ctrl+?");
+            assert_eq!(accel_to_human_readable("<Control>grave"), "Ctrl+`");
+            assert_eq!(accel_to_human_readable("<Control>plus"), "Ctrl++");
+            assert_eq!(accel_to_human_readable("<Control>minus"), "Ctrl+−");
+            assert_eq!(accel_to_human_readable("Return"), "Enter");
+            assert_eq!(accel_to_human_readable("Delete"), "Delete");
+            assert_eq!(accel_to_human_readable("F10"), "F10");
+        }
+
+        #[test]
+        fn normalises_control_aliases() {
+            assert_eq!(accel_to_human_readable("<Primary>c"), "Ctrl+C");
+            assert_eq!(accel_to_human_readable("<Ctrl>c"), "Ctrl+C");
+            assert_eq!(accel_to_human_readable("<Mod1>x"), "Alt+X");
+        }
+
+        #[test]
+        fn shows_only_the_first_of_several_accelerators() {
+            assert_eq!(
+                accel_to_human_readable("<Control>w|<Control><Shift>w"),
+                "Ctrl+W"
+            );
+        }
+
+        #[test]
+        fn passes_an_unknown_modifier_through_instead_of_calling_it_ctrl() {
+            // The old fallback rendered this as "Ctrl+X", i.e. a real shortcut
+            // the user has, attached to the wrong action.
+            assert_eq!(accel_to_human_readable("<Hyper>x"), "Hyper+X");
+        }
     }
 }

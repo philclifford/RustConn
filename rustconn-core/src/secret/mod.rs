@@ -24,9 +24,11 @@ pub(crate) mod local_crypto;
 #[cfg(all(feature = "system-keyring", target_os = "macos"))]
 pub mod macos_keychain;
 mod manager;
+pub mod migration;
 mod onepassword;
 mod pass;
 mod passbolt;
+mod portable_encrypted_file;
 mod resolver;
 pub mod script_resolver;
 pub mod serde_helpers;
@@ -52,7 +54,7 @@ pub use detection::{
     detect_password_managers, get_password_manager_launch_command, open_password_manager,
     url_open_command,
 };
-pub use encrypted_file::EncryptedFileBackend;
+pub use encrypted_file::{EncryptedFileBackend, default_encrypted_store_path};
 pub use hierarchy::{
     GROUPS_SUBFOLDER, GroupCreationResult, KEEPASS_ROOT_GROUP, KeePassHierarchy, PATH_SEPARATOR,
 };
@@ -78,6 +80,12 @@ pub use passbolt::{
     PassboltBackend, PassboltStatus, PassboltVersion, delete_passphrase_from_keyring,
     get_passbolt_status, get_passbolt_version, get_passphrase_from_keyring,
     store_passphrase_in_keyring,
+};
+pub use portable_encrypted_file::{
+    PORTABLE_STORE_FILE_NAME, PortableEncryptedFileBackend,
+    delete_portable_passphrase_from_keyring, entry_count as portable_entry_count,
+    get_portable_passphrase_from_keyring, resolve_portable_store_path,
+    store_portable_passphrase_in_keyring, verify_portable_passphrase,
 };
 pub use resolver::CredentialResolver;
 pub use status::{KeePassStatus, parse_keepassxc_version};

@@ -24,6 +24,22 @@ fn show_vault_save_error(err: &rustconn_core::error::SecretError) {
     use libadwaita as adw;
     use libadwaita::prelude::*;
 
+    // A locked portable store is not a broken backend, and the generic recovery
+    // text below ("no system keyring is responding, pick another backend") is
+    // wrong advice for it. It also used to surface the raw core error string,
+    // which is English in every locale.
+    if matches!(
+        err,
+        rustconn_core::error::SecretError::PassphraseRequired
+            | rustconn_core::error::SecretError::IncorrectPassphrase
+    ) {
+        show_portable_locked_error(matches!(
+            err,
+            rustconn_core::error::SecretError::IncorrectPassphrase
+        ));
+        return;
+    }
+
     // The cause is the SecretError Display string. Its variants embed only
     // operation context and backend diagnostics (e.g. secret-tool stderr),
     // never secret values, so it is safe to surface verbatim (R1.4).
@@ -71,6 +87,70 @@ fn show_vault_save_error(err: &rustconn_core::error::SecretError) {
             if response == "settings" {
                 // Activate the existing window action that opens the Settings
                 // dialog; the user navigates to the Secrets section there.
+                let _ = gtk4::prelude::WidgetExt::activate_action(
+                    &window_for_action,
+                    "win.settings",
+                    None,
+                );
+            }
+        });
+
+        dialog.present(Some(&window));
+    });
+}
+
+/// Reports that the portable credential file could not be written because it is
+/// locked, or because the passphrase in force does not open it.
+///
+/// `wrong_passphrase` picks between the two: they need different next steps, and
+/// telling someone to "enter the passphrase" when they already have one entered
+/// and wrong is the kind of advice that gets a bug report.
+///
+/// The suggested action opens Settings ▸ Secrets rather than the unlock dialog
+/// directly. The unlock dialog hands its result to `AppState::unlock_portable_store`,
+/// and this function is reached from `spawn_blocking_with_callback` on paths that
+/// hold no state handle — routing through Settings keeps one place responsible
+/// for recording a verified passphrase instead of adding a second.
+fn show_portable_locked_error(wrong_passphrase: bool) {
+    use gtk4::prelude::*;
+    use libadwaita as adw;
+    use libadwaita::prelude::*;
+
+    gtk4::glib::idle_add_local_once(move || {
+        let Some(window) = gtk4::gio::Application::default()
+            .and_then(|app| app.downcast_ref::<gtk4::Application>().cloned())
+            .and_then(|app| app.active_window())
+        else {
+            tracing::warn!("Could not show portable store lock dialog: no active window");
+            return;
+        };
+
+        let (heading, body) = if wrong_passphrase {
+            (
+                crate::i18n::i18n("Passphrase Does Not Open the Portable File"),
+                crate::i18n::i18n(
+                    "The password was not saved. The passphrase in use does not decrypt the portable credential file. Open Settings, then Secrets, and enter the passphrase the file was created with.",
+                ),
+            )
+        } else {
+            (
+                crate::i18n::i18n("Portable File Is Locked"),
+                crate::i18n::i18n(
+                    "The password was not saved because the portable credential file has not been unlocked in this session. Open Settings, then Secrets, and enter its passphrase.",
+                ),
+            )
+        };
+
+        let dialog = adw::AlertDialog::new(Some(&heading), Some(&body));
+        dialog.add_response("close", &crate::i18n::i18n("Close"));
+        dialog.add_response("settings", &crate::i18n::i18n("Open Settings"));
+        dialog.set_response_appearance("settings", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("settings"));
+        dialog.set_close_response("close");
+
+        let window_for_action = window.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response == "settings" {
                 let _ = gtk4::prelude::WidgetExt::activate_action(
                     &window_for_action,
                     "win.settings",
@@ -131,17 +211,23 @@ fn show_vault_fallback_toast() {
 ///
 /// # Errors
 ///
-/// Returns a human-readable error string if the store times out after 10s or
-/// every backend in the chain rejects the write.
+/// Returns the backend's own [`SecretError`] if the store times out after 10s or
+/// every backend in the chain rejects the write. The typed error is preserved
+/// rather than flattened to a string because the caller has to tell a locked
+/// portable store apart from an unresponsive keyring — the two need different
+/// advice, and a formatted string cannot be matched on.
 ///
 /// [`SecretManager`]: rustconn_core::secret::SecretManager
 /// [`SecretManager::store_reported`]: rustconn_core::secret::SecretManager::store_reported
 /// [`StoreOutcome`]: rustconn_core::secret::StoreOutcome
+/// [`SecretError`]: rustconn_core::error::SecretError
 fn store_reported_blocking(
     secret_settings: &rustconn_core::config::SecretSettings,
     lookup_key: &str,
     creds: &rustconn_core::models::Credentials,
-) -> Result<rustconn_core::secret::StoreOutcome, String> {
+) -> Result<rustconn_core::secret::StoreOutcome, rustconn_core::error::SecretError> {
+    use rustconn_core::error::SecretError;
+
     let manager = rustconn_core::secret::SecretManager::build_from_settings(secret_settings);
     let allow_fallback = secret_settings.enable_fallback;
 
@@ -154,10 +240,10 @@ fn store_reported_blocking(
                 manager.store_reported(lookup_key, creds, allow_fallback),
             )
             .await
-            .map_err(|_| "Vault store timed out after 10s".to_string())?
-            .map_err(|e| format!("{e}"))
+            .map_err(|_| SecretError::StoreFailed("Vault store timed out after 10s".to_string()))?
         })
     })
+    .map_err(SecretError::StoreFailed)
     .and_then(|r| r)
 }
 
@@ -281,7 +367,10 @@ pub fn save_password_to_vault(
                 };
                 store_reported_blocking(&secret_settings, &lookup_key, &creds)
             },
-            move |result: Result<rustconn_core::secret::StoreOutcome, String>| match result {
+            move |result: Result<
+                rustconn_core::secret::StoreOutcome,
+                rustconn_core::error::SecretError,
+            >| match result {
                 Ok(rustconn_core::secret::StoreOutcome::Primary) => {
                     tracing::info!("Password saved to vault for connection {conn_id}");
                 }
@@ -295,7 +384,7 @@ pub fn save_password_to_vault(
                 }
                 Err(e) => {
                     tracing::error!("Failed to save password to vault: {e}");
-                    show_vault_save_error(&rustconn_core::error::SecretError::StoreFailed(e));
+                    show_vault_save_error(&e);
                 }
             },
         );
@@ -373,7 +462,10 @@ pub fn save_group_password_to_vault(
                 };
                 store_reported_blocking(&secret_settings, &lookup_key, &creds)
             },
-            move |result: Result<rustconn_core::secret::StoreOutcome, String>| match result {
+            move |result: Result<
+                rustconn_core::secret::StoreOutcome,
+                rustconn_core::error::SecretError,
+            >| match result {
                 Ok(rustconn_core::secret::StoreOutcome::Primary) => {
                     tracing::info!("Group password saved to vault");
                 }
@@ -386,7 +478,7 @@ pub fn save_group_password_to_vault(
                 }
                 Err(e) => {
                     tracing::error!("Failed to save group password to vault: {e}");
-                    show_vault_save_error(&rustconn_core::error::SecretError::StoreFailed(e));
+                    show_vault_save_error(&e);
                 }
             },
         );
@@ -1122,6 +1214,19 @@ fn retrieve_by_vault_entry_name(
                                 .map(|p| zeroize::Zeroizing::new(p.to_string()))
                         }))
                     }
+                    SecretBackendType::PortableEncryptedFile => {
+                        // Passphrase-based portable file: needs the session
+                        // passphrase from settings to unlock.
+                        let backend = portable_backend_from_settings(settings);
+                        let creds = backend
+                            .retrieve(entry_name)
+                            .await
+                            .map_err(|e| format!("{e}"))?;
+                        Ok(creds.and_then(|c| {
+                            c.expose_password()
+                                .map(|p| zeroize::Zeroizing::new(p.to_string()))
+                        }))
+                    }
                     _ => {
                         // System keyring — lookup by entry_name as attribute.
                         // macOS uses the Keychain; LibSecretBackend (oo7) is
@@ -1611,6 +1716,10 @@ pub fn dispatch_vault_op(
                 // lookup key, same as the other app-managed backends.
                 std::sync::Arc::new(rustconn_core::secret::EncryptedFileBackend::new())
             }
+            SecretBackendType::PortableEncryptedFile => {
+                // Passphrase-based portable encrypted file.
+                std::sync::Arc::new(portable_backend_from_settings(secret_settings))
+            }
         };
 
         match op {
@@ -1675,6 +1784,30 @@ pub fn dispatch_vault_op(
 ///
 /// Mirrors `CredentialResolver::select_storage_backend` logic.
 /// Also used by connection password load/save and variable vault operations.
+/// Builds a portable-file backend from settings, unlocked when possible.
+///
+/// The passphrase comes from `SecretSettings::portable_passphrase`, the
+/// session-only field that the unlock dialog, the startup restore and the
+/// Settings page all write to. When it is absent the backend stays locked and
+/// its operations report [`rustconn_core::error::SecretError::PassphraseRequired`],
+/// which the connection path turns into an unlock prompt.
+///
+/// Exists so the path resolution and the unlock live in one place: four call
+/// sites each had their own copy, and every one of them had forgotten to set the
+/// passphrase at some point in this feature's history.
+#[must_use]
+pub fn portable_backend_from_settings(
+    settings: &rustconn_core::config::SecretSettings,
+) -> rustconn_core::secret::PortableEncryptedFileBackend {
+    let path =
+        rustconn_core::secret::resolve_portable_store_path(settings.portable_file_path.as_deref());
+    let backend = rustconn_core::secret::PortableEncryptedFileBackend::with_path(path);
+    if let Some(ref passphrase) = settings.portable_passphrase {
+        backend.set_passphrase(passphrase.clone());
+    }
+    backend
+}
+
 pub fn select_backend_for_load(
     secrets: &rustconn_core::config::SecretSettings,
 ) -> rustconn_core::config::SecretBackendType {
@@ -1699,6 +1832,8 @@ pub fn select_backend_for_load(
         // EncryptedFile is a flat-key backend; identity mapping mirrors the
         // other app-managed backends above. (Allowed flat-key wiring for 2.4.)
         SecretBackendType::EncryptedFile => SecretBackendType::EncryptedFile,
+        // PortableEncryptedFile is also a flat-key backend (passphrase-based).
+        SecretBackendType::PortableEncryptedFile => SecretBackendType::PortableEncryptedFile,
     }
 }
 

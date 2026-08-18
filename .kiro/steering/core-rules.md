@@ -12,7 +12,7 @@ loaded. Neither is repeated here. One source of truth per rule.
 
 Communication language: Ukrainian.
 
-## Architecture (6 crates)
+## Architecture (7 crates)
 
 | Crate | Purpose | Restrictions |
 |-------|---------|-------------|
@@ -22,12 +22,25 @@ Communication language: Ukrainian.
 | `rustconn-pty-sys` | Isolated FFI: macOS PTY controlling terminal (`setsid`+`TIOCSCTTY`) | Sanctioned `unsafe` (M-UNSAFE); `libc` only |
 | `rustconn-locale-sys` | Isolated FFI: startup `setlocale`, refused once *this program* spawns a thread of its own (baseline growth, Linux only), once a call arrives from another thread, or after sealing | Sanctioned `unsafe` (M-UNSAFE); `gettext-rs` only |
 | `rustconn-env-sys` | Isolated FFI: the startup `GSK_RENDERER` and `LANGUAGE` writes, guarded the same way | Sanctioned `unsafe` (M-UNSAFE); no dependencies |
+| `rustconn-dock-sys` | Isolated FFI: the macOS Dock tile image via `-[NSApplication setApplicationIconImage:]`, for launches with no `.app` behind them. Main-thread proof via `objc2::MainThreadMarker`; a violation is an outcome, not a panic — a wrong Dock tile is cosmetic | Sanctioned `unsafe` (M-UNSAFE); `objc2` + AppKit bindings, macOS-gated |
 
 Every `-sys` crate is an **unconditional** workspace member and an
 unconditional dependency, with `#[cfg]` inside where the platform differs. That
 is what gets the `unsafe` and its contract tests compiled by CI — no CI job
-builds macOS, so a `[target.'cfg(target_os = "macos")'.dependencies]` entry
-would mean an `unsafe` block nothing ever checks.
+builds macOS, so making the *crate* macOS-only would mean an `unsafe` block
+nothing ever checks.
+
+`rustconn-dock-sys` is the one crate whose **dependencies** are target-gated
+(`[target.'cfg(target_os = "macos")'.dependencies]`), because `objc2-app-kit`
+does not compile off Apple platforms — there is no cross-platform stand-in for
+AppKit the way `std::env::set_var` is one for `setenv`. The crate, its API and
+its precondition guard are still built and tested everywhere; only the AppKit
+call is gated, and its docs say so under "What CI actually checks" instead of
+implying the whole crate is covered. Reach for that shape only when the bindings
+genuinely cannot build elsewhere, and verify the gated path with
+`cargo clippy -p <crate> --target aarch64-apple-darwin` (a `rustup target add`
+away — the objc2 bindings are pure Rust, so `check`/`clippy` work without an SDK;
+only linking needs one).
 
 New FFI gets its own `rustconn-*-sys` crate — never an `unsafe` exception where
 the caller lives.

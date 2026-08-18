@@ -5162,7 +5162,7 @@ dependencies = [
 
 [[package]]
 name = "rustconn"
-version = "0.20.3"
+version = "0.20.4"
 dependencies = [
  "async-channel",
  "chrono",
@@ -5180,6 +5180,7 @@ dependencies = [
  "regex",
  "resvg",
  "rustconn-core",
+ "rustconn-dock-sys",
  "rustconn-env-sys",
  "rustconn-locale-sys",
  "rustconn-pty-sys",
@@ -5201,7 +5202,7 @@ dependencies = [
 
 [[package]]
 name = "rustconn-cli"
-version = "0.20.3"
+version = "0.20.4"
 dependencies = [
  "chrono",
  "clap",
@@ -5223,7 +5224,7 @@ dependencies = [
 
 [[package]]
 name = "rustconn-core"
-version = "0.20.3"
+version = "0.20.4"
 dependencies = [
  "aes 0.9.2",
  "ar",
@@ -5281,19 +5282,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustconn-dock-sys"
+version = "0.20.4"
+dependencies = [
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+]
+
+[[package]]
 name = "rustconn-env-sys"
-version = "0.20.3"
+version = "0.20.4"
 
 [[package]]
 name = "rustconn-locale-sys"
-version = "0.20.3"
+version = "0.20.4"
 dependencies = [
  "gettext-rs",
 ]
 
 [[package]]
 name = "rustconn-pty-sys"
-version = "0.20.3"
+version = "0.20.4"
 dependencies = [
  "libc",
  "nix",
@@ -7629,9 +7639,9 @@ dependencies = [
 
 [[package]]
 name = "zerovec-derive"
-version = "0.11.4"
+version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47402523226a02bfe5230160dc3ccc089aa6f6f19e7fcbb4e6f824bbb1b4aa62"
+checksum = "9f212a141d820099d57ffafb9569be9617a6f27d3dc881fbee8fb56642f917a9"
 dependencies = [
  "proc-macro2",
  "quote",

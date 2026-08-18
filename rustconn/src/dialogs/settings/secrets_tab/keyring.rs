@@ -167,6 +167,45 @@ pub(super) fn get_pb_passphrase_from_keyring() -> Option<secrecy::SecretString> 
     )
 }
 
+/// Saves the portable credential file passphrase to the system keyring.
+///
+/// Returns `true` on success, `false` on any failure.
+pub(super) fn save_portable_passphrase_to_keyring(passphrase: &str) -> bool {
+    let secret = secrecy::SecretString::from(passphrase.to_owned());
+    match crate::async_utils::with_runtime(|rt| {
+        rt.block_on(async {
+            tokio::time::timeout(
+                KEYRING_SAVE_TIMEOUT,
+                rustconn_core::secret::store_portable_passphrase_in_keyring(&secret),
+            )
+            .await
+            .map_err(|_| "keyring save timed out after 5s")?
+            .map_err(|e| e.to_string())
+        })
+    }) {
+        Ok(Ok(())) => {
+            tracing::info!("Portable file passphrase saved to keyring");
+            true
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "Failed to save the portable file passphrase to keyring");
+            false
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Runtime error saving the portable file passphrase");
+            false
+        }
+    }
+}
+
+/// Loads the portable credential file passphrase from the system keyring.
+pub(super) fn get_portable_passphrase_from_keyring() -> Option<secrecy::SecretString> {
+    lookup_in_keyring(
+        "portable-file-passphrase",
+        rustconn_core::secret::get_portable_passphrase_from_keyring(),
+    )
+}
+
 /// Saves KDBX database password to system keyring.
 ///
 /// Returns `true` on success, `false` on any failure.
@@ -313,5 +352,13 @@ pub(super) fn delete_pb_passphrase_from_keyring() -> bool {
     delete_from_keyring(
         "passbolt-passphrase",
         rustconn_core::secret::delete_passphrase_from_keyring(),
+    )
+}
+
+/// Removes the portable credential file passphrase from the system keyring.
+pub(super) fn delete_portable_passphrase_from_keyring() -> bool {
+    delete_from_keyring(
+        "portable-file-passphrase",
+        rustconn_core::secret::delete_portable_passphrase_from_keyring(),
     )
 }

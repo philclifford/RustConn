@@ -6,7 +6,7 @@
 //! continue to round-trip through the new API.
 
 use proptest::prelude::*;
-use rustconn_core::config::SecretSettings;
+use rustconn_core::config::{KeyringRevocations, SecretSettings};
 use rustconn_core::secret::CredentialStorage;
 use secrecy::SecretString;
 
@@ -282,7 +282,7 @@ fn every_runtime_secret_field_is_checked() {
     let base = SecretSettings::default();
     let secret = || Some(SecretString::from("s3cr3t".to_owned()));
 
-    let cases: [(&str, SecretSetter); 6] = [
+    let cases: [(&str, SecretSetter); 7] = [
         ("kdbx_password", |s, v| s.kdbx_password = v),
         ("bitwarden_password", |s, v| s.bitwarden_password = v),
         ("bitwarden_client_id", |s, v| s.bitwarden_client_id = v),
@@ -293,6 +293,11 @@ fn every_runtime_secret_field_is_checked() {
             s.onepassword_service_account_token = v;
         }),
         ("passbolt_passphrase", |s, v| s.passbolt_passphrase = v),
+        // The portable passphrase reaches settings from two directions — the
+        // dialog and a mid-session unlock — and was left out of
+        // `has_new_runtime_secret`, so a save that supplied only the passphrase
+        // was classified as "nothing changed" and skipped.
+        ("portable_passphrase", |s, v| s.portable_passphrase = v),
     ];
 
     for (field, set) in cases {
@@ -339,15 +344,17 @@ fn every_backend_holding(secret: &str) -> SecretSettings {
     settings.bitwarden_client_secret = Some(SecretString::from(secret.to_owned()));
     settings.onepassword_service_account_token = Some(SecretString::from(secret.to_owned()));
     settings.passbolt_passphrase = Some(SecretString::from(secret.to_owned()));
+    settings.portable_passphrase = Some(SecretString::from(secret.to_owned()));
     settings
 }
 
-/// Selects one storage choice for all four backends.
+/// Selects one storage choice for all five backends.
 fn select_everywhere(settings: &mut SecretSettings, storage: CredentialStorage) {
     settings.set_kdbx_storage(storage);
     settings.set_bitwarden_storage(storage);
     settings.set_onepassword_storage(storage);
     settings.set_passbolt_storage(storage);
+    settings.set_portable_storage(storage);
 }
 
 /// Plants the placeholder blobs an encrypted-file selection arrives with. The
@@ -361,10 +368,11 @@ fn plant_placeholder_blobs(settings: &mut SecretSettings) {
     settings.bitwarden_client_secret_encrypted = Some(COLLECT_PLACEHOLDER.to_string());
     settings.onepassword_service_account_token_encrypted = Some(COLLECT_PLACEHOLDER.to_string());
     settings.passbolt_passphrase_encrypted = Some(COLLECT_PLACEHOLDER.to_string());
+    settings.portable_passphrase_encrypted = Some(COLLECT_PLACEHOLDER.to_string());
 }
 
 /// Every persisted `*_encrypted` blob, paired with the field name for messages.
-fn encrypted_blobs(settings: &SecretSettings) -> [(&'static str, Option<&String>); 6] {
+fn encrypted_blobs(settings: &SecretSettings) -> [(&'static str, Option<&String>); 7] {
     [
         (
             "kdbx_password_encrypted",
@@ -392,11 +400,15 @@ fn encrypted_blobs(settings: &SecretSettings) -> [(&'static str, Option<&String>
             "passbolt_passphrase_encrypted",
             settings.passbolt_passphrase_encrypted.as_ref(),
         ),
+        (
+            "portable_passphrase_encrypted",
+            settings.portable_passphrase_encrypted.as_ref(),
+        ),
     ]
 }
 
 /// Every runtime `SecretString`, paired with the field name for messages.
-fn runtime_secrets(settings: &SecretSettings) -> [(&'static str, Option<&SecretString>); 6] {
+fn runtime_secrets(settings: &SecretSettings) -> [(&'static str, Option<&SecretString>); 7] {
     [
         ("kdbx_password", settings.kdbx_password.as_ref()),
         ("bitwarden_password", settings.bitwarden_password.as_ref()),
@@ -410,6 +422,7 @@ fn runtime_secrets(settings: &SecretSettings) -> [(&'static str, Option<&SecretS
             settings.onepassword_service_account_token.as_ref(),
         ),
         ("passbolt_passphrase", settings.passbolt_passphrase.as_ref()),
+        ("portable_passphrase", settings.portable_passphrase.as_ref()),
     ]
 }
 
@@ -683,7 +696,7 @@ proptest! {
 }
 
 /// Clears one runtime-secret field, used to blank a whole settings value.
-fn runtime_clearers() -> [fn(&mut SecretSettings); 6] {
+fn runtime_clearers() -> [fn(&mut SecretSettings); 7] {
     [
         |s| s.kdbx_password = None,
         |s| s.bitwarden_password = None,
@@ -691,6 +704,7 @@ fn runtime_clearers() -> [fn(&mut SecretSettings); 6] {
         |s| s.bitwarden_client_secret = None,
         |s| s.onepassword_service_account_token = None,
         |s| s.passbolt_passphrase = None,
+        |s| s.portable_passphrase = None,
     ]
 }
 
@@ -712,6 +726,7 @@ fn leaving_the_keyring_revokes_every_backend() {
     previous.bitwarden_use_api_key = true;
     previous.onepassword_save_to_keyring = true;
     previous.passbolt_save_to_keyring = true;
+    previous.portable_save_to_keyring = true;
 
     let mut current = previous.clone();
     select_everywhere(&mut current, CredentialStorage::None);
@@ -723,6 +738,42 @@ fn leaving_the_keyring_revokes_every_backend() {
     assert!(revocations.bitwarden_api_credentials);
     assert!(revocations.onepassword_token);
     assert!(revocations.passbolt_passphrase);
+    assert!(revocations.portable_passphrase);
+}
+
+/// `any()` is a hand-written OR over every field, so it can silently lose one:
+/// a field left out means its keyring entry is never revoked, and a field
+/// repeated hides the omission. Drive each flag on its own and require `any()`
+/// to notice — the mechanical check the shape of that function cannot give.
+#[test]
+fn any_reports_each_revocation_individually() {
+    /// One revocation flag: its field name, and how to set it.
+    type FlagCase = (&'static str, fn(&mut KeyringRevocations));
+
+    let flags: [FlagCase; 6] = [
+        ("kdbx_password", |r| r.kdbx_password = true),
+        ("bitwarden_password", |r| r.bitwarden_password = true),
+        ("bitwarden_api_credentials", |r| {
+            r.bitwarden_api_credentials = true;
+        }),
+        ("onepassword_token", |r| r.onepassword_token = true),
+        ("passbolt_passphrase", |r| r.passbolt_passphrase = true),
+        ("portable_passphrase", |r| r.portable_passphrase = true),
+    ];
+
+    assert!(
+        !KeyringRevocations::default().any(),
+        "nothing set must report nothing to revoke"
+    );
+
+    for (name, set_flag) in flags {
+        let mut revocations = KeyringRevocations::default();
+        set_flag(&mut revocations);
+        assert!(
+            revocations.any(),
+            "any() ignores {name}, so its keyring entry would never be revoked"
+        );
+    }
 }
 
 #[test]
@@ -735,6 +786,7 @@ fn staying_on_the_keyring_revokes_nothing() {
     settings.bitwarden_use_api_key = true;
     settings.onepassword_save_to_keyring = true;
     settings.passbolt_save_to_keyring = true;
+    settings.portable_save_to_keyring = true;
 
     let revocations = settings.keyring_revocations(&settings.clone());
     assert!(
@@ -750,6 +802,7 @@ fn staying_on_the_keyring_revokes_nothing() {
     blanked.bitwarden_password = None;
     blanked.onepassword_service_account_token = None;
     blanked.passbolt_passphrase = None;
+    blanked.portable_passphrase = None;
     assert!(!blanked.keyring_revocations(&settings).any());
 }
 

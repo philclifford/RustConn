@@ -24,12 +24,13 @@ use self::detection::{
 use self::keyring::{
     delete_bw_api_credentials_from_keyring, delete_bw_password_from_keyring,
     delete_kdbx_password_from_keyring, delete_op_token_from_keyring,
-    delete_pb_passphrase_from_keyring, get_bw_password_from_keyring,
-    get_kdbx_password_from_keyring, get_op_token_from_keyring, get_pb_passphrase_from_keyring,
+    delete_pb_passphrase_from_keyring, delete_portable_passphrase_from_keyring,
+    get_bw_password_from_keyring, get_kdbx_password_from_keyring, get_op_token_from_keyring,
+    get_pb_passphrase_from_keyring, get_portable_passphrase_from_keyring,
     save_bw_api_credentials_to_keyring, save_bw_password_to_keyring, save_kdbx_password_to_keyring,
-    save_op_token_to_keyring, save_pb_passphrase_to_keyring,
+    save_op_token_to_keyring, save_pb_passphrase_to_keyring, save_portable_passphrase_to_keyring,
 };
-use crate::i18n::i18n;
+use crate::i18n::{i18n, i18n_f};
 
 /// Which backends the system keyring could **not** supply a secret for when the
 /// dialog opened.
@@ -57,6 +58,8 @@ pub struct KeyringGaps {
     pub onepassword: bool,
     /// The Passbolt GPG passphrase is not in the keyring.
     pub passbolt: bool,
+    /// The portable credential file passphrase is not in the keyring.
+    pub portable: bool,
 }
 
 impl KeyringGaps {
@@ -70,6 +73,7 @@ impl KeyringGaps {
             bitwarden: settings.bitwarden_save_to_keyring,
             onepassword: settings.onepassword_save_to_keyring,
             passbolt: settings.passbolt_save_to_keyring,
+            portable: settings.portable_save_to_keyring,
         }
     }
 
@@ -104,6 +108,9 @@ impl KeyringGaps {
             || (self.passbolt
                 && collected.passbolt_save_to_keyring
                 && collected.passbolt_passphrase.is_some())
+            || (self.portable
+                && collected.portable_save_to_keyring
+                && collected.portable_passphrase.is_some())
     }
 }
 
@@ -190,6 +197,34 @@ pub struct SecretsPageWidgets {
     pub pass_store_dir_entry: Entry,
     pub pass_store_dir_browse_button: Button,
     pub pass_status_label: Label,
+    // Portable encrypted file widgets
+    pub portable_group: adw::PreferencesGroup,
+    pub portable_path_entry: Entry,
+    pub portable_browse_button: Button,
+    pub portable_passphrase_entry: adw::PasswordEntryRow,
+    /// Second entry guarding against a mistyped passphrase, which would
+    /// otherwise produce an unopenable store with no way to find out.
+    pub portable_confirm_entry: adw::PasswordEntryRow,
+    /// 3-state credential storage selector for portable file passphrase.
+    pub portable_storage_combo: adw::ComboRow,
+}
+
+/// Finds the preferences dialog a widget lives in, for reporting an outcome.
+///
+/// `AdwPreferencesDialog` is an `AdwDialog`, not a `GtkRoot`, so `root()` walks
+/// past it to the application window and the downcast fails. `ancestor` is the
+/// lookup that actually finds it.
+fn enclosing_preferences_dialog(widget: &impl IsA<gtk4::Widget>) -> Option<adw::PreferencesDialog> {
+    widget
+        .ancestor(adw::PreferencesDialog::static_type())
+        .and_downcast::<adw::PreferencesDialog>()
+}
+
+/// Shows a toast on a preferences dialog.
+fn show_toast(dialog: &adw::PreferencesDialog, message: &str, timeout_secs: u32) {
+    let toast = adw::Toast::new(message);
+    toast.set_timeout(timeout_secs);
+    dialog.add_toast(toast);
 }
 
 /// Index in the storage `StringList` for [`CredentialStorage::None`].
@@ -338,6 +373,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     let system_keyring_label = "libsecret";
     // Descriptive (non-brand) label — sentence case per GNOME HIG and i18n-wrapped.
     let encrypted_file_label = i18n("Encrypted file (no system keyring)");
+    let portable_file_label = i18n("Portable encrypted file (cloud-syncable)");
     let backend_strings = StringList::new(&[
         "KeePassXC",
         system_keyring_label,
@@ -346,6 +382,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         "Passbolt",
         "Pass",
         encrypted_file_label.as_str(),
+        portable_file_label.as_str(),
     ]);
     let secret_backend_dropdown = DropDown::builder()
         .model(&backend_strings)
@@ -947,6 +984,313 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
 
     page.add(&pass_group);
 
+    // === Portable Encrypted File Group ===
+    let portable_group = adw::PreferencesGroup::builder()
+        .title(i18n("Portable Encrypted File"))
+        .description(i18n(
+            "Passphrase-protected credential file that can be synced via cloud services",
+        ))
+        .build();
+
+    // File path row
+    let portable_path_entry = Entry::builder()
+        .placeholder_text(i18n("Path to credential file"))
+        .hexpand(true)
+        .build();
+    let portable_browse_button = Button::builder()
+        .icon_name("document-open-symbolic")
+        .tooltip_text(i18n("Browse"))
+        .valign(gtk4::Align::Center)
+        .build();
+    portable_browse_button.update_property(&[gtk4::accessible::Property::Label(&i18n(
+        "Browse for portable credential file",
+    ))]);
+    let portable_path_box = GtkBox::new(gtk4::Orientation::Horizontal, 6);
+    portable_path_box.append(&portable_path_entry);
+    portable_path_box.append(&portable_browse_button);
+    let portable_path_row = adw::ActionRow::builder()
+        .title(i18n("File path"))
+        .subtitle(i18n("Can be a cloud-synced directory"))
+        .build();
+    portable_path_row.add_suffix(&portable_path_box);
+    portable_group.add(&portable_path_row);
+
+    // Browse button: pick an existing store, or name a new one.
+    //
+    // The mode depends on whether the target is already there, because the two
+    // situations are genuinely different. On the first machine the file does not
+    // exist yet and has to be named, which only a save dialog allows. On the
+    // second machine the file arrived over the cloud sync and is merely being
+    // pointed at — a save dialog would answer that with an "already exists,
+    // replace it?" warning about the very file the user is trying to keep.
+    {
+        let entry = portable_path_entry.clone();
+        portable_browse_button.connect_clicked(move |button| {
+            let entry_clone = entry.clone();
+            let current = entry.text();
+            let existing = !current.is_empty() && std::path::Path::new(current.as_str()).is_file();
+
+            let Some(window) = button
+                .root()
+                .and_then(|r| r.downcast::<gtk4::Window>().ok())
+            else {
+                return;
+            };
+
+            let dialog = FileDialog::builder()
+                .title(i18n("Select Portable Credential File"))
+                .modal(true)
+                .build();
+
+            let on_chosen = move |result: Result<gtk4::gio::File, glib::Error>| {
+                if let Ok(file) = result
+                    && let Some(path) = file.path()
+                {
+                    entry_clone.set_text(&path.to_string_lossy());
+                }
+            };
+
+            if existing {
+                dialog.open(Some(&window), gtk4::gio::Cancellable::NONE, on_chosen);
+            } else {
+                dialog.set_initial_name(Some(rustconn_core::secret::PORTABLE_STORE_FILE_NAME));
+                dialog.save(Some(&window), gtk4::gio::Cancellable::NONE, on_chosen);
+            }
+        });
+    }
+
+    // Passphrase row, plus a confirmation.
+    //
+    // The confirmation is not ceremony here. This passphrase is the only key to
+    // every credential in the file, it is never checked against anything when
+    // the file is first created, and there is no recovery path: a typo produces
+    // a store that opens with a passphrase the user does not know they typed.
+    let portable_passphrase_entry = adw::PasswordEntryRow::builder()
+        .title(i18n("Passphrase"))
+        .build();
+    portable_group.add(&portable_passphrase_entry);
+
+    let portable_confirm_entry = adw::PasswordEntryRow::builder()
+        .title(i18n("Confirm passphrase"))
+        .build();
+    portable_group.add(&portable_confirm_entry);
+
+    let portable_status_label = Label::builder()
+        .label("")
+        .wrap(true)
+        .xalign(0.0)
+        .visible(false)
+        .build();
+    let portable_status_row = adw::ActionRow::builder().activatable(false).build();
+    portable_status_row.add_prefix(&portable_status_label);
+    portable_group.add(&portable_status_row);
+
+    // Live mismatch feedback, so the error is visible while typing rather than
+    // discovered when the credentials cannot be read back.
+    {
+        let passphrase = portable_passphrase_entry.clone();
+        let confirm = portable_confirm_entry.clone();
+        let status = portable_status_label.clone();
+        let path_entry = portable_path_entry.clone();
+        let update = move || {
+            let pass_text = passphrase.text();
+            let confirm_text = confirm.text();
+            let mismatch = !confirm_text.is_empty() && pass_text != confirm_text;
+            // A store that does not exist yet cannot check the passphrase, so the
+            // confirmation is required rather than optional — say so here instead
+            // of letting Save quietly drop it.
+            let path_text = path_entry.text();
+            let creating_new_store = !rustconn_core::secret::resolve_portable_store_path(
+                Some(path_text.as_str())
+                    .filter(|t| !t.is_empty())
+                    .map(std::path::Path::new),
+            )
+            .exists();
+            let unconfirmed_new =
+                creating_new_store && !pass_text.is_empty() && confirm_text.is_empty();
+
+            if mismatch {
+                status.set_label(&i18n("The two passphrases do not match"));
+                status.add_css_class("error");
+                status.set_visible(true);
+                confirm.add_css_class("error");
+            } else if unconfirmed_new {
+                status.set_label(&i18n(
+                    "Repeat the passphrase to confirm it. A new file cannot be recovered if the passphrase is wrong.",
+                ));
+                status.remove_css_class("error");
+                status.set_visible(true);
+                confirm.remove_css_class("error");
+            } else {
+                status.set_visible(false);
+                status.remove_css_class("error");
+                confirm.remove_css_class("error");
+            }
+        };
+        let on_pass = update.clone();
+        portable_passphrase_entry.connect_changed(move |_| on_pass());
+        portable_confirm_entry.connect_changed(move |_| update());
+    }
+
+    // Storage combo (how to persist the passphrase locally).
+    //
+    // The group's own status label, not a fresh one: `make_storage_combo` writes
+    // "System keyring unavailable" into whatever it is handed, and a `Label` that
+    // is never added to a container puts that warning nowhere. The combo would
+    // then revert the user's choice with no explanation.
+    let portable_storage_combo = make_storage_combo(
+        &i18n("Save passphrase"),
+        Rc::clone(&secret_tool_available),
+        portable_status_label.clone(),
+    );
+    portable_group.add(&portable_storage_combo);
+
+    // Migrate button row
+    let portable_migrate_button = Button::builder()
+        .label(i18n("Copy Credentials"))
+        .tooltip_text(i18n(
+            "Copy passwords from the machine-bound encrypted file into this portable file",
+        ))
+        .halign(gtk4::Align::Start)
+        .valign(gtk4::Align::Center)
+        .build();
+    let portable_migrate_row = adw::ActionRow::builder()
+        .title(i18n("Existing passwords"))
+        .subtitle(i18n(
+            "Re-encrypt credentials from the machine-bound file with your passphrase",
+        ))
+        .activatable_widget(&portable_migrate_button)
+        .build();
+    portable_migrate_row.add_suffix(&portable_migrate_button);
+    portable_group.add(&portable_migrate_row);
+
+    // Wire up migrate button
+    {
+        let passphrase_entry_clone = portable_passphrase_entry.clone();
+        let confirm_entry_clone = portable_confirm_entry.clone();
+        let path_entry_clone = portable_path_entry.clone();
+        let status_clone = portable_status_label.clone();
+        portable_migrate_button.connect_clicked(move |button| {
+            let passphrase_text = passphrase_entry_clone.text();
+            let confirm_text = confirm_entry_clone.text();
+
+            // Refuse rather than flash: the reason has to stay on screen, since
+            // the fix (type the passphrase, make both fields agree) is not
+            // obvious from a border that recolours for two seconds.
+            let complaint = if passphrase_text.is_empty() {
+                Some(i18n(
+                    "Enter the passphrase that will protect the portable file",
+                ))
+            } else if !confirm_text.is_empty() && confirm_text != passphrase_text {
+                Some(i18n("The two passphrases do not match"))
+            } else {
+                None
+            };
+            if let Some(message) = complaint {
+                status_clone.set_label(&message);
+                status_clone.add_css_class("error");
+                status_clone.set_visible(true);
+                passphrase_entry_clone.grab_focus();
+                return;
+            }
+
+            let passphrase = secrecy::SecretString::from(passphrase_text.to_string());
+            let source_path = rustconn_core::secret::default_encrypted_store_path();
+            let dest_path = rustconn_core::secret::resolve_portable_store_path(
+                Some(path_entry_clone.text().as_str())
+                    .filter(|t| !t.is_empty())
+                    .map(std::path::Path::new),
+            );
+
+            let Some(prefs_dialog) = enclosing_preferences_dialog(button) else {
+                tracing::warn!("Migration button is not inside a preferences dialog");
+                return;
+            };
+
+            // Nothing to copy is worth saying out loud — the button being
+            // enabled implies there might be.
+            let entry_count = rustconn_core::secret::migration::encrypted_entry_count(&source_path)
+                .unwrap_or_default();
+            if entry_count == 0 {
+                show_toast(&prefs_dialog, &i18n("No stored passwords to copy"), 3);
+                return;
+            }
+
+            // Appending under the wrong passphrase would produce a file whose
+            // halves need two different ones. The core store refuses that, but
+            // checking first turns a failed migration into a clear message.
+            //
+            // On a blocking thread, like the unlock dialog does it: the check is
+            // an Argon2id derivation with the *file's* parameters, and the file
+            // comes from a shared folder. Even with the header's cost ceilings
+            // that is long enough to freeze the Settings dialog, and running it
+            // on the GTK main thread was the one place in this feature that did.
+            let verify_path = dest_path.clone();
+            let verify_pass = passphrase.clone();
+            let status_async = status_clone.clone();
+            let button_async = button.clone();
+            status_clone.set_label(&i18n("Checking the passphrase…"));
+            status_clone.remove_css_class("error");
+            status_clone.add_css_class("dim-label");
+            status_clone.set_visible(true);
+            button.set_sensitive(false);
+
+            glib::spawn_future_local(async move {
+                let outcome = gtk4::gio::spawn_blocking(move || {
+                    rustconn_core::secret::verify_portable_passphrase(&verify_path, &verify_pass)
+                })
+                .await;
+                button_async.set_sensitive(true);
+                status_async.remove_css_class("dim-label");
+
+                let failure = match outcome {
+                    Ok(Ok(())) => None,
+                    Ok(Err(e)) => Some(
+                        if matches!(e, rustconn_core::error::SecretError::IncorrectPassphrase) {
+                            // One line on purpose: xgettext does not collapse
+                            // Rust's `\<newline>`, so a wrapped literal reaches
+                            // the catalogue with the source indentation and never
+                            // matches at runtime.
+                            i18n(
+                                "That passphrase does not open the existing portable file. Enter the passphrase the file was created with.",
+                            )
+                        } else {
+                            i18n_f("Cannot open the portable file: {}", &[&e.to_string()])
+                        },
+                    ),
+                    Err(_join_err) => Some(i18n("Could not check the passphrase")),
+                };
+
+                if let Some(message) = failure {
+                    status_async.set_label(&message);
+                    status_async.add_css_class("error");
+                    status_async.set_visible(true);
+                    return;
+                }
+                status_async.set_visible(false);
+
+                crate::dialogs::portable_migration::show_migration_wizard(
+                    &button_async,
+                    entry_count,
+                    move |response| {
+                        if response
+                            == crate::dialogs::portable_migration::MigrationResponse::Transfer
+                        {
+                            crate::dialogs::portable_migration::run_migration(
+                                source_path.clone(),
+                                dest_path.clone(),
+                                passphrase.clone(),
+                                prefs_dialog.clone(),
+                            );
+                        }
+                    },
+                );
+            });
+        });
+    }
+
+    page.add(&portable_group);
+
     // === KeePass Database Group ===
     let kdbx_group = adw::PreferencesGroup::builder()
         .title(i18n("KeePass Database"))
@@ -1138,6 +1482,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     let onepassword_group_clone = onepassword_group.clone();
     let passbolt_group_clone = passbolt_group.clone();
     let pass_group_clone = pass_group.clone();
+    let portable_group_clone = portable_group.clone();
     let kdbx_group_clone = kdbx_group.clone();
     let auth_group_clone2 = auth_group.clone();
     let status_group_clone2 = status_group.clone();
@@ -1170,6 +1515,8 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         passbolt_group_clone.set_visible(selected == 4);
         // Show Pass group only when Pass is selected (index 5)
         pass_group_clone.set_visible(selected == 5);
+        // Show portable group only when portable encrypted file is selected (index 7)
+        portable_group_clone.set_visible(selected == 7);
         // Show KDBX groups only when KeePassXC is selected (index 0)
         let show_kdbx = selected == 0;
         kdbx_group_clone.set_visible(show_kdbx);
@@ -1339,6 +1686,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     onepassword_group.set_visible(false);
     passbolt_group.set_visible(false);
     pass_group.set_visible(false);
+    portable_group.set_visible(false);
 
     // Initial version display set above as "Detecting..."
 
@@ -1704,6 +2052,12 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         pass_store_dir_entry,
         pass_store_dir_browse_button,
         pass_status_label,
+        portable_group,
+        portable_path_entry,
+        portable_browse_button,
+        portable_passphrase_entry,
+        portable_confirm_entry,
+        portable_storage_combo,
     }
 }
 
@@ -1756,6 +2110,7 @@ pub fn load_secret_settings(widgets: &SecretsPageWidgets, settings: &SecretSetti
         SecretBackendType::Passbolt => 4,
         SecretBackendType::Pass => 5,
         SecretBackendType::EncryptedFile => 6,
+        SecretBackendType::PortableEncryptedFile => 7,
     };
     widgets.secret_backend_dropdown.set_selected(backend_index);
     widgets.enable_fallback.set_active(settings.enable_fallback);
@@ -1868,6 +2223,25 @@ pub fn load_secret_settings(widgets: &SecretsPageWidgets, settings: &SecretSetti
             .set_text(&path.display().to_string());
     }
 
+    // Load portable encrypted file settings
+    if let Some(ref path) = settings.portable_file_path {
+        widgets
+            .portable_path_entry
+            .set_text(&path.display().to_string());
+    }
+    if let Some(ref passphrase) = settings.portable_passphrase {
+        use secrecy::ExposeSecret;
+        widgets
+            .portable_passphrase_entry
+            .set_text(passphrase.expose_secret());
+        // Mirror it into the confirmation so an already-known passphrase does
+        // not read as a mismatch the moment the page opens.
+        widgets
+            .portable_confirm_entry
+            .set_text(passphrase.expose_secret());
+    }
+    set_storage_combo_value(&widgets.portable_storage_combo, settings.portable_storage());
+
     // Show/hide groups based on selected backend
     let show_kdbx = backend_index == 0;
     widgets.kdbx_group.set_visible(show_kdbx);
@@ -1881,6 +2255,7 @@ pub fn load_secret_settings(widgets: &SecretsPageWidgets, settings: &SecretSetti
     widgets.onepassword_group.set_visible(backend_index == 3);
     widgets.passbolt_group.set_visible(backend_index == 4);
     widgets.pass_group.set_visible(backend_index == 5);
+    widgets.portable_group.set_visible(backend_index == 7);
     widgets.password_row.set_visible(settings.kdbx_use_password);
     widgets
         .kdbx_storage_combo
@@ -1930,6 +2305,11 @@ pub fn load_secret_settings(widgets: &SecretsPageWidgets, settings: &SecretSetti
         }
         SecretBackendType::KeePassXc | SecretBackendType::KdbxFile => {
             load_kdbx_credentials_from_keyring(widgets, settings);
+        }
+        SecretBackendType::PortableEncryptedFile => {
+            // Not stateless: the store's passphrase is a settings-tab field, and
+            // it is the one credential the page must be able to pre-fill.
+            load_portable_credentials_from_keyring(widgets, settings);
         }
         SecretBackendType::LibSecret
         | SecretBackendType::MacOsKeychain
@@ -2087,6 +2467,36 @@ fn load_passbolt_credentials_from_keyring(widgets: &SecretsPageWidgets, settings
     });
 }
 
+/// Loads the portable credential file passphrase from keyring.
+///
+/// Fills the confirmation entry too, so a passphrase the user never retyped is
+/// not reported back to them as a mismatch.
+fn load_portable_credentials_from_keyring(widgets: &SecretsPageWidgets, settings: &SecretSettings) {
+    if !settings.portable_save_to_keyring {
+        return;
+    }
+    let passphrase_entry = widgets.portable_passphrase_entry.clone();
+    let confirm_entry = widgets.portable_confirm_entry.clone();
+    let gaps = widgets.keyring_gaps.clone();
+    tracing::debug!("Scheduling portable passphrase auto-load (async)");
+    glib::spawn_future_local(async move {
+        let passphrase = gtk4::gio::spawn_blocking(get_portable_passphrase_from_keyring)
+            .await
+            .ok()
+            .flatten();
+
+        if let Some(passphrase) = passphrase {
+            use secrecy::ExposeSecret;
+            KeyringGaps::resolve(&gaps, |g| g.portable = false);
+            passphrase_entry.set_text(passphrase.expose_secret());
+            confirm_entry.set_text(passphrase.expose_secret());
+            tracing::info!("Portable file passphrase restored from keyring");
+        } else {
+            tracing::debug!("No portable file passphrase found in keyring");
+        }
+    });
+}
+
 /// Loads KeePassXC password from keyring.
 fn load_kdbx_credentials_from_keyring(widgets: &SecretsPageWidgets, settings: &SecretSettings) {
     if !settings.kdbx_save_to_keyring {
@@ -2136,6 +2546,7 @@ pub fn collect_secret_settings(
         4 => SecretBackendType::Passbolt,
         5 => SecretBackendType::Pass,
         6 => SecretBackendType::EncryptedFile,
+        7 => SecretBackendType::PortableEncryptedFile,
         _ => SecretBackendType::default(),
     };
 
@@ -2430,6 +2841,84 @@ pub fn collect_secret_settings(
         CredentialStorage::None => (None, None),
     };
 
+    // Collect the portable file passphrase.
+    //
+    // A passphrase that does not match its confirmation is treated as not
+    // entered. The alternative is worse than it sounds: this value becomes the
+    // only key to every credential in the portable file, it is not checked
+    // against anything when the file is first created, and there is no recovery.
+    // Writing a typo would produce a store that opens with a passphrase nobody
+    // knows. The mismatch is already shown inline next to the two entries, so
+    // dropping it here is not a silent refusal.
+    let portable_storage = storage_combo_value(&widgets.portable_storage_combo);
+    let (portable_passphrase, portable_passphrase_encrypted) = {
+        let pass_text = widgets.portable_passphrase_entry.text();
+        let confirm_text = widgets.portable_confirm_entry.text();
+
+        // An empty confirmation means "I did not retype it", which is fine only
+        // when there is a file to check the passphrase against — the save path
+        // verifies it and reports a mismatch. For a store that does not exist
+        // yet there is nothing to check against, and the first write makes
+        // whatever was typed the key to the file forever, so the confirmation is
+        // required. This is the same rule `rustconn-cli` applies when it decides
+        // whether to prompt twice.
+        let path_text = widgets.portable_path_entry.text();
+        let store_path = rustconn_core::secret::resolve_portable_store_path(
+            Some(path_text.as_str())
+                .filter(|t| !t.is_empty())
+                .map(std::path::Path::new),
+        );
+        let confirmed = if store_path.exists() {
+            confirm_text.is_empty() || confirm_text == pass_text
+        } else {
+            !confirm_text.is_empty() && confirm_text == pass_text
+        };
+
+        if pass_text.is_empty() || !confirmed {
+            if !confirmed {
+                tracing::warn!(
+                    "Portable passphrase was not confirmed — not saving it; a new store \
+                     requires the confirmation entry"
+                );
+            }
+            // Keep whatever is already persisted rather than dropping the blob:
+            // a blank field means "I did not retype it", the same rule the other
+            // backends follow.
+            let existing = if portable_storage == CredentialStorage::EncryptedFile {
+                settings
+                    .borrow()
+                    .secrets
+                    .portable_passphrase_encrypted
+                    .clone()
+            } else {
+                None
+            };
+            (None, existing)
+        } else {
+            match portable_storage {
+                CredentialStorage::None => (None, None),
+                // `apply_storage_persistence` re-encrypts from the runtime value
+                // just before the settings are written, so a placeholder is
+                // enough to record "an encrypted copy is wanted here".
+                CredentialStorage::EncryptedFile => (
+                    Some(secrecy::SecretString::new(pass_text.to_string().into())),
+                    settings
+                        .borrow()
+                        .secrets
+                        .portable_passphrase_encrypted
+                        .clone()
+                        .or_else(|| Some("encrypted_passphrase_placeholder".to_string())),
+                ),
+                // Keyring-backed: the runtime copy is the only one that reaches
+                // the keyring, and no blob goes to disk.
+                CredentialStorage::SystemKeyring => (
+                    Some(secrecy::SecretString::new(pass_text.to_string().into())),
+                    None,
+                ),
+            }
+        }
+    };
+
     // Keyring saves are deferred — performed asynchronously after the dialog
     // closes to avoid blocking the GTK main loop (D-Bus round-trip). The caller
     // should invoke `save_pending_keyring_credentials()` after processing the
@@ -2478,6 +2967,18 @@ pub fn collect_secret_settings(
                 Some(std::path::PathBuf::from(path_text.as_str()))
             }
         },
+        // Collect portable encrypted file settings
+        portable_file_path: {
+            let path_text = widgets.portable_path_entry.text();
+            if path_text.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(path_text.as_str()))
+            }
+        },
+        portable_passphrase,
+        portable_passphrase_encrypted,
+        portable_save_to_keyring: portable_storage == CredentialStorage::SystemKeyring,
     };
 
     // A password entry the keyring could not pre-fill stays blank, so switching
@@ -2558,6 +3059,12 @@ pub fn save_pending_keyring_credentials(
     {
         outcome.write_failures += 1;
     }
+    if current.portable_save_to_keyring
+        && let Some(ref pp) = current.portable_passphrase
+        && !save_portable_passphrase_to_keyring(pp.expose_secret())
+    {
+        outcome.write_failures += 1;
+    }
 
     outcome.revoke_failures = revoke_stale_keyring_credentials(previous, current);
 
@@ -2589,6 +3096,9 @@ fn revoke_stale_keyring_credentials(previous: &SecretSettings, current: &SecretS
         failures += 1;
     }
     if revocations.passbolt_passphrase && !delete_pb_passphrase_from_keyring() {
+        failures += 1;
+    }
+    if revocations.portable_passphrase && !delete_portable_passphrase_from_keyring() {
         failures += 1;
     }
     failures

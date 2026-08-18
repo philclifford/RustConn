@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.20.3
+Version:        0.20.4
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -282,6 +282,19 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Tue Aug 18 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.4-0
+- Version bump to 0.20.4
+- Added: portable encrypted file backend, passphrase-protected and syncable
+  between machines via cloud storage, including across Linux and macOS
+  (issue #293)
+- Fixed: terminal starts at the real window size instead of 24x80 (issue #294)
+- Fixed: keyboard shortcuts window shows remapped bindings instead of defaults,
+  and lists the shortcuts that cannot be rebound (issue #295)
+- Improved: rustconn-cli --backend accepts encrypted-file and portable
+- Security: credential store temp files are created 0600 rather than chmod'ed
+  after the write
+- Localisation: new strings translated in all 16 locales
+
 * Mon Aug 17 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.3-0
 - Version bump to 0.20.3
 - Added: keyboard passthrough state is now saved across restarts

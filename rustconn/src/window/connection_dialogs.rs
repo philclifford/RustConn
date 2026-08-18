@@ -778,6 +778,24 @@ pub fn show_new_group_dialog_with_parent(
                                     })
                                 })?
                             }
+                            SecretBackendType::PortableEncryptedFile => {
+                                // Passphrase-based portable file, unlocked from
+                                // the session passphrase in settings.
+                                let backend = crate::vault_ops::portable_backend_from_settings(
+                                    &secret_settings,
+                                );
+                                crate::async_utils::with_runtime(|rt| {
+                                    rt.block_on(async {
+                                        tokio::time::timeout(
+                                            VAULT_RETRIEVE_TIMEOUT,
+                                            backend.retrieve(&lookup_key),
+                                        )
+                                        .await
+                                        .map_err(|_| "Vault retrieve timed out".to_string())?
+                                        .map_err(|e| format!("{e}"))
+                                    })
+                                })?
+                            }
                         }
                     },
                     move |result: Result<Option<rustconn_core::models::Credentials>, String>| {

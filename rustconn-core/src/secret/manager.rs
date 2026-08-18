@@ -165,6 +165,16 @@ pub struct SecretManager {
     cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
     /// Whether caching is enabled
     cache_enabled: bool,
+    /// The portable backend in `backends`, if one was configured.
+    ///
+    /// Held typed as well as erased because that backend is the only one that
+    /// can be *unlocked after construction*: its passphrase arrives from a
+    /// dialog, minutes after the manager was built. Reaching it through
+    /// `backends` would mean downcasting a `dyn SecretBackend`, and rebuilding
+    /// the manager instead does not work — `rebuild_from_settings` only fires
+    /// when `SecretSettings` compares unequal, and the runtime passphrase is
+    /// deliberately excluded from that comparison.
+    portable: Option<Arc<super::PortableEncryptedFileBackend>>,
 }
 
 impl Clone for SecretManager {
@@ -173,6 +183,7 @@ impl Clone for SecretManager {
             backends: self.backends.clone(),
             cache: Arc::clone(&self.cache),
             cache_enabled: self.cache_enabled,
+            portable: self.portable.clone(),
         }
     }
 }
@@ -191,6 +202,7 @@ impl SecretManager {
             backends,
             cache: Arc::new(RwLock::new(HashMap::new())),
             cache_enabled: true,
+            portable: None,
         }
     }
 
@@ -223,6 +235,7 @@ impl SecretManager {
         use crate::config::SecretBackendType;
 
         let mut backends: Vec<Arc<dyn SecretBackend>> = Vec::new();
+        let mut portable: Option<Arc<super::PortableEncryptedFileBackend>> = None;
 
         match settings.preferred_backend {
             SecretBackendType::Bitwarden => {
@@ -300,11 +313,28 @@ impl SecretManager {
                 // app-managed (flat-key) backends.
                 backends.push(Arc::new(super::EncryptedFileBackend::new()));
             }
+            SecretBackendType::PortableEncryptedFile => {
+                // Passphrase-based portable encrypted file: same flat-key scheme
+                // as EncryptedFile, but keyed from a user passphrase.
+                let path =
+                    super::resolve_portable_store_path(settings.portable_file_path.as_deref());
+                let backend = Arc::new(super::PortableEncryptedFileBackend::with_path(path));
+                // Seed from settings when the passphrase is already known —
+                // restored from the keyring or the local encrypted copy at
+                // startup, or carried across a settings save. When it is not,
+                // the backend stays locked and reports `PassphraseRequired`
+                // until `set_portable_passphrase` supplies it.
+                if let Some(ref passphrase) = settings.portable_passphrase {
+                    backend.set_passphrase(passphrase.clone());
+                }
+                portable = Some(Arc::clone(&backend));
+                backends.push(backend);
+            }
         }
 
         // Register the application-managed encrypted file as the terminal
         // fallback when fallback is enabled and it is not already the preferred
-        // backend (avoids a duplicate entry in the chain).
+        // backend (which would be a duplicate entry in the chain).
         //
         // This replaces the previous "append LibSecret as fallback" logic: on a
         // box without a responding Secret Service (issue #201) LibSecret is the
@@ -313,6 +343,16 @@ impl SecretManager {
         // machine key), making it the single sound terminal fallback. Because
         // `retrieve` walks the backend chain in priority order, a credential
         // stored here is found on the next resolution.
+        //
+        // `PortableEncryptedFile` is deliberately *not* excluded here, even
+        // though both are file backends. The two hold different files under
+        // different keys: excluding the machine-bound store when portable is
+        // preferred would make every credential already in `credentials.enc`
+        // unreachable the moment the user switched — before they had a chance to
+        // run "Copy Credentials", and permanently if they never did. The user
+        // guide and the migration wizard both promise the originals stay
+        // readable as this machine's fallback, and this is the line that has to
+        // hold for that to be true.
         if settings.enable_fallback
             && !matches!(settings.preferred_backend, SecretBackendType::EncryptedFile)
         {
@@ -325,7 +365,67 @@ impl SecretManager {
             "SecretManager built from settings"
         );
 
-        Self::new(backends)
+        Self {
+            portable,
+            ..Self::new(backends)
+        }
+    }
+
+    /// Hands a passphrase to the portable backend, if one is configured.
+    ///
+    /// Returns `true` when a portable backend was present and is now unlocked.
+    /// `false` means the preferred backend is something else, so there was
+    /// nothing to unlock — not a failure.
+    ///
+    /// This exists because the portable backend is unlocked *after* the manager
+    /// is built: the passphrase comes from a dialog. Rebuilding the manager
+    /// would not work, since `rebuild_from_settings` is only called when
+    /// `SecretSettings` compares unequal and the runtime passphrase is excluded
+    /// from that comparison by design.
+    pub fn set_portable_passphrase(&self, passphrase: secrecy::SecretString) -> bool {
+        match self.portable {
+            Some(ref backend) => {
+                backend.set_passphrase(passphrase);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Drops the portable backend's passphrase and cached data key.
+    ///
+    /// Synchronous, and deliberately separate from the credential cache: this is
+    /// the part that must happen on a shutdown path, where a spawned future is
+    /// not guaranteed to run before the main loop stops.
+    ///
+    /// The counterpart to [`Self::set_portable_passphrase`].
+    pub fn lock_portable(&self) {
+        if let Some(ref backend) = self.portable {
+            backend.clear_passphrase();
+        }
+    }
+
+    /// Re-locks the portable backend and clears the credential cache.
+    ///
+    /// The cache has to go too: entries decrypted from the portable store while
+    /// it was unlocked would otherwise keep answering `retrieve` after the lock,
+    /// which would make locking look like it had not worked. Taking the cache's
+    /// `RwLock` is the only asynchronous part, which is why [`Self::lock_portable`]
+    /// exists for callers that cannot await.
+    pub async fn clear_portable_passphrase(&self) {
+        self.lock_portable();
+        self.clear_cache().await;
+    }
+
+    /// Reports whether the portable backend is configured and unlocked.
+    ///
+    /// `false` when no portable backend is configured at all, which callers read
+    /// as "no unlock needed".
+    #[must_use]
+    pub fn portable_unlocked(&self) -> bool {
+        self.portable
+            .as_ref()
+            .is_some_and(|backend| backend.is_unlocked())
     }
 
     /// Replaces all backends with a fresh set built from settings
@@ -336,6 +436,9 @@ impl SecretManager {
         let old_backend_count = self.backends.len();
         let fresh = Self::build_from_settings(settings);
         self.backends = fresh.backends;
+        // Carry the typed handle across too, or an unlock after a settings save
+        // would reach a backend that is no longer in the chain.
+        self.portable = fresh.portable;
         // Clear cache on rebuild — backend change may invalidate cached entries
         if let Ok(mut cache) = self.cache.try_write() {
             cache.clear();
@@ -502,13 +605,39 @@ impl SecretManager {
                 continue;
             }
 
-            if let Ok(Some(creds)) = backend.retrieve(connection_id).await {
-                // Cache the result
-                if self.cache_enabled {
-                    let mut cache = self.cache.write().await;
-                    cache.insert(connection_id.to_string(), CacheEntry::new(creds.clone()));
+            match backend.retrieve(connection_id).await {
+                Ok(Some(creds)) => {
+                    // Cache the result
+                    if self.cache_enabled {
+                        let mut cache = self.cache.write().await;
+                        cache.insert(connection_id.to_string(), CacheEntry::new(creds.clone()));
+                    }
+                    return Ok(Some(creds));
                 }
-                return Ok(Some(creds));
+                Ok(None) => {}
+                // A passphrase problem is not a miss and must not be walked
+                // past. Absorbing it made a mistyped portable passphrase — or a
+                // store the sync client replaced with one under a different
+                // passphrase — resolve as `Ok(None)`, i.e. "no stored password",
+                // and the user got a password prompt instead of being told the
+                // passphrase was wrong. Every other error stays absorbed: a
+                // KeePassXC CLI hiccup or one corrupt entry should still fall
+                // through to the next backend, which is what the chain is for.
+                Err(e @ (SecretError::IncorrectPassphrase | SecretError::PassphraseRequired)) => {
+                    tracing::warn!(
+                        backend = backend.backend_id(),
+                        "credential store could not be opened; reporting rather than \
+                         falling through"
+                    );
+                    return Err(e);
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        backend = backend.backend_id(),
+                        error = %e,
+                        "backend could not retrieve credentials; trying the next one"
+                    );
+                }
             }
         }
 
@@ -551,6 +680,12 @@ impl SecretManager {
             Ok(())
         } else if let Some(err) = last_error {
             Err(err)
+        } else if self.portable.as_ref().is_some_and(|p| !p.is_unlocked()) {
+            // The portable backend reports itself unavailable while locked, so
+            // it was skipped above and left no `last_error`. "No secret backend
+            // available" would be a misleading way to say "the store this
+            // credential lives in needs its passphrase".
+            Err(SecretError::PassphraseRequired)
         } else {
             // No backends available
             Err(SecretError::BackendUnavailable(
@@ -860,7 +995,10 @@ impl std::fmt::Debug for SecretManager {
             .field("cache_enabled", &self.cache_enabled)
             .field("cache_size", &cache_size)
             .field("cache_ttl_secs", &CACHE_TTL_SECONDS)
-            .finish()
+            // `portable` is a second handle to a backend already named in
+            // `backend_ids`, and it holds the store passphrase — its unlock
+            // state is reported by `portable_unlocked()`, not here.
+            .finish_non_exhaustive()
     }
 }
 
@@ -883,6 +1021,189 @@ mod debug_tests {
         assert!(
             !rendered.contains("password"),
             "Debug should not render password field: {rendered}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod portable_tests {
+    use super::*;
+    use crate::config::{SecretBackendType, SecretSettings};
+
+    /// Settings that select the portable store at `path`, with fallback on.
+    fn portable_settings(path: &std::path::Path) -> SecretSettings {
+        SecretSettings {
+            preferred_backend: SecretBackendType::PortableEncryptedFile,
+            portable_file_path: Some(path.to_path_buf()),
+            enable_fallback: true,
+            ..Default::default()
+        }
+    }
+
+    /// The machine-bound store must stay in the chain when portable is preferred.
+    ///
+    /// Excluding it — as the first version of this feature did, by lumping both
+    /// file backends into one `matches!` — made every credential already in
+    /// `credentials.enc` unreachable the moment the user switched backends, and
+    /// permanently so if they never ran "Copy Credentials". The user guide and the
+    /// migration wizard both promise the opposite.
+    #[test]
+    fn the_machine_bound_store_stays_in_the_chain_behind_the_portable_one() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager = SecretManager::build_from_settings(&portable_settings(
+            &dir.path().join("portable.enc"),
+        ));
+
+        let ids: Vec<&str> = manager.backends.iter().map(|b| b.backend_id()).collect();
+        assert!(
+            ids.contains(&"portable_encrypted_file"),
+            "the preferred backend must be first in the chain: {ids:?}"
+        );
+        assert!(
+            ids.contains(&"encrypted_file"),
+            "the machine-bound store must remain reachable as the fallback: {ids:?}"
+        );
+    }
+
+    /// The machine-bound store is its own preferred backend in that case, so
+    /// appending it again would walk the same file twice on every lookup.
+    #[test]
+    fn the_machine_bound_store_is_not_appended_to_itself() {
+        let settings = SecretSettings {
+            preferred_backend: SecretBackendType::EncryptedFile,
+            enable_fallback: true,
+            ..Default::default()
+        };
+
+        let manager = SecretManager::build_from_settings(&settings);
+        let file_backends = manager
+            .backends
+            .iter()
+            .filter(|b| b.backend_id() == "encrypted_file")
+            .count();
+        assert_eq!(
+            file_backends, 1,
+            "the fallback must not duplicate the primary"
+        );
+    }
+
+    /// `build_from_settings` is synchronous, so it is the only place that can seed
+    /// a passphrase the caller already holds — `rebuild_from_settings` runs only
+    /// when `SecretSettings` compares unequal, and the runtime passphrase is
+    /// excluded from that comparison by design.
+    #[test]
+    fn a_known_passphrase_is_seeded_into_the_backend() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut settings = portable_settings(&dir.path().join("portable.enc"));
+
+        let locked = SecretManager::build_from_settings(&settings);
+        assert!(
+            !locked.portable_unlocked(),
+            "with no passphrase in settings the backend must start locked"
+        );
+
+        settings.portable_passphrase = Some(secrecy::SecretString::from("pass".to_owned()));
+        let unlocked = SecretManager::build_from_settings(&settings);
+        assert!(
+            unlocked.portable_unlocked(),
+            "a passphrase already in settings must reach the backend"
+        );
+    }
+
+    #[test]
+    fn set_and_clear_passphrase_reach_the_backend_in_the_chain() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager = SecretManager::build_from_settings(&portable_settings(
+            &dir.path().join("portable.enc"),
+        ));
+        assert!(!manager.portable_unlocked());
+
+        assert!(
+            manager.set_portable_passphrase(secrecy::SecretString::from("pass".to_owned())),
+            "a configured portable backend must accept the passphrase"
+        );
+        assert!(manager.portable_unlocked());
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(manager.clear_portable_passphrase());
+        assert!(
+            !manager.portable_unlocked(),
+            "clearing must re-lock, or a session lock does nothing"
+        );
+    }
+
+    #[test]
+    fn setting_a_passphrase_without_a_portable_backend_reports_false() {
+        let manager = SecretManager::build_from_settings(&SecretSettings::default());
+        assert!(
+            !manager.set_portable_passphrase(secrecy::SecretString::from("pass".to_owned())),
+            "no portable backend configured means the passphrase has nowhere to go"
+        );
+        assert!(!manager.portable_unlocked());
+    }
+
+    /// A wrong passphrase must not be walked past as though the entry were
+    /// missing. Absorbing it turned a typo into "no stored password", and the
+    /// user got a password prompt instead of being told the passphrase was wrong.
+    #[test]
+    fn retrieve_reports_a_wrong_passphrase_instead_of_falling_through() {
+        use crate::secret::portable_encrypted_file as portable;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("portable.enc");
+
+        // Seed a real store under a known passphrase, using the cheap KDF
+        // parameters the file format carries per-file.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        {
+            let seeder = super::super::PortableEncryptedFileBackend::with_path(path.clone());
+            seeder.set_passphrase(secrecy::SecretString::from("right".to_owned()));
+            rt.block_on(async {
+                seeder
+                    .store(
+                        "rustconn/host",
+                        &crate::models::Credentials {
+                            username: Some("alice".to_owned()),
+                            password: Some(secrecy::SecretString::from("s3cr3t".to_owned())),
+                            key_passphrase: None,
+                            domain: None,
+                        },
+                    )
+                    .await
+                    .expect("seed store");
+            });
+        }
+        assert_eq!(portable::entry_count(&path).expect("count"), 1);
+
+        let mut settings = portable_settings(&path);
+        settings.portable_passphrase = Some(secrecy::SecretString::from("wrong".to_owned()));
+        // Fallback off so the assertion is about the portable backend's error and
+        // not about what the machine-bound store happens to hold.
+        settings.enable_fallback = false;
+        let manager = SecretManager::build_from_settings(&settings);
+
+        let result = rt.block_on(manager.retrieve("rustconn/host"));
+        assert!(
+            matches!(result, Err(SecretError::IncorrectPassphrase)),
+            "a wrong passphrase must surface, got {result:?}"
+        );
+    }
+
+    /// Deleting from a locked store must say what is wrong. Before, the backend
+    /// reported itself unavailable, was skipped, and the manager returned
+    /// "No secret backend available" — true in a narrow sense and useless.
+    #[test]
+    fn delete_on_a_locked_store_reports_the_passphrase_requirement() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut settings = portable_settings(&dir.path().join("portable.enc"));
+        settings.enable_fallback = false;
+        let manager = SecretManager::build_from_settings(&settings);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(manager.delete("rustconn/host"));
+        assert!(
+            matches!(result, Err(SecretError::PassphraseRequired)),
+            "expected a passphrase requirement, got {result:?}"
         );
     }
 }

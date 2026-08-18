@@ -295,6 +295,59 @@ pub fn macos_bundle_resources_dir() -> Option<std::path::PathBuf> {
     MACOS_BUNDLE_RESOURCES.with(|cell| cell.borrow().clone())
 }
 
+/// The application icon, embedded for the macOS Dock tile.
+///
+/// 256×256 is the largest raster in the icon tree and matches what the Dock
+/// draws at its 128pt maximum on a Retina display, so nothing is upscaled. The
+/// scalable SVG next to it would need a rasteriser, and the only one in the
+/// dependency graph (`resvg`) arrives with the optional tray features — the Dock
+/// icon must not depend on whether a tray was compiled in.
+#[cfg(target_os = "macos")]
+const DOCK_ICON_PNG: &[u8] =
+    include_bytes!("../assets/icons/hicolor/256x256/apps/io.github.totoshko88.RustConn.png");
+
+/// Gives the Dock tile RustConn's icon when no bundle can supply one.
+///
+/// macOS reads the Dock icon from the launched bundle's `Info.plist`, so a
+/// process with no bundle behind it gets the generic Unix-executable tile, which
+/// reads as a terminal window. Two launch paths land there: `rustconn` started
+/// from a shell, and the Homebrew formula's `.app`, whose `CFBundleExecutable` is
+/// a wrapper that `exec`s `$(brew --prefix)/bin/rustconn` from outside the
+/// bundle. Both are fixed by setting the tile image at runtime.
+///
+/// Skipped inside a real bundle. There the `.icns` is strictly better: it carries
+/// every representation from 16px to 1024px, and it preserves a custom icon a
+/// user may have pasted onto the app in Finder. Only the tile is settable at
+/// runtime anyway — the name under it and the Cmd-Tab entry still come from the
+/// bundle.
+///
+/// Must run on the main thread after GTK initialisation, which is where
+/// `app::run()` calls it: `NSApplication` is main-thread-only, and by then GDK
+/// has created the singleton.
+#[cfg(target_os = "macos")]
+pub fn apply_macos_dock_icon() {
+    if let Some(resources) = macos_bundle_resources_dir() {
+        tracing::debug!(
+            resources = %resources.display(),
+            "Dock icon left to the bundle's CFBundleIconFile"
+        );
+        return;
+    }
+
+    let outcome = rustconn_dock_sys::set_dock_icon_png(DOCK_ICON_PNG);
+    if outcome.is_applied() {
+        tracing::debug!("Set the Dock tile icon programmatically (running without a .app bundle)");
+    } else {
+        // Not a warning: a wrong Dock tile costs nothing at runtime, and the
+        // launch paths that reach this branch are development runs. The reason is
+        // logged so it does not have to be guessed at.
+        tracing::debug!(
+            reason = outcome.describe(),
+            "Could not set the Dock tile icon"
+        );
+    }
+}
+
 /// Configures GSettings schema source from the macOS .app bundle.
 ///
 /// GTK4/libadwaita on macOS needs compiled GSettings schemas for some

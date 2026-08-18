@@ -139,6 +139,22 @@ pub enum SecretError {
     /// Pass (passwordstore)-specific error
     #[error("Pass error: {0}")]
     Pass(String),
+
+    /// The portable encrypted file backend requires a passphrase to unlock.
+    ///
+    /// The GUI layer should intercept this, prompt the user for the
+    /// passphrase, set it on the backend, and retry the operation.
+    #[error("Passphrase required to unlock portable credential file")]
+    PassphraseRequired,
+
+    /// The supplied passphrase does not open the portable credential file.
+    ///
+    /// Distinct from [`Self::PassphraseRequired`] (nothing supplied yet) and from
+    /// [`Self::RetrieveFailed`] (the file is unreadable or corrupt), because the
+    /// three call for different answers: prompt, prompt *again with an error*,
+    /// and do not prompt at all.
+    #[error("Incorrect passphrase for portable credential file")]
+    IncorrectPassphrase,
 }
 
 /// Errors related to configuration import operations

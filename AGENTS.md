@@ -75,8 +75,9 @@ number in `Cargo.toml` (`rust-version`).
 | `rustconn-pty-sys` | No | Isolated FFI: macOS PTY controlling terminal. |
 | `rustconn-locale-sys` | No | Isolated FFI: startup `setlocale`. |
 | `rustconn-env-sys` | No | Isolated FFI: startup `GSK_RENDERER` and `LANGUAGE` writes. |
+| `rustconn-dock-sys` | No | Isolated FFI: the macOS Dock tile image, for launches with no `.app` behind them. |
 
-No `unsafe` outside the three `*-sys` crates: `unsafe_code = "deny"` in
+No `unsafe` outside the `*-sys` crates: `unsafe_code = "deny"` in
 `[workspace.lints.rust]`, re-opened by a crate-level
 `#![expect(unsafe_code, reason = "…")]` in each helper. `deny` and not `forbid`
 because `forbid` cannot be overridden, which would stop the helpers inheriting
