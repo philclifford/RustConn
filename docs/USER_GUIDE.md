@@ -3139,20 +3139,77 @@ macOS included.
 
 **Setting it up on the first machine**
 
-1. Settings → Secrets → **Preferred Backend** → *Portable encrypted file
-   (cloud-syncable)*
+1. Settings → Secrets → **Backend** → *Portable encrypted file*. The row's
+   subtitle then describes the choice, so you can confirm it took effect.
 2. **File path** — Browse to a folder your cloud client syncs, and name the file
-   (the default name is `credentials-portable.enc`)
+   (the default name is `credentials-portable.enc`). Leave the field empty to use
+   the default location, which the placeholder shows. A leading `~/` is expanded.
 3. **Passphrase** — choose one, then repeat it in **Confirm passphrase**
 4. **Save passphrase** — optional; see below
-5. **Existing passwords → Copy Credentials** — re-encrypts the passwords already
+5. **Set up the file → Create File** — writes the file now and tells you where.
+   Do this before relying on it: it is how a mistyped folder gets caught here
+   rather than later, as a failure to save a password.
+6. **Existing passwords → Copy Credentials** — re-encrypts the passwords already
    stored on this machine with your passphrase and writes them into the portable
    file. The originals are kept, so nothing is lost either way.
+
+The **File** row above the passphrase reports the file's state throughout —
+whether it exists, how many passwords are in it, or that it cannot be read.
 
 **Setting it up on the second machine**
 
 Wait for the file to sync, then point Settings → Secrets at it and enter the same
-passphrase. There is nothing to import: the file already contains everything.
+passphrase. **Create File** checks that the passphrase opens the delivered file
+without changing it, so you find out here rather than on the first connection.
+There is nothing to import: the file already contains everything.
+
+**Coming from KeePassXC, the system keyring or a vault**
+
+*Copy Credentials* only reads the machine-bound encrypted file. To bring
+passwords in from any other store, use Settings → Secrets → **Move between
+stores → Copy Passwords…**, pick the store they are in now under *From* and the
+portable file under *To*, and the dialog reports how many entries the pair
+covers before you confirm.
+
+The transfer copies; it never removes anything from the source. It moves the
+passwords of every connection and group set to **Vault**, plus secret variables
+that RustConn stores itself — a variable pointing at an entry you maintain
+elsewhere (a custom KeePass path or vault entry name) is left alone. Entries that
+exist in a vault but were not created by RustConn are not touched either: nothing
+in the connection list names them.
+
+The dialog counts entries as it goes and offers **Stop**. Stopping takes effect
+after the entry in progress, never in the middle of one, and the report then says
+how many entries were never looked at — so a run you stopped is not mistaken for
+one that failed. Everything already copied stays where it is, and running the
+copy again finishes the rest.
+
+**Choosing the passphrase**
+
+The passphrase field says when what you have typed would not take long to guess.
+It is advice, not a rule: the same field is how an existing file is opened, so
+nothing is ever refused for being weak, and the warning only appears for a file
+being created. Length does most of the work — several unrelated words beat a
+short string of symbols and are easier to remember. RustConn has no wordlist, so
+it cannot tell you that a common password is common; it can only tell you when a
+passphrase is short or repetitive.
+
+**Changing the passphrase**
+
+Settings → Secrets → **Passphrase → Change Passphrase…** asks for the current
+passphrase and the new one together, then re-encrypts every password in the file
+under the new one and reports how many.
+
+It is all-or-nothing: if one entry cannot be read the change is abandoned and the
+file stays as it was, rather than leaving you with a file that opens but is
+missing credentials. If a copy of the passphrase is kept on this computer, save
+your settings afterwards — until you do, this computer still remembers the old
+one and will ask for the new one on the next start.
+
+What changing the passphrase does **not** do is protect what has already left.
+Anyone holding the old passphrase and an old copy of the file still reads every
+password that was in it at the time. If the old passphrase was exposed, change
+the passwords themselves too.
 
 **Saving the passphrase**
 

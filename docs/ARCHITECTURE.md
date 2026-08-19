@@ -904,6 +904,52 @@ than misdecrypted, but concurrent edits are not merged. Splitting the map into
 one file per entry would let the sync client merge them; that is the documented
 upgrade path if multi-writer use becomes real.
 
+`prepare_portable_store()` performs the file's creation as an explicit step
+rather than leaving it to the first `store`. It writes an empty store when the
+file is absent and only *verifies* one that is present — never rewrites it, since
+pointing a second machine at a synced file must not open a lost-update window on
+a file the sync client is also holding.
+
+### Credential Transfer Between Backends
+
+`vault_ops::plan_credential_transfer` / `run_credential_transfer` implement bulk
+copying between any two backends, behind Settings ▸ Secrets ▸ *Move between
+stores*. Two constraints shape the design, and both are worth stating because
+neither is obvious from the trait.
+
+**It cannot be driven by the backends.** `SecretBackend` has no enumeration
+method, and only the two file backends can list what they hold at all (their map
+keys are stored in the clear, which is what lets `secret/migration.rs` copy them
+verbatim). The transfer therefore derives its work list from the *connection
+list*: every `Connection` and `ConnectionGroup` with `PasswordSource::Vault`,
+plus the secret variables RustConn owns. A vault may hold entries RustConn never
+created; those are out of reach by construction, because nothing can name them.
+Variables carrying a custom `kdbx_entry_path` or `vault_entry_name` are skipped —
+they reference an entry the user maintains elsewhere.
+
+**Keys are regenerated per side, never copied.** The lookup key's shape belongs
+to the backend, not to the credential: `RustConn/{group}/{name} ({protocol})` for
+the system keyring, a hierarchical entry path for KDBX, flat `rustconn/{name}`
+for the other six. `SecretManager::retrieve` walks the backend chain but always
+with the *same* key string, so a shape mismatch is not rescued by the chain — a
+credential copied verbatim from the keyring into the portable file would be
+unreachable the moment that backend became preferred. Each
+`CredentialTransferItem` therefore carries a *list* of source keys (current shape
+first, then the legacy shapes `vault_keys_for_connection` knows about) and one
+destination key generated for the destination backend.
+
+KDBX is reached through `KeePassStatus`, not through `dispatch_vault_op_for`.
+`SecretManager::build_from_settings` deliberately maps the KDBX backends onto the
+system keyring, because KDBX proper goes through direct file access; routing a
+transfer that way would silently substitute one store for the one the user named.
+The KDBX read path returns a password and no username, which is why the transfer
+item carries a username of its own.
+
+The source is never modified. For a shared vault the entries may not be
+RustConn's to delete, and for the machine-bound file the originals are this
+machine's fallback — the same reason the portable-file wizard keeps them.
+Deletion is not offered rather than defaulted off.
+
 #### Flatpak Compatibility
 
 Flatpak keyring access uses the same Secret Service D-Bus permission
