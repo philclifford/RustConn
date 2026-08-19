@@ -96,8 +96,8 @@ A pre-write hook blocks violations of both rules, but do not rely on it.
 - Errors → `thiserror::Error`. No `unwrap()`/`expect()` outside tests
 - Logging → `tracing`, never `println!`/`eprintln!`
 - Every user-facing string → `i18n()` / `i18n_f()` with `{}` placeholders,
-  then `bash po/update-pot.sh`. 16 locales: be, cs, da, de, es, fr, it, kk, nl,
-  pl, pt, sk, sv, uk, uz, zh-cn
+  then `bash po/update-pot.sh`. 17 locales: be, cs, da, de, es, fr, it, ka, kk,
+  nl, pl, pt, sk, sv, uk, uz, zh-cn
 - Icon-only buttons need both a tooltip and an accessible label
 - Never `std::env::set_var`/`remove_var` (unsafe in Rust 2024) — the sole
   exception is `rustconn-env-sys::set_startup_var`, callable only from `main()`

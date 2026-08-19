@@ -151,7 +151,7 @@
           <li>Fixed: terminal starts at the real window size instead of 24x80 (issue #294)</li>
           <li>Fixed: keyboard shortcuts window shows remapped bindings instead of defaults, and lists the shortcuts that cannot be rebound (issue #295)</li>
           <li>Improved: rustconn-cli --backend accepts encrypted-file and portable</li>
-          <li>Localisation: new strings translated in all 16 locales</li>
+          <li>Localisation: new strings translated in all 17 locales; Georgian (ka) added (PR #296, Ekaterine Papava)</li>
         </ul>
       </description>
     </release>

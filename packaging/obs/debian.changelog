@@ -11,7 +11,8 @@ rustconn (0.20.4-1) unstable; urgency=medium
   * Improved: rustconn-cli --backend accepts encrypted-file and portable
   * Security: credential store temp files are created 0600 rather than
     chmod'ed after the write
-  * Localisation: new strings translated in all 16 locales
+  * Localisation: new strings translated in all 17 locales; Georgian (ka)
+    added (PR #296, Ekaterine Papava)
 
  -- Anton Isaiev <totoshko88@gmail.com>  Wed, 19 Aug 2026 12:00:00 +0300
 

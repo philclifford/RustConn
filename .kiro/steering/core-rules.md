@@ -62,7 +62,7 @@ the caller lives.
 - Logging → `tracing`, never `println!`/`eprintln!`
 - i18n → `i18n()` / `i18n_f()` with `{}` placeholders for all user-facing strings
 - `display_name()` values used in UI → wrap in `i18n()` at the call site
-- After new i18n strings → `bash po/update-pot.sh` + `msgmerge --update` (16 languages)
+- After new i18n strings → `bash po/update-pot.sh` + `msgmerge --update` (17 languages)
 - Rust 2024 edition: let-chains instead of collapsible_if
 - Never `set_var`/`remove_var` (unsafe in Rust 2024). The one exception is
   `rustconn-env-sys::set_startup_var`, which may only be called from `main()`
