@@ -282,7 +282,7 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
-* Tue Aug 18 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.4-0
+* Wed Aug 19 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.4-0
 - Version bump to 0.20.4
 - Added: portable encrypted file backend, passphrase-protected and syncable
   between machines via cloud storage, including across Linux and macOS
