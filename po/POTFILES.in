@@ -87,6 +87,8 @@ rustconn/src/dialogs/keyboard.rs
 rustconn/src/dialogs/kdbx_unlock.rs
 rustconn/src/dialogs/portable_unlock.rs
 rustconn/src/dialogs/portable_migration.rs
+rustconn/src/dialogs/portable_passphrase_change.rs
+rustconn/src/dialogs/credential_transfer.rs
 rustconn/src/dialogs/shortcuts.rs
 rustconn/src/dialogs/smart_folder.rs
 rustconn/src/dialogs/snippet.rs

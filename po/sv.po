@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: rustconn 0.12.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-18 15:53+0300\n"
+"POT-Creation-Date: 2026-08-19 10:30+0300\n"
 "PO-Revision-Date: 2026-04-25 10:46+0000\n"
 "Last-Translator: RustConn Team\n"
 "Language-Team: Swedish\n"
@@ -18,15 +18,18 @@ msgstr ""
 "Generated-By: Babel 2.10.3\n"
 
 #: rustconn/src/alert.rs:15 rustconn/src/alert.rs:54 rustconn/src/alert.rs:64
-#: rustconn/src/app.rs:1582 rustconn/src/toast.rs:246
+#: rustconn/src/app.rs:1583 rustconn/src/toast.rs:246
 msgid "OK"
 msgstr "OK"
 
 #: rustconn/src/alert.rs:33 rustconn/src/alert.rs:94
 #: rustconn/src/dialogs/cluster.rs:623
+#: rustconn/src/dialogs/credential_transfer.rs:144
+#: rustconn/src/dialogs/credential_transfer.rs:457
 #: rustconn/src/dialogs/flatpak_components.rs:298
 #: rustconn/src/dialogs/history.rs:199 rustconn/src/dialogs/kdbx_unlock.rs:95
 #: rustconn/src/dialogs/portable_migration.rs:58
+#: rustconn/src/dialogs/portable_passphrase_change.rs:89
 #: rustconn/src/dialogs/portable_unlock.rs:93
 #: rustconn/src/dialogs/recording.rs:508 rustconn/src/dialogs/recording.rs:578
 #: rustconn/src/dialogs/settings/keybindings_tab.rs:173
@@ -43,7 +46,7 @@ msgstr "OK"
 #: rustconn/src/window/batch_edit.rs:63
 #: rustconn/src/window/connection_dialogs.rs:1072
 #: rustconn/src/window/edit_group.rs:1775
-#: rustconn/src/window/edit_group.rs:1823 rustconn/src/window/mod.rs:3447
+#: rustconn/src/window/edit_group.rs:1823 rustconn/src/window/mod.rs:3452
 #: rustconn/src/window/operations.rs:82 rustconn/src/window/operations.rs:457
 #: rustconn/src/window/operations.rs:634 rustconn/src/window/sessions.rs:339
 #: rustconn/src/window/workspaces.rs:548
@@ -119,7 +122,7 @@ msgstr ""
 "{} är valt, men nyckelringsklienten är inte installerad. Öppna Inställningar "
 "och sedan Hemligheter för att välja en backend som fungerar på detta system."
 
-#: rustconn/src/app.rs:1478
+#: rustconn/src/app.rs:1479
 msgid ""
 "Modern connection manager for Linux with a GTK4/Wayland-native interface. "
 "Manage SSH, RDP, VNC, SPICE, Telnet, Serial, Kubernetes, and Zero Trust "
@@ -130,35 +133,35 @@ msgstr ""
 "Trust-anslutningar från en enda applikation."
 
 #. Translators: Replace this with your name and language, e.g. "John Doe (German)"
-#: rustconn/src/app.rs:1514
+#: rustconn/src/app.rs:1515
 msgid "translator-credits"
 msgstr "RustConn-teamet (Svenska)"
 
-#: rustconn/src/app.rs:1521
+#: rustconn/src/app.rs:1522
 msgid "User Guide"
 msgstr "Användarhandbok"
 
-#: rustconn/src/app.rs:1525
+#: rustconn/src/app.rs:1526
 msgid "Installation"
 msgstr "Installation"
 
-#: rustconn/src/app.rs:1529
+#: rustconn/src/app.rs:1530
 msgid "Releases"
 msgstr "Utgåvor"
 
-#: rustconn/src/app.rs:1533
+#: rustconn/src/app.rs:1534
 msgid "Changelog"
 msgstr "Ändringslogg"
 
-#: rustconn/src/app.rs:1543
+#: rustconn/src/app.rs:1544
 msgid "Special Thanks"
 msgstr "Särskilt tack"
 
-#: rustconn/src/app.rs:1558
+#: rustconn/src/app.rs:1559
 msgid "Made in Ukraine"
 msgstr "Made in Ukraine"
 
-#: rustconn/src/app.rs:1559
+#: rustconn/src/app.rs:1560
 msgid "All contributors and supporters"
 msgstr "Alla bidragsgivare och supportrar"
 
@@ -227,7 +230,7 @@ msgstr "Klusterdetaljer"
 #: rustconn/src/dialogs/connection/advanced_tab.rs:845
 #: rustconn/src/dialogs/connection/general_tab.rs:82
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:101
-#: rustconn/src/dialogs/export.rs:374 rustconn/src/dialogs/settings/mod.rs:1588
+#: rustconn/src/dialogs/export.rs:374 rustconn/src/dialogs/settings/mod.rs:1734
 #: rustconn/src/dialogs/smart_folder.rs:121 rustconn/src/dialogs/snippet.rs:175
 #: rustconn/src/dialogs/template.rs:511
 #: rustconn/src/dialogs/tunnel_builder/step_review.rs:78
@@ -701,7 +704,7 @@ msgid "Rule name"
 msgstr "Regelnamn"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:854
-#: rustconn/src/dialogs/settings/mod.rs:1608
+#: rustconn/src/dialogs/settings/mod.rs:1754
 msgid "Pattern (regex)"
 msgstr "Mönster (regex)"
 
@@ -710,22 +713,22 @@ msgid "Regex pattern to match"
 msgstr "Regex-mönster att matcha"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:864
-#: rustconn/src/dialogs/settings/mod.rs:1552
-#: rustconn/src/dialogs/settings/mod.rs:1554
+#: rustconn/src/dialogs/settings/mod.rs:1698
+#: rustconn/src/dialogs/settings/mod.rs:1700
 msgid "Enable rule"
 msgstr "Aktivera regel"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:871
 #: rustconn/src/dialogs/connection/dialog/rows.rs:285
 #: rustconn/src/dialogs/connection/dialog/rows.rs:287
-#: rustconn/src/dialogs/settings/mod.rs:1569
+#: rustconn/src/dialogs/settings/mod.rs:1715
 #: rustconn/src/window/edit_group.rs:1941
 #: rustconn/src/window/edit_group.rs:1943
 msgid "Delete rule"
 msgstr "Ta bort regel"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:875
-#: rustconn/src/dialogs/settings/mod.rs:1573
+#: rustconn/src/dialogs/settings/mod.rs:1719
 msgid "Delete highlight rule"
 msgstr "Ta bort markeringsregel"
 
@@ -1729,7 +1732,7 @@ msgstr "SSH, kända portar"
 #: rustconn/src/dialogs/connection/vnc.rs:284
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:85
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:388
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1340
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2027
 #: rustconn/src/dialogs/template.rs:625
 msgid "Authentication"
 msgstr "Autentisering"
@@ -3011,6 +3014,7 @@ msgid "Default"
 msgstr "Standard"
 
 #: rustconn/src/dialogs/connection/ssh.rs:241
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:721
 #: rustconn/src/dialogs/template.rs:652
 msgid "File"
 msgstr "Fil"
@@ -3035,8 +3039,8 @@ msgid "Path to SSH key"
 msgstr "Sökväg till SSH-nyckel"
 
 #: rustconn/src/dialogs/connection/ssh.rs:267
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1406
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1409
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2093
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2096
 msgid "Browse for key file"
 msgstr "Bläddra efter nyckelfil"
 
@@ -3047,7 +3051,7 @@ msgstr "Bläddra efter SSH-nyckelfil"
 #: rustconn/src/dialogs/connection/ssh.rs:275
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:124
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:336
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1419
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2106
 #: rustconn/src/dialogs/template.rs:676
 msgid "Key File"
 msgstr "Nyckelfil"
@@ -3945,6 +3949,198 @@ msgstr "Anpassat kommando för leverantörer som inte stöds"
 msgid "Command Template"
 msgstr "Kommandomall"
 
+#: rustconn/src/dialogs/credential_transfer.rs:77
+msgid "Copy Stored Passwords"
+msgstr "Kopiera sparade lösenord"
+
+#: rustconn/src/dialogs/credential_transfer.rs:79
+msgid ""
+"Copies the passwords of every connection, group and secret variable that "
+"uses the password store. The originals are left where they are."
+msgstr ""
+"Kopierar lösenorden för varje anslutning, grupp och hemlig variabel som "
+"använder lösenordsförvaret. Originalen ligger kvar."
+
+#: rustconn/src/dialogs/credential_transfer.rs:88
+msgid "From"
+msgstr "Från"
+
+#: rustconn/src/dialogs/credential_transfer.rs:89
+msgid "Where the passwords are now"
+msgstr "Var lösenorden finns nu"
+
+#: rustconn/src/dialogs/credential_transfer.rs:94
+msgid "To"
+msgstr "Till"
+
+#: rustconn/src/dialogs/credential_transfer.rs:95
+msgid "Where they should also be"
+msgstr "Var de också ska finnas"
+
+#: rustconn/src/dialogs/credential_transfer.rs:108
+msgid "Entries to copy"
+msgstr "Poster att kopiera"
+
+#: rustconn/src/dialogs/credential_transfer.rs:119
+msgid "Portable file passphrase"
+msgstr "Lösenfras för den portabla filen"
+
+#: rustconn/src/dialogs/credential_transfer.rs:142
+#: rustconn/src/dialogs/credential_transfer.rs:458
+#: rustconn/src/dialogs/shortcuts.rs:161 rustconn/src/dialogs/widgets.rs:465
+#: rustconn/src/embedded_rdp/mod.rs:563 rustconn/src/embedded_trait.rs:205
+#: rustconn/src/embedded_vnc/ui.rs:47 rustconn/src/terminal/config.rs:252
+msgid "Copy"
+msgstr "Kopiera"
+
+#: rustconn/src/dialogs/credential_transfer.rs:152
+#: rustconn/src/terminal/playback.rs:264
+msgid "Stop"
+msgstr "Stoppa"
+
+#: rustconn/src/dialogs/credential_transfer.rs:156
+msgid "Transfer Credentials"
+msgstr "Överför inloggningsuppgifter"
+
+#: rustconn/src/dialogs/credential_transfer.rs:201
+msgid "Choose two different password stores"
+msgstr "Välj två olika lösenordsförvar"
+
+#: rustconn/src/dialogs/credential_transfer.rs:223
+msgid ""
+"These entries would end up in the same place in the destination, so one "
+"would overwrite the other. Rename one of them, or choose a destination that "
+"keeps groups apart."
+msgstr ""
+"Dessa poster skulle hamna på samma plats i destinationen, så den ena skulle "
+"skriva över den andra. Byt namn på en av dem eller välj en destination som "
+"håller grupper åtskilda."
+
+#: rustconn/src/dialogs/credential_transfer.rs:238
+msgid ""
+"No connection, group or variable is set to use the password store, so there "
+"is nothing to copy."
+msgstr ""
+"Ingen anslutning, grupp eller variabel är inställd på att använda "
+"lösenordsförvaret, så det finns inget att kopiera."
+
+#: rustconn/src/dialogs/credential_transfer.rs:279
+msgid "Stopping after the entry in progress…"
+msgstr "Stoppar efter posten som pågår…"
+
+#: rustconn/src/dialogs/credential_transfer.rs:310
+#: rustconn/src/dialogs/credential_transfer.rs:573
+msgid "Enter the passphrase that protects the portable file"
+msgstr "Ange lösenfrasen som skyddar den portabla filen"
+
+#: rustconn/src/dialogs/credential_transfer.rs:365
+msgid "Copying… {} of {}"
+msgstr "Kopierar… {} av {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:430
+msgid ""
+"{} entries will be read from {} and written to {}. Nothing is removed from "
+"{}."
+msgstr "{} poster läses från {} och skrivs till {}. Inget tas bort från {}."
+
+#: rustconn/src/dialogs/credential_transfer.rs:451
+msgid "Destination file: {}"
+msgstr "Målfil: {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:456
+msgid "Copy stored passwords?"
+msgstr "Kopiera sparade lösenord?"
+
+#: rustconn/src/dialogs/credential_transfer.rs:548
+msgid ""
+"The copy did not finish. Some entries may already have been copied; running "
+"it again completes it."
+msgstr ""
+"Kopieringen slutfördes inte. Vissa poster kan redan ha kopierats; en ny "
+"körning slutför den."
+
+#: rustconn/src/dialogs/credential_transfer.rs:587
+msgid ""
+"There is no portable file at {}. Check the path in Settings, or wait for "
+"your cloud client to deliver it."
+msgstr ""
+"Det finns ingen portabel fil på {}. Kontrollera sökvägen i inställningarna "
+"eller vänta på att din molnklient levererar den."
+
+#: rustconn/src/dialogs/credential_transfer.rs:594
+#: rustconn/src/dialogs/portable_passphrase_change.rs:219
+msgid ""
+"That passphrase does not open the portable file. Enter the passphrase the "
+"file was created with."
+msgstr ""
+"Den lösenfrasen öppnar inte den portabla filen. Ange den som filen skapades "
+"med."
+
+#: rustconn/src/dialogs/credential_transfer.rs:597
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1942
+msgid "Cannot open the portable file: {}"
+msgstr "Kan inte öppna den portabla filen: {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:610
+msgid "Copied: {}"
+msgstr "Kopierade: {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:614
+msgid "Had no stored password yet: {}"
+msgstr "Hade ännu inget sparat lösenord: {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:629
+msgid ""
+"You stopped the copy, so {} entries were not looked at. Everything already "
+"copied stays where it is, and running the copy again finishes the rest."
+msgstr ""
+"Du stoppade kopieringen, så {} poster tittades inte på. Allt som redan "
+"kopierats stannar där det är, och en ny körning avslutar resten."
+
+#: rustconn/src/dialogs/credential_transfer.rs:632
+msgid "Copy Stopped"
+msgstr "Kopiering stoppad"
+
+#: rustconn/src/dialogs/credential_transfer.rs:633
+#: rustconn/src/dialogs/credential_transfer.rs:642
+#: rustconn/src/dialogs/credential_transfer.rs:709
+#: rustconn/src/dialogs/export.rs:1155 rustconn/src/dialogs/history.rs:340
+#: rustconn/src/dialogs/import/sources.rs:694
+#: rustconn/src/dialogs/portable_passphrase_change.rs:368
+#: rustconn/src/dialogs/recording.rs:804 rustconn/src/dialogs/recording.rs:816
+#: rustconn/src/dialogs/settings/cloud_sync_tab.rs:238
+#: rustconn/src/dialogs/tunnel_builder/mod.rs:618
+#: rustconn/src/dialogs/widgets.rs:460 rustconn/src/terminal/tab_menu.rs:407
+#: rustconn/src/vault_ops.rs:78 rustconn/src/vault_ops.rs:145
+#: rustconn/src/window/mod.rs:3453
+msgid "Close"
+msgstr "Stäng"
+
+#: rustconn/src/dialogs/credential_transfer.rs:641
+msgid "Passwords Copied"
+msgstr "Lösenord kopierade"
+
+#: rustconn/src/dialogs/credential_transfer.rs:652
+msgid "Could not be copied: {}"
+msgstr "Kunde inte kopieras: {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:672
+#: rustconn/src/dialogs/portable_migration.rs:195
+msgid "…and {} more. The full list is in the application log."
+msgstr "… och {} till. Hela listan finns i programloggen."
+
+#: rustconn/src/dialogs/credential_transfer.rs:684
+msgid ""
+"These arrived, but the destination has nowhere to keep part of what they "
+"held:"
+msgstr ""
+"Dessa kom fram, men destinationen har ingen plats för en del av vad de "
+"innehöll:"
+
+#: rustconn/src/dialogs/credential_transfer.rs:708
+msgid "Some Passwords Were Not Copied"
+msgstr "Vissa lösenord kopierades inte"
+
 #: rustconn/src/dialogs/export.rs:93
 msgid "Export Connections"
 msgstr "Exportera anslutningar"
@@ -4248,17 +4444,6 @@ msgid ""
 msgstr ""
 "Det gick inte att skriva exportfilen: {}. Kontrollera målets behörigheter "
 "och ledigt diskutrymme."
-
-#: rustconn/src/dialogs/export.rs:1155 rustconn/src/dialogs/history.rs:340
-#: rustconn/src/dialogs/import/sources.rs:694
-#: rustconn/src/dialogs/recording.rs:804 rustconn/src/dialogs/recording.rs:816
-#: rustconn/src/dialogs/settings/cloud_sync_tab.rs:238
-#: rustconn/src/dialogs/tunnel_builder/mod.rs:618
-#: rustconn/src/dialogs/widgets.rs:460 rustconn/src/terminal/tab_menu.rs:407
-#: rustconn/src/vault_ops.rs:78 rustconn/src/vault_ops.rs:145
-#: rustconn/src/window/mod.rs:3448
-msgid "Close"
-msgstr "Stäng"
 
 #: rustconn/src/dialogs/flatpak_components.rs:72
 msgid "Components"
@@ -4706,7 +4891,7 @@ msgid "Import connections from multiple files at once"
 msgstr "Importera anslutningar från flera filer samtidigt"
 
 #: rustconn/src/dialogs/import/sources.rs:217
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2092
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2797
 msgid "Available"
 msgstr "Tillgänglig"
 
@@ -4932,7 +5117,7 @@ msgstr ""
 "Lösenordet behålls i minnet endast för denna session."
 
 #: rustconn/src/dialogs/kdbx_unlock.rs:77
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1359
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2046
 msgid "Database password"
 msgstr "Databaslösenord"
 
@@ -4947,7 +5132,7 @@ msgstr "Verifierar…"
 
 #: rustconn/src/dialogs/kdbx_unlock.rs:168
 #: rustconn/src/dialogs/portable_unlock.rs:166
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1833
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2521
 msgid "Verification failed"
 msgstr "Verifieringen misslyckades"
 
@@ -5209,24 +5394,24 @@ msgstr ""
 "Originalen behålls, så inget förloras om du ändrar dig."
 
 #: rustconn/src/dialogs/portable_migration.rs:59
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1150
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1846
 msgid "Copy Credentials"
 msgstr "Kopiera inloggningsuppgifter"
 
-#: rustconn/src/dialogs/portable_migration.rs:118
+#: rustconn/src/dialogs/portable_migration.rs:125
 msgid "Copied {} credentials to the portable file"
 msgstr "Kopierade {} inloggningsuppgifter till den portabla filen"
 
-#: rustconn/src/dialogs/portable_migration.rs:130
-#: rustconn/src/dialogs/portable_migration.rs:139
+#: rustconn/src/dialogs/portable_migration.rs:137
+#: rustconn/src/dialogs/portable_migration.rs:146
 msgid "Could Not Copy Credentials"
 msgstr "Kunde inte kopiera inloggningsuppgifterna"
 
-#: rustconn/src/dialogs/portable_migration.rs:131
+#: rustconn/src/dialogs/portable_migration.rs:138
 msgid "The transfer did not start: {}"
 msgstr "Överföringen startade inte: {}"
 
-#: rustconn/src/dialogs/portable_migration.rs:141
+#: rustconn/src/dialogs/portable_migration.rs:148
 msgid ""
 "The transfer did not finish. The portable file may hold only some of your "
 "credentials; run the copy again to complete it."
@@ -5234,7 +5419,7 @@ msgstr ""
 "Överföringen slutfördes inte. Den portabla filen kan innehålla bara en del "
 "av dina inloggningsuppgifter. Kör kopieringen igen för att slutföra den."
 
-#: rustconn/src/dialogs/portable_migration.rs:173
+#: rustconn/src/dialogs/portable_migration.rs:182
 msgid ""
 "Copied {} credentials. {} could not be read and were left in the machine-"
 "bound file:"
@@ -5242,11 +5427,7 @@ msgstr ""
 "{} inloggningsuppgifter kopierade. {} kunde inte läsas och lämnades kvar i "
 "den datorbundna filen:"
 
-#: rustconn/src/dialogs/portable_migration.rs:186
-msgid "…and {} more. The full list is in the application log."
-msgstr "… och {} till. Hela listan finns i programloggen."
-
-#: rustconn/src/dialogs/portable_migration.rs:192
+#: rustconn/src/dialogs/portable_migration.rs:201
 msgid ""
 "These connections still work on this computer. To use them on another "
 "device, open each one and save its password again."
@@ -5254,9 +5435,102 @@ msgstr ""
 "De här anslutningarna fungerar fortfarande på den här datorn. Öppna var och "
 "en och spara lösenordet igen för att kunna använda dem på en annan enhet."
 
-#: rustconn/src/dialogs/portable_migration.rs:205
+#: rustconn/src/dialogs/portable_migration.rs:214
 msgid "Some Credentials Were Not Copied"
 msgstr "Vissa inloggningsuppgifter kopierades inte"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:54
+#: rustconn/src/dialogs/portable_passphrase_change.rs:92
+msgid "Change Passphrase"
+msgstr "Byt lösenfras"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:56
+msgid ""
+"Every password in the file is encrypted again under the new passphrase. "
+"There is still no way to recover it, so it is asked for twice."
+msgstr ""
+"Varje lösenord i filen krypteras om under den nya lösenfrasen. Den går "
+"fortfarande inte att återskapa, därför efterfrågas den två gånger."
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:61
+msgid "Current passphrase"
+msgstr "Nuvarande lösenfras"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:64
+msgid "New passphrase"
+msgstr "Ny lösenfras"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:67
+msgid "Confirm new passphrase"
+msgstr "Bekräfta den nya lösenfrasen"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:87
+msgid "Change"
+msgstr "Byt"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:123
+#: rustconn/src/dialogs/portable_passphrase_change.rs:322
+msgid "The two new passphrases do not match"
+msgstr "De två nya lösenfraserna stämmer inte"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:168
+msgid "Changing the passphrase…"
+msgstr "Byter lösenfras…"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:225
+msgid "Could not change the passphrase: {}"
+msgstr "Kunde inte byta lösenfrasen: {}"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:230
+msgid "Could not change the passphrase. The file was not modified."
+msgstr "Kunde inte byta lösenfrasen. Filen ändrades inte."
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:276
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1688
+msgid ""
+"A passphrase this short can be guessed quickly. This file is meant to be "
+"copied to your other computers, so the passphrase is the only thing "
+"protecting it."
+msgstr ""
+"En så kort lösenfras går snabbt att gissa. Den här filen är avsedd att "
+"kopieras till dina andra datorer, så lösenfrasen är det enda som skyddar den."
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:280
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1692
+msgid ""
+"This passphrase would not take long to guess. Several unrelated words make a "
+"much stronger one, and are easier to remember than symbols."
+msgstr ""
+"Att gissa den här lösenfrasen tar inte lång tid. Flera osammanhängande ord "
+"ger en mycket starkare, och de är lättare att komma ihåg än symboler."
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:304
+msgid "Enter the passphrase the file is protected with now"
+msgstr "Ange den lösenfras filen skyddas med nu"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:311
+msgid "Enter a new passphrase"
+msgstr "Ange en ny lösenfras"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:334
+msgid "The new passphrase is the same as the current one"
+msgstr "Den nya lösenfrasen är densamma som den nuvarande"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:357
+msgid "Passwords encrypted again under the new passphrase: {}"
+msgstr "Lösenord omkrypterade under den nya lösenfrasen: {}"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:363
+msgid ""
+"Save your settings so the copy of the passphrase kept on this computer is "
+"updated too. Until then this computer still remembers the old one."
+msgstr ""
+"Spara dina inställningar så att även kopian av lösenfrasen på den här datorn "
+"uppdateras. Fram till dess minns datorn fortfarande den gamla."
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:367
+msgid "Passphrase Changed"
+msgstr "Lösenfras bytt"
 
 #: rustconn/src/dialogs/portable_unlock.rs:55
 msgid "Portable credential file is locked"
@@ -5271,7 +5545,8 @@ msgstr ""
 "Lösenfrasen behålls i minnet endast under den här sessionen."
 
 #: rustconn/src/dialogs/portable_unlock.rs:75
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1069
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1579
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1835
 msgid "Passphrase"
 msgstr "Lösenfras"
 
@@ -5426,9 +5701,10 @@ msgid "Kubernetes CLI tools"
 msgstr "Kubernetes CLI-verktyg"
 
 #: rustconn/src/dialogs/settings/clients_tab.rs:154
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:416
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1809
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2097
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:717
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:835
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2497
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2802
 #: rustconn/src/dialogs/settings/ssh_agent_tab.rs:43
 #: rustconn/src/dialogs/settings/ssh_agent_tab.rs:203
 msgid "Checking..."
@@ -5751,11 +6027,20 @@ msgstr "Avsluta nu"
 msgid "Restore failed"
 msgstr "Återställning misslyckades"
 
-#: rustconn/src/dialogs/settings/mod.rs:948
+#: rustconn/src/dialogs/settings/mod.rs:864
+msgid "There is no portable file at {}. Create it first, or correct the path."
+msgstr ""
+"Det finns ingen portabel fil på {}. Skapa den först, eller rätta sökvägen."
+
+#: rustconn/src/dialogs/settings/mod.rs:919
+msgid "Passphrase changed. Passwords encrypted again: {}"
+msgstr "Lösenfras bytt. Omkrypterade lösenord: {}"
+
+#: rustconn/src/dialogs/settings/mod.rs:1090
 msgid "Failed to start"
 msgstr "Kunde inte starta"
 
-#: rustconn/src/dialogs/settings/mod.rs:1535
+#: rustconn/src/dialogs/settings/mod.rs:1681
 msgid "Untitled rule"
 msgstr "Namnlös regel"
 
@@ -5856,7 +6141,7 @@ msgid "Cannot determine store directory"
 msgstr "Kan inte bestämma lagringskatalog"
 
 #: rustconn/src/dialogs/settings/secrets_tab/detection.rs:426
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:680
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1125
 msgid "Unlocked"
 msgstr "Upplåst"
 
@@ -5865,7 +6150,7 @@ msgid "Locked"
 msgstr "Låst"
 
 #: rustconn/src/dialogs/settings/secrets_tab/detection.rs:428
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:693
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1138
 msgid "Not logged in"
 msgstr "Inte inloggad"
 
@@ -5897,7 +6182,7 @@ msgid "Session expired"
 msgstr "Session utgången"
 
 #: rustconn/src/dialogs/settings/secrets_tab/detection.rs:475
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2267
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2980
 msgid "Configured"
 msgstr "Konfigurerad"
 
@@ -5910,198 +6195,296 @@ msgstr "Inte konfigurerad"
 msgid "Authentication failed"
 msgstr "Autentisering misslyckades"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:273
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:298
 msgid "Don't save"
 msgstr "Spara inte"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:274
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:299
 msgid "Encrypted file (machine-specific)"
 msgstr "Krypterad fil (maskinspecifik)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:275
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:300
 msgid "System keyring (recommended)"
 msgstr "Systemets nyckelring (rekommenderas)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:279
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:304
 msgid "How to persist the credential between sessions"
 msgstr "Hur autentiseringsuppgiften ska sparas mellan sessioner"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:300
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:346
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:325
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:371
 msgid "System keyring unavailable — install libsecret (secret-tool)"
 msgstr ""
 "Systemnyckelringen är inte tillgänglig — installera libsecret (secret-tool)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:356
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:438
+msgid "This Mac's login keychain, unlocked with your session"
+msgstr "Den här Macens inloggningsnyckelring, upplåst med din session"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:444
+msgid "This computer's login keyring, unlocked with your session"
+msgstr "Den här datorns inloggningsnyckelring, upplåst med din session"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:451
+msgid "A KeePass database, through the KeePassXC application"
+msgstr "En KeePass-databas via programmet KeePassXC"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:457
+msgid "Your Bitwarden vault, through the bw command line tool"
+msgstr "Ditt Bitwarden-valv via kommandoradsverktyget bw"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:462
+msgid "Your 1Password vault, through the op command line tool"
+msgstr "Ditt 1Password-valv via kommandoradsverktyget op"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:467
+msgid "Your Passbolt server, through the passbolt command line tool"
+msgstr "Din Passbolt-server via kommandoradsverktyget passbolt"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:472
+msgid "The pass password store, encrypted with your GPG key"
+msgstr "Lösenordsförvaret pass, krypterat med din GPG-nyckel"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:479
+#: rustconn/src/window/credentials.rs:328
+msgid "Encrypted file"
+msgstr "Krypterad fil"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:480
+msgid "A file on this computer, encrypted with a key tied to this machine"
+msgstr ""
+"En fil på den här datorn, krypterad med en nyckel bunden till den här "
+"maskinen"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:484
+#: rustconn/src/window/credentials.rs:332
+msgid "Portable encrypted file"
+msgstr "Portabel krypterad fil"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:486
+msgid ""
+"A file encrypted with a passphrase you choose, so it opens on your other "
+"computers"
+msgstr ""
+"En fil krypterad med en lösenfras du väljer, så den öppnas även på dina "
+"andra datorer"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:652
+msgid "Not created yet"
+msgstr "Inte skapad än"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:653
+msgid "Ready, no passwords yet"
+msgstr "Klar, inga lösenord än"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:659
+msgid "Passwords stored: {}"
+msgstr "Sparade lösenord: {}"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:662
+msgid "Cannot read the file: {}"
+msgstr "Filen kan inte läsas: {}"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:663
+msgid "Could not check the file"
+msgstr "Filen kunde inte kontrolleras"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:690
+msgid "Enter the passphrase that will protect the portable file"
+msgstr "Ange den lösenfras som ska skydda den portabla filen"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:694
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1674
+msgid "The two passphrases do not match"
+msgstr "De två lösenfraserna stämmer inte överens"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:698
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1702
+msgid ""
+"Repeat the passphrase to confirm it. A new file cannot be recovered if the "
+"passphrase is wrong."
+msgstr ""
+"Upprepa lösenfrasen för att bekräfta den. En ny fil kan inte återställas om "
+"lösenfrasen är fel."
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:787
 msgid "Secrets"
 msgstr "Hemligheter"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:362
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:793
 msgid "Secret Backend"
 msgstr "Hemlighetsbackend"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:363
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:794
 msgid "Choose how passwords are stored"
 msgstr "Välj hur lösenord lagras"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:375
-msgid "Encrypted file (no system keyring)"
-msgstr "Krypterad fil (ingen systemnyckelring)"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:376
-msgid "Portable encrypted file (cloud-syncable)"
-msgstr "Portabel krypterad fil (kan synkroniseras med molnet)"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:393
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:808
 msgid "Backend"
 msgstr "Backend"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:394
-msgid "Primary password storage method"
-msgstr "Primär metod för lösenordslagring"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:405
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:824
 msgid "Version"
 msgstr "Version"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:420
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:839
 msgid "Availability"
 msgstr "Tillgänglighet"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:431
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:851
+msgid "Use the macOS Keychain if the primary backend is unavailable"
+msgstr "Använd macOS Keychain om den primära backenden inte är tillgänglig"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:853
+msgid "Use libsecret if the primary backend is unavailable"
+msgstr "Använd libsecret om den primära backenden inte är tillgänglig"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:855
 msgid "Enable fallback"
 msgstr "Aktivera reservläge"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:432
-msgid "Use libsecret if primary backend unavailable"
-msgstr "Använd libsecret om primär backend inte är tillgänglig"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:870
+msgid "Copy Passwords…"
+msgstr "Kopiera lösenord…"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:472
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:491
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:724
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:839
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:946
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1555
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:874
+msgid "Move between stores"
+msgstr "Flytta mellan förvar"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:876
+msgid ""
+"Copy the passwords you already have from one store into another, for example "
+"into the portable file"
+msgstr ""
+"Kopiera lösenorden du redan har från ett förvar till ett annat, till exempel "
+"till den portabla filen"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:917
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:936
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1169
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1284
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1391
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2242
 msgid "Detecting..."
 msgstr "Identifierar..."
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:477
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:922
 msgid "Bitwarden"
 msgstr "Bitwarden"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:478
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:923
 msgid "Configure Bitwarden CLI integration"
 msgstr "Konfigurera Bitwarden CLI-integration"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:484
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:929
 msgid "Master Password"
 msgstr "Huvudlösenord"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:485
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:930
 msgid "Required to unlock vault"
 msgstr "Krävs för att låsa upp valvet"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:501
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:946
 msgid "Save master password"
 msgstr "Spara huvudlösenord"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:510
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:955
 msgid "Use API key authentication"
 msgstr "Använd API-nyckelautentisering"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:512
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:957
 msgid "For automation or 2FA methods not supported by CLI (FIDO2, Duo)"
 msgstr ""
 "För automatisering eller 2FA-metoder som inte stöds av CLI (FIDO2, Duo)För "
 "automatisering eller 2FA-metoder som inte stöds av CLI (FIDO2, Duo)För "
 "automatisering eller 2FA-metoder som inte stöds av CLI (FIDO2, Duo)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:521
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:966
 msgid "client_id"
 msgstr "client_id"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:526
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:971
 msgid "Client ID"
 msgstr "Klient-ID"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:528
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:973
 msgid "From Bitwarden web vault → Settings → Security → Keys"
 msgstr "Från Bitwardens webbvalv → Inställningar → Säkerhet → Nycklar"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:537
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:982
 msgid "Client Secret"
 msgstr "Klienthemlighet"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:538
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:983
 msgid "Keep this secret safe"
 msgstr "Förvara denna hemlighet säkert"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:556
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1001
 msgid "Unlock"
 msgstr "Lås upp"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:559
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1004
 msgid "Unlock Bitwarden vault"
 msgstr "Lås upp Bitwarden-valv"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:571
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1016
 msgid "Vault Status"
 msgstr "Valvstatus"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:572
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1017
 msgid "Login with 'bw login' in terminal first"
 msgstr "Logga in med 'bw login' i terminalen först"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:596
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:600
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1041
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1045
 msgid "Enter password"
 msgstr "Ange lösenord"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:607
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1052
 msgid "Unlocking..."
 msgstr "Låser upp..."
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:691
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1136
 msgid "Invalid password"
 msgstr "Ogiltigt lösenord"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:695
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1140
 msgid "Unlock failed"
 msgstr "Upplåsning misslyckades"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:709
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1154
 msgid "1Password"
 msgstr "1Password"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:710
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1155
 msgid "Configure 1Password CLI integration"
 msgstr "Konfigurera 1Password CLI-integration"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:715
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1160
 msgid "Service Account Token"
 msgstr "Tjänstkontotoken"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:717
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1162
 msgid "For headless/automated access (OP_SERVICE_ACCOUNT_TOKEN)"
 msgstr "För automatiserad åtkomst (OP_SERVICE_ACCOUNT_TOKEN)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:734
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1179
 msgid "Save token"
 msgstr "Spara token"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:741
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1186
 msgid "Sign In"
 msgstr "Logga in"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:744
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1189
 msgid "Sign in to 1Password (opens terminal)"
 msgstr "Logga in på 1Password (öppnar terminal)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:756
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1201
 msgid "Account Status"
 msgstr "Kontostatus"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:758
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1203
 msgid "Sign in with 'op signin' in terminal or use biometric unlock"
 msgstr ""
 "Logga in med 'op signin' i terminalen eller använd biometrisk "
@@ -6109,189 +6492,196 @@ msgstr ""
 "upplåsningLogga in med 'op signin' i terminalen eller använd biometrisk "
 "upplåsning"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:770
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1215
 msgid "Opening terminal..."
 msgstr "Öppnar terminal..."
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:795
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1240
 msgid "Check terminal"
 msgstr "Kontrollera terminal"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:801
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1246
 msgid "No terminal found"
 msgstr "Ingen terminal hittades"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:812
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1257
 msgid "Passbolt"
 msgstr "Passbolt"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:813
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1258
 msgid "Configure Passbolt CLI integration"
 msgstr "Konfigurera Passbolt CLI-integration"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:823
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1268
 msgid "Server URL"
 msgstr "Server-URL"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:824
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1269
 msgid "Passbolt web vault address"
 msgstr "Passbolts webbvalvsadress"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:832
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1277
 msgid "GPG Passphrase"
 msgstr "GPG-lösenfras"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:833
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1278
 msgid "Required to decrypt credentials from Passbolt"
 msgstr "Krävs för att dekryptera inloggningsuppgifter från Passbolt"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:848
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1142
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1293
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1727
 msgid "Save passphrase"
 msgstr "Spara lösenfras"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:855
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1300
 msgid "Open Vault"
 msgstr "Öppna valv"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:858
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1303
 msgid "Open Passbolt web vault in browser"
 msgstr "Öppna Passbolt-webbvalv i webbläsare"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:870
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1315
 msgid "Server Status"
 msgstr "Serverstatus"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:871
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1316
 msgid "Configure with 'passbolt configure' in terminal"
 msgstr "Konfigurera med 'passbolt configure' i terminalen"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:894
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1339
 msgid "Failed to open browser"
 msgstr "Kunde inte öppna webbläsare"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:899
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1344
 msgid "Enter server URL or run 'passbolt configure'"
 msgstr "Ange server-URL eller kör 'passbolt configure'"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:910
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1355
 msgid "Pass"
 msgstr "Pass"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:911
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1356
 msgid "Configure Pass (passwordstore.org) integration"
 msgstr "Konfigurera Pass (passwordstore.org)-integration"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:916
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1361
 msgid "~/.password-store"
 msgstr "~/.password-store"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:924
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:927
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1369
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1372
 msgid "Choose password store directory"
 msgstr "Välj lösenordslagringsmapp"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:938
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1383
 msgid "Store Directory"
 msgstr "Lagringsmapp"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:939
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1384
 msgid "Location of password-store (leave empty for default)"
 msgstr "Plats för lösenordslagring (tom för standard)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:953
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1398
 msgid "Initialization Status"
 msgstr "Initieringsstatus"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:954
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1399
 msgid "Run 'pass init &lt;gpg-id&gt;' to initialize"
 msgstr "Kör 'pass init &lt;gpg-id&gt;' för att initiera"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:965
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1410
 msgid "Select Password Store Directory"
 msgstr "Välj lösenordslagringsmapp"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:989
-msgid "Portable Encrypted File"
-msgstr "Portabel krypterad fil"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1439
+msgid "Encrypted File"
+msgstr "Krypterad fil"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:991
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1441
 msgid ""
-"Passphrase-protected credential file that can be synced via cloud services"
+"Credentials in a file on this computer. The key is derived from this "
+"machine, so the file cannot be opened anywhere else — and cannot be "
+"recovered if the machine is lost."
 msgstr ""
-"Fil med inloggningsuppgifter som skyddas av en lösenfras och kan "
-"synkroniseras via molntjänster"
+"Inloggningsuppgifter i en fil på den här datorn. Nyckeln härleds från den "
+"här maskinen, så filen kan inte öppnas någon annanstans — och kan inte "
+"återskapas om maskinen förloras."
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:997
-msgid "Path to credential file"
-msgstr "Sökväg till filen med inloggningsuppgifter"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1002
-msgid "Browse"
-msgstr "Bläddra"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1006
-msgid "Browse for portable credential file"
-msgstr "Välj den portabla filen med inloggningsuppgifter"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1012
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1447
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1499
 msgid "File path"
 msgstr "Filsökväg"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1013
-msgid "Can be a cloud-synced directory"
-msgstr "Kan vara en mapp som synkroniseras med molnet"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1467
+msgid "Portable Encrypted File"
+msgstr "Portabel krypterad fil"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1041
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1469
+msgid ""
+"Credentials in a file encrypted with a passphrase you choose. Put it in a "
+"folder your cloud client syncs and the same file opens on your other "
+"computers. There is no way to recover the passphrase, so it is asked for "
+"twice."
+msgstr ""
+"Inloggningsuppgifter i en fil krypterad med en lösenfras du väljer. Lägg den "
+"i en mapp som din molnklient synkroniserar och samma fil öppnas på dina "
+"andra datorer. Lösenfrasen kan inte återskapas, därför efterfrågas den två "
+"gånger."
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1486
+msgid "Browse"
+msgstr "Bläddra"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1490
+msgid "Browse for portable credential file"
+msgstr "Välj den portabla filen med inloggningsuppgifter"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1500
+msgid ""
+"Name a file inside a folder your cloud client syncs. Leave empty for the "
+"default location."
+msgstr ""
+"Namnge en fil i en mapp som din molnklient synkroniserar. Lämna tomt för "
+"standardplatsen."
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1551
 msgid "Select Portable Credential File"
 msgstr "Välj den portabla filen med inloggningsuppgifter"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1074
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1584
 msgid "Confirm passphrase"
 msgstr "Bekräfta lösenfras"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1113
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1185
-msgid "The two passphrases do not match"
-msgstr "De två lösenfraserna stämmer inte överens"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1743
+msgid "Create File"
+msgstr "Skapa fil"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1119
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1748
+msgid "Set up the file"
+msgstr "Förbered filen"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1750
 msgid ""
-"Repeat the passphrase to confirm it. A new file cannot be recovered if the "
-"passphrase is wrong."
+"Create the file now, or check that your passphrase opens one that is already "
+"there"
 msgstr ""
-"Upprepa lösenfrasen för att bekräfta den. En ny fil kan inte återställas om lösenfrasen är fel."
+"Skapa filen nu, eller kontrollera att din lösenfras öppnar en som redan finns"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1152
-msgid ""
-"Copy passwords from the machine-bound encrypted file into this portable file"
-msgstr ""
-"Kopiera lösenord från den datorbundna krypterade filen till den här portabla "
-"filen"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1782
+msgid "Setting up the file…"
+msgstr "Förbereder filen…"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1158
-msgid "Existing passwords"
-msgstr "Befintliga lösenord"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1798
+msgid "Created {}"
+msgstr "Skapade {}"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1160
-msgid "Re-encrypt credentials from the machine-bound file with your passphrase"
-msgstr ""
-"Kryptera om inloggningsuppgifterna från den datorbundna filen med din "
-"lösenfras"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1802
+msgid "That file is already there and your passphrase opens it"
+msgstr "Filen finns redan och din lösenfras öppnar den"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1182
-msgid "Enter the passphrase that will protect the portable file"
-msgstr "Ange den lösenfras som ska skydda den portabla filen"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1215
-msgid "No stored passwords to copy"
-msgstr "Inga sparade lösenord att kopiera"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1232
-msgid "Checking the passphrase…"
-msgstr "Kontrollerar lösenfrasen…"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1255
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1807
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1939
 msgid ""
 "That passphrase does not open the existing portable file. Enter the "
 "passphrase the file was created with."
@@ -6299,143 +6689,181 @@ msgstr ""
 "Den lösenfrasen öppnar inte den befintliga portabla filen. Ange den "
 "lösenfras som filen skapades med."
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1258
-msgid "Cannot open the portable file: {}"
-msgstr "Kan inte öppna den portabla filen: {}"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1812
+msgid "Cannot set up the file: {}"
+msgstr "Filen kan inte förberedas: {}"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1261
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1815
+msgid "Could not set up the file"
+msgstr "Filen kunde inte förberedas"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1830
+msgid "Change Passphrase…"
+msgstr "Byt lösenfras…"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1837
+msgid ""
+"Choose a new passphrase and encrypt every password in the file again under it"
+msgstr "Välj en ny lösenfras och kryptera om varje lösenord i filen med den"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1848
+msgid ""
+"Copy passwords from the machine-bound encrypted file into this portable file"
+msgstr ""
+"Kopiera lösenord från den datorbundna krypterade filen till den här portabla "
+"filen"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1854
+msgid "Existing passwords"
+msgstr "Befintliga lösenord"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1856
+msgid "Re-encrypt credentials from the machine-bound file with your passphrase"
+msgstr ""
+"Kryptera om inloggningsuppgifterna från den datorbundna filen med din "
+"lösenfras"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1902
+msgid "No stored passwords to copy"
+msgstr "Inga sparade lösenord att kopiera"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1920
+msgid "Checking the passphrase…"
+msgstr "Kontrollerar lösenfrasen…"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1945
 msgid "Could not check the passphrase"
 msgstr "Kunde inte kontrollera lösenfrasen"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1296
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1983
 msgid "KeePass Database"
 msgstr "KeePass-databas"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1298
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1985
 msgid ""
 "Configure KDBX file integration (works with KeePassXC, GNOME Secrets, etc.)"
 msgstr ""
 "Konfigurera KDBX-filintegration (fungerar med KeePassXC, GNOME Secrets m.fl.)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1303
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1990
 msgid "KDBX Integration"
 msgstr "KDBX-integration"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1304
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1991
 msgid "Enable direct database access"
 msgstr "Aktivera direkt databasåtkomst"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1310
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1997
 msgid "Select .kdbx file"
 msgstr "Välj .kdbx-fil"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1317
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2004
 msgid "Browse for database file"
 msgstr "Bläddra efter databasfil"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1320
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2007
 msgid "Browse for KeePass database file"
 msgstr "Bläddra efter KeePass-databasfil"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1331
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2018
 msgid "Database File"
 msgstr "Databasfil"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1341
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2028
 msgid "Database unlock methods"
 msgstr "Metoder för att låsa upp databasen"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1350
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2037
 msgid "Use password"
 msgstr "Använd lösenord"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1366
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2053
 msgid "Not connected"
 msgstr "Inte ansluten"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1382
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2069
 msgid "Save password"
 msgstr "Spara lösenord"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1391
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2078
 msgid "Use key file"
 msgstr "Använd nyckelfil"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1399
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2086
 msgid "Select .keyx or .key file"
 msgstr "Välj .keyx- eller .key-fil"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1427
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2114
 msgid "KDBX Status"
 msgstr "KDBX-status"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1432
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2119
 msgid "Check"
 msgstr "Kontrollera"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1434
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2121
 msgid "Test database connection"
 msgstr "Testa databasanslutning"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1446
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2133
 msgid "Connection Status"
 msgstr "Anslutningsstatus"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1552
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1958
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1967
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1975
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2239
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2646
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2655
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2663
 msgid "Not installed"
 msgstr "Inte installerad"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1637
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2431
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2324
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:3144
 msgid "Token loaded from keyring"
 msgstr "Token laddad från nyckelring"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1698
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2386
 msgid "Select KeePass Database"
 msgstr "Välj KeePass-databas"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1704
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2392
 msgid "KeePass Database (*.kdbx)"
 msgstr "KeePass-databas (*.kdbx)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1732
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2420
 msgid "Select Key File"
 msgstr "Välj nyckelfil"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1739
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2427
 msgid "Key Files (*.keyx, *.key)"
 msgstr "Nyckelfiler (*.keyx, *.key)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1743
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2431
 msgid "All Files"
 msgstr "Alla filer"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1779
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2467
 msgid "No database selected"
 msgstr "Ingen databas vald"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1827
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2515
 #: rustconn/src/embedded_rdp/ui.rs:167 rustconn/src/embedded_trait.rs:324
 #: rustconn/src/sidebar/view.rs:688
 msgid "Connected"
 msgstr "Ansluten"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2094
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2799
 msgid "No keyring service responding"
 msgstr "Ingen nyckelringstjänst svarar"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2096
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2801
 msgid "Keyring client not installed"
 msgstr "Nyckelringsklient inte installerad"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2269
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2982
 msgid "Database path required"
 msgstr "Databassökväg krävs"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2272
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2985
 msgid "Disabled"
 msgstr "Inaktiverad"
 
@@ -7231,12 +7659,6 @@ msgstr "Fokusera terminalen"
 #: rustconn/src/dialogs/shortcuts.rs:158
 msgid "Command Palette (Commands)"
 msgstr "Kommandopalett (kommandon)"
-
-#: rustconn/src/dialogs/shortcuts.rs:161 rustconn/src/dialogs/widgets.rs:465
-#: rustconn/src/embedded_rdp/mod.rs:563 rustconn/src/embedded_trait.rs:205
-#: rustconn/src/embedded_vnc/ui.rs:47 rustconn/src/terminal/config.rs:252
-msgid "Copy"
-msgstr "Kopiera"
 
 #: rustconn/src/dialogs/shortcuts.rs:162 rustconn/src/embedded_rdp/mod.rs:571
 #: rustconn/src/embedded_trait.rs:213 rustconn/src/embedded_vnc/ui.rs:52
@@ -9728,10 +10150,6 @@ msgstr "Rensa terminal"
 msgid "Play"
 msgstr "Spela"
 
-#: rustconn/src/terminal/playback.rs:264
-msgid "Stop"
-msgstr "Stoppa"
-
 #: rustconn/src/terminal/playback.rs:265
 msgid "Stop playback"
 msgstr "Stoppa uppspelning"
@@ -9947,7 +10365,7 @@ msgstr ""
 msgid "Password not saved"
 msgstr "Lösenord inte sparat"
 
-#: rustconn/src/vault_ops.rs:130 rustconn/src/window/mod.rs:4214
+#: rustconn/src/vault_ops.rs:130 rustconn/src/window/mod.rs:4219
 msgid "Passphrase Does Not Open the Portable File"
 msgstr "Lösenfrasen öppnar inte den portabla filen"
 
@@ -10213,14 +10631,6 @@ msgstr "Importerade {} anslutningar och {} kodsnuttar till gruppen '{}'"
 #: rustconn/src/window/connection_dialogs.rs:1145
 msgid "Imported {} connections to '{}' group"
 msgstr "Importerade {} anslutningar till gruppen '{}'"
-
-#: rustconn/src/window/credentials.rs:328
-msgid "Encrypted file"
-msgstr "Krypterad fil"
-
-#: rustconn/src/window/credentials.rs:332
-msgid "Portable encrypted file"
-msgstr "Portabel krypterad fil"
 
 #: rustconn/src/window/credentials.rs:390
 msgid "Failed to save variable to vault: {}"
@@ -10731,15 +11141,15 @@ msgstr "Anslutning “{}” skapad"
 msgid "RustConn - {}"
 msgstr "RustConn — {}"
 
-#: rustconn/src/window/mod.rs:3193
+#: rustconn/src/window/mod.rs:3198
 msgid "Settings saved"
 msgstr "Inställningar sparade"
 
-#: rustconn/src/window/mod.rs:3211
+#: rustconn/src/window/mod.rs:3216
 msgid "Passphrase Not Saved on This Computer"
 msgstr "Lösenfrasen sparades inte på den här datorn"
 
-#: rustconn/src/window/mod.rs:3213
+#: rustconn/src/window/mod.rs:3218
 msgid ""
 "The passphrase could not be encrypted for local storage, so it is kept for "
 "this session only and you will be asked for it again after a restart. Choose "
@@ -10751,11 +11161,11 @@ msgstr ""
 "nyckelring” i stället, eller kontrollera att RustConn kan skriva till sin "
 "datakatalog."
 
-#: rustconn/src/window/mod.rs:3259
+#: rustconn/src/window/mod.rs:3264
 msgid "Credentials Not Saved to Keyring"
 msgstr "Autentiseringsuppgifterna sparades inte i nyckelringen"
 
-#: rustconn/src/window/mod.rs:3261
+#: rustconn/src/window/mod.rs:3266
 msgid ""
 "The system keyring did not accept the credentials, so they are kept for this "
 "session only and will be gone after a restart. Check that your keyring "
@@ -10765,36 +11175,36 @@ msgstr ""
 "för den här sessionen och försvinner efter en omstart. Kontrollera att "
 "nyckelringstjänsten körs och är upplåst och spara sedan inställningarna igen."
 
-#: rustconn/src/window/mod.rs:3441
+#: rustconn/src/window/mod.rs:3446
 msgid "Close RustConn?"
 msgstr "Stäng RustConn?"
 
-#: rustconn/src/window/mod.rs:3443
+#: rustconn/src/window/mod.rs:3448
 msgid "{} session tab(s) are open. Active connections will be disconnected."
 msgstr ""
 "{} sessionsflik(ar) är öppna. Aktiva anslutningar kommer att kopplas från."
 
-#: rustconn/src/window/mod.rs:3478
+#: rustconn/src/window/mod.rs:3483
 msgid "Cloud sync failed for '{}': {}"
 msgstr "Molnsynkronisering misslyckades för '{}': {}"
 
-#: rustconn/src/window/mod.rs:3659
+#: rustconn/src/window/mod.rs:3664
 msgid "Startup connection not found"
 msgstr "Uppstartsanslutning hittades inte"
 
-#: rustconn/src/window/mod.rs:3695
+#: rustconn/src/window/mod.rs:3700
 msgid "Failed to open .rdp file"
 msgstr "Kunde inte öppna .rdp-fil"
 
-#: rustconn/src/window/mod.rs:3731
+#: rustconn/src/window/mod.rs:3736
 msgid "Failed to open .vv file"
 msgstr "Kunde inte öppna .vv-fil"
 
-#: rustconn/src/window/mod.rs:4130
+#: rustconn/src/window/mod.rs:4135
 msgid "Successfully exported {} connection(s). {} skipped."
 msgstr "Exporterade {} anslutning(ar). {} hoppades över."
 
-#: rustconn/src/window/mod.rs:4216
+#: rustconn/src/window/mod.rs:4221
 msgid ""
 "The passphrase you saved does not decrypt the portable credential file, so "
 "none of the passwords in it can be read. Open Settings ▸ Secrets and enter "
@@ -11500,6 +11910,33 @@ msgstr "RustConn"
 #: rustconn/assets/io.github.totoshko88.RustConn.desktop:15
 msgid "ssh;rdp;vnc;spice;mosh;telnet;zerotrust;connection;terminal;remote;kubernetes;k8s;serial;sftp;"
 msgstr "ssh;rdp;vnc;spice;mosh;telnet;zerotrust;anslutning;terminal;fjärr;kubernetes;k8s;serial;sftp;"
+
+#~ msgid "Copying…"
+#~ msgstr "Kopierar…"
+
+#~ msgid "Encrypted file (no system keyring)"
+#~ msgstr "Krypterad fil (ingen systemnyckelring)"
+
+#~ msgid "Portable encrypted file (cloud-syncable)"
+#~ msgstr "Portabel krypterad fil (kan synkroniseras med molnet)"
+
+#~ msgid "Primary password storage method"
+#~ msgstr "Primär metod för lösenordslagring"
+
+#~ msgid "Use libsecret if primary backend unavailable"
+#~ msgstr "Använd libsecret om primär backend inte är tillgänglig"
+
+#~ msgid ""
+#~ "Passphrase-protected credential file that can be synced via cloud services"
+#~ msgstr ""
+#~ "Fil med inloggningsuppgifter som skyddas av en lösenfras och kan "
+#~ "synkroniseras via molntjänster"
+
+#~ msgid "Path to credential file"
+#~ msgstr "Sökväg till filen med inloggningsuppgifter"
+
+#~ msgid "Can be a cloud-synced directory"
+#~ msgstr "Kan vara en mapp som synkroniseras med molnet"
 
 #~ msgid "Copied {} credentials, {} could not be read"
 #~ msgstr "Kopierade {} inloggningsuppgifter, {} kunde inte läsas"

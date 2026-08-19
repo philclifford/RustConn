@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: rustconn 0.12.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-18 15:53+0300\n"
+"POT-Creation-Date: 2026-08-19 10:30+0300\n"
 "PO-Revision-Date: 2026-06-14 09:46+0000\n"
 "Last-Translator: Albano Battistella\n"
 "Language-Team: Italian\n"
@@ -18,15 +18,18 @@ msgstr ""
 "Generated-By: Babel 2.10.3\n"
 
 #: rustconn/src/alert.rs:15 rustconn/src/alert.rs:54 rustconn/src/alert.rs:64
-#: rustconn/src/app.rs:1582 rustconn/src/toast.rs:246
+#: rustconn/src/app.rs:1583 rustconn/src/toast.rs:246
 msgid "OK"
 msgstr "OK"
 
 #: rustconn/src/alert.rs:33 rustconn/src/alert.rs:94
 #: rustconn/src/dialogs/cluster.rs:623
+#: rustconn/src/dialogs/credential_transfer.rs:144
+#: rustconn/src/dialogs/credential_transfer.rs:457
 #: rustconn/src/dialogs/flatpak_components.rs:298
 #: rustconn/src/dialogs/history.rs:199 rustconn/src/dialogs/kdbx_unlock.rs:95
 #: rustconn/src/dialogs/portable_migration.rs:58
+#: rustconn/src/dialogs/portable_passphrase_change.rs:89
 #: rustconn/src/dialogs/portable_unlock.rs:93
 #: rustconn/src/dialogs/recording.rs:508 rustconn/src/dialogs/recording.rs:578
 #: rustconn/src/dialogs/settings/keybindings_tab.rs:173
@@ -43,7 +46,7 @@ msgstr "OK"
 #: rustconn/src/window/batch_edit.rs:63
 #: rustconn/src/window/connection_dialogs.rs:1072
 #: rustconn/src/window/edit_group.rs:1775
-#: rustconn/src/window/edit_group.rs:1823 rustconn/src/window/mod.rs:3447
+#: rustconn/src/window/edit_group.rs:1823 rustconn/src/window/mod.rs:3452
 #: rustconn/src/window/operations.rs:82 rustconn/src/window/operations.rs:457
 #: rustconn/src/window/operations.rs:634 rustconn/src/window/sessions.rs:339
 #: rustconn/src/window/workspaces.rs:548
@@ -121,7 +124,7 @@ msgstr ""
 "Impostazioni, poi Segreti, per scegliere un backend che funzioni su questo "
 "sistema."
 
-#: rustconn/src/app.rs:1478
+#: rustconn/src/app.rs:1479
 msgid ""
 "Modern connection manager for Linux with a GTK4/Wayland-native interface. "
 "Manage SSH, RDP, VNC, SPICE, Telnet, Serial, Kubernetes, and Zero Trust "
@@ -132,35 +135,35 @@ msgstr ""
 "Kubernetes e Zero Trust da un'unica applicazione."
 
 #. Translators: Replace this with your name and language, e.g. "John Doe (German)"
-#: rustconn/src/app.rs:1514
+#: rustconn/src/app.rs:1515
 msgid "translator-credits"
 msgstr "Team RustConn (Italiano)"
 
-#: rustconn/src/app.rs:1521
+#: rustconn/src/app.rs:1522
 msgid "User Guide"
 msgstr "Guida utente"
 
-#: rustconn/src/app.rs:1525
+#: rustconn/src/app.rs:1526
 msgid "Installation"
 msgstr "Installazione"
 
-#: rustconn/src/app.rs:1529
+#: rustconn/src/app.rs:1530
 msgid "Releases"
 msgstr "Versioni"
 
-#: rustconn/src/app.rs:1533
+#: rustconn/src/app.rs:1534
 msgid "Changelog"
 msgstr "Registro delle modifiche"
 
-#: rustconn/src/app.rs:1543
+#: rustconn/src/app.rs:1544
 msgid "Special Thanks"
 msgstr "Ringraziamenti speciali"
 
-#: rustconn/src/app.rs:1558
+#: rustconn/src/app.rs:1559
 msgid "Made in Ukraine"
 msgstr "Made in Ukraine"
 
-#: rustconn/src/app.rs:1559
+#: rustconn/src/app.rs:1560
 msgid "All contributors and supporters"
 msgstr "Tutti i collaboratori e sostenitori"
 
@@ -229,7 +232,7 @@ msgstr "Dettagli cluster"
 #: rustconn/src/dialogs/connection/advanced_tab.rs:845
 #: rustconn/src/dialogs/connection/general_tab.rs:82
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:101
-#: rustconn/src/dialogs/export.rs:374 rustconn/src/dialogs/settings/mod.rs:1588
+#: rustconn/src/dialogs/export.rs:374 rustconn/src/dialogs/settings/mod.rs:1734
 #: rustconn/src/dialogs/smart_folder.rs:121 rustconn/src/dialogs/snippet.rs:175
 #: rustconn/src/dialogs/template.rs:511
 #: rustconn/src/dialogs/tunnel_builder/step_review.rs:78
@@ -705,7 +708,7 @@ msgid "Rule name"
 msgstr "Nome della regola"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:854
-#: rustconn/src/dialogs/settings/mod.rs:1608
+#: rustconn/src/dialogs/settings/mod.rs:1754
 msgid "Pattern (regex)"
 msgstr "Modello (regex)"
 
@@ -714,22 +717,22 @@ msgid "Regex pattern to match"
 msgstr "Modello Regex da abbinare"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:864
-#: rustconn/src/dialogs/settings/mod.rs:1552
-#: rustconn/src/dialogs/settings/mod.rs:1554
+#: rustconn/src/dialogs/settings/mod.rs:1698
+#: rustconn/src/dialogs/settings/mod.rs:1700
 msgid "Enable rule"
 msgstr "Abilita regola"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:871
 #: rustconn/src/dialogs/connection/dialog/rows.rs:285
 #: rustconn/src/dialogs/connection/dialog/rows.rs:287
-#: rustconn/src/dialogs/settings/mod.rs:1569
+#: rustconn/src/dialogs/settings/mod.rs:1715
 #: rustconn/src/window/edit_group.rs:1941
 #: rustconn/src/window/edit_group.rs:1943
 msgid "Delete rule"
 msgstr "Elimina regola"
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:875
-#: rustconn/src/dialogs/settings/mod.rs:1573
+#: rustconn/src/dialogs/settings/mod.rs:1719
 msgid "Delete highlight rule"
 msgstr "Elimina regola di evidenziazione"
 
@@ -1744,7 +1747,7 @@ msgstr "SSH, porte note"
 #: rustconn/src/dialogs/connection/vnc.rs:284
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:85
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:388
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1340
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2027
 #: rustconn/src/dialogs/template.rs:625
 msgid "Authentication"
 msgstr "Autenticazione"
@@ -3037,6 +3040,7 @@ msgid "Default"
 msgstr "Predefinito"
 
 #: rustconn/src/dialogs/connection/ssh.rs:241
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:721
 #: rustconn/src/dialogs/template.rs:652
 msgid "File"
 msgstr "File"
@@ -3061,8 +3065,8 @@ msgid "Path to SSH key"
 msgstr "Percorso alla chiave SSH"
 
 #: rustconn/src/dialogs/connection/ssh.rs:267
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1406
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1409
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2093
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2096
 msgid "Browse for key file"
 msgstr "Cerca file chiave"
 
@@ -3073,7 +3077,7 @@ msgstr "Sfoglia per il file della chiave SSH"
 #: rustconn/src/dialogs/connection/ssh.rs:275
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:124
 #: rustconn/src/dialogs/connection_wizard/auth_page.rs:336
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1419
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2106
 #: rustconn/src/dialogs/template.rs:676
 msgid "Key File"
 msgstr "File chiave"
@@ -3970,6 +3974,199 @@ msgstr "Comando personalizzato per fornitori non supportati"
 msgid "Command Template"
 msgstr "Modello di comando"
 
+#: rustconn/src/dialogs/credential_transfer.rs:77
+msgid "Copy Stored Passwords"
+msgstr "Copia le password salvate"
+
+#: rustconn/src/dialogs/credential_transfer.rs:79
+msgid ""
+"Copies the passwords of every connection, group and secret variable that "
+"uses the password store. The originals are left where they are."
+msgstr ""
+"Copia le password di ogni connessione, gruppo e variabile segreta che usa "
+"l'archivio delle password. Gli originali restano dove sono."
+
+#: rustconn/src/dialogs/credential_transfer.rs:88
+msgid "From"
+msgstr "Da"
+
+#: rustconn/src/dialogs/credential_transfer.rs:89
+msgid "Where the passwords are now"
+msgstr "Dove sono ora le password"
+
+#: rustconn/src/dialogs/credential_transfer.rs:94
+msgid "To"
+msgstr "A"
+
+#: rustconn/src/dialogs/credential_transfer.rs:95
+msgid "Where they should also be"
+msgstr "Dove devono essere anche"
+
+#: rustconn/src/dialogs/credential_transfer.rs:108
+msgid "Entries to copy"
+msgstr "Voci da copiare"
+
+#: rustconn/src/dialogs/credential_transfer.rs:119
+msgid "Portable file passphrase"
+msgstr "Passphrase del file portatile"
+
+#: rustconn/src/dialogs/credential_transfer.rs:142
+#: rustconn/src/dialogs/credential_transfer.rs:458
+#: rustconn/src/dialogs/shortcuts.rs:161 rustconn/src/dialogs/widgets.rs:465
+#: rustconn/src/embedded_rdp/mod.rs:563 rustconn/src/embedded_trait.rs:205
+#: rustconn/src/embedded_vnc/ui.rs:47 rustconn/src/terminal/config.rs:252
+msgid "Copy"
+msgstr "Copia"
+
+#: rustconn/src/dialogs/credential_transfer.rs:152
+#: rustconn/src/terminal/playback.rs:264
+msgid "Stop"
+msgstr "Ferma"
+
+#: rustconn/src/dialogs/credential_transfer.rs:156
+msgid "Transfer Credentials"
+msgstr "Trasferisci le credenziali"
+
+#: rustconn/src/dialogs/credential_transfer.rs:201
+msgid "Choose two different password stores"
+msgstr "Scegli due archivi di password diversi"
+
+#: rustconn/src/dialogs/credential_transfer.rs:223
+msgid ""
+"These entries would end up in the same place in the destination, so one "
+"would overwrite the other. Rename one of them, or choose a destination that "
+"keeps groups apart."
+msgstr ""
+"Queste voci finirebbero nello stesso posto nella destinazione, quindi una "
+"sovrascriverebbe l'altra. Rinomina una di esse oppure scegli una "
+"destinazione che distingua i gruppi."
+
+#: rustconn/src/dialogs/credential_transfer.rs:238
+msgid ""
+"No connection, group or variable is set to use the password store, so there "
+"is nothing to copy."
+msgstr ""
+"Nessuna connessione, gruppo o variabile è impostata per usare l'archivio "
+"delle password, quindi non c'è nulla da copiare."
+
+#: rustconn/src/dialogs/credential_transfer.rs:279
+msgid "Stopping after the entry in progress…"
+msgstr "Interruzione dopo la voce in corso…"
+
+#: rustconn/src/dialogs/credential_transfer.rs:310
+#: rustconn/src/dialogs/credential_transfer.rs:573
+msgid "Enter the passphrase that protects the portable file"
+msgstr "Inserisci la passphrase che protegge il file portatile"
+
+#: rustconn/src/dialogs/credential_transfer.rs:365
+msgid "Copying… {} of {}"
+msgstr "Copia… {} di {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:430
+msgid ""
+"{} entries will be read from {} and written to {}. Nothing is removed from "
+"{}."
+msgstr ""
+"{} voci saranno lette da {} e scritte in {}. Da {} non viene rimosso nulla."
+
+#: rustconn/src/dialogs/credential_transfer.rs:451
+msgid "Destination file: {}"
+msgstr "File di destinazione: {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:456
+msgid "Copy stored passwords?"
+msgstr "Copiare le password salvate?"
+
+#: rustconn/src/dialogs/credential_transfer.rs:548
+msgid ""
+"The copy did not finish. Some entries may already have been copied; running "
+"it again completes it."
+msgstr ""
+"La copia non è terminata. Alcune voci potrebbero essere già state copiate; "
+"eseguirla di nuovo la completa."
+
+#: rustconn/src/dialogs/credential_transfer.rs:587
+msgid ""
+"There is no portable file at {}. Check the path in Settings, or wait for "
+"your cloud client to deliver it."
+msgstr ""
+"Non c'è alcun file portatile in {}. Controlla il percorso nelle impostazioni "
+"oppure attendi che il tuo client cloud lo consegni."
+
+#: rustconn/src/dialogs/credential_transfer.rs:594
+#: rustconn/src/dialogs/portable_passphrase_change.rs:219
+msgid ""
+"That passphrase does not open the portable file. Enter the passphrase the "
+"file was created with."
+msgstr ""
+"Questa passphrase non apre il file portatile. Inserisci quella con cui il "
+"file è stato creato."
+
+#: rustconn/src/dialogs/credential_transfer.rs:597
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1942
+msgid "Cannot open the portable file: {}"
+msgstr "Impossibile aprire il file portatile: {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:610
+msgid "Copied: {}"
+msgstr "Copiate: {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:614
+msgid "Had no stored password yet: {}"
+msgstr "Non avevano ancora una password salvata: {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:629
+msgid ""
+"You stopped the copy, so {} entries were not looked at. Everything already "
+"copied stays where it is, and running the copy again finishes the rest."
+msgstr ""
+"Hai interrotto la copia, quindi {} voci non sono state esaminate. Tutto ciò "
+"che è già stato copiato resta dov'è, e ripetere la copia completa il resto."
+
+#: rustconn/src/dialogs/credential_transfer.rs:632
+msgid "Copy Stopped"
+msgstr "Copia interrotta"
+
+#: rustconn/src/dialogs/credential_transfer.rs:633
+#: rustconn/src/dialogs/credential_transfer.rs:642
+#: rustconn/src/dialogs/credential_transfer.rs:709
+#: rustconn/src/dialogs/export.rs:1155 rustconn/src/dialogs/history.rs:340
+#: rustconn/src/dialogs/import/sources.rs:694
+#: rustconn/src/dialogs/portable_passphrase_change.rs:368
+#: rustconn/src/dialogs/recording.rs:804 rustconn/src/dialogs/recording.rs:816
+#: rustconn/src/dialogs/settings/cloud_sync_tab.rs:238
+#: rustconn/src/dialogs/tunnel_builder/mod.rs:618
+#: rustconn/src/dialogs/widgets.rs:460 rustconn/src/terminal/tab_menu.rs:407
+#: rustconn/src/vault_ops.rs:78 rustconn/src/vault_ops.rs:145
+#: rustconn/src/window/mod.rs:3453
+msgid "Close"
+msgstr "Chiudi"
+
+#: rustconn/src/dialogs/credential_transfer.rs:641
+msgid "Passwords Copied"
+msgstr "Password copiate"
+
+#: rustconn/src/dialogs/credential_transfer.rs:652
+msgid "Could not be copied: {}"
+msgstr "Non copiate: {}"
+
+#: rustconn/src/dialogs/credential_transfer.rs:672
+#: rustconn/src/dialogs/portable_migration.rs:195
+msgid "…and {} more. The full list is in the application log."
+msgstr "… e altre {}. L’elenco completo è nel registro dell’applicazione."
+
+#: rustconn/src/dialogs/credential_transfer.rs:684
+msgid ""
+"These arrived, but the destination has nowhere to keep part of what they "
+"held:"
+msgstr ""
+"Queste sono arrivate, ma la destinazione non ha spazio per una parte di ciò "
+"che contenevano:"
+
+#: rustconn/src/dialogs/credential_transfer.rs:708
+msgid "Some Passwords Were Not Copied"
+msgstr "Alcune password non sono state copiate"
+
 #: rustconn/src/dialogs/export.rs:93
 msgid "Export Connections"
 msgstr "Esporta connessioni"
@@ -4273,17 +4470,6 @@ msgid ""
 msgstr ""
 "Impossibile scrivere il file di esportazione: {}. Controlla i permessi della "
 "destinazione e lo spazio libero su disco."
-
-#: rustconn/src/dialogs/export.rs:1155 rustconn/src/dialogs/history.rs:340
-#: rustconn/src/dialogs/import/sources.rs:694
-#: rustconn/src/dialogs/recording.rs:804 rustconn/src/dialogs/recording.rs:816
-#: rustconn/src/dialogs/settings/cloud_sync_tab.rs:238
-#: rustconn/src/dialogs/tunnel_builder/mod.rs:618
-#: rustconn/src/dialogs/widgets.rs:460 rustconn/src/terminal/tab_menu.rs:407
-#: rustconn/src/vault_ops.rs:78 rustconn/src/vault_ops.rs:145
-#: rustconn/src/window/mod.rs:3448
-msgid "Close"
-msgstr "Chiudi"
 
 #: rustconn/src/dialogs/flatpak_components.rs:72
 msgid "Components"
@@ -4734,7 +4920,7 @@ msgid "Import connections from multiple files at once"
 msgstr "Importa connessioni da più file contemporaneamente"
 
 #: rustconn/src/dialogs/import/sources.rs:217
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2092
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2797
 msgid "Available"
 msgstr "Disponibile"
 
@@ -4960,7 +5146,7 @@ msgstr ""
 "La password sarà mantenuta in memoria solo per questa sessione."
 
 #: rustconn/src/dialogs/kdbx_unlock.rs:77
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1359
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2046
 msgid "Database password"
 msgstr "Password database"
 
@@ -4975,7 +5161,7 @@ msgstr "Verifica in corso…"
 
 #: rustconn/src/dialogs/kdbx_unlock.rs:168
 #: rustconn/src/dialogs/portable_unlock.rs:166
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1833
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2521
 msgid "Verification failed"
 msgstr "Verifica fallita"
 
@@ -5238,24 +5424,24 @@ msgstr ""
 "Gli originali vengono conservati, quindi non si perde nulla se cambi idea."
 
 #: rustconn/src/dialogs/portable_migration.rs:59
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1150
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1846
 msgid "Copy Credentials"
 msgstr "Copia credenziali"
 
-#: rustconn/src/dialogs/portable_migration.rs:118
+#: rustconn/src/dialogs/portable_migration.rs:125
 msgid "Copied {} credentials to the portable file"
 msgstr "Copiate {} credenziali nel file portatile"
 
-#: rustconn/src/dialogs/portable_migration.rs:130
-#: rustconn/src/dialogs/portable_migration.rs:139
+#: rustconn/src/dialogs/portable_migration.rs:137
+#: rustconn/src/dialogs/portable_migration.rs:146
 msgid "Could Not Copy Credentials"
 msgstr "Impossibile copiare le credenziali"
 
-#: rustconn/src/dialogs/portable_migration.rs:131
+#: rustconn/src/dialogs/portable_migration.rs:138
 msgid "The transfer did not start: {}"
 msgstr "Il trasferimento non è iniziato: {}"
 
-#: rustconn/src/dialogs/portable_migration.rs:141
+#: rustconn/src/dialogs/portable_migration.rs:148
 msgid ""
 "The transfer did not finish. The portable file may hold only some of your "
 "credentials; run the copy again to complete it."
@@ -5263,7 +5449,7 @@ msgstr ""
 "Il trasferimento non si è concluso. Il file portatile potrebbe contenere "
 "solo una parte delle credenziali; esegui di nuovo la copia per completarla."
 
-#: rustconn/src/dialogs/portable_migration.rs:173
+#: rustconn/src/dialogs/portable_migration.rs:182
 msgid ""
 "Copied {} credentials. {} could not be read and were left in the machine-"
 "bound file:"
@@ -5271,11 +5457,7 @@ msgstr ""
 "{} credenziali copiate. {} non è stato possibile leggerle e sono rimaste nel "
 "file legato alla macchina:"
 
-#: rustconn/src/dialogs/portable_migration.rs:186
-msgid "…and {} more. The full list is in the application log."
-msgstr "… e altre {}. L’elenco completo è nel registro dell’applicazione."
-
-#: rustconn/src/dialogs/portable_migration.rs:192
+#: rustconn/src/dialogs/portable_migration.rs:201
 msgid ""
 "These connections still work on this computer. To use them on another "
 "device, open each one and save its password again."
@@ -5283,9 +5465,105 @@ msgstr ""
 "Queste connessioni continuano a funzionare su questo computer. Per usarle su "
 "un altro dispositivo, apri ciascuna e salva di nuovo la sua password."
 
-#: rustconn/src/dialogs/portable_migration.rs:205
+#: rustconn/src/dialogs/portable_migration.rs:214
 msgid "Some Credentials Were Not Copied"
 msgstr "Alcune credenziali non sono state copiate"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:54
+#: rustconn/src/dialogs/portable_passphrase_change.rs:92
+msgid "Change Passphrase"
+msgstr "Cambia la passphrase"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:56
+msgid ""
+"Every password in the file is encrypted again under the new passphrase. "
+"There is still no way to recover it, so it is asked for twice."
+msgstr ""
+"Ogni password nel file viene cifrata di nuovo con la nuova passphrase. Non "
+"c'è ancora modo di recuperarla, perciò viene chiesta due volte."
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:61
+msgid "Current passphrase"
+msgstr "Passphrase attuale"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:64
+msgid "New passphrase"
+msgstr "Nuova passphrase"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:67
+msgid "Confirm new passphrase"
+msgstr "Conferma la nuova passphrase"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:87
+msgid "Change"
+msgstr "Cambia"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:123
+#: rustconn/src/dialogs/portable_passphrase_change.rs:322
+msgid "The two new passphrases do not match"
+msgstr "Le due nuove passphrase non corrispondono"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:168
+msgid "Changing the passphrase…"
+msgstr "Cambio della passphrase…"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:225
+msgid "Could not change the passphrase: {}"
+msgstr "Impossibile cambiare la passphrase: {}"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:230
+msgid "Could not change the passphrase. The file was not modified."
+msgstr "Impossibile cambiare la passphrase. Il file non è stato modificato."
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:276
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1688
+msgid ""
+"A passphrase this short can be guessed quickly. This file is meant to be "
+"copied to your other computers, so the passphrase is the only thing "
+"protecting it."
+msgstr ""
+"Una passphrase così corta si indovina in fretta. Questo file è pensato per "
+"essere copiato sui tuoi altri computer, quindi la passphrase è l'unica cosa "
+"che lo protegge."
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:280
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1692
+msgid ""
+"This passphrase would not take long to guess. Several unrelated words make a "
+"much stronger one, and are easier to remember than symbols."
+msgstr ""
+"Indovinare questa passphrase non richiederebbe molto. Diverse parole senza "
+"legame tra loro ne danno una molto più robusta, e sono più facili da "
+"ricordare dei simboli."
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:304
+msgid "Enter the passphrase the file is protected with now"
+msgstr "Inserisci la passphrase con cui il file è protetto adesso"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:311
+msgid "Enter a new passphrase"
+msgstr "Inserisci una nuova passphrase"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:334
+msgid "The new passphrase is the same as the current one"
+msgstr "La nuova passphrase è la stessa di quella attuale"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:357
+msgid "Passwords encrypted again under the new passphrase: {}"
+msgstr "Password cifrate di nuovo con la nuova passphrase: {}"
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:363
+msgid ""
+"Save your settings so the copy of the passphrase kept on this computer is "
+"updated too. Until then this computer still remembers the old one."
+msgstr ""
+"Salva le impostazioni perché venga aggiornata anche la copia della "
+"passphrase conservata su questo computer. Fino ad allora questo computer "
+"ricorda quella vecchia."
+
+#: rustconn/src/dialogs/portable_passphrase_change.rs:367
+msgid "Passphrase Changed"
+msgstr "Passphrase cambiata"
 
 #: rustconn/src/dialogs/portable_unlock.rs:55
 msgid "Portable credential file is locked"
@@ -5300,7 +5578,8 @@ msgstr ""
 "La passphrase sarà conservata in memoria solo per questa sessione."
 
 #: rustconn/src/dialogs/portable_unlock.rs:75
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1069
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1579
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1835
 msgid "Passphrase"
 msgstr "Passphrase"
 
@@ -5455,9 +5734,10 @@ msgid "Kubernetes CLI tools"
 msgstr "Strumenti CLI Kubernetes"
 
 #: rustconn/src/dialogs/settings/clients_tab.rs:154
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:416
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1809
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2097
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:717
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:835
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2497
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2802
 #: rustconn/src/dialogs/settings/ssh_agent_tab.rs:43
 #: rustconn/src/dialogs/settings/ssh_agent_tab.rs:203
 msgid "Checking..."
@@ -5782,11 +6062,21 @@ msgstr "Esci ora"
 msgid "Restore failed"
 msgstr "Ripristino non riuscito"
 
-#: rustconn/src/dialogs/settings/mod.rs:948
+#: rustconn/src/dialogs/settings/mod.rs:864
+msgid "There is no portable file at {}. Create it first, or correct the path."
+msgstr ""
+"Non c'è alcun file portatile in {}. Crealo prima, oppure correggi il "
+"percorso."
+
+#: rustconn/src/dialogs/settings/mod.rs:919
+msgid "Passphrase changed. Passwords encrypted again: {}"
+msgstr "Passphrase cambiata. Password cifrate di nuovo: {}"
+
+#: rustconn/src/dialogs/settings/mod.rs:1090
 msgid "Failed to start"
 msgstr "Avvio non riuscito"
 
-#: rustconn/src/dialogs/settings/mod.rs:1535
+#: rustconn/src/dialogs/settings/mod.rs:1681
 msgid "Untitled rule"
 msgstr "Regola senza titolo"
 
@@ -5889,7 +6179,7 @@ msgid "Cannot determine store directory"
 msgstr "Impossibile determinare la directory dell'archivio"
 
 #: rustconn/src/dialogs/settings/secrets_tab/detection.rs:426
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:680
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1125
 msgid "Unlocked"
 msgstr "Sbloccato"
 
@@ -5898,7 +6188,7 @@ msgid "Locked"
 msgstr "Bloccato"
 
 #: rustconn/src/dialogs/settings/secrets_tab/detection.rs:428
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:693
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1138
 msgid "Not logged in"
 msgstr "Non connesso"
 
@@ -5930,7 +6220,7 @@ msgid "Session expired"
 msgstr "Sessione scaduta"
 
 #: rustconn/src/dialogs/settings/secrets_tab/detection.rs:475
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2267
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2980
 msgid "Configured"
 msgstr "Configurato"
 
@@ -5943,381 +6233,488 @@ msgstr "Non configurato"
 msgid "Authentication failed"
 msgstr "Autenticazione fallita"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:273
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:298
 msgid "Don't save"
 msgstr "Non salvare"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:274
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:299
 msgid "Encrypted file (machine-specific)"
 msgstr "File cifrato (specifico per la macchina)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:275
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:300
 msgid "System keyring (recommended)"
 msgstr "Portachiavi di sistema (consigliato)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:279
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:304
 msgid "How to persist the credential between sessions"
 msgstr "Come mantenere le credenziali tra le sessioni"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:300
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:346
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:325
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:371
 msgid "System keyring unavailable — install libsecret (secret-tool)"
 msgstr ""
 "Portachiavi di sistema non disponibile — installa libsecret (secret-tool)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:356
-msgid "Secrets"
-msgstr "Segreti"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:438
+msgid "This Mac's login keychain, unlocked with your session"
+msgstr "Il portachiavi di accesso di questo Mac, sbloccato con la sessione"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:362
-msgid "Secret Backend"
-msgstr "Backend segreti"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:444
+msgid "This computer's login keyring, unlocked with your session"
+msgstr ""
+"Il portachiavi di accesso di questo computer, sbloccato con la sessione"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:363
-msgid "Choose how passwords are stored"
-msgstr "Scegli come vengono salvate le password"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:451
+msgid "A KeePass database, through the KeePassXC application"
+msgstr "Un database KeePass, tramite l'applicazione KeePassXC"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:375
-msgid "Encrypted file (no system keyring)"
-msgstr "File cifrato (senza portachiavi di sistema)"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:457
+msgid "Your Bitwarden vault, through the bw command line tool"
+msgstr "La tua cassaforte Bitwarden, tramite lo strumento a riga di comando bw"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:376
-msgid "Portable encrypted file (cloud-syncable)"
-msgstr "File cifrato portatile (sincronizzabile sul cloud)"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:462
+msgid "Your 1Password vault, through the op command line tool"
+msgstr "La tua cassaforte 1Password, tramite lo strumento a riga di comando op"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:393
-msgid "Backend"
-msgstr "Backend"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:394
-msgid "Primary password storage method"
-msgstr "Metodo principale di archiviazione password"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:405
-msgid "Version"
-msgstr "Versione"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:420
-msgid "Availability"
-msgstr "Disponibilità"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:431
-msgid "Enable fallback"
-msgstr "Abilita fallback"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:432
-msgid "Use libsecret if primary backend unavailable"
-msgstr "Usa libsecret se il backend principale non è disponibile"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:467
+msgid "Your Passbolt server, through the passbolt command line tool"
+msgstr ""
+"Il tuo server Passbolt, tramite lo strumento a riga di comando passbolt"
 
 #: rustconn/src/dialogs/settings/secrets_tab/mod.rs:472
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:491
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:724
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:839
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:946
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1555
-msgid "Detecting..."
-msgstr "Rilevamento..."
+msgid "The pass password store, encrypted with your GPG key"
+msgstr "L'archivio di password pass, cifrato con la tua chiave GPG"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:477
-msgid "Bitwarden"
-msgstr "Bitwarden"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:479
+#: rustconn/src/window/credentials.rs:328
+msgid "Encrypted file"
+msgstr "File cifrato"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:478
-msgid "Configure Bitwarden CLI integration"
-msgstr "Configura integrazione CLI di Bitwarden"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:480
+msgid "A file on this computer, encrypted with a key tied to this machine"
+msgstr ""
+"Un file su questo computer, cifrato con una chiave legata a questa macchina"
 
 #: rustconn/src/dialogs/settings/secrets_tab/mod.rs:484
-msgid "Master Password"
-msgstr "Password principale"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:485
-msgid "Required to unlock vault"
-msgstr "Necessario per sbloccare la cassaforte"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:501
-msgid "Save master password"
-msgstr "Salva password principale"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:510
-msgid "Use API key authentication"
-msgstr "Usa autenticazione con chiave API"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:512
-msgid "For automation or 2FA methods not supported by CLI (FIDO2, Duo)"
-msgstr "Per automazione o metodi 2FA non supportati dalla CLI (FIDO2, Duo)"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:521
-msgid "client_id"
-msgstr "client_id"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:526
-msgid "Client ID"
-msgstr "ID client"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:528
-msgid "From Bitwarden web vault → Settings → Security → Keys"
-msgstr "Dal vault web di Bitwarden → Impostazioni → Sicurezza → Chiavi"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:537
-msgid "Client Secret"
-msgstr "Segreto client"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:538
-msgid "Keep this secret safe"
-msgstr "Conserva questo segreto al sicuro"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:556
-msgid "Unlock"
-msgstr "Sblocca"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:559
-msgid "Unlock Bitwarden vault"
-msgstr "Sblocca vault Bitwarden"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:571
-msgid "Vault Status"
-msgstr "Stato cassaforte"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:572
-msgid "Login with 'bw login' in terminal first"
-msgstr "Accedi prima con 'bw login' nel terminale"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:596
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:600
-msgid "Enter password"
-msgstr "Inserire password"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:607
-msgid "Unlocking..."
-msgstr "Sblocco..."
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:691
-msgid "Invalid password"
-msgstr "Password non valida"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:695
-msgid "Unlock failed"
-msgstr "Sblocco fallito"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:709
-msgid "1Password"
-msgstr "1Password"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:710
-msgid "Configure 1Password CLI integration"
-msgstr "Configura integrazione CLI di 1Password"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:715
-msgid "Service Account Token"
-msgstr "Token account di servizio"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:717
-msgid "For headless/automated access (OP_SERVICE_ACCOUNT_TOKEN)"
-msgstr "Per accesso automatizzato (OP_SERVICE_ACCOUNT_TOKEN)"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:734
-msgid "Save token"
-msgstr "Salva token"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:741
-msgid "Sign In"
-msgstr "Accedi"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:744
-msgid "Sign in to 1Password (opens terminal)"
-msgstr "Accedi a 1Password (apre il terminale)"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:756
-msgid "Account Status"
-msgstr "Stato account"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:758
-msgid "Sign in with 'op signin' in terminal or use biometric unlock"
-msgstr "Accedi con 'op signin' nel terminale o usa lo sblocco biometrico"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:770
-msgid "Opening terminal..."
-msgstr "Apertura terminale..."
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:795
-msgid "Check terminal"
-msgstr "Verifica terminale"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:801
-msgid "No terminal found"
-msgstr "Nessun terminale trovato"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:812
-msgid "Passbolt"
-msgstr "Passbolt"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:813
-msgid "Configure Passbolt CLI integration"
-msgstr "Configura integrazione CLI di Passbolt"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:823
-msgid "Server URL"
-msgstr "URL server"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:824
-msgid "Passbolt web vault address"
-msgstr "Indirizzo del vault web di Passbolt"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:832
-msgid "GPG Passphrase"
-msgstr "Passphrase GPG"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:833
-msgid "Required to decrypt credentials from Passbolt"
-msgstr "Necessario per decrittare le credenziali da Passbolt"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:848
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1142
-msgid "Save passphrase"
-msgstr "Salva passphrase"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:855
-msgid "Open Vault"
-msgstr "Apri cassaforte"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:858
-msgid "Open Passbolt web vault in browser"
-msgstr "Apri vault web Passbolt nel browser"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:870
-msgid "Server Status"
-msgstr "Stato server"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:871
-msgid "Configure with 'passbolt configure' in terminal"
-msgstr "Configura con 'passbolt configure' nel terminale"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:894
-msgid "Failed to open browser"
-msgstr "Impossibile aprire il browser"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:899
-msgid "Enter server URL or run 'passbolt configure'"
-msgstr "Inserire URL del server o eseguire 'passbolt configure'"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:910
-msgid "Pass"
-msgstr "Pass"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:911
-msgid "Configure Pass (passwordstore.org) integration"
-msgstr "Configura integrazione Pass (passwordstore.org)"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:916
-msgid "~/.password-store"
-msgstr "~/.password-store"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:924
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:927
-msgid "Choose password store directory"
-msgstr "Scegli directory del password store"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:938
-msgid "Store Directory"
-msgstr "Directory del store"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:939
-msgid "Location of password-store (leave empty for default)"
-msgstr "Posizione del password-store (lasciare vuoto per predefinito)"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:953
-msgid "Initialization Status"
-msgstr "Stato di inizializzazione"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:954
-msgid "Run 'pass init &lt;gpg-id&gt;' to initialize"
-msgstr "Eseguire 'pass init &lt;gpg-id&gt;' per inizializzare"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:965
-msgid "Select Password Store Directory"
-msgstr "Seleziona directory del password store"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:989
-msgid "Portable Encrypted File"
+#: rustconn/src/window/credentials.rs:332
+msgid "Portable encrypted file"
 msgstr "File cifrato portatile"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:991
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:486
 msgid ""
-"Passphrase-protected credential file that can be synced via cloud services"
+"A file encrypted with a passphrase you choose, so it opens on your other "
+"computers"
 msgstr ""
-"File delle credenziali protetto da passphrase, sincronizzabile tramite "
-"servizi cloud"
+"Un file cifrato con una passphrase scelta da te, così si apre anche sui tuoi "
+"altri computer"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:997
-msgid "Path to credential file"
-msgstr "Percorso del file delle credenziali"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:652
+msgid "Not created yet"
+msgstr "Non ancora creato"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1002
-msgid "Browse"
-msgstr "Sfoglia"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:653
+msgid "Ready, no passwords yet"
+msgstr "Pronto, ancora nessuna password"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1006
-msgid "Browse for portable credential file"
-msgstr "Scegli il file delle credenziali portatile"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:659
+msgid "Passwords stored: {}"
+msgstr "Password salvate: {}"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1012
-msgid "File path"
-msgstr "Percorso del file"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:662
+msgid "Cannot read the file: {}"
+msgstr "Impossibile leggere il file: {}"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1013
-msgid "Can be a cloud-synced directory"
-msgstr "Può essere una cartella sincronizzata sul cloud"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:663
+msgid "Could not check the file"
+msgstr "Non è stato possibile controllare il file"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1041
-msgid "Select Portable Credential File"
-msgstr "Scegli il file delle credenziali portatile"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:690
+msgid "Enter the passphrase that will protect the portable file"
+msgstr "Inserisci la passphrase che proteggerà il file portatile"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1074
-msgid "Confirm passphrase"
-msgstr "Conferma passphrase"
-
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1113
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1185
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:694
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1674
 msgid "The two passphrases do not match"
 msgstr "Le due passphrase non corrispondono"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1119
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:698
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1702
 msgid ""
 "Repeat the passphrase to confirm it. A new file cannot be recovered if the "
 "passphrase is wrong."
 msgstr ""
-"Ripeti la passphrase per confermarla. Un file nuovo non può essere recuperato se la passphrase è errata."
+"Ripeti la passphrase per confermarla. Un file nuovo non può essere "
+"recuperato se la passphrase è errata."
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1152
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:787
+msgid "Secrets"
+msgstr "Segreti"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:793
+msgid "Secret Backend"
+msgstr "Backend segreti"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:794
+msgid "Choose how passwords are stored"
+msgstr "Scegli come vengono salvate le password"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:808
+msgid "Backend"
+msgstr "Backend"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:824
+msgid "Version"
+msgstr "Versione"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:839
+msgid "Availability"
+msgstr "Disponibilità"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:851
+msgid "Use the macOS Keychain if the primary backend is unavailable"
+msgstr "Usa il Keychain di macOS se il backend primario non è disponibile"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:853
+msgid "Use libsecret if the primary backend is unavailable"
+msgstr "Usa libsecret se il backend primario non è disponibile"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:855
+msgid "Enable fallback"
+msgstr "Abilita fallback"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:870
+msgid "Copy Passwords…"
+msgstr "Copia le password…"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:874
+msgid "Move between stores"
+msgstr "Spostamento tra archivi"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:876
 msgid ""
-"Copy passwords from the machine-bound encrypted file into this portable file"
+"Copy the passwords you already have from one store into another, for example "
+"into the portable file"
 msgstr ""
-"Copia le password dal file cifrato legato alla macchina in questo file "
-"portatile"
+"Copia le password che hai già da un archivio a un altro, per esempio nel "
+"file portatile"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1158
-msgid "Existing passwords"
-msgstr "Password esistenti"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:917
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:936
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1169
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1284
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1391
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2242
+msgid "Detecting..."
+msgstr "Rilevamento..."
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:922
+msgid "Bitwarden"
+msgstr "Bitwarden"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:923
+msgid "Configure Bitwarden CLI integration"
+msgstr "Configura integrazione CLI di Bitwarden"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:929
+msgid "Master Password"
+msgstr "Password principale"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:930
+msgid "Required to unlock vault"
+msgstr "Necessario per sbloccare la cassaforte"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:946
+msgid "Save master password"
+msgstr "Salva password principale"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:955
+msgid "Use API key authentication"
+msgstr "Usa autenticazione con chiave API"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:957
+msgid "For automation or 2FA methods not supported by CLI (FIDO2, Duo)"
+msgstr "Per automazione o metodi 2FA non supportati dalla CLI (FIDO2, Duo)"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:966
+msgid "client_id"
+msgstr "client_id"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:971
+msgid "Client ID"
+msgstr "ID client"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:973
+msgid "From Bitwarden web vault → Settings → Security → Keys"
+msgstr "Dal vault web di Bitwarden → Impostazioni → Sicurezza → Chiavi"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:982
+msgid "Client Secret"
+msgstr "Segreto client"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:983
+msgid "Keep this secret safe"
+msgstr "Conserva questo segreto al sicuro"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1001
+msgid "Unlock"
+msgstr "Sblocca"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1004
+msgid "Unlock Bitwarden vault"
+msgstr "Sblocca vault Bitwarden"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1016
+msgid "Vault Status"
+msgstr "Stato cassaforte"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1017
+msgid "Login with 'bw login' in terminal first"
+msgstr "Accedi prima con 'bw login' nel terminale"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1041
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1045
+msgid "Enter password"
+msgstr "Inserire password"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1052
+msgid "Unlocking..."
+msgstr "Sblocco..."
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1136
+msgid "Invalid password"
+msgstr "Password non valida"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1140
+msgid "Unlock failed"
+msgstr "Sblocco fallito"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1154
+msgid "1Password"
+msgstr "1Password"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1155
+msgid "Configure 1Password CLI integration"
+msgstr "Configura integrazione CLI di 1Password"
 
 #: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1160
-msgid "Re-encrypt credentials from the machine-bound file with your passphrase"
-msgstr ""
-"Cifra di nuovo le credenziali del file legato alla macchina con la tua "
-"passphrase"
+msgid "Service Account Token"
+msgstr "Token account di servizio"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1182
-msgid "Enter the passphrase that will protect the portable file"
-msgstr "Inserisci la passphrase che proteggerà il file portatile"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1162
+msgid "For headless/automated access (OP_SERVICE_ACCOUNT_TOKEN)"
+msgstr "Per accesso automatizzato (OP_SERVICE_ACCOUNT_TOKEN)"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1179
+msgid "Save token"
+msgstr "Salva token"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1186
+msgid "Sign In"
+msgstr "Accedi"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1189
+msgid "Sign in to 1Password (opens terminal)"
+msgstr "Accedi a 1Password (apre il terminale)"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1201
+msgid "Account Status"
+msgstr "Stato account"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1203
+msgid "Sign in with 'op signin' in terminal or use biometric unlock"
+msgstr "Accedi con 'op signin' nel terminale o usa lo sblocco biometrico"
 
 #: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1215
-msgid "No stored passwords to copy"
-msgstr "Nessuna password salvata da copiare"
+msgid "Opening terminal..."
+msgstr "Apertura terminale..."
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1232
-msgid "Checking the passphrase…"
-msgstr "Verifica della passphrase…"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1240
+msgid "Check terminal"
+msgstr "Verifica terminale"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1255
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1246
+msgid "No terminal found"
+msgstr "Nessun terminale trovato"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1257
+msgid "Passbolt"
+msgstr "Passbolt"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1258
+msgid "Configure Passbolt CLI integration"
+msgstr "Configura integrazione CLI di Passbolt"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1268
+msgid "Server URL"
+msgstr "URL server"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1269
+msgid "Passbolt web vault address"
+msgstr "Indirizzo del vault web di Passbolt"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1277
+msgid "GPG Passphrase"
+msgstr "Passphrase GPG"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1278
+msgid "Required to decrypt credentials from Passbolt"
+msgstr "Necessario per decrittare le credenziali da Passbolt"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1293
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1727
+msgid "Save passphrase"
+msgstr "Salva passphrase"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1300
+msgid "Open Vault"
+msgstr "Apri cassaforte"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1303
+msgid "Open Passbolt web vault in browser"
+msgstr "Apri vault web Passbolt nel browser"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1315
+msgid "Server Status"
+msgstr "Stato server"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1316
+msgid "Configure with 'passbolt configure' in terminal"
+msgstr "Configura con 'passbolt configure' nel terminale"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1339
+msgid "Failed to open browser"
+msgstr "Impossibile aprire il browser"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1344
+msgid "Enter server URL or run 'passbolt configure'"
+msgstr "Inserire URL del server o eseguire 'passbolt configure'"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1355
+msgid "Pass"
+msgstr "Pass"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1356
+msgid "Configure Pass (passwordstore.org) integration"
+msgstr "Configura integrazione Pass (passwordstore.org)"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1361
+msgid "~/.password-store"
+msgstr "~/.password-store"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1369
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1372
+msgid "Choose password store directory"
+msgstr "Scegli directory del password store"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1383
+msgid "Store Directory"
+msgstr "Directory del store"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1384
+msgid "Location of password-store (leave empty for default)"
+msgstr "Posizione del password-store (lasciare vuoto per predefinito)"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1398
+msgid "Initialization Status"
+msgstr "Stato di inizializzazione"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1399
+msgid "Run 'pass init &lt;gpg-id&gt;' to initialize"
+msgstr "Eseguire 'pass init &lt;gpg-id&gt;' per inizializzare"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1410
+msgid "Select Password Store Directory"
+msgstr "Seleziona directory del password store"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1439
+msgid "Encrypted File"
+msgstr "File cifrato"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1441
+msgid ""
+"Credentials in a file on this computer. The key is derived from this "
+"machine, so the file cannot be opened anywhere else — and cannot be "
+"recovered if the machine is lost."
+msgstr ""
+"Credenziali in un file su questo computer. La chiave deriva da questa "
+"macchina, quindi il file non si apre altrove — e non è recuperabile se la "
+"macchina va perduta."
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1447
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1499
+msgid "File path"
+msgstr "Percorso del file"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1467
+msgid "Portable Encrypted File"
+msgstr "File cifrato portatile"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1469
+msgid ""
+"Credentials in a file encrypted with a passphrase you choose. Put it in a "
+"folder your cloud client syncs and the same file opens on your other "
+"computers. There is no way to recover the passphrase, so it is asked for "
+"twice."
+msgstr ""
+"Credenziali in un file cifrato con una passphrase scelta da te. Mettilo in "
+"una cartella sincronizzata dal tuo client cloud e lo stesso file si aprirà "
+"sui tuoi altri computer. La passphrase non è recuperabile, perciò viene "
+"chiesta due volte."
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1486
+msgid "Browse"
+msgstr "Sfoglia"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1490
+msgid "Browse for portable credential file"
+msgstr "Scegli il file delle credenziali portatile"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1500
+msgid ""
+"Name a file inside a folder your cloud client syncs. Leave empty for the "
+"default location."
+msgstr ""
+"Assegna un nome a un file in una cartella sincronizzata dal tuo client "
+"cloud. Lascia vuoto per la posizione predefinita."
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1551
+msgid "Select Portable Credential File"
+msgstr "Scegli il file delle credenziali portatile"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1584
+msgid "Confirm passphrase"
+msgstr "Conferma passphrase"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1743
+msgid "Create File"
+msgstr "Crea il file"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1748
+msgid "Set up the file"
+msgstr "Configurazione del file"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1750
+msgid ""
+"Create the file now, or check that your passphrase opens one that is already "
+"there"
+msgstr ""
+"Crea il file adesso, oppure verifica che la tua passphrase apra quello già "
+"presente"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1782
+msgid "Setting up the file…"
+msgstr "Configurazione del file…"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1798
+msgid "Created {}"
+msgstr "Creato {}"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1802
+msgid "That file is already there and your passphrase opens it"
+msgstr "Quel file esiste già e la tua passphrase lo apre"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1807
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1939
 msgid ""
 "That passphrase does not open the existing portable file. Enter the "
 "passphrase the file was created with."
@@ -6325,144 +6722,183 @@ msgstr ""
 "Questa passphrase non apre il file portatile esistente. Inserisci la "
 "passphrase con cui il file è stato creato."
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1258
-msgid "Cannot open the portable file: {}"
-msgstr "Impossibile aprire il file portatile: {}"
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1812
+msgid "Cannot set up the file: {}"
+msgstr "Impossibile configurare il file: {}"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1261
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1815
+msgid "Could not set up the file"
+msgstr "Non è stato possibile configurare il file"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1830
+msgid "Change Passphrase…"
+msgstr "Cambia la passphrase…"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1837
+msgid ""
+"Choose a new passphrase and encrypt every password in the file again under it"
+msgstr ""
+"Scegli una nuova passphrase e cifra di nuovo con essa ogni password nel file"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1848
+msgid ""
+"Copy passwords from the machine-bound encrypted file into this portable file"
+msgstr ""
+"Copia le password dal file cifrato legato alla macchina in questo file "
+"portatile"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1854
+msgid "Existing passwords"
+msgstr "Password esistenti"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1856
+msgid "Re-encrypt credentials from the machine-bound file with your passphrase"
+msgstr ""
+"Cifra di nuovo le credenziali del file legato alla macchina con la tua "
+"passphrase"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1902
+msgid "No stored passwords to copy"
+msgstr "Nessuna password salvata da copiare"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1920
+msgid "Checking the passphrase…"
+msgstr "Verifica della passphrase…"
+
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1945
 msgid "Could not check the passphrase"
 msgstr "Impossibile verificare la passphrase"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1296
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1983
 msgid "KeePass Database"
 msgstr "Database KeePass"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1298
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1985
 msgid ""
 "Configure KDBX file integration (works with KeePassXC, GNOME Secrets, etc.)"
 msgstr ""
 "Configura integrazione file KDBX (funziona con KeePassXC, GNOME Secrets, "
 "ecc.)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1303
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1990
 msgid "KDBX Integration"
 msgstr "Integrazione KDBX"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1304
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1991
 msgid "Enable direct database access"
 msgstr "Abilita accesso diretto al database"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1310
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1997
 msgid "Select .kdbx file"
 msgstr "Seleziona file .kdbx"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1317
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2004
 msgid "Browse for database file"
 msgstr "Cerca file database"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1320
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2007
 msgid "Browse for KeePass database file"
 msgstr "Sfoglia file database KeePass"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1331
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2018
 msgid "Database File"
 msgstr "File database"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1341
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2028
 msgid "Database unlock methods"
 msgstr "Metodi di sblocco del database"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1350
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2037
 msgid "Use password"
 msgstr "Usa password"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1366
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2053
 msgid "Not connected"
 msgstr "Non connesso"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1382
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2069
 msgid "Save password"
 msgstr "Salva password"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1391
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2078
 msgid "Use key file"
 msgstr "Usa file chiave"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1399
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2086
 msgid "Select .keyx or .key file"
 msgstr "Seleziona file .keyx o .key"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1427
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2114
 msgid "KDBX Status"
 msgstr "Stato KDBX"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1432
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2119
 msgid "Check"
 msgstr "Verifica"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1434
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2121
 msgid "Test database connection"
 msgstr "Testa connessione database"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1446
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2133
 msgid "Connection Status"
 msgstr "Stato connessione"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1552
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1958
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1967
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1975
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2239
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2646
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2655
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2663
 msgid "Not installed"
 msgstr "Non installato"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1637
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2431
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2324
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:3144
 msgid "Token loaded from keyring"
 msgstr "Token caricato dal portachiavi"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1698
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2386
 msgid "Select KeePass Database"
 msgstr "Seleziona database KeePass"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1704
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2392
 msgid "KeePass Database (*.kdbx)"
 msgstr "Database KeePass (*.kdbx)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1732
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2420
 msgid "Select Key File"
 msgstr "Seleziona file chiave"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1739
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2427
 msgid "Key Files (*.keyx, *.key)"
 msgstr "File chiave (*.keyx, *.key)"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1743
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2431
 msgid "All Files"
 msgstr "Tutti i file"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1779
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2467
 msgid "No database selected"
 msgstr "Nessun database selezionato"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1827
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2515
 #: rustconn/src/embedded_rdp/ui.rs:167 rustconn/src/embedded_trait.rs:324
 #: rustconn/src/sidebar/view.rs:688
 msgid "Connected"
 msgstr "Connesso"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2094
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2799
 msgid "No keyring service responding"
 msgstr "Nessun servizio portachiavi risponde"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2096
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2801
 msgid "Keyring client not installed"
 msgstr "Client portachiavi non installato"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2269
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2982
 msgid "Database path required"
 msgstr "Percorso database richiesto"
 
-#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2272
+#: rustconn/src/dialogs/settings/secrets_tab/mod.rs:2985
 msgid "Disabled"
 msgstr "Disattivato"
 
@@ -7264,12 +7700,6 @@ msgstr "Attiva il terminale"
 #: rustconn/src/dialogs/shortcuts.rs:158
 msgid "Command Palette (Commands)"
 msgstr "Tavolozza comandi (comandi)"
-
-#: rustconn/src/dialogs/shortcuts.rs:161 rustconn/src/dialogs/widgets.rs:465
-#: rustconn/src/embedded_rdp/mod.rs:563 rustconn/src/embedded_trait.rs:205
-#: rustconn/src/embedded_vnc/ui.rs:47 rustconn/src/terminal/config.rs:252
-msgid "Copy"
-msgstr "Copia"
 
 #: rustconn/src/dialogs/shortcuts.rs:162 rustconn/src/embedded_rdp/mod.rs:571
 #: rustconn/src/embedded_trait.rs:213 rustconn/src/embedded_vnc/ui.rs:52
@@ -9768,10 +10198,6 @@ msgstr "Pulisci terminale"
 msgid "Play"
 msgstr "Avvia"
 
-#: rustconn/src/terminal/playback.rs:264
-msgid "Stop"
-msgstr "Ferma"
-
 #: rustconn/src/terminal/playback.rs:265
 msgid "Stop playback"
 msgstr "Interrompi riproduzione"
@@ -9987,7 +10413,7 @@ msgstr ""
 msgid "Password not saved"
 msgstr "Password non salvata"
 
-#: rustconn/src/vault_ops.rs:130 rustconn/src/window/mod.rs:4214
+#: rustconn/src/vault_ops.rs:130 rustconn/src/window/mod.rs:4219
 msgid "Passphrase Does Not Open the Portable File"
 msgstr "La passphrase non apre il file portatile"
 
@@ -10255,14 +10681,6 @@ msgstr "Importate {} connessioni e {} snippet nel gruppo '{}'"
 #: rustconn/src/window/connection_dialogs.rs:1145
 msgid "Imported {} connections to '{}' group"
 msgstr "Importate {} connessioni nel gruppo '{}'"
-
-#: rustconn/src/window/credentials.rs:328
-msgid "Encrypted file"
-msgstr "File cifrato"
-
-#: rustconn/src/window/credentials.rs:332
-msgid "Portable encrypted file"
-msgstr "File cifrato portatile"
 
 #: rustconn/src/window/credentials.rs:390
 msgid "Failed to save variable to vault: {}"
@@ -10779,15 +11197,15 @@ msgstr "Connessione “{}” creata"
 msgid "RustConn - {}"
 msgstr "RustConn — {}"
 
-#: rustconn/src/window/mod.rs:3193
+#: rustconn/src/window/mod.rs:3198
 msgid "Settings saved"
 msgstr "Impostazioni salvate"
 
-#: rustconn/src/window/mod.rs:3211
+#: rustconn/src/window/mod.rs:3216
 msgid "Passphrase Not Saved on This Computer"
 msgstr "Passphrase non salvata su questo computer"
 
-#: rustconn/src/window/mod.rs:3213
+#: rustconn/src/window/mod.rs:3218
 msgid ""
 "The passphrase could not be encrypted for local storage, so it is kept for "
 "this session only and you will be asked for it again after a restart. Choose "
@@ -10799,11 +11217,11 @@ msgstr ""
 "nuovo dopo un riavvio. Scegli invece «Portachiavi di sistema» oppure "
 "verifica che RustConn possa scrivere nella sua cartella dati."
 
-#: rustconn/src/window/mod.rs:3259
+#: rustconn/src/window/mod.rs:3264
 msgid "Credentials Not Saved to Keyring"
 msgstr "Credenziali non salvate nel portachiavi"
 
-#: rustconn/src/window/mod.rs:3261
+#: rustconn/src/window/mod.rs:3266
 msgid ""
 "The system keyring did not accept the credentials, so they are kept for this "
 "session only and will be gone after a restart. Check that your keyring "
@@ -10814,37 +11232,37 @@ msgstr ""
 "che il servizio del portachiavi sia in esecuzione e sbloccato, poi salva di "
 "nuovo le impostazioni."
 
-#: rustconn/src/window/mod.rs:3441
+#: rustconn/src/window/mod.rs:3446
 msgid "Close RustConn?"
 msgstr "Chiudere RustConn?"
 
-#: rustconn/src/window/mod.rs:3443
+#: rustconn/src/window/mod.rs:3448
 msgid "{} session tab(s) are open. Active connections will be disconnected."
 msgstr ""
 "{} schede di sessione sono aperte. Le connessioni attive verranno "
 "disconnesse."
 
-#: rustconn/src/window/mod.rs:3478
+#: rustconn/src/window/mod.rs:3483
 msgid "Cloud sync failed for '{}': {}"
 msgstr "Sincronizzazione cloud non riuscita per «{}»: {}"
 
-#: rustconn/src/window/mod.rs:3659
+#: rustconn/src/window/mod.rs:3664
 msgid "Startup connection not found"
 msgstr "Connessione di avvio non trovata"
 
-#: rustconn/src/window/mod.rs:3695
+#: rustconn/src/window/mod.rs:3700
 msgid "Failed to open .rdp file"
 msgstr "Impossibile aprire il file .rdp"
 
-#: rustconn/src/window/mod.rs:3731
+#: rustconn/src/window/mod.rs:3736
 msgid "Failed to open .vv file"
 msgstr "Impossibile aprire il file .vv"
 
-#: rustconn/src/window/mod.rs:4130
+#: rustconn/src/window/mod.rs:4135
 msgid "Successfully exported {} connection(s). {} skipped."
 msgstr "Esportate con successo {} connessione/i. {} saltate."
 
-#: rustconn/src/window/mod.rs:4216
+#: rustconn/src/window/mod.rs:4221
 msgid ""
 "The passphrase you saved does not decrypt the portable credential file, so "
 "none of the passwords in it can be read. Open Settings ▸ Secrets and enter "
@@ -11554,6 +11972,33 @@ msgstr "RustConn"
 #: rustconn/assets/io.github.totoshko88.RustConn.desktop:15
 msgid "ssh;rdp;vnc;spice;mosh;telnet;zerotrust;connection;terminal;remote;kubernetes;k8s;serial;sftp;"
 msgstr "ssh;rdp;vnc;spice;mosh;telnet;zerotrust;connessione;terminal;remote;kubernetes;k8s;seriale;sftp;"
+
+#~ msgid "Copying…"
+#~ msgstr "Copia in corso…"
+
+#~ msgid "Encrypted file (no system keyring)"
+#~ msgstr "File cifrato (senza portachiavi di sistema)"
+
+#~ msgid "Portable encrypted file (cloud-syncable)"
+#~ msgstr "File cifrato portatile (sincronizzabile sul cloud)"
+
+#~ msgid "Primary password storage method"
+#~ msgstr "Metodo principale di archiviazione password"
+
+#~ msgid "Use libsecret if primary backend unavailable"
+#~ msgstr "Usa libsecret se il backend principale non è disponibile"
+
+#~ msgid ""
+#~ "Passphrase-protected credential file that can be synced via cloud services"
+#~ msgstr ""
+#~ "File delle credenziali protetto da passphrase, sincronizzabile tramite "
+#~ "servizi cloud"
+
+#~ msgid "Path to credential file"
+#~ msgstr "Percorso del file delle credenziali"
+
+#~ msgid "Can be a cloud-synced directory"
+#~ msgstr "Può essere una cartella sincronizzata sul cloud"
 
 #~ msgid "Copied {} credentials, {} could not be read"
 #~ msgstr "Copiate {} credenziali, {} non è stato possibile leggerle"
