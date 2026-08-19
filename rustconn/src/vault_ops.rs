@@ -24,6 +24,22 @@ fn show_vault_save_error(err: &rustconn_core::error::SecretError) {
     use libadwaita as adw;
     use libadwaita::prelude::*;
 
+    // A locked portable store is not a broken backend, and the generic recovery
+    // text below ("no system keyring is responding, pick another backend") is
+    // wrong advice for it. It also used to surface the raw core error string,
+    // which is English in every locale.
+    if matches!(
+        err,
+        rustconn_core::error::SecretError::PassphraseRequired
+            | rustconn_core::error::SecretError::IncorrectPassphrase
+    ) {
+        show_portable_locked_error(matches!(
+            err,
+            rustconn_core::error::SecretError::IncorrectPassphrase
+        ));
+        return;
+    }
+
     // The cause is the SecretError Display string. Its variants embed only
     // operation context and backend diagnostics (e.g. secret-tool stderr),
     // never secret values, so it is safe to surface verbatim (R1.4).
@@ -71,6 +87,70 @@ fn show_vault_save_error(err: &rustconn_core::error::SecretError) {
             if response == "settings" {
                 // Activate the existing window action that opens the Settings
                 // dialog; the user navigates to the Secrets section there.
+                let _ = gtk4::prelude::WidgetExt::activate_action(
+                    &window_for_action,
+                    "win.settings",
+                    None,
+                );
+            }
+        });
+
+        dialog.present(Some(&window));
+    });
+}
+
+/// Reports that the portable credential file could not be written because it is
+/// locked, or because the passphrase in force does not open it.
+///
+/// `wrong_passphrase` picks between the two: they need different next steps, and
+/// telling someone to "enter the passphrase" when they already have one entered
+/// and wrong is the kind of advice that gets a bug report.
+///
+/// The suggested action opens Settings ▸ Secrets rather than the unlock dialog
+/// directly. The unlock dialog hands its result to `AppState::unlock_portable_store`,
+/// and this function is reached from `spawn_blocking_with_callback` on paths that
+/// hold no state handle — routing through Settings keeps one place responsible
+/// for recording a verified passphrase instead of adding a second.
+fn show_portable_locked_error(wrong_passphrase: bool) {
+    use gtk4::prelude::*;
+    use libadwaita as adw;
+    use libadwaita::prelude::*;
+
+    gtk4::glib::idle_add_local_once(move || {
+        let Some(window) = gtk4::gio::Application::default()
+            .and_then(|app| app.downcast_ref::<gtk4::Application>().cloned())
+            .and_then(|app| app.active_window())
+        else {
+            tracing::warn!("Could not show portable store lock dialog: no active window");
+            return;
+        };
+
+        let (heading, body) = if wrong_passphrase {
+            (
+                crate::i18n::i18n("Passphrase Does Not Open the Portable File"),
+                crate::i18n::i18n(
+                    "The password was not saved. The passphrase in use does not decrypt the portable credential file. Open Settings, then Secrets, and enter the passphrase the file was created with.",
+                ),
+            )
+        } else {
+            (
+                crate::i18n::i18n("Portable File Is Locked"),
+                crate::i18n::i18n(
+                    "The password was not saved because the portable credential file has not been unlocked in this session. Open Settings, then Secrets, and enter its passphrase.",
+                ),
+            )
+        };
+
+        let dialog = adw::AlertDialog::new(Some(&heading), Some(&body));
+        dialog.add_response("close", &crate::i18n::i18n("Close"));
+        dialog.add_response("settings", &crate::i18n::i18n("Open Settings"));
+        dialog.set_response_appearance("settings", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("settings"));
+        dialog.set_close_response("close");
+
+        let window_for_action = window.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response == "settings" {
                 let _ = gtk4::prelude::WidgetExt::activate_action(
                     &window_for_action,
                     "win.settings",
@@ -131,17 +211,23 @@ fn show_vault_fallback_toast() {
 ///
 /// # Errors
 ///
-/// Returns a human-readable error string if the store times out after 10s or
-/// every backend in the chain rejects the write.
+/// Returns the backend's own [`SecretError`] if the store times out after 10s or
+/// every backend in the chain rejects the write. The typed error is preserved
+/// rather than flattened to a string because the caller has to tell a locked
+/// portable store apart from an unresponsive keyring — the two need different
+/// advice, and a formatted string cannot be matched on.
 ///
 /// [`SecretManager`]: rustconn_core::secret::SecretManager
 /// [`SecretManager::store_reported`]: rustconn_core::secret::SecretManager::store_reported
 /// [`StoreOutcome`]: rustconn_core::secret::StoreOutcome
+/// [`SecretError`]: rustconn_core::error::SecretError
 fn store_reported_blocking(
     secret_settings: &rustconn_core::config::SecretSettings,
     lookup_key: &str,
     creds: &rustconn_core::models::Credentials,
-) -> Result<rustconn_core::secret::StoreOutcome, String> {
+) -> Result<rustconn_core::secret::StoreOutcome, rustconn_core::error::SecretError> {
+    use rustconn_core::error::SecretError;
+
     let manager = rustconn_core::secret::SecretManager::build_from_settings(secret_settings);
     let allow_fallback = secret_settings.enable_fallback;
 
@@ -154,10 +240,10 @@ fn store_reported_blocking(
                 manager.store_reported(lookup_key, creds, allow_fallback),
             )
             .await
-            .map_err(|_| "Vault store timed out after 10s".to_string())?
-            .map_err(|e| format!("{e}"))
+            .map_err(|_| SecretError::StoreFailed("Vault store timed out after 10s".to_string()))?
         })
     })
+    .map_err(SecretError::StoreFailed)
     .and_then(|r| r)
 }
 
@@ -281,7 +367,10 @@ pub fn save_password_to_vault(
                 };
                 store_reported_blocking(&secret_settings, &lookup_key, &creds)
             },
-            move |result: Result<rustconn_core::secret::StoreOutcome, String>| match result {
+            move |result: Result<
+                rustconn_core::secret::StoreOutcome,
+                rustconn_core::error::SecretError,
+            >| match result {
                 Ok(rustconn_core::secret::StoreOutcome::Primary) => {
                     tracing::info!("Password saved to vault for connection {conn_id}");
                 }
@@ -295,7 +384,7 @@ pub fn save_password_to_vault(
                 }
                 Err(e) => {
                     tracing::error!("Failed to save password to vault: {e}");
-                    show_vault_save_error(&rustconn_core::error::SecretError::StoreFailed(e));
+                    show_vault_save_error(&e);
                 }
             },
         );
@@ -373,7 +462,10 @@ pub fn save_group_password_to_vault(
                 };
                 store_reported_blocking(&secret_settings, &lookup_key, &creds)
             },
-            move |result: Result<rustconn_core::secret::StoreOutcome, String>| match result {
+            move |result: Result<
+                rustconn_core::secret::StoreOutcome,
+                rustconn_core::error::SecretError,
+            >| match result {
                 Ok(rustconn_core::secret::StoreOutcome::Primary) => {
                     tracing::info!("Group password saved to vault");
                 }
@@ -386,7 +478,7 @@ pub fn save_group_password_to_vault(
                 }
                 Err(e) => {
                     tracing::error!("Failed to save group password to vault: {e}");
-                    show_vault_save_error(&rustconn_core::error::SecretError::StoreFailed(e));
+                    show_vault_save_error(&e);
                 }
             },
         );
@@ -1122,6 +1214,19 @@ fn retrieve_by_vault_entry_name(
                                 .map(|p| zeroize::Zeroizing::new(p.to_string()))
                         }))
                     }
+                    SecretBackendType::PortableEncryptedFile => {
+                        // Passphrase-based portable file: needs the session
+                        // passphrase from settings to unlock.
+                        let backend = portable_backend_from_settings(settings);
+                        let creds = backend
+                            .retrieve(entry_name)
+                            .await
+                            .map_err(|e| format!("{e}"))?;
+                        Ok(creds.and_then(|c| {
+                            c.expose_password()
+                                .map(|p| zeroize::Zeroizing::new(p.to_string()))
+                        }))
+                    }
                     _ => {
                         // System keyring — lookup by entry_name as attribute.
                         // macOS uses the Keychain; LibSecretBackend (oo7) is
@@ -1548,70 +1653,136 @@ pub fn dispatch_vault_op(
     lookup_key: &str,
     op: VaultOp<'_>,
 ) -> Result<Option<rustconn_core::models::Credentials>, String> {
+    dispatch_vault_op_for(
+        secret_settings,
+        select_backend_for_load(secret_settings),
+        lookup_key,
+        op,
+    )
+}
+
+/// Constructs one backend of the named type from `secret_settings`.
+///
+/// Split out of [`dispatch_vault_op_for`] so a caller that performs many
+/// operations against the same backend can build it **once**. That is not a
+/// micro-optimisation for the portable file: its `store` derives the data key
+/// from the passphrase with Argon2id, and the derivation is cached *per backend
+/// instance*, so a fresh instance per credential means a full ~0.5 s KDF pass
+/// each time. Its `write_lock` is per instance too, so separate instances
+/// serialise nothing against each other.
+///
+/// `KeePassXc` / `KdbxFile` deliberately resolve to the system keyring here,
+/// because KDBX proper is not a [`SecretBackend`] — it goes through
+/// `KeePassStatus` and the `keepassxc-cli` binary. Callers that mean the database
+/// itself must intercept those two variants before calling this.
+///
+/// # Errors
+///
+/// Returns a human-readable error when the backend cannot be constructed, which
+/// today only happens for Bitwarden, whose construction includes an unlock.
+fn build_single_backend(
+    secret_settings: &rustconn_core::config::SecretSettings,
+    backend_type: rustconn_core::config::SecretBackendType,
+    rt: &tokio::runtime::Runtime,
+) -> Result<std::sync::Arc<dyn rustconn_core::secret::SecretBackend>, String> {
     use rustconn_core::config::SecretBackendType;
     use rustconn_core::secret::SecretBackend;
 
-    let backend_type = select_backend_for_load(secret_settings);
-
-    crate::async_utils::with_runtime(|rt| {
-        let backend: std::sync::Arc<dyn SecretBackend> = match backend_type {
-            SecretBackendType::Bitwarden => std::sync::Arc::new(rt.block_on(async {
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    rustconn_core::secret::auto_unlock(secret_settings),
-                )
-                .await
-                .map_err(|_| "Bitwarden auto-unlock timed out after 30s".to_string())?
-                .map_err(|e| format!("{e}"))
-            })?),
-            SecretBackendType::OnePassword => {
-                let mut backend = rustconn_core::secret::OnePasswordBackend::new();
-                if let Some(ref token) = secret_settings.onepassword_service_account_token {
-                    backend.set_service_account_token(token.clone());
-                }
-                std::sync::Arc::new(backend)
+    let backend: std::sync::Arc<dyn SecretBackend> = match backend_type {
+        SecretBackendType::Bitwarden => std::sync::Arc::new(rt.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                rustconn_core::secret::auto_unlock(secret_settings),
+            )
+            .await
+            .map_err(|_| "Bitwarden auto-unlock timed out after 30s".to_string())?
+            .map_err(|e| format!("{e}"))
+        })?),
+        SecretBackendType::OnePassword => {
+            let mut backend = rustconn_core::secret::OnePasswordBackend::new();
+            if let Some(ref token) = secret_settings.onepassword_service_account_token {
+                backend.set_service_account_token(token.clone());
             }
-            SecretBackendType::Passbolt => {
-                let mut backend = rustconn_core::secret::PassboltBackend::new();
-                if let Some(ref url) = secret_settings.passbolt_server_url {
-                    backend = backend.with_server_address(url.clone());
-                }
-                if let Some(ref passphrase) = secret_settings.passbolt_passphrase {
-                    backend = backend.with_user_password(passphrase.clone());
-                }
-                std::sync::Arc::new(backend)
+            std::sync::Arc::new(backend)
+        }
+        SecretBackendType::Passbolt => {
+            let mut backend = rustconn_core::secret::PassboltBackend::new();
+            if let Some(ref url) = secret_settings.passbolt_server_url {
+                backend = backend.with_server_address(url.clone());
             }
-            SecretBackendType::Pass => std::sync::Arc::new(
-                rustconn_core::secret::PassBackend::from_secret_settings(secret_settings),
-            ),
+            if let Some(ref passphrase) = secret_settings.passbolt_passphrase {
+                backend = backend.with_user_password(passphrase.clone());
+            }
+            std::sync::Arc::new(backend)
+        }
+        SecretBackendType::Pass => std::sync::Arc::new(
+            rustconn_core::secret::PassBackend::from_secret_settings(secret_settings),
+        ),
+        #[cfg(target_os = "macos")]
+        SecretBackendType::MacOsKeychain => {
+            std::sync::Arc::new(rustconn_core::secret::MacOsKeychainBackend::new())
+        }
+        #[cfg(not(target_os = "macos"))]
+        SecretBackendType::MacOsKeychain => {
+            std::sync::Arc::new(rustconn_core::secret::LibSecretBackend::new("rustconn"))
+        }
+        SecretBackendType::LibSecret
+        | SecretBackendType::KeePassXc
+        | SecretBackendType::KdbxFile => {
+            // macOS uses the system Keychain; LibSecretBackend (oo7) is not
+            // compiled there (R10.1, R10.2). Non-macOS keeps libsecret.
             #[cfg(target_os = "macos")]
-            SecretBackendType::MacOsKeychain => {
+            {
                 std::sync::Arc::new(rustconn_core::secret::MacOsKeychainBackend::new())
             }
             #[cfg(not(target_os = "macos"))]
-            SecretBackendType::MacOsKeychain => {
+            {
                 std::sync::Arc::new(rustconn_core::secret::LibSecretBackend::new("rustconn"))
             }
-            SecretBackendType::LibSecret
-            | SecretBackendType::KeePassXc
-            | SecretBackendType::KdbxFile => {
-                // macOS uses the system Keychain; LibSecretBackend (oo7) is not
-                // compiled there (R10.1, R10.2). Non-macOS keeps libsecret.
-                #[cfg(target_os = "macos")]
-                {
-                    std::sync::Arc::new(rustconn_core::secret::MacOsKeychainBackend::new())
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    std::sync::Arc::new(rustconn_core::secret::LibSecretBackend::new("rustconn"))
-                }
-            }
-            SecretBackendType::EncryptedFile => {
-                // Application-managed encrypted file; addressed by the flat
-                // lookup key, same as the other app-managed backends.
-                std::sync::Arc::new(rustconn_core::secret::EncryptedFileBackend::new())
-            }
-        };
+        }
+        SecretBackendType::EncryptedFile => {
+            // Application-managed encrypted file; addressed by the flat
+            // lookup key, same as the other app-managed backends.
+            std::sync::Arc::new(rustconn_core::secret::EncryptedFileBackend::new())
+        }
+        SecretBackendType::PortableEncryptedFile => {
+            // Passphrase-based portable encrypted file.
+            std::sync::Arc::new(portable_backend_from_settings(secret_settings))
+        }
+    };
+    Ok(backend)
+}
+
+/// Dispatches a single vault operation to an explicitly named backend.
+///
+/// [`dispatch_vault_op`] always addresses whichever backend the settings prefer,
+/// which is right for saving and deleting a credential. A credential *transfer*
+/// has to address two backends in one operation, neither of which need be the
+/// preferred one, so the type is a parameter here.
+///
+/// `secret_settings` is still needed in full: it carries the per-backend
+/// configuration (Bitwarden unlock, the 1Password token, the Passbolt server and
+/// passphrase, the `pass` store directory, the portable file's path and
+/// passphrase) that constructing the backend requires.
+///
+/// `KeePassXc` / `KdbxFile` are **not** handled here. They resolve to the system
+/// keyring, which is correct for `dispatch_vault_op`'s callers — KDBX proper goes
+/// through `KeePassStatus` — but would be a silent substitution for a transfer
+/// that names KeePass explicitly. [`TransferPort`] intercepts those two variants
+/// for that reason.
+///
+/// # Errors
+///
+/// Returns a human-readable error string if the backend is unavailable or the
+/// operation fails.
+pub fn dispatch_vault_op_for(
+    secret_settings: &rustconn_core::config::SecretSettings,
+    backend_type: rustconn_core::config::SecretBackendType,
+    lookup_key: &str,
+    op: VaultOp<'_>,
+) -> Result<Option<rustconn_core::models::Credentials>, String> {
+    crate::async_utils::with_runtime(|rt| {
+        let backend = build_single_backend(secret_settings, backend_type, rt)?;
 
         match op {
             VaultOp::Store(creds) => {
@@ -1671,10 +1842,674 @@ pub fn dispatch_vault_op(
     .and_then(|r| r)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Credential transfer between backends
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// How long one entry's read or write may take before the transfer moves on.
+///
+/// Ten seconds, matching what the rest of this module allows a single vault
+/// operation. It is per entry rather than per batch: forty entries are allowed
+/// forty of these, because the alternative — one budget for the whole run — makes
+/// the last entries fail for the first entries' slowness.
+const TRANSFER_OP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The message for an operation that ran out of time.
+///
+/// One function so the two arms of each operation cannot drift into reporting
+/// different wordings, and so the duration is stated once.
+fn timed_out(operation: &str) -> String {
+    format!(
+        "the {operation} timed out after {}s",
+        TRANSFER_OP_TIMEOUT.as_secs()
+    )
+}
+
+/// One side of a transfer, opened once for the whole batch.
+///
+/// The KDBX arms run their `keepassxc-cli` call on a blocking task under a
+/// [`TRANSFER_OP_TIMEOUT`], which the backend arms already had and they did not.
+/// This bounds *the transfer*, not the child process: `std::process::Command` has
+/// no timeout, so a `keepassxc-cli` that never returns — a database on an
+/// unreachable mount, a hardware key waiting for a touch — leaves its blocking
+/// task parked until the process exits. That is a leaked thread against a loop
+/// that would otherwise stop dead on one entry and never reach the other thirty
+/// nine, which is the worse of the two.
+///
+/// Two consequences of that abandoned task are worth stating rather than
+/// discovering. Its `Zeroizing` plaintext password — and its handle on the shared
+/// database password — are released when the closure returns, so a task that never
+/// returns holds both for as long as the child lives: the timeout bounds the
+/// *transfer*, not the exposure. And on the
+/// write side the abandoned `keepassxc-cli` is still writing while the loop moves
+/// on, so two of them can touch one `.kdbx`; `save_password_to_kdbx` removes an
+/// existing entry before adding it, so a timed-out write can leave its entry
+/// deleted in the destination. The source is untouched either way and running the
+/// transfer again repairs it, which is why this is a documented edge and not a
+/// refusal to proceed.
+///
+/// Two reasons this is not just a [`SecretBackendType`] passed to
+/// [`dispatch_vault_op_for`] per entry. The portable store caches its
+/// passphrase-derived data key *per backend instance*, so a fresh instance per
+/// credential pays a full Argon2id derivation each time — roughly half a second
+/// — and its write mutex is per instance too, so separate instances serialise
+/// nothing. And the checks that decide whether a side is usable at all belong
+/// before the loop, not once per entry: a locked KeePass database should say so
+/// once, not fail forty times.
+enum TransferPort {
+    /// A [`SecretBackend`](rustconn_core::secret::SecretBackend) instance, reused
+    /// for every entry.
+    Backend(std::sync::Arc<dyn rustconn_core::secret::SecretBackend>),
+    /// The KeePass database, which is not a `SecretBackend`: it is reached through
+    /// `KeePassStatus` and the `keepassxc-cli` binary.
+    Kdbx {
+        /// Database file.
+        path: std::path::PathBuf,
+        /// Database password, when the database uses one.
+        ///
+        /// Behind an `Arc` because each entry's call moves its inputs into a
+        /// blocking task, and `SecretString` is `SecretBox<str>`: cloning it
+        /// copies the plaintext into a fresh allocation. That would be one
+        /// transient plaintext copy of the database master password per entry,
+        /// and — since a timed-out task keeps running — several live at once.
+        /// `Arc::clone` copies a pointer and leaves one copy for the whole batch.
+        db_password: Option<std::sync::Arc<secrecy::SecretString>>,
+        /// Key file, when the database uses one.
+        key_file: Option<std::path::PathBuf>,
+    },
+}
+
+impl TransferPort {
+    /// Opens one side of a transfer, refusing up front what cannot work.
+    ///
+    /// # Errors
+    /// Returns a human-readable reason the side cannot be used: no database
+    /// configured, the KeePass integration switched off, a database whose
+    /// password is not available, or a backend that could not be constructed.
+    fn open(
+        settings: &rustconn_core::config::AppSettings,
+        backend_type: rustconn_core::config::SecretBackendType,
+        rt: &tokio::runtime::Runtime,
+    ) -> Result<Self, String> {
+        use rustconn_core::config::SecretBackendType;
+
+        if !matches!(
+            backend_type,
+            SecretBackendType::KeePassXc | SecretBackendType::KdbxFile
+        ) {
+            return build_single_backend(&settings.secrets, backend_type, rt).map(Self::Backend);
+        }
+
+        // Everything below is a precondition every *reader* of a KDBX entry
+        // already applies. Skipping them would let the transfer write into a
+        // database that nothing will look at, or fail once per entry on a
+        // database it was never going to be able to open.
+        let Some(path) = settings.secrets.kdbx_path.clone() else {
+            return Err("no KeePass database is configured".to_string());
+        };
+        if !settings.secrets.kdbx_enabled {
+            // `select_backend_for_load` and the resolver both require this flag
+            // before they will touch a KDBX entry; without it they use the
+            // keyring instead. Writing here anyway produces entries that are
+            // never read.
+            return Err(
+                "KDBX integration is switched off, so entries in the database would not be used"
+                    .to_string(),
+            );
+        }
+        if settings.secrets.kdbx_use_password && settings.secrets.kdbx_password.is_none() {
+            // `keepassxc-cli` would get an empty stdin and fail to unlock, once
+            // per entry. The resolver reports this as a lockout and prompts; here
+            // the honest answer is to refuse before starting.
+            return Err(
+                "the KeePass database password is not available — set it in Settings ▸ Secrets"
+                    .to_string(),
+            );
+        }
+
+        Ok(Self::Kdbx {
+            path,
+            // One plaintext copy for the batch; see the field's documentation.
+            db_password: settings
+                .secrets
+                .kdbx_password
+                .clone()
+                .map(std::sync::Arc::new),
+            key_file: settings.secrets.kdbx_key_file.clone(),
+        })
+    }
+
+    /// Reads one credential, trying `item.source_keys` in order.
+    ///
+    /// # Errors
+    /// Returns the backend's failure. A key that simply holds nothing is
+    /// `Ok(None)`, not an error.
+    fn retrieve(
+        &self,
+        item: &CredentialTransferItem,
+        rt: &tokio::runtime::Runtime,
+    ) -> Result<Option<rustconn_core::models::Credentials>, String> {
+        let mut last_error = None;
+        for key in &item.source_keys {
+            let outcome = match self {
+                Self::Backend(backend) => rt.block_on(async {
+                    tokio::time::timeout(TRANSFER_OP_TIMEOUT, backend.retrieve(key))
+                        .await
+                        .map_err(|_| timed_out("read"))?
+                        .map_err(|e| format!("{e}"))
+                }),
+                Self::Kdbx {
+                    path,
+                    db_password,
+                    key_file,
+                } => {
+                    let path = path.clone();
+                    let db_password = db_password.as_ref().map(std::sync::Arc::clone);
+                    let key_file = key_file.clone();
+                    let entry = key.clone();
+                    let username = item.username.clone();
+                    rt.block_on(async move {
+                        tokio::time::timeout(
+                            TRANSFER_OP_TIMEOUT,
+                            tokio::task::spawn_blocking(move || {
+                                rustconn_core::secret::KeePassStatus::get_password_from_kdbx_with_key(
+                                    &path,
+                                    db_password.as_deref(),
+                                    key_file.as_deref(),
+                                    &entry,
+                                    None,
+                                )
+                            }),
+                        )
+                        .await
+                        .map_err(|_| timed_out("read"))?
+                        .map_err(|e| format!("the read could not be run: {e}"))?
+                        .map_err(|e| format!("{e}"))
+                        // The KDBX read yields a password and nothing else, which
+                        // is why the item carries a username of its own.
+                        .map(|password| {
+                            password.map(|password| rustconn_core::models::Credentials {
+                                username,
+                                password: Some(password),
+                                key_passphrase: None,
+                                domain: None,
+                            })
+                        })
+                    })
+                }
+            };
+            match outcome {
+                Ok(Some(creds)) => return Ok(Some(creds)),
+                Ok(None) => {}
+                Err(e) => last_error = Some(e),
+            }
+        }
+        // Every key missed. A store that could not be opened at all failed on the
+        // first key too, so a recorded error outweighs "not found": reporting a
+        // miss would tell the user their passwords are not there when the truth is
+        // that nothing could look.
+        last_error.map_or(Ok(None), Err)
+    }
+
+    /// Writes one credential under `item.destination_key`.
+    ///
+    /// Returns which credential fields this side could not hold, so a partial
+    /// write is not reported as a clean copy.
+    ///
+    /// # Errors
+    /// Returns the backend's failure.
+    fn store(
+        &self,
+        item: &CredentialTransferItem,
+        creds: &rustconn_core::models::Credentials,
+        rt: &tokio::runtime::Runtime,
+    ) -> Result<Vec<&'static str>, String> {
+        use secrecy::ExposeSecret;
+
+        match self {
+            Self::Backend(backend) => rt
+                .block_on(async {
+                    tokio::time::timeout(
+                        TRANSFER_OP_TIMEOUT,
+                        backend.store(&item.destination_key, creds),
+                    )
+                    .await
+                    .map_err(|_| timed_out("write"))?
+                    .map_err(|e| format!("{e}"))
+                })
+                .map(|()| Vec::new()),
+            Self::Kdbx {
+                path,
+                db_password,
+                key_file,
+            } => {
+                let Some(password) = creds.password.as_ref() else {
+                    return Err("the entry has no password to write".to_string());
+                };
+                // Wrapped so the plaintext copy keepassxc-cli needs is wiped on drop.
+                let plaintext = zeroize::Zeroizing::new(password.expose_secret().to_string());
+                let path = path.clone();
+                let db_password = db_password.as_ref().map(std::sync::Arc::clone);
+                let key_file = key_file.clone();
+                let entry = item.destination_key.clone();
+                let username = creds.username.clone().unwrap_or_default();
+                rt.block_on(async move {
+                    tokio::time::timeout(
+                        TRANSFER_OP_TIMEOUT,
+                        tokio::task::spawn_blocking(move || {
+                            rustconn_core::secret::KeePassStatus::save_password_to_kdbx(
+                                &path,
+                                db_password.as_deref(),
+                                key_file.as_deref(),
+                                &entry,
+                                &username,
+                                plaintext.as_str(),
+                                None,
+                            )
+                        }),
+                    )
+                    .await
+                    .map_err(|_| timed_out("write"))?
+                    .map_err(|e| format!("the write could not be run: {e}"))?
+                    .map_err(|e| format!("{e}"))
+                })?;
+
+                // `save_password_to_kdbx` writes a title, username, password and
+                // URL. A key passphrase or a domain has nowhere to go, and the
+                // caller has to know that rather than being told the entry copied
+                // cleanly.
+                let mut dropped = Vec::new();
+                if creds.key_passphrase.is_some() {
+                    dropped.push("key passphrase");
+                }
+                if creds.domain.is_some() {
+                    dropped.push("domain");
+                }
+                Ok(dropped)
+            }
+        }
+    }
+}
+
+/// One credential to move, resolved to the key each side files it under.
+///
+/// The two sides need separate keys because the shape is per backend, not per
+/// credential: the system keyring uses `RustConn/{group}/{name} ({protocol})`,
+/// KDBX uses an entry path, and the remaining backends use `rustconn/{name}`.
+/// Copying a key verbatim between two backends of different shape would write a
+/// credential that the resolver never looks for again.
+#[derive(Debug, Clone)]
+pub struct CredentialTransferItem {
+    /// What to call this entry when reporting — a connection, group or variable
+    /// name. Never a secret.
+    pub label: String,
+    /// Keys to try in the source, most-current format first, so credentials
+    /// written by earlier releases are picked up rather than reported missing.
+    pub source_keys: Vec<String>,
+    /// Key to write in the destination.
+    pub destination_key: String,
+    /// Username to pair with the password when the source cannot supply one.
+    ///
+    /// The KDBX read path returns a password and nothing else, so without this a
+    /// KeePassXC-to-anywhere transfer would drop every username.
+    pub username: Option<String>,
+}
+
+/// Outcome of a credential transfer.
+#[derive(Debug, Clone, Default)]
+pub struct CredentialTransferReport {
+    /// Credentials read from the source and written to the destination.
+    pub transferred: usize,
+    /// Entries the source held nothing for.
+    ///
+    /// Not a failure, and reported separately for that reason: a connection set
+    /// to use the vault does not have to have a password saved yet, and counting
+    /// those as errors would make a healthy transfer look broken.
+    pub missing: usize,
+    /// Entries whose password arrived but which lost a field the destination
+    /// cannot hold, as `(label, field list)`.
+    ///
+    /// Separate from both counters above because it is neither: the entry works,
+    /// but not identically. Writing a KeePass database drops a key passphrase and
+    /// a domain, which libsecret and both file backends do store.
+    pub incomplete: Vec<(String, String)>,
+    /// Entries that could not be transferred, as `(label, error description)`.
+    pub failures: Vec<(String, String)>,
+    /// Whether the run stopped early because the user asked it to.
+    ///
+    /// Reported so the counts can be read correctly: "Copied: 7" out of forty
+    /// planned entries is a complete answer to a cancelled run and an alarming
+    /// one to a finished run, and nothing else in the report distinguishes them.
+    pub cancelled: bool,
+}
+
+impl CredentialTransferReport {
+    /// Whether every entry that had a credential arrived complete.
+    ///
+    /// A cancelled run is never complete, even when everything it did reach
+    /// arrived cleanly: the entries it never looked at are the point.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        !self.cancelled && self.failures.is_empty() && self.incomplete.is_empty()
+    }
+}
+
+/// The dialog's handles on a running transfer.
+///
+/// Both halves exist because a transfer over a CLI-backed vault is a process spawn
+/// per entry: forty entries is minutes of a dialog that previously said "Copying…"
+/// and nothing else, with no way to stop it.
+pub struct TransferControl {
+    /// Sent the number of entries finished, after each one.
+    ///
+    /// Unbounded, so the worker never blocks on a main loop that is busy, and
+    /// `try_send` is used rather than `send` — a dropped progress tick costs a
+    /// stale count for a moment, where a blocked worker costs the transfer.
+    pub progress: async_channel::Sender<usize>,
+    /// Set by the dialog to stop the run.
+    ///
+    /// Checked before each entry, never mid-entry: a credential is written by a
+    /// single backend call, and abandoning one in flight would leave the
+    /// destination in a state the report could not describe. So Cancel means "stop
+    /// after the one you are on", and the report says how far it got.
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// What a transfer would move, and what stands in its way.
+#[derive(Debug, Clone, Default)]
+pub struct CredentialTransferPlan {
+    /// The credentials to copy, one entry each.
+    pub items: Vec<CredentialTransferItem>,
+    /// Entries that would overwrite one another in the destination, grouped by
+    /// the key they share. See [`find_destination_collisions`] for why this can
+    /// happen and why the answer is to refuse rather than to pick a winner.
+    pub collisions: Vec<Vec<String>>,
+}
+
+/// Builds the list of credentials a transfer from `source` to `destination`
+/// would move.
+///
+/// The `SecretBackend` trait cannot enumerate: six of the eight backends offer no
+/// way to list what they hold, so the set of credentials is taken from what
+/// RustConn knows it stored — every connection and group set to use the vault,
+/// plus every secret variable. A vault may well contain entries RustConn never
+/// created; those are not touched, and cannot be, because nothing can name them.
+///
+/// Variables that point at a pre-existing external entry (`kdbx_entry_path` or
+/// `vault_entry_name`) are skipped on purpose. Those are references to entries the
+/// user maintains elsewhere, not credentials RustConn owns, and copying one into
+/// another backend would duplicate someone else's secret under a name the
+/// resolver would not look for anyway.
+#[must_use]
+pub fn plan_credential_transfer(
+    settings: &rustconn_core::config::AppSettings,
+    connections: &[rustconn_core::models::Connection],
+    groups: &[rustconn_core::models::ConnectionGroup],
+    source: rustconn_core::config::SecretBackendType,
+    destination: rustconn_core::config::SecretBackendType,
+) -> CredentialTransferPlan {
+    use rustconn_core::models::PasswordSource;
+
+    let mut items = Vec::new();
+
+    for conn in connections {
+        if conn.password_source != PasswordSource::Vault {
+            continue;
+        }
+        let protocol = conn.protocol_config.protocol_type().as_str().to_lowercase();
+        let source_keys = transfer_keys_for_connection(groups, conn, &protocol, source);
+        let Some(destination_key) =
+            transfer_keys_for_connection(groups, conn, &protocol, destination)
+                .into_iter()
+                .next()
+        else {
+            continue;
+        };
+        items.push(CredentialTransferItem {
+            label: conn.name.clone(),
+            source_keys,
+            destination_key,
+            username: conn.username.clone(),
+        });
+    }
+
+    for group in groups {
+        if group.password_source != Some(PasswordSource::Vault) {
+            continue;
+        }
+        items.push(CredentialTransferItem {
+            label: group.name.clone(),
+            source_keys: vec![transfer_key_for_group(groups, group, source)],
+            destination_key: transfer_key_for_group(groups, group, destination),
+            username: group.username.clone(),
+        });
+    }
+
+    for variable in &settings.global_variables {
+        if !variable.is_secret
+            || variable.kdbx_entry_path.is_some()
+            || variable.vault_entry_name.is_some()
+        {
+            continue;
+        }
+        let key = rustconn_core::variables::variable_secret_key(&variable.name);
+        items.push(CredentialTransferItem {
+            label: variable.name.clone(),
+            source_keys: vec![key.clone()],
+            destination_key: key,
+            username: None,
+        });
+    }
+
+    let collisions = find_destination_collisions(&items);
+    CredentialTransferPlan { items, collisions }
+}
+
+/// Groups of entries that would land on the same key in the destination.
+///
+/// The flat key shape the six non-keyring backends use is `rustconn/{name}` with
+/// no group in it, while the keyring and KDBX shapes both carry the group path.
+/// Two connections called `web` in `Prod` and `Staging` therefore have distinct
+/// keys in a keyring or a database and *one* key in the portable file — so a
+/// keyring-to-portable transfer would read two different passwords, write both to
+/// the same entry, and count two successes. The user then has a connection that
+/// authenticates with another connection's password, silently.
+///
+/// This is a property of the key shape, not of the transfer, and predates it (the
+/// group was added to the keyring key for issue #264 and to nothing else). But
+/// the transfer is the first thing that walks every entry at once, so it is the
+/// first thing that can see the collision — and refusing is the only honest
+/// response, since there is no key for the second entry to go to.
+fn find_destination_collisions(items: &[CredentialTransferItem]) -> Vec<Vec<String>> {
+    let mut by_key: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    for item in items {
+        by_key
+            .entry(item.destination_key.as_str())
+            .or_default()
+            .push(item.label.as_str());
+    }
+
+    let mut collisions: Vec<Vec<String>> = by_key
+        .into_values()
+        .filter(|labels| labels.len() > 1)
+        .map(|labels| {
+            let mut owned: Vec<String> = labels.into_iter().map(str::to_owned).collect();
+            owned.sort_unstable();
+            owned
+        })
+        .collect();
+    // Deterministic order so the dialog and the log do not reshuffle per run.
+    collisions.sort_unstable();
+    collisions
+}
+
+/// Keys a connection's credential can live under in `backend_type`, current
+/// format first.
+fn transfer_keys_for_connection(
+    groups: &[rustconn_core::models::ConnectionGroup],
+    connection: &rustconn_core::models::Connection,
+    protocol_str: &str,
+    backend_type: rustconn_core::config::SecretBackendType,
+) -> Vec<String> {
+    use rustconn_core::config::SecretBackendType;
+
+    if matches!(
+        backend_type,
+        SecretBackendType::KeePassXc | SecretBackendType::KdbxFile
+    ) {
+        // The same string `save_password_to_vault` writes: the hierarchical entry
+        // path without the `RustConn/` prefix, which both KDBX helpers add back,
+        // plus the protocol suffix.
+        let entry_path =
+            rustconn_core::secret::KeePassHierarchy::build_entry_path(connection, groups);
+        let base = entry_path.strip_prefix("RustConn/").unwrap_or(&entry_path);
+        return vec![format!("{base} ({protocol_str})")];
+    }
+
+    vault_keys_for_connection(groups, connection, protocol_str, backend_type)
+}
+
+/// Key a group's credential lives under in `backend_type`.
+fn transfer_key_for_group(
+    groups: &[rustconn_core::models::ConnectionGroup],
+    group: &rustconn_core::models::ConnectionGroup,
+    backend_type: rustconn_core::config::SecretBackendType,
+) -> String {
+    use rustconn_core::config::SecretBackendType;
+
+    if matches!(
+        backend_type,
+        SecretBackendType::KeePassXc | SecretBackendType::KdbxFile
+    ) {
+        let path = rustconn_core::secret::KeePassHierarchy::build_group_entry_path(group, groups);
+        return path.strip_prefix("RustConn/").unwrap_or(&path).to_string();
+    }
+
+    // Every other backend keys group credentials by the group's UUID, which is
+    // why a group rename does not have to migrate them.
+    group.id.to_string()
+}
+
+/// Copies each planned credential from `source` into `destination`.
+///
+/// Blocking: every entry costs at least one backend round trip, and a KDBX or
+/// Bitwarden side costs a process spawn per entry. Call this from
+/// `spawn_blocking`, never on the GTK main thread.
+///
+/// The source is never modified. Deleting from it is not offered at all: for a
+/// shared vault such as Bitwarden or a Passbolt server the entries may not be
+/// RustConn's to remove, and for the machine-bound file the originals are this
+/// machine's fallback — the same reason the portable-file wizard keeps them.
+pub fn run_credential_transfer(
+    settings: &rustconn_core::config::AppSettings,
+    source: rustconn_core::config::SecretBackendType,
+    destination: rustconn_core::config::SecretBackendType,
+    items: &[CredentialTransferItem],
+    control: &TransferControl,
+) -> Result<CredentialTransferReport, String> {
+    crate::async_utils::with_runtime(|rt| {
+        // Both sides once, before the loop: see `TransferPort`.
+        let source_port = TransferPort::open(settings, source, rt)
+            .map_err(|e| format!("cannot read from the source: {e}"))?;
+        let destination_port = TransferPort::open(settings, destination, rt)
+            .map_err(|e| format!("cannot write to the destination: {e}"))?;
+
+        let mut report = CredentialTransferReport::default();
+        for (finished, item) in items.iter().enumerate() {
+            // Between entries, not within one: see `TransferControl::cancel`.
+            if control.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                report.cancelled = true;
+                tracing::info!(
+                    finished,
+                    planned = items.len(),
+                    "credential transfer cancelled"
+                );
+                break;
+            }
+            match source_port.retrieve(item, rt) {
+                Ok(Some(creds)) => match destination_port.store(item, &creds, rt) {
+                    Ok(dropped) if dropped.is_empty() => report.transferred += 1,
+                    Ok(dropped) => {
+                        report.transferred += 1;
+                        report
+                            .incomplete
+                            .push((item.label.clone(), dropped.join(", ")));
+                    }
+                    Err(e) => {
+                        // The reason goes to the log here and nowhere else. It is
+                        // backend output, and a backend that takes a password on
+                        // its command line can quote it back; the dialog shows the
+                        // names, which is what the user acts on. Logging it at all
+                        // is a judgement that a diagnosable failure is worth more
+                        // than the residual risk, now that the one backend known
+                        // to echo its argv scrubs it first.
+                        tracing::warn!(
+                            entry = %item.label,
+                            error = %e,
+                            "credential transfer could not write an entry"
+                        );
+                        report.failures.push((item.label.clone(), e));
+                    }
+                },
+                Ok(None) => report.missing += 1,
+                Err(e) => {
+                    tracing::warn!(
+                        entry = %item.label,
+                        error = %e,
+                        "credential transfer could not read an entry"
+                    );
+                    report.failures.push((item.label.clone(), e));
+                }
+            }
+            // After the entry, so the count is entries *done* rather than started.
+            // A full queue is ignored: the dialog showing a count one behind for a
+            // moment is better than a worker waiting on the main loop.
+            let _ = control.progress.try_send(finished + 1);
+        }
+
+        tracing::info!(
+            ?source,
+            ?destination,
+            transferred = report.transferred,
+            missing = report.missing,
+            incomplete = report.incomplete.len(),
+            failed = report.failures.len(),
+            cancelled = report.cancelled,
+            "credential transfer finished"
+        );
+        Ok(report)
+    })
+    .and_then(|r| r)
+}
+
 /// Selects the appropriate storage backend for variable secrets.
 ///
 /// Mirrors `CredentialResolver::select_storage_backend` logic.
 /// Also used by connection password load/save and variable vault operations.
+/// Builds a portable-file backend from settings, unlocked when possible.
+///
+/// The passphrase comes from `SecretSettings::portable_passphrase`, the
+/// session-only field that the unlock dialog, the startup restore and the
+/// Settings page all write to. When it is absent the backend stays locked and
+/// its operations report [`rustconn_core::error::SecretError::PassphraseRequired`],
+/// which the connection path turns into an unlock prompt.
+///
+/// Exists so the path resolution and the unlock live in one place: four call
+/// sites each had their own copy, and every one of them had forgotten to set the
+/// passphrase at some point in this feature's history.
+#[must_use]
+pub fn portable_backend_from_settings(
+    settings: &rustconn_core::config::SecretSettings,
+) -> rustconn_core::secret::PortableEncryptedFileBackend {
+    let path =
+        rustconn_core::secret::resolve_portable_store_path(settings.portable_file_path.as_deref());
+    let backend = rustconn_core::secret::PortableEncryptedFileBackend::with_path(path);
+    if let Some(ref passphrase) = settings.portable_passphrase {
+        backend.set_passphrase(passphrase.clone());
+    }
+    backend
+}
+
 pub fn select_backend_for_load(
     secrets: &rustconn_core::config::SecretSettings,
 ) -> rustconn_core::config::SecretBackendType {
@@ -1699,6 +2534,8 @@ pub fn select_backend_for_load(
         // EncryptedFile is a flat-key backend; identity mapping mirrors the
         // other app-managed backends above. (Allowed flat-key wiring for 2.4.)
         SecretBackendType::EncryptedFile => SecretBackendType::EncryptedFile,
+        // PortableEncryptedFile is also a flat-key backend (passphrase-based).
+        SecretBackendType::PortableEncryptedFile => SecretBackendType::PortableEncryptedFile,
     }
 }
 
@@ -2149,6 +2986,170 @@ mod tests {
         assert_eq!(
             plan.old_keys.first().map(String::as_str),
             Some("rustconn/admin")
+        );
+    }
+
+    // ── credential transfer ──────────────────────────────────────────
+    //
+    // The transfer's correctness is entirely a claim about *agreement*: the key it
+    // writes has to be the key the save path would have written and the resolver
+    // will later look for. Nothing in the type system enforces that, so these
+    // tests pin it per backend shape.
+
+    /// A vault-backed connection, since the plan only includes those.
+    fn vault_connection(name: &str, group_id: Option<uuid::Uuid>) -> Connection {
+        let mut conn = ssh_connection(name, group_id);
+        conn.password_source = rustconn_core::models::PasswordSource::Vault;
+        conn
+    }
+
+    #[test]
+    fn transfer_destination_key_matches_what_the_save_path_writes() {
+        let group = ConnectionGroup::new("Prod".to_string());
+        let conn = vault_connection("web", Some(group.id));
+        let groups = std::slice::from_ref(&group);
+
+        for backend in [
+            SecretBackendType::LibSecret,
+            SecretBackendType::MacOsKeychain,
+            SecretBackendType::Bitwarden,
+            SecretBackendType::OnePassword,
+            SecretBackendType::Passbolt,
+            SecretBackendType::Pass,
+            SecretBackendType::EncryptedFile,
+            SecretBackendType::PortableEncryptedFile,
+        ] {
+            let transfer = transfer_keys_for_connection(groups, &conn, "ssh", backend);
+            let expected = vault_keys_for_connection(groups, &conn, "ssh", backend)[0].clone();
+            assert_eq!(
+                transfer.first(),
+                Some(&expected),
+                "{backend:?}: the transfer would write a key nothing reads"
+            );
+        }
+    }
+
+    /// KDBX is the one shape that does not come from `vault_keys_for_connection`,
+    /// because the database is addressed by entry path rather than by lookup key.
+    #[test]
+    fn transfer_kdbx_key_matches_the_kdbx_save_path() {
+        let group = ConnectionGroup::new("Prod".to_string());
+        let conn = vault_connection("web", Some(group.id));
+        let groups = std::slice::from_ref(&group);
+
+        let keys = transfer_keys_for_connection(groups, &conn, "ssh", SecretBackendType::KdbxFile);
+
+        // Exactly what `save_password_to_vault`'s KDBX arm builds: the entry path
+        // with the `RustConn/` prefix stripped, plus the protocol suffix.
+        assert_eq!(keys, vec!["Prod/web (ssh)".to_string()]);
+    }
+
+    #[test]
+    fn transfer_group_key_is_the_uuid_off_kdbx_and_a_path_on_it() {
+        let group = ConnectionGroup::new("Prod".to_string());
+        let groups = std::slice::from_ref(&group);
+
+        assert_eq!(
+            transfer_key_for_group(groups, &group, SecretBackendType::LibSecret),
+            group.id.to_string(),
+            "every non-KDBX backend keys group credentials by UUID"
+        );
+        assert_eq!(
+            transfer_key_for_group(groups, &group, SecretBackendType::KdbxFile),
+            "Groups/Prod",
+            "KDBX keys them by entry path, prefix stripped"
+        );
+    }
+
+    /// The defect this guard exists for: the flat key shape carries no group, so
+    /// two same-named connections in different groups map onto one destination
+    /// entry. Writing both would leave one connection authenticating with the
+    /// other's password, and the report would call it two successes.
+    #[test]
+    fn plan_refuses_when_two_entries_would_share_a_destination_key() {
+        let prod = ConnectionGroup::new("Prod".to_string());
+        let staging = ConnectionGroup::new("Staging".to_string());
+        let groups = vec![prod.clone(), staging.clone()];
+        let connections = vec![
+            vault_connection("web", Some(prod.id)),
+            vault_connection("web", Some(staging.id)),
+        ];
+        let settings = rustconn_core::config::AppSettings::default();
+
+        let plan = plan_credential_transfer(
+            &settings,
+            &connections,
+            &groups,
+            SecretBackendType::LibSecret,
+            SecretBackendType::PortableEncryptedFile,
+        );
+
+        assert_eq!(plan.items.len(), 2);
+        assert_eq!(
+            plan.collisions,
+            vec![vec!["web".to_string(), "web".to_string()]],
+            "the flat destination key must be reported as shared, not silently reused"
+        );
+
+        // The same pair is fine when the destination keeps groups apart.
+        let keyring_plan = plan_credential_transfer(
+            &settings,
+            &connections,
+            &groups,
+            SecretBackendType::PortableEncryptedFile,
+            SecretBackendType::LibSecret,
+        );
+        assert!(
+            keyring_plan.collisions.is_empty(),
+            "the keyring key carries the group path, so there is no collision"
+        );
+    }
+
+    #[test]
+    fn plan_skips_variables_that_point_at_an_external_entry() {
+        let settings = rustconn_core::config::AppSettings {
+            global_variables: vec![
+                rustconn_core::variables::Variable {
+                    name: "ours".to_string(),
+                    value: String::new(),
+                    is_secret: true,
+                    description: None,
+                    kdbx_entry_path: None,
+                    vault_entry_name: None,
+                },
+                rustconn_core::variables::Variable {
+                    name: "theirs".to_string(),
+                    value: String::new(),
+                    is_secret: true,
+                    description: None,
+                    kdbx_entry_path: Some("Internet/MyRouter".to_string()),
+                    vault_entry_name: None,
+                },
+                rustconn_core::variables::Variable {
+                    name: "plain".to_string(),
+                    value: "not a secret".to_string(),
+                    is_secret: false,
+                    description: None,
+                    kdbx_entry_path: None,
+                    vault_entry_name: None,
+                },
+            ],
+            ..rustconn_core::config::AppSettings::default()
+        };
+
+        let plan = plan_credential_transfer(
+            &settings,
+            &[],
+            &[],
+            SecretBackendType::LibSecret,
+            SecretBackendType::PortableEncryptedFile,
+        );
+
+        let labels: Vec<&str> = plan.items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["ours"],
+            "only secret variables RustConn itself stores are ours to copy"
         );
     }
 }

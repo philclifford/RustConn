@@ -1,4 +1,17 @@
 -------------------------------------------------------------------
+Wed Aug 19 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.4
+- Version bump to 0.20.4
+- Added: portable encrypted file backend, passphrase-protected and syncable
+  between machines via cloud storage, including across Linux and macOS (issue #293)
+- Fixed: terminal starts at the real window size instead of 24x80 (issue #294)
+- Fixed: keyboard shortcuts window shows remapped bindings instead of defaults,
+  and lists the shortcuts that cannot be rebound (issue #295)
+- Improved: rustconn-cli --backend accepts encrypted-file and portable
+- Security: credential store temp files are created 0600 rather than chmod'ed
+  after the write
+- Localisation: new strings translated in all 17 locales; Georgian (ka) added
+  (PR #296, Ekaterine Papava)
+-------------------------------------------------------------------
 Mon Aug 17 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.3
 - Version bump to 0.20.3
 - Added: keyboard passthrough state is now saved across restarts (issue #274 follow-up)

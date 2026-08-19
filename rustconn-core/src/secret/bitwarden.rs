@@ -47,6 +47,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use super::backend::SecretBackend;
+use super::serde_helpers::serde_error_kind;
 use crate::error::{SecretError, SecretResult};
 use crate::models::Credentials;
 
@@ -389,8 +390,16 @@ impl BitwardenBackend {
 
     /// Runs a bw command and returns stdout
     async fn run_command(&self, args: &[&str]) -> SecretResult<String> {
+        // Only the verb reaches the log, never the whole argv.
+        //
+        // `bw create item` and `bw edit item` take the item as a base64 argument,
+        // and that item contains the plaintext password (see `store`). Logging
+        // `args` therefore wrote every saved password to the log at debug level,
+        // wearing base64 as a disguise. The bulk credential transfer turned that
+        // from an occasional line into one per stored password.
+        let verb = args.iter().take(2).copied().collect::<Vec<_>>().join(" ");
         tracing::debug!(
-            args = ?args,
+            %verb,
             has_session = self.session_key.is_some(),
             has_global_session = get_session_key().is_some(),
             "Bitwarden run_command"
@@ -404,17 +413,18 @@ impl BitwardenBackend {
         )
         .await
         .map_err(|_| {
-            tracing::warn!(args = ?args, "Bitwarden run_command: timed out after 30s");
-            SecretError::ConnectionFailed(format!(
-                "bw command timed out after 30s (args: {args:?})"
-            ))
+            tracing::warn!(%verb, "Bitwarden run_command: timed out after 30s");
+            // The argv is not in this message for the same reason it is not in the
+            // log line above: it carries the credential, and this error is shown to
+            // the user and logged by `vault_ops`.
+            SecretError::ConnectionFailed("bw command timed out after 30s".to_string())
         })?
         .map_err(|e| SecretError::ConnectionFailed(format!("Failed to run bw: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             tracing::debug!(
-                args = ?args,
+                %verb,
                 stderr = %stderr,
                 "Bitwarden run_command: failed"
             );
@@ -425,7 +435,7 @@ impl BitwardenBackend {
 
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         tracing::debug!(
-            args = ?args,
+            %verb,
             output_len = stdout.len(),
             "Bitwarden run_command: success"
         );
@@ -541,8 +551,18 @@ impl BitwardenBackend {
             .run_command(&["list", "items", "--search", &search_term])
             .await?;
 
-        let items: Vec<BitwardenItem> = serde_json::from_str(&output)
-            .map_err(|e| SecretError::RetrieveFailed(format!("Failed to parse items: {e}")))?;
+        // Position, not the serde `Display`. `bw list items` includes
+        // `login.password`, and serde reports a type mismatch by quoting the value
+        // it choked on — a numeric password comes back as `invalid type: integer
+        // \`1234\`, expected a string`, which `vault_ops` then logs and shows.
+        let items: Vec<BitwardenItem> = serde_json::from_str(&output).map_err(|e| {
+            SecretError::RetrieveFailed(format!(
+                "Failed to parse items: {} error at line {}, column {}",
+                serde_error_kind(&e),
+                e.line(),
+                e.column()
+            ))
+        })?;
 
         tracing::debug!(
             items_count = items.len(),
@@ -584,8 +604,18 @@ impl BitwardenBackend {
             .run_command(&["list", "items", "--search", entry_name])
             .await?;
 
-        let items: Vec<BitwardenItem> = serde_json::from_str(&output)
-            .map_err(|e| SecretError::RetrieveFailed(format!("Failed to parse items: {e}")))?;
+        // Position, not the serde `Display`. `bw list items` includes
+        // `login.password`, and serde reports a type mismatch by quoting the value
+        // it choked on — a numeric password comes back as `invalid type: integer
+        // \`1234\`, expected a string`, which `vault_ops` then logs and shows.
+        let items: Vec<BitwardenItem> = serde_json::from_str(&output).map_err(|e| {
+            SecretError::RetrieveFailed(format!(
+                "Failed to parse items: {} error at line {}, column {}",
+                serde_error_kind(&e),
+                e.line(),
+                e.column()
+            ))
+        })?;
 
         tracing::debug!(
             items_count = items.len(),

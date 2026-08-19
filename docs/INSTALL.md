@@ -225,7 +225,7 @@ ln -sf $(brew --prefix)/opt/rustconn/RustConn.app /Applications/RustConn.app
 | `rustconn-cli` | CLI tool for scripting and automation |
 | `rustconn-app` | Convenience launcher (opens .app bundle) |
 | `RustConn.app` | macOS application bundle with icon and environment setup |
-| Locales | 16 languages (be, cs, da, de, es, fr, it, kk, nl, pl, pt, sk, sv, uk, uz, zh-cn) |
+| Locales | 17 languages (be, cs, da, de, es, fr, it, ka, kk, nl, pl, pt, sk, sv, uk, uz, zh-cn) |
 
 ### Optional: Password Manager CLIs
 

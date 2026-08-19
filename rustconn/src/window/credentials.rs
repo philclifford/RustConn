@@ -328,6 +328,10 @@ impl MainWindow {
                                     names.push(crate::i18n::i18n("Encrypted file"));
                                     types.push(preferred);
                                 }
+                                rustconn_core::config::SecretBackendType::PortableEncryptedFile => {
+                                    names.push(crate::i18n::i18n("Portable encrypted file"));
+                                    types.push(preferred);
+                                }
                             }
 
                             // Always add LibSecret as fallback option
@@ -546,6 +550,56 @@ impl MainWindow {
                                             );
                                         }
                                         crate::dialogs::KdbxUnlockResponse::Cancel => {
+                                            // User cancelled — connection is not started
+                                        }
+                                    }
+                                },
+                            );
+                        }
+                    }
+                    CredentialResolutionResult::PortableFileLocked { file_path, connection_id: conn_id } => {
+                        // Portable credential file needs unlocking — show passphrase
+                        // dialog. On success, store the passphrase in settings and
+                        // retry credential resolution.
+                        {
+                            let state_unlock = state_clone.clone();
+                            let notebook_unlock = notebook_clone.clone();
+                            let split_unlock = split_view_clone.clone();
+                            let sidebar_unlock = sidebar_clone.clone();
+                            let monitoring_unlock = monitoring_clone.clone();
+                            let activity_unlock = activity_clone.clone();
+                            let observer_unlock = observer_clone.clone();
+
+                            crate::dialogs::show_portable_unlock_dialog(
+                                notebook_clone.widget(),
+                                &file_path,
+                                move |response| {
+                                    match response {
+                                        crate::dialogs::PortableUnlockResponse::Unlocked { passphrase } => {
+                                            // Store the verified passphrase for the rest of
+                                            // the session, in both places that need it: the
+                                            // settings field the GUI paths read, and the
+                                            // manager's backend, which no settings change
+                                            // will rebuild (the runtime passphrase is
+                                            // excluded from SecretSettings equality).
+                                            if let Ok(mut state_ref) = state_unlock.try_borrow_mut() {
+                                                state_ref.unlock_portable_store(passphrase);
+                                            }
+
+                                            // Retry credential resolution — now portable_passphrase
+                                            // is available and the backend can decrypt.
+                                            Self::start_connection_with_credential_resolution_observed(
+                                                state_unlock.clone(),
+                                                notebook_unlock.clone(),
+                                                split_unlock.clone(),
+                                                sidebar_unlock.clone(),
+                                                monitoring_unlock.clone(),
+                                                conn_id,
+                                                activity_unlock.clone(),
+                                                observer_unlock.clone(),
+                                            );
+                                        }
+                                        crate::dialogs::PortableUnlockResponse::Cancel => {
                                             // User cancelled — connection is not started
                                         }
                                     }

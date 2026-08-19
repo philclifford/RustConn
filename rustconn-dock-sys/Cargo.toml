@@ -1,0 +1,48 @@
+[package]
+name = "rustconn-dock-sys"
+description = "Isolated FFI helper for RustConn's macOS Dock tile: a guarded wrapper around -[NSApplication setApplicationIconImage:]."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# AppKit has no counterpart off Apple platforms, so the bindings are the one
+# thing here that must be target-gated — `objc2-app-kit` does not compile
+# elsewhere. The *crate* is not: it is an unconditional workspace member and an
+# unconditional dependency of `rustconn`, so its API, its precondition guard and
+# the guard's tests are built and run by Linux CI. Only the AppKit call itself is
+# macOS-only, exactly as in `rustconn-pty-sys`, whose controlling-terminal setup
+# has the same shape. See "What CI actually checks" in src/lib.rs — that gap is
+# stated there rather than left to be discovered.
+[target.'cfg(target_os = "macos")'.dependencies]
+# `MainThreadMarker` (the main-thread proof AppKit requires) and `AnyThread`
+# (for `NSImage::alloc`).
+objc2 = { version = "0.6", default-features = false, features = ["std"] }
+# Only NSApplication and NSImage are needed; NSApplication's bindings are gated
+# behind its superclass NSResponder. The default feature set is *every* AppKit
+# class, which is why it is switched off here.
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSImage",
+    "NSResponder",
+] }
+# NSData, to hand the PNG bytes to `-[NSImage initWithData:]`.
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSData",
+] }
+
+# This crate is one of the sanctioned locations for `unsafe` in the workspace
+# (see rust-pragmatic-guidelines.md, M-UNSAFE: isolate FFI in a small -sys
+# crate), and it opts into the workspace lint set like every other crate. The
+# single exemption it needs is re-opened in src/lib.rs with a crate-level
+# `#![cfg_attr(target_os = "macos", expect(unsafe_code, reason = "…"))]`, which is
+# possible because the workspace sets that lint to `deny` rather than `forbid`.
+# Declaring `[lints.rust]` here instead would *replace* the inherited table, and
+# this crate would silently lose clippy::pedantic, clippy::nursery and
+# clippy::unwrap_used — the last place in the workspace that should be running
+# with fewer checks than the rest.
+[lints]
+workspace = true

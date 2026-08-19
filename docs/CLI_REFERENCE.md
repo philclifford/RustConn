@@ -771,8 +771,28 @@ Backend aliases:
 | 1Password | `1password`, `onepassword`, `op` |
 | Passbolt | `passbolt` |
 | Pass (passwordstore.org) | `pass` |
+| Encrypted file (machine-bound) | `encrypted-file`, `file` |
+| Portable encrypted file | `portable`, `portable-file` |
 
 > **Security note:** Prefer `--password-stdin` (pipe the password via stdin) or the interactive password prompt (omit both flags) over `--password`, which is deprecated because the value is visible in process listings (`/proc/cmdline`).
+
+#### Portable encrypted file
+
+This backend is protected by a passphrase rather than a machine key, so the CLI
+has to obtain it. It looks, in order, at the machine-local encrypted copy, the
+system keyring, and finally an interactive prompt:
+
+```bash
+rustconn-cli secret get "My Server" --backend portable
+# Enter passphrase for /home/you/Dropbox/credentials-portable.enc:
+```
+
+The passphrase is verified before use, so a typo reports "Incorrect passphrase"
+rather than writing a second key into a file that already has one.
+
+In a script or any shell without a terminal, and with nothing saved locally, the
+command reports that it cannot ask instead of hanging. To use it unattended,
+store the passphrase first via Settings ▸ Secrets ▸ **Save passphrase**.
 
 ### smart-folder — Manage smart folders
 

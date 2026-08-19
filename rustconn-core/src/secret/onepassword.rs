@@ -19,6 +19,7 @@ use serde::Deserialize;
 use tokio::process::Command;
 
 use super::backend::SecretBackend;
+use super::serde_helpers::serde_error_kind;
 use crate::error::{SecretError, SecretResult};
 use crate::models::Credentials;
 
@@ -302,8 +303,17 @@ impl OnePasswordBackend {
                 let details = self
                     .run_command(&["item", "get", &item.id, "--vault", &self.vault_name])
                     .await?;
+                // Position, not the serde `Display`. `op item get` returns the
+                // item's field *values*, password included, and serde reports a
+                // type mismatch by quoting the value it choked on — which puts
+                // the credential into an error that `vault_ops` logs and shows.
                 let full_item: OnePasswordItem = serde_json::from_str(&details).map_err(|e| {
-                    SecretError::RetrieveFailed(format!("Failed to parse item: {e}"))
+                    SecretError::RetrieveFailed(format!(
+                        "Failed to parse item: {} error at line {}, column {}",
+                        serde_error_kind(&e),
+                        e.line(),
+                        e.column()
+                    ))
                 })?;
                 return Ok(Some(full_item));
             }
@@ -335,10 +345,14 @@ impl SecretBackend for OnePasswordBackend {
 
         let title = Self::entry_title(connection_id);
         let username = credentials.username.clone().unwrap_or_default();
-        let password = credentials
-            .expose_password()
-            .unwrap_or_default()
-            .to_string();
+        // Wiped on drop. The value reaches `op` over stdin, which is the part that
+        // matters, but the intermediate copy was outliving the call.
+        let password = zeroize::Zeroizing::new(
+            credentials
+                .expose_password()
+                .unwrap_or_default()
+                .to_string(),
+        );
 
         // Check if item already exists
         if let Some(existing) = self.find_item(connection_id).await? {

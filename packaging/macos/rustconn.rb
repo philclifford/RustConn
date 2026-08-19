@@ -7,7 +7,7 @@ class Rustconn < Formula
   # active `sha256` at this indentation — the sed patterns and the CI
   # verification gate are anchored to `^  url` and `^  sha256` (issue #251).
   # PLACEHOLDER_SHA256 is expected here in-tree; only the tap copy has a hash.
-  url "https://github.com/totoshko88/RustConn/archive/refs/tags/v0.20.3.tar.gz"
+  url "https://github.com/totoshko88/RustConn/archive/refs/tags/v0.20.4.tar.gz"
   sha256 "PLACEHOLDER_SHA256"
   license "GPL-3.0-or-later"
   head "https://github.com/totoshko88/RustConn.git", branch: "main"
@@ -52,7 +52,35 @@ class Rustconn < Formula
     # Create .app bundle for macOS
     app_dir = prefix/"RustConn.app/Contents"
     mkdir_p "#{app_dir}/MacOS"
-    mkdir_p "#{app_dir}/Resources"
+    mkdir_p "#{app_dir}/Resources/bin"
+
+    # LaunchServices must execute a real binary *inside* the bundle. When
+    # CFBundleExecutable named a wrapper that exec'd the keg's bin/rustconn, the
+    # process that ended up owning the window had no enclosing bundle, so it got
+    # the generic Unix-executable Dock tile and no Info.plist identity — and
+    # replacing the process image also destroys the LaunchServices scene
+    # registration NSStatusItem needs, which is the same root cause fixed for the
+    # canonical producer in 0.19.x (see CHANGELOG, "tray icon missing when
+    # launched from .app bundle").
+    #
+    # A second copy rather than a link, deliberately. A symlink would make
+    # `_NSGetExecutablePath` — and therefore the bundle detection in
+    # rustconn/src/main.rs — depend on whether macOS resolves it, which Apple
+    # documents only as "may contain symlinks"; a hard link would be undone by any
+    # Homebrew relocation pass that rewrites the file rather than editing it in
+    # place, silently leaving the bundle copy unrelocated. Two independent Mach-O
+    # files are seen by every such pass and behave identically on both launch
+    # paths, at the cost of the binary's size in the keg.
+    #
+    # The source is the keg's bin, not target/release: `bin.install` above *moves*
+    # the artefact, so the build path no longer holds it by this point.
+    cp "#{bin}/rustconn", "#{app_dir}/MacOS/rustconn"
+    chmod 0555, "#{app_dir}/MacOS/rustconn"
+
+    # Translations, bundle-relative: with no wrapper to export LOCALEDIR, a
+    # LaunchServices start resolves them through the .app detection in
+    # `i18n::locale_dir()`, which looks here and nowhere else inside a bundle.
+    cp_r "#{share}/locale", "#{app_dir}/Resources/locale"
 
     # Icon
     mkdir_p buildpath/"iconset/RustConn.iconset"
@@ -74,17 +102,23 @@ class Rustconn < Formula
     system "iconutil", "-c", "icns", buildpath/"iconset/RustConn.iconset",
            "-o", "#{app_dir}/Resources/RustConn.icns"
 
-    # Wrapper script — sets up environment for GTK4/libadwaita runtime
-    (app_dir/"MacOS/rustconn-wrapper").write <<~EOS
+    # Optional manual-terminal launcher. Under Resources/bin, not MacOS/, so it is
+    # not mistaken for the bundle executable and does not interfere with
+    # nested-code signing — the same placement the canonical producer uses. Nothing
+    # launches through it automatically; the app resolves schemas and icons from
+    # Homebrew on its own, and this only exists for a terminal start that wants the
+    # bundle's own translations.
+    (app_dir/"Resources/bin/rustconn-wrapper").write <<~EOS
       #!/bin/bash
+      CONTENTS="$(cd "$(dirname "$0")/../.." && pwd)"
       export XDG_DATA_DIRS="$HOME/.local/share:#{HOMEBREW_PREFIX}/share:/usr/local/share:/usr/share"
       export GSETTINGS_SCHEMA_DIR="#{HOMEBREW_PREFIX}/share/glib-2.0/schemas"
-      export LOCALEDIR="#{share}/locale"
+      export LOCALEDIR="$CONTENTS/Resources/locale"
       export PATH="#{HOMEBREW_PREFIX}/bin:#{HOMEBREW_PREFIX}/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
       cd "$HOME"
-      exec "#{bin}/rustconn" "$@"
+      exec "$CONTENTS/MacOS/rustconn" "$@"
     EOS
-    chmod 0755, "#{app_dir}/MacOS/rustconn-wrapper"
+    chmod 0755, "#{app_dir}/Resources/bin/rustconn-wrapper"
 
     # Info.plist
     (app_dir/"Info.plist").write <<~EOS
@@ -93,7 +127,7 @@ class Rustconn < Formula
       <plist version="1.0">
       <dict>
           <key>CFBundleExecutable</key>
-          <string>rustconn-wrapper</string>
+          <string>rustconn</string>
           <key>CFBundleIconFile</key>
           <string>RustConn</string>
           <key>CFBundleIdentifier</key>

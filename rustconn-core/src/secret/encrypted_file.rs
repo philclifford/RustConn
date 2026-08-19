@@ -29,12 +29,24 @@ use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
 use super::backend::SecretBackend;
-use super::local_crypto::{decrypt_credential, encrypt_credential, get_machine_key};
+use super::local_crypto::{decrypt_credential, encrypt_credential, fill_random, get_machine_key};
 use crate::error::{SecretError, SecretResult};
 use crate::models::Credentials;
 
 /// File name (under the XDG data dir) holding the encrypted credential map.
 const STORE_FILE_NAME: &str = "credentials.enc";
+
+/// Default location of the machine-bound credential store.
+///
+/// Exposed so callers that need to *name* the file — the portable-file migration
+/// in Settings, for one — do not rebuild the path from a hardcoded literal and
+/// drift from where the backend actually reads.
+#[must_use]
+pub fn default_encrypted_store_path() -> PathBuf {
+    dirs::data_dir()
+        .map(|dir| dir.join("rustconn").join(STORE_FILE_NAME))
+        .unwrap_or_else(|| PathBuf::from(STORE_FILE_NAME))
+}
 
 /// Owner-only permission bits (`rw-------`) for the on-disk store (Req 8.4).
 #[cfg(unix)]
@@ -45,8 +57,12 @@ const STORE_FILE_MODE: u32 = 0o600;
 /// This type exists only transiently between (de)serialization and the
 /// encrypted blob. Its secret fields are wiped on drop and excluded from the
 /// `Debug` representation (Req 8.6) so they never leak via logs.
+///
+/// Shared with [`super::portable_encrypted_file`]: both backends store the same
+/// payload and differ only in how the key is obtained, so the wipe-on-drop and
+/// `Debug`-redaction guarantees are written once rather than copied.
 #[derive(Serialize, Deserialize)]
-struct StoredCredentials {
+pub(crate) struct StoredCredentials {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     username: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -83,7 +99,7 @@ impl std::fmt::Debug for StoredCredentials {
 impl StoredCredentials {
     /// Builds the plaintext payload from in-memory [`Credentials`], exposing the
     /// secret values only into this short-lived, drop-wiped struct.
-    fn from_credentials(creds: &Credentials) -> Self {
+    pub(crate) fn from_credentials(creds: &Credentials) -> Self {
         Self {
             username: creds.username.clone(),
             password: creds.expose_password().map(ToOwned::to_owned),
@@ -94,7 +110,7 @@ impl StoredCredentials {
 
     /// Rebuilds in-memory [`Credentials`], moving secret strings into
     /// [`SecretString`] (which zeroizes on drop) without copying them again.
-    fn into_credentials(mut self) -> Credentials {
+    pub(crate) fn into_credentials(mut self) -> Credentials {
         Credentials {
             username: self.username.take(),
             password: self.password.take().map(SecretString::from),
@@ -153,7 +169,7 @@ impl EncryptedFileBackend {
 /// # Errors
 /// Returns [`SecretError::RetrieveFailed`] if the file cannot be read or is not
 /// valid JSON.
-fn read_map(path: &Path) -> SecretResult<BTreeMap<String, String>> {
+pub(crate) fn read_map(path: &Path) -> SecretResult<BTreeMap<String, String>> {
     match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|e| SecretError::RetrieveFailed(format!("encrypted store is corrupt: {e}"))),
@@ -164,33 +180,47 @@ fn read_map(path: &Path) -> SecretResult<BTreeMap<String, String>> {
     }
 }
 
-/// Computes the sibling temp path used for atomic writes (same directory so the
-/// `rename` stays on one filesystem).
-fn tmp_path(path: &Path) -> PathBuf {
+/// Computes a unique sibling temp path for an atomic write (same directory so
+/// the `rename` stays on one filesystem).
+///
+/// The suffix is random so two RustConn processes writing at once cannot pick
+/// the same temp, and so the name is not one an attacker can pre-create as a
+/// symlink. See [`create_temp_file`] for the other half of that guarantee.
+///
+/// # Errors
+/// Returns [`SecretError::StoreFailed`] if the RNG is unavailable.
+fn tmp_path(path: &Path) -> SecretResult<PathBuf> {
+    let mut suffix = [0u8; 8];
+    fill_random(&mut suffix).map_err(SecretError::StoreFailed)?;
+
     let mut name = path.file_name().map_or_else(
         || std::ffi::OsString::from(STORE_FILE_NAME),
         ToOwned::to_owned,
     );
-    name.push(".tmp");
-    path.with_file_name(name)
+    name.push(format!(".{}.tmp", data_encoding::HEXLOWER.encode(&suffix)));
+    Ok(path.with_file_name(name))
 }
 
-/// Restricts a file to owner-only access (`0600`) on unix; a no-op elsewhere.
+/// Creates the temp file with owner-only permissions already in place.
+///
+/// `create_new` refuses an existing path, so a leftover temp or a planted
+/// symlink is an error rather than a redirected write. On unix the mode goes
+/// into the `open` call: setting it after the write leaves a window in which the
+/// ciphertext is world-readable.
 ///
 /// # Errors
-/// Returns [`SecretError::StoreFailed`] if the permission change fails.
-#[cfg(unix)]
-fn set_owner_only(path: &Path) -> SecretResult<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(STORE_FILE_MODE)).map_err(|e| {
-        SecretError::StoreFailed(format!("cannot set permissions on encrypted store: {e}"))
-    })
-}
-
-/// Non-unix platforms cannot set POSIX mode bits; permissions are left default.
-#[cfg(not(unix))]
-fn set_owner_only(_path: &Path) -> SecretResult<()> {
-    Ok(())
+/// Returns [`SecretError::StoreFailed`] if the file cannot be created.
+fn create_temp_file(tmp: &Path) -> SecretResult<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(STORE_FILE_MODE);
+    }
+    options
+        .open(tmp)
+        .map_err(|e| SecretError::StoreFailed(format!("cannot create encrypted store temp: {e}")))
 }
 
 /// Atomically writes the credential map: temp file + `0600` + `rename`.
@@ -201,7 +231,7 @@ fn set_owner_only(_path: &Path) -> SecretResult<()> {
 /// # Errors
 /// Returns [`SecretError::StoreFailed`] if any directory creation, serialization,
 /// write, permission, or rename step fails.
-fn write_map_atomic(path: &Path, map: &BTreeMap<String, String>) -> SecretResult<()> {
+pub(crate) fn write_map_atomic(path: &Path, map: &BTreeMap<String, String>) -> SecretResult<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -212,18 +242,26 @@ fn write_map_atomic(path: &Path, map: &BTreeMap<String, String>) -> SecretResult
     let json = serde_json::to_vec_pretty(map)
         .map_err(|e| SecretError::StoreFailed(format!("cannot serialize encrypted store: {e}")))?;
 
-    let tmp = tmp_path(path);
-    std::fs::write(&tmp, &json)
-        .map_err(|e| SecretError::StoreFailed(format!("cannot write encrypted store: {e}")))?;
-    // Restrict the temp file before it becomes the live file via rename.
-    set_owner_only(&tmp)?;
+    let tmp = tmp_path(path)?;
+    let write_result = (|| -> SecretResult<()> {
+        use std::io::Write;
+        let mut file = create_temp_file(&tmp)?;
+        file.write_all(&json)
+            .map_err(|e| SecretError::StoreFailed(format!("cannot write encrypted store: {e}")))
+    })();
+    if let Err(e) = write_result {
+        // The temp name is random, so a leftover would never be reused; remove
+        // it rather than accumulate one per failed write.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         SecretError::StoreFailed(format!("cannot finalize encrypted store: {e}"))
     })?;
-    // Re-assert mode on the destination (rename keeps the temp's mode, but be
-    // explicit in case the destination pre-existed with looser bits).
-    set_owner_only(path)?;
+    // No chmod on the destination: `rename` gives the name to the temp file's
+    // inode, created 0600, so the mode is already right whatever the replaced
+    // file's was.
     Ok(())
 }
 
@@ -233,7 +271,8 @@ fn write_map_atomic(path: &Path, map: &BTreeMap<String, String>) -> SecretResult
 /// Returns [`SecretError::StoreFailed`] if no machine key is available or if
 /// serialization/encryption fails. No secret value appears in the error.
 fn encrypt_entry(creds: &Credentials) -> SecretResult<String> {
-    let machine_key = Zeroizing::new(get_machine_key());
+    // `get_machine_key` already returns a wiped-on-drop buffer.
+    let machine_key = get_machine_key();
     if machine_key.is_empty() {
         return Err(SecretError::StoreFailed(
             "no machine key available to encrypt credentials".to_string(),
@@ -264,7 +303,8 @@ fn decrypt_entry(encoded: &str) -> SecretResult<Credentials> {
             SecretError::RetrieveFailed(format!("encrypted store entry is malformed: {e}"))
         })?;
 
-    let machine_key = Zeroizing::new(get_machine_key());
+    // `get_machine_key` already returns a wiped-on-drop buffer.
+    let machine_key = get_machine_key();
     if machine_key.is_empty() {
         return Err(SecretError::RetrieveFailed(
             "no machine key available to decrypt credentials".to_string(),

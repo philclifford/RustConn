@@ -10,7 +10,7 @@ pub mod cloud_sync_tab;
 mod keybindings_tab;
 mod logging_tab;
 mod monitoring_tab;
-mod secrets_tab;
+pub mod secrets_tab;
 mod ssh_agent_tab;
 mod terminal_tab;
 mod ui_tab;
@@ -35,7 +35,7 @@ pub use ssh_agent_tab::*;
 pub use terminal_tab::*;
 pub use ui_tab::*;
 
-use crate::i18n::i18n;
+use crate::i18n::{i18n, i18n_f};
 
 /// Callback type for settings save
 pub type SettingsCallback = Option<Rc<dyn Fn(AppSettings)>>;
@@ -787,6 +787,148 @@ impl SettingsDialog {
         }
     }
 
+    /// Wires the Secrets page's credential transfer button.
+    ///
+    /// Separate from `create_secrets_page` for the same reason
+    /// [`Self::populate_cloud_sync`] is separate: the page is built before the
+    /// dialog has any application state, and a bulk credential transfer is driven
+    /// by the connection and group lists rather than by anything on the page.
+    ///
+    /// The snapshot is taken when the button is pressed, not here, so a transfer
+    /// started after other windows have added connections still sees them.
+    pub fn connect_credential_transfer(&self, state: &crate::state::SharedAppState) {
+        let state = state.clone();
+        let portable_path_entry = self.secrets_widgets.portable_path_entry.clone();
+        self.secrets_widgets
+            .transfer_button
+            .connect_clicked(move |button| {
+                let Ok(state_ref) = state.try_borrow() else {
+                    tracing::warn!("Application state is busy; not opening the transfer dialog");
+                    return;
+                };
+                // The *saved* settings: the transfer talks to real stores and
+                // needs the configuration they were set up with, not an unsaved
+                // edit sitting in this dialog's widgets.
+                let mut settings = state_ref.settings().clone();
+                let connections = state_ref.list_connections_owned();
+                let groups = state_ref.list_groups_owned();
+                drop(state_ref);
+
+                // The portable file's path is the one exception, because it is the
+                // field most likely to be mid-edit at the moment this button is
+                // reached. Taking the saved value would send the passwords to the
+                // default location while the row above still described the path
+                // the user had just typed.
+                if let Some(path) =
+                    secrets_tab::expand_user_path(portable_path_entry.text().as_str())
+                {
+                    settings.secrets.portable_file_path = Some(path);
+                }
+
+                let context = crate::dialogs::credential_transfer::TransferContext {
+                    settings,
+                    connections,
+                    groups,
+                };
+                crate::dialogs::credential_transfer::show_transfer_dialog(button, context);
+            });
+    }
+
+    /// Wires the Secrets page's "Change Passphrase…" button.
+    ///
+    /// Separate from `create_secrets_page` for the reason the button's own comment
+    /// gives: re-keying the file is half a passphrase change, and the other half —
+    /// replacing the copy in the session settings and in the live backend — needs
+    /// the application state this page never sees.
+    pub fn connect_portable_passphrase_change(&self, state: &crate::state::SharedAppState) {
+        let state = state.clone();
+        let path_entry = self.secrets_widgets.portable_path_entry.clone();
+        let passphrase_entry = self.secrets_widgets.portable_passphrase_entry.clone();
+        let confirm_entry = self.secrets_widgets.portable_confirm_entry.clone();
+        let status_label = self.secrets_widgets.portable_status_label.clone();
+        self.secrets_widgets
+            .portable_change_passphrase_button
+            .connect_clicked(move |button| {
+                // The path as the row currently reads, not the saved one — the same
+                // rule the transfer dialog follows, and for the same reason: this is
+                // the field most likely to be mid-edit, and re-keying the file at
+                // the default location while the row describes another would be a
+                // surprise with no undo.
+                let path = rustconn_core::secret::resolve_portable_store_path(
+                    secrets_tab::expand_user_path(path_entry.text().as_str()).as_deref(),
+                );
+                if !path.exists() {
+                    secrets_tab::update_status_label(
+                        &status_label,
+                        &i18n_f(
+                            "There is no portable file at {}. Create it first, or correct the path.",
+                            &[&path.display().to_string()],
+                        ),
+                        "error",
+                    );
+                    return;
+                }
+
+                // Whether this machine keeps a copy, which decides only whether the
+                // report tells the user to save their settings. Read from the saved
+                // settings rather than the storage combo: the combo is what the user
+                // *wants*, and what matters here is what is on disk right now.
+                let passphrase_is_remembered = {
+                    let Ok(state_ref) = state.try_borrow() else {
+                        tracing::warn!(
+                            "Application state is busy; not opening the passphrase change dialog"
+                        );
+                        return;
+                    };
+                    let secrets = &state_ref.settings().secrets;
+                    secrets.portable_save_to_keyring
+                        || secrets.portable_passphrase_encrypted.is_some()
+                };
+
+                let state_for_change = state.clone();
+                let passphrase_entry = passphrase_entry.clone();
+                let confirm_entry = confirm_entry.clone();
+                let status_for_change = status_label.clone();
+                let context =
+                    crate::dialogs::portable_passphrase_change::PassphraseChangeContext {
+                        store_path: path,
+                        passphrase_is_remembered,
+                        on_changed: Box::new(move |new_passphrase, reencrypted| {
+                            // The session copy and the live backend, in one call —
+                            // updating one and not the other is what made an unlock
+                            // appear to succeed while the next lookup still failed.
+                            if let Ok(mut state_mut) = state_for_change.try_borrow_mut() {
+                                state_mut.unlock_portable_store(new_passphrase.clone());
+                            } else {
+                                tracing::warn!(
+                                    "Application state was busy; the new portable passphrase was \
+                                     not installed for this session"
+                                );
+                            }
+                            // Both entries, so a Save from this dialog persists the
+                            // new passphrase rather than the superseded one. The
+                            // confirmation is filled too because `collect_secret_settings`
+                            // treats a passphrase that does not match its confirmation
+                            // as not entered.
+                            let plain = secrecy::ExposeSecret::expose_secret(new_passphrase);
+                            passphrase_entry.set_text(plain);
+                            confirm_entry.set_text(plain);
+                            secrets_tab::update_status_label(
+                                &status_for_change,
+                                &i18n_f(
+                                    "Passphrase changed. Passwords encrypted again: {}",
+                                    &[&reencrypted.to_string()],
+                                ),
+                                "success",
+                            );
+                        }),
+                    };
+                crate::dialogs::portable_passphrase_change::show_passphrase_change_dialog(
+                    button, context,
+                );
+            });
+    }
+
     /// Imports a `.rcn` file from the sync directory by creating an Import group
     /// and triggering an immediate sync.
     fn import_cloud_file(state: &crate::state::SharedAppState, filename: &str) {
@@ -1174,6 +1316,12 @@ impl SettingsDialog {
         let onepassword_storage_combo_clone =
             self.secrets_widgets.onepassword_storage_combo.clone();
         let pass_store_dir_entry_clone = self.secrets_widgets.pass_store_dir_entry.clone();
+        // Portable encrypted file — collect-only widgets.
+        let portable_path_entry_clone = self.secrets_widgets.portable_path_entry.clone();
+        let portable_passphrase_entry_clone =
+            self.secrets_widgets.portable_passphrase_entry.clone();
+        let portable_confirm_entry_clone = self.secrets_widgets.portable_confirm_entry.clone();
+        let portable_storage_combo_clone = self.secrets_widgets.portable_storage_combo.clone();
         // Which backends the keyring could not supply a secret for when the
         // dialog opened — part of the dirty check below.
         let keyring_gaps_clone = self.secrets_widgets.keyring_gaps.clone();
@@ -1284,6 +1432,8 @@ impl SettingsDialog {
                 page: adw::PreferencesPage::new(), // dummy, not used in collect
                 secret_backend_dropdown: secret_backend_dropdown_clone.clone(),
                 enable_fallback: enable_fallback_clone.clone(),
+                transfer_button: Button::new(), // dummy, not used in collect
+                portable_change_passphrase_button: Button::new(), // dummy, not used in collect
                 kdbx_path_entry: kdbx_path_entry_clone.clone(),
                 kdbx_password_entry: kdbx_password_entry_clone.clone(),
                 kdbx_enabled_row: kdbx_enabled_row_clone.clone(),
@@ -1328,6 +1478,14 @@ impl SettingsDialog {
                 pass_store_dir_entry: pass_store_dir_entry_clone.clone(),
                 pass_store_dir_browse_button: Button::new(), // dummy, не використовується при збиранні
                 pass_status_label: Label::new(None), // dummy, не використовується при збиранні
+                encrypted_file_group: adw::PreferencesGroup::new(), // dummy
+                portable_group: adw::PreferencesGroup::new(), // dummy
+                portable_path_entry: portable_path_entry_clone.clone(),
+                portable_browse_button: Button::new(), // dummy, не використовується при збиранні
+                portable_passphrase_entry: portable_passphrase_entry_clone.clone(),
+                portable_confirm_entry: portable_confirm_entry_clone.clone(),
+                portable_storage_combo: portable_storage_combo_clone.clone(),
+                portable_status_label: Label::new(None), // dummy, not used in collect
             };
             let secrets = collect_secret_settings(&secrets_widgets_for_collect, &settings_clone);
 

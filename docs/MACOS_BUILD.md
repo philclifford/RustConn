@@ -246,6 +246,13 @@ ruby -c packaging/macos/rustconn.rb
 brew install --build-from-source ./packaging/macos/rustconn.rb
 ```
 
+The formula builds its own `.app` under `#{prefix}/RustConn.app`, and it must obey the same rule as the canonical producer: `CFBundleExecutable` names a real binary inside `Contents/MacOS`, never a wrapper that `exec`s one from the keg's `bin`. Re-exec destroys the bundle identity — generic Dock tile, wrong name, and no LaunchServices scene for `NSStatusItem`. Because that copy is not reached by `scripts/macos-build.sh`, verify the formula's bundle separately after changing it:
+
+```bash
+plutil -p "$(brew --prefix)/opt/rustconn/RustConn.app/Contents/Info.plist" | grep CFBundleExecutable
+file "$(brew --prefix)/opt/rustconn/RustConn.app/Contents/MacOS/rustconn"   # must be Mach-O, not a script
+```
+
 ## Troubleshooting
 
 ### Local Shell Is Empty
@@ -259,6 +266,18 @@ Build with `system-keyring`. macOS uses Security.framework directly for primary 
 ### Tray Icon Warning
 
 Use `tray-macos`, not Linux `tray`. The macOS path creates a native `NSStatusItem` through `tray-icon` and `muda`.
+
+### Dock Shows a Generic Terminal Tile
+
+Expected for any launch with no bundle behind it, and not something the window icon can fix: macOS reads the Dock icon from the launched bundle's `Info.plist`, and `gtk_window_set_icon_name` is an X11/Wayland concept the GDK macOS backend ignores.
+
+RustConn compensates by setting the tile image at runtime through `rustconn-dock-sys`, so a shell launch of `rustconn` shows the right icon from 0.20.4 onwards. Only the tile: the name under it, the Cmd-Tab entry and the application menu still come from the bundle, so use `open dist/RustConn.app` when those matter. Confirm the runtime path took effect with:
+
+```bash
+RUST_LOG=debug rustconn 2>&1 | grep -i 'dock tile'
+```
+
+`Set the Dock tile icon programmatically` means it applied; `Dock icon left to the bundle's CFBundleIconFile` means RustConn detected a real bundle and deliberately did nothing, which is correct inside `dist/RustConn.app`. A stale tile for a bundle you just rebuilt is LaunchServices caching rather than a packaging fault — `touch dist/RustConn.app` and relaunch.
 
 ### Missing Icons or Schemas During Development
 

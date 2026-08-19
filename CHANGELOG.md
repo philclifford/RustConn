@@ -5,6 +5,90 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.4] - 2026-08-19
+
+### Added
+
+- **Portable encrypted file backend — cloud-syncable credential storage (issue [#293](https://github.com/totoshko88/RustConn/issues/293))** — a new secret backend keyed by a passphrase you choose instead of by the machine, so one file holds your passwords and opens on every device you own, Linux and macOS alike. Configured in Settings ▸ Secrets: pick a path inside whatever folder your cloud client syncs, choose a passphrase, and optionally have it remembered locally. Existing passwords can be copied into the portable file in one step, keeping the originals as the local fallback. `rustconn-cli secret get`/`set`/`delete` work with it too.
+
+  The file uses AES-256-GCM with a key-encryption-key / data-encryption-key split derived from Argon2id. Concurrent edits resolve as last-writer-wins; there is no passphrase recovery. Both limits are documented in the user guide.
+
+- **Settings ▸ Secrets ▸ Copy Passwords… — move stored passwords between any two backends** — a dialog with From/To selectors covering all eight backends, progress reporting, and the ability to stop mid-batch. Reports what arrived, what had no stored password, and what failed, by name. Refuses when two entries would collide in the destination rather than silently overwriting.
+
+- **Settings ▸ Secrets ▸ Change Passphrase…** — re-encrypts every credential in the portable file under a new passphrase. All-or-nothing: a single unreadable entry aborts and leaves the file unchanged.
+
+- **Passphrase strength indicator** — the setup row warns when a passphrase is weak. Advice only, never a refusal; not shown when opening an existing file.
+
+- **Create File button in Settings** — creating the portable file is now an explicit step with confirmation, rather than a side effect of the first credential save. On a second machine it verifies that the passphrase opens the file the sync client delivered.
+
+### Fixed
+
+- **Terminal starts at correct size instead of 24×80 (issue [#294](https://github.com/totoshko88/RustConn/issues/294))** — programs that check geometry only at startup (`mc`, `htop`) now see the real window dimensions immediately.
+
+- **Keyboard shortcuts help dialog shows user overrides (issue [#295](https://github.com/totoshko88/RustConn/issues/295))** — the window was built from a compile-time array and always showed defaults. It now reads the effective accelerators, including remapped bindings, and lists eleven non-rebindable shortcuts that were previously missing.
+
+- **macOS: Dock showed a generic tile instead of RustConn's icon** — set at runtime via AppKit when no `.app` bundle is behind the process. Lives in a new `rustconn-dock-sys` crate.
+
+- **macOS: Homebrew formula's `.app` had no bundle identity** — the wrapper script lost the bundle context, causing a generic Dock tile and missing tray icon. The bundle now holds the real binary directly.
+
+- **`~` in Settings path fields was taken literally** — `~/Dropbox/rustconn.enc` now expands correctly for the KeePass database, key file, pass store and portable file paths.
+
+- **Empty row visible in the Portable Encrypted File settings group** — the status row was always present but hidden wrong, leaving a blank band. Also fixed: status messages from different sources (keyring warning, file creation, copy result) no longer erase each other.
+
+- **Portable file could be overwritten during setup on a second machine** — a file arriving from the sync client during the half-second Argon2 derivation was discarded. The path is now re-checked before the rename.
+
+- **Saved passphrase reported as stale when it no longer opens the file** — previously said "Incorrect passphrase", now says "The saved passphrase no longer opens the portable file" with guidance to update it in Settings.
+
+- **Selecting the portable backend made the machine-bound store unreachable** — credentials in `credentials.enc` became unreadable immediately after switching, before the user could run Copy Credentials. Fixed.
+
+- **Wrong passphrase read as "no stored password"** — a mistyped passphrase in Settings now surfaces as an explicit error instead of silently falling through to a password prompt.
+
+### Improved
+
+- **Backend selector redesigned** — now an `AdwComboRow` with descriptions explaining each option's trade-offs. Both file backends show file status (path, credential count, or error state).
+
+- **Fallback toggle is now an `AdwSwitchRow`** — was a checkbox naming "libsecret" on all platforms; now says "macOS Keychain" on macOS.
+
+- **`rustconn-cli --backend` accepts `encrypted-file` and `portable`** — the machine-bound file backend was previously unreachable from the CLI without changing Settings first.
+
+- **Transfer failures named in a dialog, not a disappearing toast** — entries that could not be copied are listed by name with guidance, rather than reported as a count in a transient notification.
+
+### Security
+
+- **Passbolt CLI error messages no longer contain the submitted password** — `go-passbolt-cli` quotes its arguments in error output; those are now scrubbed before logging.
+
+- **Bitwarden CLI no longer logs saved passwords at debug level** — the base64-encoded item (containing the plaintext) was logged on every `bw create/edit`. Only the verb is logged now.
+
+- **Vault parse errors no longer quote credential values** — serde's `Display` included the rejected token, which could be a password stored as a JSON number. Parse errors now report position and category only.
+
+- **Intermediate plaintext copies are wiped on drop** — five code paths across Passbolt, 1Password, KeePass and the portable store left `expose_secret().to_string()` in bare `String` instead of `Zeroizing`. Fixed.
+
+- **Portable store data key no longer left in an unwiped stack slot** — the `[u8; 32]` is `Copy`, so wrapping the copy in `Zeroizing` left the original unprotected. Now filled in place.
+
+- **Credential store temp files are created `0600`** — previously chmod'ed after the write, leaving a window where the KDF salt and wrapped key were world-readable. Temp names are also randomised and opened with `O_EXCL`.
+
+- **Concurrent writes no longer lose entries** — a mutex now spans the full read-modify-write cycle. Cross-machine writes remain last-writer-wins.
+
+- **Portable file size and entry count capped before parsing** — 8 MiB / 10 000 entries. Argon2 cost ceilings reduced to 256 MiB / 12 iterations.
+
+- **KeePass bulk transfer has a per-entry timeout** — a hung `keepassxc-cli` no longer blocks the entire batch indefinitely.
+
+### Localisation
+
+- **Georgian (ka) added — [PR #296](https://github.com/totoshko88/RustConn/pull/296)** — full catalogue contributed by Ekaterine Papava. RustConn now ships 17 locales.
+
+- **Eighty-five new strings for the Secrets rework translated in all 17 locales** — merged with `--no-fuzzy-matching` to avoid incorrect guesses that render as English while counting as translated. Ukrainian reviewed against the project style guide.
+
+### Documentation
+
+- **`docs/USER_GUIDE.md`** — new "Portable Encrypted File" section covering setup, passphrase choices, and limitations.
+- **`docs/ARCHITECTURE.md`** — key hierarchy, untrusted-header handling, and cloud-sync ceiling.
+- **`docs/CLI_REFERENCE.md`** — new `--backend` aliases and passphrase prompting behaviour.
+
+### Dependencies
+
+- **Updated**: zvariant 5.14.0→5.15.0, zvariant_derive 5.14.0→5.15.0, zvariant_utils 4.1.0→4.2.0
+
 ## [0.20.3] - 2026-08-17
 
 ### Added

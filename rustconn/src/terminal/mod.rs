@@ -992,6 +992,41 @@ impl TerminalNotebook {
     /// really changed — a redundant `SIGWINCH` makes full-screen programs
     /// repaint for nothing.
     fn watch_grid_size(&self, session_id: Uuid, terminal: &Terminal) {
+        // Issue #294: push the real window size on the first main-loop idle
+        // after the session is spawned. Without this, the child starts at the
+        // default 24×80 and programs that read geometry only at startup (`mc`,
+        // `htop`) render at the wrong size until they are restarted.
+        //
+        // Best effort by construction: the idle runs at
+        // `G_PRIORITY_DEFAULT_IDLE`, below GTK's frame clock, so in the common
+        // case layout has already happened — but if it has not, VTE reports its
+        // own 24×80 defaults rather than zero, the guard below does not catch it,
+        // and `sync_size` finds nothing to change. That case falls back to the
+        // 250 ms poll, which is the behaviour this replaced, so there is no
+        // retry: the cost of being early is a slower fix, not a wrong size.
+        {
+            let terminal_weak = terminal.downgrade();
+            let relays_early = Rc::clone(&self.pty_relays);
+            glib::idle_add_local_once(move || {
+                let Some(terminal) = terminal_weak.upgrade() else {
+                    return;
+                };
+                let (rows, cols) = grid_size(&terminal);
+                if rows == 0 || cols == 0 {
+                    return;
+                }
+                let relays = relays_early.borrow();
+                if let Some(relay) = relays.get(&session_id)
+                    && relay.sync_size(rows, cols)
+                {
+                    tracing::debug!(
+                        %session_id, rows, cols,
+                        "Early size push after widget allocation"
+                    );
+                }
+            });
+        }
+
         let terminal = terminal.downgrade();
         let relays = Rc::clone(&self.pty_relays);
         let timers = Rc::clone(&self.pty_size_timers);

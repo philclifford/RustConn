@@ -204,6 +204,11 @@ impl CredentialResolver {
                 let lookup_key = Self::generate_lookup_key(connection);
                 self.secret_manager.retrieve(&lookup_key).await
             }
+            SecretBackendType::PortableEncryptedFile => {
+                // Passphrase-based flat-key backend: same lookup key scheme.
+                let lookup_key = Self::generate_lookup_key(connection);
+                self.secret_manager.retrieve(&lookup_key).await
+            }
         }
     }
 
@@ -465,6 +470,8 @@ impl CredentialResolver {
             // EncryptedFile is a flat-key backend (no hierarchy); identity
             // mapping mirrors the other app-managed flat-key backends above.
             SecretBackendType::EncryptedFile => SecretBackendType::EncryptedFile,
+            // PortableEncryptedFile is also a flat-key backend (passphrase-based).
+            SecretBackendType::PortableEncryptedFile => SecretBackendType::PortableEncryptedFile,
         }
     }
 
@@ -671,6 +678,11 @@ impl CredentialResolver {
                 let lookup_key = Self::generate_lookup_key(connection);
                 self.secret_manager.store(&lookup_key, credentials).await
             }
+            SecretBackendType::PortableEncryptedFile => {
+                // Passphrase-based flat-key backend: same store scheme.
+                let lookup_key = Self::generate_lookup_key(connection);
+                self.secret_manager.store(&lookup_key, credentials).await
+            }
         }
     }
 
@@ -712,6 +724,11 @@ impl CredentialResolver {
             SecretBackendType::EncryptedFile => {
                 // Flat-key backend (no hierarchy): store under the same flat
                 // lookup key as store_unified, so moves/renames don't break it.
+                let lookup_key = Self::generate_lookup_key(connection);
+                self.secret_manager.store(&lookup_key, credentials).await
+            }
+            SecretBackendType::PortableEncryptedFile => {
+                // Passphrase-based flat-key backend (no hierarchy).
                 let lookup_key = Self::generate_lookup_key(connection);
                 self.secret_manager.store(&lookup_key, credentials).await
             }
@@ -970,6 +987,11 @@ impl CredentialResolver {
                 let lookup_key = Self::generate_lookup_key(connection);
                 self.secret_manager.retrieve(&lookup_key).await
             }
+            SecretBackendType::PortableEncryptedFile => {
+                // Passphrase-based flat-key backend (no hierarchy).
+                let lookup_key = Self::generate_lookup_key(connection);
+                self.secret_manager.retrieve(&lookup_key).await
+            }
         }
     }
 
@@ -1102,10 +1124,11 @@ impl CredentialResolver {
             | SecretBackendType::OnePassword
             | SecretBackendType::Passbolt
             | SecretBackendType::Pass
-            | SecretBackendType::EncryptedFile => {
+            | SecretBackendType::EncryptedFile
+            | SecretBackendType::PortableEncryptedFile => {
                 // Flat keys — no rename needed on group move.
-                // (EncryptedFile is flat-key; grouping here is correct, not a
-                // 2.5 placeholder.)
+                // (EncryptedFile/PortableEncryptedFile are flat-key; grouping
+                // here is correct, not a placeholder.)
             }
         }
 
@@ -1198,6 +1221,17 @@ impl CredentialResolver {
                         // as the other app-managed backends; rename moves the
                         // entry without data loss.
                         // (Flat-key; correct, not a 2.5 placeholder.)
+                        let old_key = Self::generate_lookup_key(&old_connection);
+                        let new_key = Self::generate_lookup_key(connection);
+                        if old_key != new_key
+                            && let Some(creds) = self.secret_manager.retrieve(&old_key).await?
+                        {
+                            self.secret_manager.store(&new_key, &creds).await?;
+                            let _ = self.secret_manager.delete(&old_key).await;
+                        }
+                    }
+                    SecretBackendType::PortableEncryptedFile => {
+                        // Same flat-key rename as EncryptedFile.
                         let old_key = Self::generate_lookup_key(&old_connection);
                         let new_key = Self::generate_lookup_key(connection);
                         if old_key != new_key

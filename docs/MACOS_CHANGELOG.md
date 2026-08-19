@@ -1,5 +1,19 @@
 # macOS Port — Changelog
 
+## [0.20.4] - 2026-08-18
+
+### Fixed
+
+- **The Dock showed a generic terminal tile instead of RustConn's icon** — the Dock icon is not a property of the running program; LaunchServices reads it from the launched bundle's `Info.plist`. A process with no bundle behind it therefore gets the generic Unix-executable tile, which is the case for `rustconn` started from a shell. GTK cannot reach it — `gtk_window_set_icon_name` is an X11/Wayland concept and a no-op on the GDK macOS backend, and GDK exposes no Dock API. The tile image is now set at runtime through `-[NSApplication setApplicationIconImage:]` from the embedded 256×256 icon, which is what the Dock draws at its 128pt maximum on a Retina display.
+
+  Skipped inside a real bundle on purpose: the `.icns` carries every representation from 16px to 1024px and preserves a custom icon pasted onto the app in Finder. Only the tile is settable at runtime in any case — the name beneath it, the Cmd-Tab entry and the application menu still come from the bundle, so `scripts/macos-build.sh` remains the way to get all of them.
+
+- **The Homebrew formula's `.app` had no bundle identity of its own** — `CFBundleExecutable` named a wrapper script that `exec`ed the keg's `bin/rustconn`, outside the `.app`. LaunchServices ran the script, the script replaced the process image, and the process that ended up owning the window had no enclosing bundle: generic Dock tile, wrong name beneath it, and no LaunchServices scene, so `NSStatusItem` could not appear either. Exactly the failure the canonical producer had fixed in 0.19.x, never carried across to the formula — the file the release workflow copies into the tap. `Contents/MacOS/rustconn` is now a real binary named directly by `CFBundleExecutable`, translations are installed bundle-relative under `Contents/Resources/locale` (previously supplied by the wrapper's `LOCALEDIR` export), and the wrapper remains only as an optional manual launcher under `Contents/Resources/bin`, where it does not interfere with nested-code signing. Schemas and icons need no bundle copy: the app already falls back to the Homebrew prefix for both.
+
+### Added
+
+- **`rustconn-dock-sys`** — a fourth sanctioned FFI crate, alongside the PTY, `setlocale` and `setenv` helpers, holding the one AppKit call above so `unsafe` stays out of `rustconn`. Its precondition is AppKit's main-thread rule, proved by asking the runtime via `objc2::MainThreadMarker`; a violation is reported as an outcome rather than a panic, because a wrong Dock tile is cosmetic and stopping the process over it would be the worse failure. Unlike the other three its dependencies are target-gated, since `objc2-app-kit` builds nowhere else; the crate itself stays an unconditional workspace member, and its guard plus outcome reporting are covered by nine tests that run on Linux CI. Verify the gated half with `cargo clippy -p rustconn-dock-sys --target aarch64-apple-darwin` — the bindings are pure Rust, so no SDK is needed to type-check them.
+
 ## [0.19.14] - 2026-08-06
 
 ### Changed

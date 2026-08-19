@@ -43,9 +43,14 @@ pub(crate) const SETTINGS_HEADER_LEN: usize = 4 + 1 + SETTINGS_SALT_LEN + SETTIN
 /// first generated (parallel threads would otherwise each generate a different
 /// UUID, with the last writer winning and earlier encryptions becoming
 /// undecryptable).
-pub(crate) fn get_machine_key() -> Vec<u8> {
+/// The cached copy lives for the process lifetime — that is the point of the
+/// cache, and it is why the *clone* handed to each caller is what gets wiped.
+/// Returning `Zeroizing` means a caller cannot accidentally leave key bytes in a
+/// buffer that outlives the operation; previously every call site had to
+/// remember to wrap it, and two of them did not.
+pub(crate) fn get_machine_key() -> Zeroizing<Vec<u8>> {
     static CACHED_KEY: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-    CACHED_KEY.get_or_init(derive_machine_key_inner).clone()
+    Zeroizing::new(CACHED_KEY.get_or_init(derive_machine_key_inner).clone())
 }
 
 /// Inner implementation of machine key derivation (called once per process).
@@ -133,7 +138,7 @@ pub(crate) fn encrypt_credential(plaintext: &[u8], machine_key: &[u8]) -> Result
 
     let key = derive_settings_key(machine_key, &salt)?;
 
-    let unbound_key = UnboundKey::new(&AES_256_GCM, &key)
+    let unbound_key = UnboundKey::new(&AES_256_GCM, key.as_ref())
         .map_err(|_| "Failed to create encryption key".to_string())?;
     let less_safe_key = LessSafeKey::new(unbound_key);
     let nonce = Nonce::assume_unique_for_key(nonce_bytes);
@@ -206,7 +211,7 @@ pub(crate) fn decrypt_credential_aes(
 
     let key = derive_settings_key(machine_key, salt)?;
 
-    let unbound_key = UnboundKey::new(&AES_256_GCM, &key)
+    let unbound_key = UnboundKey::new(&AES_256_GCM, key.as_ref())
         .map_err(|_| "Failed to create decryption key".to_string())?;
     let less_safe_key = LessSafeKey::new(unbound_key);
     let nonce = Nonce::assume_unique_for_key(nonce_bytes);
@@ -234,7 +239,10 @@ pub(crate) fn decrypt_credential_aes(
 /// # Errors
 /// Returns an error string if the Argon2 parameters are invalid or key
 /// derivation fails.
-pub(crate) fn derive_settings_key(machine_key: &[u8], salt: &[u8]) -> Result<[u8; 32], String> {
+pub(crate) fn derive_settings_key(
+    machine_key: &[u8],
+    salt: &[u8],
+) -> Result<Zeroizing<[u8; 32]>, String> {
     use argon2::{Algorithm, Argon2, Params, Version};
 
     // Lighter params: 16 MiB memory, 2 iterations, 1 thread
@@ -243,11 +251,176 @@ pub(crate) fn derive_settings_key(machine_key: &[u8], salt: &[u8]) -> Result<[u8
         .map_err(|e| format!("Invalid Argon2 params: {e}"))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
-    let mut key = [0u8; 32];
+    // Wiped on drop, matching `derive_passphrase_key` below. Both produce key
+    // material of the same sensitivity; only one of them used to say so.
+    let mut key = Zeroizing::new([0u8; 32]);
     argon2
-        .hash_password_into(machine_key, salt, &mut key)
+        .hash_password_into(machine_key, salt, key.as_mut())
         .map_err(|e| format!("Key derivation failed: {e}"))?;
     Ok(key)
+}
+
+/// Parameters for passphrase-based key derivation (portable encrypted file).
+///
+/// Stronger than [`derive_settings_key`] because the input is a user-chosen
+/// passphrase with limited entropy rather than a machine-specific UUID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "m_cost/t_cost/p_cost are Argon2's own parameter names and are serialised \
+              under them; renaming would break the on-disk header"
+)]
+pub(crate) struct PassphraseKdfParams {
+    /// Memory cost in KiB (default: 64 MiB = 65536 KiB).
+    pub m_cost: u32,
+    /// Time cost / iterations (default: 3).
+    pub t_cost: u32,
+    /// Parallelism (default: 4).
+    pub p_cost: u32,
+}
+
+impl Default for PassphraseKdfParams {
+    fn default() -> Self {
+        Self {
+            // 64 MiB memory, 3 iterations, 4 threads — balance between
+            // security (brute-force resistance) and unlock latency (~0.5 s on
+            // modern hardware). These defaults are stored in the file header so
+            // future versions can raise them without breaking existing files.
+            m_cost: 64 * 1024,
+            t_cost: 3,
+            p_cost: 4,
+        }
+    }
+}
+
+/// Derives a 256-bit AES key from a user passphrase using Argon2id.
+///
+/// Uses stronger parameters than [`derive_settings_key`] because the input is
+/// a human-chosen passphrase rather than a high-entropy machine key.
+///
+/// # Errors
+/// Returns an error string if the Argon2 parameters are invalid or key
+/// derivation fails.
+pub(crate) fn derive_passphrase_key(
+    passphrase: &[u8],
+    salt: &[u8],
+    params: &PassphraseKdfParams,
+) -> Result<Zeroizing<[u8; 32]>, String> {
+    use argon2::{Algorithm, Argon2, Params, Version};
+
+    let argon_params = Params::new(params.m_cost, params.t_cost, params.p_cost, Some(32))
+        .map_err(|e| format!("Invalid Argon2 passphrase params: {e}"))?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon_params);
+
+    let mut key = Zeroizing::new([0u8; 32]);
+    argon2
+        .hash_password_into(passphrase, salt, key.as_mut())
+        .map_err(|e| format!("Passphrase key derivation failed: {e}"))?;
+    Ok(key)
+}
+
+/// Fills `buf` with cryptographically secure random bytes.
+///
+/// # Errors
+/// Returns an error string if the system RNG refuses to produce bytes.
+pub(crate) fn fill_random(buf: &mut [u8]) -> Result<(), String> {
+    use ring::rand::{SecureRandom, SystemRandom};
+    SystemRandom::new()
+        .fill(buf)
+        .map_err(|_| "Failed to generate random bytes".to_string())
+}
+
+/// AAD context label for the wrapped data-encryption key in a portable store.
+pub(crate) const AAD_WRAPPED_KEY: &[u8] = b"rustconn-portable-dek-v1";
+
+/// AAD context label for a credential entry in a portable store.
+pub(crate) const AAD_ENTRY: &[u8] = b"rustconn-portable-entry-v1";
+
+/// Seals `plaintext` under a caller-supplied 256-bit key.
+///
+/// Output layout is `nonce (12) + ciphertext + tag (16)` — no magic, no salt and
+/// no KDF, because the key is already a key. This is the primitive the portable
+/// store uses for both the wrapped data-encryption key and every entry, so a
+/// store operation costs one AES-GCM pass rather than an Argon2 derivation.
+///
+/// `aad` binds the blob to its role ([`AAD_WRAPPED_KEY`] or [`AAD_ENTRY`]).
+/// Without it the two blob kinds are structurally identical, so anyone able to
+/// edit the JSON could move a wrapped key into the entry map (or the reverse)
+/// and the ciphertext would still authenticate.
+///
+/// # Errors
+/// Returns an error if nonce generation or AES-GCM sealing fails.
+pub(crate) fn seal_with_key(
+    key: &[u8; 32],
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, String> {
+    use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+
+    let mut nonce_bytes = [0u8; SETTINGS_NONCE_LEN];
+    fill_random(&mut nonce_bytes)?;
+
+    let unbound_key = UnboundKey::new(&AES_256_GCM, key)
+        .map_err(|_| "Failed to create encryption key".to_string())?;
+    let less_safe_key = LessSafeKey::new(unbound_key);
+    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+
+    // Sealed in place: `seal_in_place_append_tag` overwrites the plaintext copy
+    // with ciphertext, so it does not outlive the call. `Zeroizing` covers the
+    // path where it does *not* overwrite anything — on a seal error the buffer
+    // would otherwise be dropped still holding the plaintext, which here is a
+    // data-encryption key or a credential.
+    let mut in_out = Zeroizing::new(plaintext.to_vec());
+    less_safe_key
+        .seal_in_place_append_tag(nonce, Aad::from(aad), &mut *in_out)
+        .map_err(|_| "Encryption failed".to_string())?;
+
+    let mut result = Vec::with_capacity(SETTINGS_NONCE_LEN + in_out.len());
+    result.extend_from_slice(&nonce_bytes);
+    result.extend_from_slice(&in_out);
+    Ok(result)
+}
+
+/// Opens a blob produced by [`seal_with_key`] under the same key and `aad`.
+///
+/// # Errors
+/// Returns an error if the blob is shorter than a nonce plus tag, or if AES-GCM
+/// authentication fails (wrong key, wrong `aad`, or corrupted data).
+pub(crate) fn open_with_key(
+    key: &[u8; 32],
+    aad: &[u8],
+    data: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+
+    /// AES-GCM authentication tag length.
+    const TAG_LEN: usize = 16;
+
+    if data.len() < SETTINGS_NONCE_LEN + TAG_LEN {
+        return Err("Encrypted data too short".to_string());
+    }
+
+    let nonce_bytes: [u8; SETTINGS_NONCE_LEN] = data[..SETTINGS_NONCE_LEN]
+        .try_into()
+        .map_err(|_| "Invalid nonce".to_string())?;
+    let ciphertext = &data[SETTINGS_NONCE_LEN..];
+
+    let unbound_key = UnboundKey::new(&AES_256_GCM, key)
+        .map_err(|_| "Failed to create decryption key".to_string())?;
+    let less_safe_key = LessSafeKey::new(unbound_key);
+    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+
+    // Plaintext-bearing buffer wiped on drop.
+    let mut in_out = Zeroizing::new(ciphertext.to_vec());
+    less_safe_key
+        .open_in_place(nonce, Aad::from(aad), &mut in_out)
+        .map_err(|_| "Decryption failed (wrong key or corrupted data)".to_string())?;
+
+    // Drop the authentication tag. The length is bound first because
+    // `Zeroizing`'s `Deref` blocks the two-phase borrow a plain `Vec` allows.
+    let plaintext_len = in_out.len() - TAG_LEN;
+    in_out.truncate(plaintext_len);
+    Ok(in_out)
 }
 
 #[cfg(test)]
