@@ -1044,11 +1044,17 @@ fn open_portable_backend(
 
     let path = resolve_portable_store_path(settings.portable_file_path.as_deref());
 
+    // Where the passphrase came from decides what a rejection means. One the user
+    // just typed is a typo; one restored from disk is a stale saved copy, and
+    // telling that user their passphrase is "incorrect" names something they never
+    // entered and offers nothing to do about it.
+    let mut passphrase_was_restored = true;
     let passphrase = if let Some(ref existing) = settings.portable_passphrase {
         existing.clone()
     } else if let Some(restored) = restore_portable_passphrase(settings) {
         restored
     } else {
+        passphrase_was_restored = false;
         if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
             return Err(CliError::Secret(
                 "The portable credential file needs a passphrase and there is no terminal \
@@ -1089,8 +1095,24 @@ fn open_portable_backend(
         secrecy::SecretString::from(prompted.as_str())
     };
 
-    verify_portable_passphrase(&path, &passphrase)
-        .map_err(|e| CliError::Secret(format!("Cannot open portable credential file: {e}")))?;
+    verify_portable_passphrase(&path, &passphrase).map_err(|e| {
+        // The remembered copy is only rewritten when Settings is saved, so a
+        // passphrase changed in the GUI and not yet saved lands here on every
+        // machine that remembered the old one. That is the common cause, and
+        // "incorrect passphrase" describes it from the file's point of view
+        // rather than the user's.
+        if passphrase_was_restored
+            && matches!(e, rustconn_core::error::SecretError::IncorrectPassphrase)
+        {
+            return CliError::Secret(format!(
+                "The saved passphrase no longer opens '{}'. If it was changed in \
+                 Settings ▸ Secrets ▸ Change Passphrase, save the settings there so the \
+                 copy kept on this computer is updated too.",
+                path.display()
+            ));
+        }
+        CliError::Secret(format!("Cannot open portable credential file: {e}"))
+    })?;
 
     let backend = PortableEncryptedFileBackend::with_path(path);
     backend.set_passphrase(passphrase);
