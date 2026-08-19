@@ -28,6 +28,7 @@ pub mod migration;
 mod onepassword;
 mod pass;
 mod passbolt;
+pub mod passphrase_strength;
 mod portable_encrypted_file;
 mod resolver;
 pub mod script_resolver;
@@ -81,11 +82,20 @@ pub use passbolt::{
     get_passbolt_status, get_passbolt_version, get_passphrase_from_keyring,
     store_passphrase_in_keyring,
 };
+// `MIN_REASONABLE_LENGTH` is deliberately *not* re-exported here. Flattened to
+// this level it reads as `MIN_PASSPHRASE_LENGTH`, which is the name of an
+// enforced minimum, and the whole point of the module is that there is none —
+// the same field opens existing files, so a floor would lock users out of their
+// own credentials. `PassphraseStrength::TooShort` tells the UI everything it
+// needs. Reach for the constant under `passphrase_strength::` if a caller ever
+// genuinely needs the number.
+pub use passphrase_strength::{PassphraseStrength, assess_passphrase};
 pub use portable_encrypted_file::{
-    PORTABLE_STORE_FILE_NAME, PortableEncryptedFileBackend,
-    delete_portable_passphrase_from_keyring, entry_count as portable_entry_count,
-    get_portable_passphrase_from_keyring, resolve_portable_store_path,
-    store_portable_passphrase_in_keyring, verify_portable_passphrase,
+    PORTABLE_STORE_FILE_NAME, PortableEncryptedFileBackend, PortableStoreSetup,
+    change_portable_passphrase, delete_portable_passphrase_from_keyring,
+    entry_count as portable_entry_count, get_portable_passphrase_from_keyring,
+    prepare_portable_store, resolve_portable_store_path, store_portable_passphrase_in_keyring,
+    verify_portable_passphrase,
 };
 pub use resolver::CredentialResolver;
 pub use status::{KeePassStatus, parse_keepassxc_version};

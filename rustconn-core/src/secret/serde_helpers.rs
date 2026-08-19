@@ -211,3 +211,61 @@ mod tests {
         assert!(parsed.value.is_none());
     }
 }
+
+/// Classifies a `serde_json` failure without quoting what it choked on.
+///
+/// The obvious thing to put in an error is the serde error's `Display`, and that
+/// is what the vault backends used to do. It quotes the offending value, and the
+/// payloads being parsed here are vault responses whose fields include the
+/// password: a password stored as a JSON number comes back as ``invalid type:
+/// integer `1234`, expected a string`` inside a [`SecretError`] that the GUI logs
+/// and shows.
+///
+/// Position alone (`line`/`column`) leaks nothing but also says nothing about
+/// *what* went wrong, and the payload it indexes into is deliberately not logged.
+/// The category is the part that is both safe and useful: it separates "their CLI
+/// stopped emitting JSON" from "their JSON no longer matches what we expect",
+/// which is the difference between a broken installation and a schema change.
+///
+/// [`SecretError`]: crate::error::SecretError
+#[must_use]
+pub fn serde_error_kind(error: &serde_json::Error) -> &'static str {
+    match error.classify() {
+        serde_json::error::Category::Io => "read",
+        serde_json::error::Category::Syntax => "syntax",
+        serde_json::error::Category::Data => "schema",
+        serde_json::error::Category::Eof => "truncated input",
+    }
+}
+
+#[cfg(test)]
+mod kind_tests {
+    use super::serde_error_kind;
+
+    /// The whole point of the helper: a numeric password must not survive into
+    /// the classification the way it survives into `Display`.
+    #[test]
+    fn a_type_mismatch_is_reported_without_the_offending_value() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Item {
+            #[expect(dead_code, reason = "only the deserialization failure matters")]
+            password: String,
+        }
+
+        let error = serde_json::from_str::<Item>(r#"{"password": 1234}"#)
+            .expect_err("a number must not deserialize into a String");
+
+        assert_eq!(serde_error_kind(&error), "schema");
+        assert!(
+            error.to_string().contains("1234"),
+            "the premise of this helper is that Display does leak the value"
+        );
+    }
+
+    #[test]
+    fn malformed_json_is_reported_as_syntax() {
+        let error =
+            serde_json::from_str::<serde_json::Value>("{not json").expect_err("this is not JSON");
+        assert_eq!(serde_error_kind(&error), "syntax");
+    }
+}

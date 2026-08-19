@@ -166,8 +166,21 @@ impl PortableStoreFile {
     /// Returns [`SecretError::StoreFailed`] if the RNG, the Argon2 derivation or
     /// the key wrapping fails.
     fn create(passphrase: &[u8]) -> SecretResult<(Self, Dek)> {
-        let kdf_params = PassphraseKdfParams::default();
+        Self::create_with_params(passphrase, PassphraseKdfParams::default())
+    }
 
+    /// Creates an empty store at an explicit key-derivation cost.
+    ///
+    /// Split from [`Self::create`] so the tests can build a store without paying
+    /// 64 MiB of Argon2 per case; production callers use the default.
+    ///
+    /// # Errors
+    /// Returns [`SecretError::StoreFailed`] if the RNG, the Argon2 derivation or
+    /// the key wrapping fails.
+    fn create_with_params(
+        passphrase: &[u8],
+        kdf_params: PassphraseKdfParams,
+    ) -> SecretResult<(Self, Dek)> {
         let mut salt = [0u8; SETTINGS_SALT_LEN];
         fill_random(&mut salt).map_err(SecretError::StoreFailed)?;
 
@@ -321,10 +334,19 @@ impl PortableStoreFile {
         let plain = open_with_key(&kek, AAD_WRAPPED_KEY, &wrapped)
             .map_err(|_| SecretError::IncorrectPassphrase)?;
 
-        let bytes: [u8; 32] = plain.as_slice().try_into().map_err(|_| {
-            SecretError::RetrieveFailed("portable store key has the wrong length".to_string())
-        })?;
-        Ok(Zeroizing::new(bytes))
+        if plain.len() != 32 {
+            return Err(SecretError::RetrieveFailed(
+                "portable store key has the wrong length".to_string(),
+            ));
+        }
+        // Filled in place, rather than `try_into()` into an array and then
+        // `Zeroizing::new(that)`. `[u8; 32]` is `Copy`, so that form materialises
+        // a bare array on the stack, copies it into the guard, and leaves the
+        // original slot holding the data-encryption key with nothing to wipe it —
+        // the guard protects the copy and not the original.
+        let mut dek: Dek = Zeroizing::new([0u8; 32]);
+        dek.copy_from_slice(&plain);
+        Ok(dek)
     }
 }
 
@@ -730,6 +752,223 @@ pub fn entry_count(path: &Path) -> SecretResult<usize> {
     Ok(read_store(path)?.map_or(0, |store| store.entries.len()))
 }
 
+/// What [`prepare_portable_store`] found or did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortableStoreSetup {
+    /// The file did not exist and an empty store was created under the passphrase.
+    Created,
+    /// The file was already there and the passphrase opens it.
+    AlreadyUsable,
+}
+
+/// Makes the portable store at `path` exist and open under `passphrase`.
+///
+/// Creating the file was previously a side effect of the first credential save,
+/// which meant a fresh setup could not be confirmed — or corrected — until some
+/// later action happened to write to it. This performs it as its own step: an
+/// empty store is written when the file is absent, and an existing one is only
+/// checked, never rewritten, so pointing a second machine at a synced file
+/// verifies the passphrase without touching the contents.
+///
+/// # Errors
+/// Returns [`SecretError::IncorrectPassphrase`] if the file exists and the
+/// passphrase does not open it, or [`SecretError::StoreFailed`] /
+/// [`SecretError::RetrieveFailed`] if the file cannot be read or written.
+pub fn prepare_portable_store(
+    path: &Path,
+    passphrase: &SecretString,
+) -> SecretResult<PortableStoreSetup> {
+    let pass = Zeroizing::new(passphrase.expose_secret().as_bytes().to_vec());
+
+    if let Some(store) = read_store(path)? {
+        store.unlock(&pass)?;
+        return Ok(PortableStoreSetup::AlreadyUsable);
+    }
+
+    let (store, _dek) = PortableStoreFile::create(&pass)?;
+
+    // Look again before writing. `PortableStoreFile::create` runs a full Argon2id
+    // derivation — around half a second — and the documented second-machine
+    // workflow is "wait for the sync client to deliver the file, then press Create
+    // File", so a file appearing inside that window is not an independent event.
+    // Without this re-check the unconditional rename below would replace the
+    // delivered store, and every credential in it, with an empty one.
+    //
+    // It narrows the window rather than closing it: `rename` is atomic but not
+    // conditional, and there is no portable create-exclusive rename. What remains
+    // is the microseconds between this read and the rename, against seconds of
+    // derivation.
+    if let Some(store) = read_store(path)? {
+        store.unlock(&pass)?;
+        tracing::info!(
+            backend = "portable_encrypted_file",
+            "a portable store appeared while its replacement was being prepared; keeping the existing file"
+        );
+        return Ok(PortableStoreSetup::AlreadyUsable);
+    }
+
+    write_store_atomic(path, &store)?;
+    tracing::info!(
+        backend = "portable_encrypted_file",
+        "created an empty portable credential store"
+    );
+    Ok(PortableStoreSetup::Created)
+}
+
+/// Changes the passphrase protecting the store at `path`, returning how many
+/// credential entries were re-encrypted.
+///
+/// The store must exist and must open with `current`; there is nothing to change
+/// otherwise, and a missing file is reported rather than created, because
+/// "change the passphrase of a file that is not there" is a wrong path far more
+/// often than it is a request to make one.
+///
+/// # Why this re-keys instead of rewrapping
+///
+/// The key hierarchy makes a cheaper implementation available: reseal the same
+/// data-encryption key under a KEK derived from the new passphrase, and write 32
+/// bytes. This does not do that. Someone changes a passphrase because the old one
+/// may be known — written down, shared, typed into the wrong window — and anyone
+/// who knew it could have unwrapped the DEK and kept it. Rewrapping leaves that
+/// DEK in force, so every credential saved *after* the change stays readable to
+/// them, and the change would have achieved nothing it was done for.
+///
+/// So a fresh DEK is generated and every entry is re-encrypted under it. The cost
+/// is one AES-GCM pass per entry — microseconds each, against the ~0.5 s Argon2id
+/// derivation that dominates either way. What the KEK/DEK split still buys is
+/// that this pays *one* derivation rather than one per entry.
+///
+/// The new store is written at the stronger of the old file's key-derivation cost
+/// and the current default, per parameter, so a store created by an earlier
+/// release picks up a cost increase — and one deliberately hardened past the
+/// default is not quietly weakened back down to it. [`check_kdf_cost`] admits up
+/// to four times the defaults, so such a file legitimately exists.
+///
+/// # What a passphrase change does not do
+///
+/// It protects credentials saved from now on. Anyone holding the old passphrase
+/// *and* a copy of the old file still reads every credential that was in it at
+/// the moment of the change — no rotation of this file can reach a copy that has
+/// already left. Changing the passphrase is therefore not a substitute for
+/// changing the passwords it protected, and "re-encrypted 12 entries" should not
+/// be read as "those 12 are now safe".
+///
+/// [`check_kdf_cost`]: PortableStoreFile::check_kdf_cost
+///
+/// # Failure behaviour
+///
+/// All or nothing. A single unreadable entry aborts the change and leaves the
+/// file untouched under its old passphrase, rather than writing a store that
+/// opens with the new one and is missing credentials. The alternative — skip what
+/// cannot be read and report it — trades a recoverable failure for silent
+/// permanent loss, since the entry's old ciphertext would be gone.
+///
+/// # Concurrency
+///
+/// This is a read-modify-write of the whole file and it does **not** hold
+/// [`PortableEncryptedFileBackend`]'s write mutex, which is per instance and
+/// unreachable from here. A credential save landing between the read and the
+/// rename would be lost. Call it from a settings page, not while connections are
+/// being opened — the same constraint [`prepare_portable_store`] carries.
+///
+/// # Caller's remaining obligation
+///
+/// The DEK changed, so every cached key and every stored copy of the old
+/// passphrase is now stale. The caller must install `new` wherever the old one
+/// lived — the backend's [`PortableEncryptedFileBackend::set_passphrase`], the
+/// session settings, and any keyring or machine-encrypted copy — or the next
+/// lookup fails with [`SecretError::IncorrectPassphrase`] against the user's own
+/// file.
+///
+/// # Errors
+/// Returns [`SecretError::IncorrectPassphrase`] if `current` does not open the
+/// store, [`SecretError::RetrieveFailed`] if the file is absent, unreadable or
+/// holds an entry that cannot be decrypted, and [`SecretError::StoreFailed`] if
+/// the new store cannot be built or written.
+pub fn change_portable_passphrase(
+    path: &Path,
+    current: &SecretString,
+    new: &SecretString,
+) -> SecretResult<usize> {
+    change_passphrase_with_params(path, current, new, PassphraseKdfParams::default())
+}
+
+/// [`change_portable_passphrase`] at an explicit key-derivation cost.
+///
+/// Exists for the tests, which would otherwise pay two 64 MiB Argon2 derivations
+/// per case — one to open the old store and one to build the new one.
+fn change_passphrase_with_params(
+    path: &Path,
+    current: &SecretString,
+    new: &SecretString,
+    kdf_params: PassphraseKdfParams,
+) -> SecretResult<usize> {
+    let current_pass = Zeroizing::new(current.expose_secret().as_bytes().to_vec());
+    let new_pass = Zeroizing::new(new.expose_secret().as_bytes().to_vec());
+
+    let Some(store) = read_store(path)? else {
+        return Err(SecretError::RetrieveFailed(
+            "there is no portable credential store at that path".to_string(),
+        ));
+    };
+    let old_dek = store.unlock(&current_pass)?;
+
+    // Never weaken the file. An unconditional default would downgrade a store
+    // whose costs were raised past it, which `check_kdf_cost` permits up to 4×.
+    let target_params = PassphraseKdfParams {
+        m_cost: store.kdf_params.m_cost.max(kdf_params.m_cost),
+        t_cost: store.kdf_params.t_cost.max(kdf_params.t_cost),
+        p_cost: store.kdf_params.p_cost.max(kdf_params.p_cost),
+    };
+    let (mut rekeyed, new_dek) = PortableStoreFile::create_with_params(&new_pass, target_params)?;
+
+    for (key, encoded) in &store.entries {
+        // No per-entry error collection: see "Failure behaviour" above. The `?`
+        // is the point — it leaves the old file in place. The entry name is named
+        // in the error because it is not secret (it is a plaintext key in the
+        // JSON) and because "one entry could not be read" is only actionable if
+        // the user is told which.
+        let credentials = open_entry(&old_dek, key, encoded).map_err(|e| {
+            SecretError::RetrieveFailed(format!(
+                "cannot re-encrypt the entry filed under '{key}': {e}"
+            ))
+        })?;
+        let sealed = seal_entry(&new_dek, key, &credentials)?;
+        rekeyed.entries.insert(key.clone(), sealed);
+    }
+
+    // Look again before writing — the same narrowing `prepare_portable_store`
+    // does, against a worse outcome. A `store` that read the file before this
+    // rename and lands after it replaces the re-keyed file with one sealed under
+    // the *old* passphrase. By then this function has returned `Ok`, so the
+    // caller has installed the new passphrase in the keyring, the settings and the
+    // backend, per the obligation documented above — and the file on disk answers
+    // to none of them. That is not a lost entry, it is a store nobody can open.
+    // Aborting leaves the old file, which the old passphrase still opens.
+    //
+    // Microseconds, not closed: `rename` is atomic but not conditional. It is the
+    // same residual window the rest of this module carries.
+    if let Some(on_disk) = read_store(path)?
+        && (on_disk.wrapped_key != store.wrapped_key || on_disk.entries != store.entries)
+    {
+        return Err(SecretError::StoreFailed(
+            "the portable store was written to while its passphrase was being changed; \
+             nothing was changed — try again"
+                .to_string(),
+        ));
+    }
+
+    write_store_atomic(path, &rekeyed)?;
+
+    let reencrypted = rekeyed.entries.len();
+    tracing::info!(
+        backend = "portable_encrypted_file",
+        reencrypted,
+        "changed the portable store passphrase and re-encrypted its entries"
+    );
+    Ok(reencrypted)
+}
+
 /// Resolves the portable store path from an optional user override.
 ///
 /// Falls back to `dirs::data_dir()/rustconn/credentials-portable.enc`, then to a
@@ -1038,12 +1277,17 @@ mod tests {
     use super::*;
 
     /// Cheap KDF parameters so the tests do not pay 64 MiB of Argon2 each.
-    fn fast_store(passphrase: &[u8]) -> (PortableStoreFile, Dek) {
-        let kdf_params = PassphraseKdfParams {
+    fn fast_params() -> PassphraseKdfParams {
+        PassphraseKdfParams {
             m_cost: 1024,
             t_cost: 1,
             p_cost: 1,
-        };
+        }
+    }
+
+    /// An empty store at [`fast_params`] cost, with its data key.
+    fn fast_store(passphrase: &[u8]) -> (PortableStoreFile, Dek) {
+        let kdf_params = fast_params();
         let mut salt = [0u8; SETTINGS_SALT_LEN];
         fill_random(&mut salt).unwrap();
         let mut dek: Dek = Zeroizing::new([0u8; 32]);
@@ -1289,6 +1533,270 @@ mod tests {
         assert!(
             verify_portable_passphrase(&path, &SecretString::from("right".to_owned())).is_ok(),
             "the correct passphrase must still be accepted"
+        );
+    }
+
+    /// The only test here that pays a real Argon2id derivation: creating a store
+    /// uses `PassphraseKdfParams::default()`, which is the point — a file created
+    /// with the test-only cheap parameters would not be one a release can open.
+    #[test]
+    fn prepare_store_creates_a_missing_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("nested").join("portable.enc");
+        let pass = SecretString::from("correct horse".to_owned());
+
+        assert_eq!(
+            prepare_portable_store(&path, &pass).expect("create"),
+            PortableStoreSetup::Created
+        );
+        assert!(path.exists(), "the parent directory must be created too");
+        assert_eq!(entry_count(&path).expect("count"), 0);
+        assert!(
+            verify_portable_passphrase(&path, &pass).is_ok(),
+            "the store must open with the passphrase it was created under"
+        );
+    }
+
+    /// Pointing a second machine at a synced file must verify the passphrase
+    /// without touching the contents. Rewriting it would be a lost-update window
+    /// on a file the sync client is also holding.
+    #[test]
+    fn prepare_store_leaves_an_existing_file_untouched() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("portable.enc");
+        let (mut store, dek) = fast_store(b"right");
+        store.entries.insert(
+            "rustconn/host".to_owned(),
+            seal_entry(&dek, "rustconn/host", &sample_credentials()).expect("seal"),
+        );
+        write_store_atomic(&path, &store).expect("write");
+        let before = std::fs::read(&path).expect("read");
+
+        assert_eq!(
+            prepare_portable_store(&path, &SecretString::from("right".to_owned())).expect("open"),
+            PortableStoreSetup::AlreadyUsable
+        );
+        assert_eq!(
+            std::fs::read(&path).expect("read"),
+            before,
+            "an existing store must not be rewritten"
+        );
+    }
+
+    #[test]
+    fn prepare_store_rejects_the_wrong_passphrase() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("portable.enc");
+        let (store, _dek) = fast_store(b"right");
+        write_store_atomic(&path, &store).expect("write");
+
+        assert!(matches!(
+            prepare_portable_store(&path, &SecretString::from("wrong".to_owned())),
+            Err(SecretError::IncorrectPassphrase)
+        ));
+    }
+
+    /// Writes a `fast_params` store holding one sealed entry per name.
+    fn seed_store_on_disk(path: &Path, passphrase: &[u8], names: &[&str]) {
+        let (mut store, dek) = fast_store(passphrase);
+        for name in names {
+            store.entries.insert(
+                (*name).to_owned(),
+                seal_entry(&dek, name, &sample_credentials()).expect("seal"),
+            );
+        }
+        write_store_atomic(path, &store).expect("write");
+    }
+
+    /// Changes a passphrase at test cost. Production goes through
+    /// `change_portable_passphrase`, which is this with the default parameters.
+    fn change_fast(path: &Path, current: &str, new: &str) -> SecretResult<usize> {
+        change_passphrase_with_params(
+            path,
+            &SecretString::from(current.to_owned()),
+            &SecretString::from(new.to_owned()),
+            fast_params(),
+        )
+    }
+
+    #[test]
+    fn changing_the_passphrase_reseals_every_entry() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("portable.enc");
+        seed_store_on_disk(&path, b"old-pass", &["rustconn/a", "rustconn/b"]);
+
+        assert_eq!(
+            change_fast(&path, "old-pass", "new-pass").expect("change"),
+            2
+        );
+
+        // The old passphrase is gone, the new one opens the file, and both
+        // credentials survived the re-encryption intact.
+        assert!(matches!(
+            verify_portable_passphrase(&path, &SecretString::from("old-pass".to_owned())),
+            Err(SecretError::IncorrectPassphrase)
+        ));
+        let store = read_store(&path).expect("read").expect("present");
+        let dek = store
+            .unlock(b"new-pass")
+            .expect("unlock with the new passphrase");
+        for name in ["rustconn/a", "rustconn/b"] {
+            let recovered = open_entry(&dek, name, &store.entries[name]).expect("open");
+            assert_eq!(recovered.username.as_deref(), Some("alice"));
+            assert_eq!(
+                recovered.password.map(|p| p.expose_secret().to_owned()),
+                Some("s3cr3t".to_owned())
+            );
+        }
+    }
+
+    /// The difference between re-keying and rewrapping, pinned.
+    ///
+    /// A rewrap would leave `entries` byte-identical, so whoever knew the old
+    /// passphrase — and had unwrapped the data key from it — would still read
+    /// everything written afterwards.
+    #[test]
+    fn changing_the_passphrase_replaces_the_data_key() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("portable.enc");
+        seed_store_on_disk(&path, b"old-pass", &["rustconn/a"]);
+        let before = read_store(&path).expect("read").expect("present");
+        let old_dek = before.unlock(b"old-pass").expect("unlock");
+
+        change_fast(&path, "old-pass", "new-pass").expect("change");
+
+        let after = read_store(&path).expect("read").expect("present");
+        assert_ne!(after.kdf_salt, before.kdf_salt, "the salt must be fresh");
+        assert_ne!(
+            after.wrapped_key, before.wrapped_key,
+            "the wrapped key must be fresh"
+        );
+        assert_ne!(
+            after.entries["rustconn/a"], before.entries["rustconn/a"],
+            "a rewrap would have left the entry ciphertext untouched"
+        );
+        // The decisive part: the key the old passphrase yielded no longer opens
+        // anything in the file.
+        assert!(
+            open_entry(&old_dek, "rustconn/a", &after.entries["rustconn/a"]).is_err(),
+            "the superseded data key must not open the re-keyed entry"
+        );
+    }
+
+    #[test]
+    fn a_wrong_current_passphrase_changes_nothing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("portable.enc");
+        seed_store_on_disk(&path, b"old-pass", &["rustconn/a"]);
+        let before = std::fs::read(&path).expect("read");
+
+        assert!(matches!(
+            change_fast(&path, "not-the-passphrase", "new-pass"),
+            Err(SecretError::IncorrectPassphrase)
+        ));
+        assert_eq!(
+            std::fs::read(&path).expect("read"),
+            before,
+            "a refused change must not touch the file"
+        );
+    }
+
+    /// A missing file is reported, never created: "change the passphrase of a
+    /// file that is not there" is a wrong path far more often than a request.
+    #[test]
+    fn changing_the_passphrase_of_a_missing_file_is_refused() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("absent.enc");
+
+        assert!(matches!(
+            change_fast(&path, "old-pass", "new-pass"),
+            Err(SecretError::RetrieveFailed(_))
+        ));
+        assert!(!path.exists(), "nothing may be created here");
+    }
+
+    #[test]
+    fn an_empty_store_can_still_change_its_passphrase() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("portable.enc");
+        seed_store_on_disk(&path, b"old-pass", &[]);
+
+        assert_eq!(
+            change_fast(&path, "old-pass", "new-pass").expect("change"),
+            0
+        );
+        assert!(
+            verify_portable_passphrase(&path, &SecretString::from("new-pass".to_owned())).is_ok()
+        );
+    }
+
+    /// All-or-nothing: the entry whose ciphertext cannot be opened aborts the
+    /// change rather than being dropped from the re-keyed file, because its old
+    /// ciphertext would be gone and the credential unrecoverable.
+    #[test]
+    fn an_unreadable_entry_leaves_the_file_under_the_old_passphrase() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("portable.enc");
+        let (mut store, dek) = fast_store(b"old-pass");
+        store.entries.insert(
+            "rustconn/good".to_owned(),
+            seal_entry(&dek, "rustconn/good", &sample_credentials()).expect("seal"),
+        );
+        // Well-formed base64 that is not a valid AES-GCM blob under this key.
+        store.entries.insert(
+            "rustconn/corrupt".to_owned(),
+            data_encoding::BASE64.encode(&[7u8; 64]),
+        );
+        write_store_atomic(&path, &store).expect("write");
+        let before = std::fs::read(&path).expect("read");
+
+        let error = change_fast(&path, "old-pass", "new-pass").expect_err("must abort");
+        // The variant as well as the text: asserting on the message alone would
+        // also pass for a different variant that happened to carry the key. The
+        // entry name is a plaintext key in the file, so reporting it is safe —
+        // and it is the only thing that makes this actionable.
+        assert!(
+            matches!(&error, SecretError::RetrieveFailed(m) if m.contains("rustconn/corrupt")),
+            "the blocking entry must be named in a RetrieveFailed, got: {error:?}"
+        );
+        assert_eq!(
+            std::fs::read(&path).expect("read"),
+            before,
+            "an aborted change must leave the old file byte-for-byte"
+        );
+        assert!(
+            verify_portable_passphrase(&path, &SecretString::from("old-pass".to_owned())).is_ok(),
+            "the old passphrase must still open it"
+        );
+    }
+
+    /// `check_kdf_cost` admits up to 4× the defaults, so a file hardened past
+    /// them legitimately exists and must not be quietly weakened by a rotation.
+    #[test]
+    fn the_key_derivation_cost_is_never_lowered() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("portable.enc");
+        seed_store_on_disk(&path, b"old-pass", &["rustconn/a"]);
+        let before = read_store(&path).expect("read").expect("present");
+
+        // Rotate asking for *weaker* parameters than the file carries.
+        let weaker = PassphraseKdfParams {
+            m_cost: before.kdf_params.m_cost / 2,
+            t_cost: 1,
+            p_cost: 1,
+        };
+        change_passphrase_with_params(
+            &path,
+            &SecretString::from("old-pass".to_owned()),
+            &SecretString::from("new-pass".to_owned()),
+            weaker,
+        )
+        .expect("change");
+
+        let after = read_store(&path).expect("read").expect("present");
+        assert_eq!(
+            after.kdf_params.m_cost, before.kdf_params.m_cost,
+            "the memory cost must not have been reduced"
         );
     }
 

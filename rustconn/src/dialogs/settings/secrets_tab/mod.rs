@@ -9,8 +9,8 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, CheckButton, DropDown, Entry, FileDialog, FileFilter, Label,
-    Orientation, StringList, Switch, glib,
+    Box as GtkBox, Button, Entry, FileDialog, FileFilter, Label, Orientation, StringList, Switch,
+    glib,
 };
 use libadwaita as adw;
 use rustconn_core::config::{SecretBackendType, SecretSettings};
@@ -133,8 +133,23 @@ impl KeyringGaps {
 #[expect(dead_code, reason = "Fields kept for GTK widget lifecycle")]
 pub struct SecretsPageWidgets {
     pub page: adw::PreferencesPage,
-    pub secret_backend_dropdown: DropDown,
-    pub enable_fallback: CheckButton,
+    /// Backend selector. Its rows, order and index→backend mapping come from
+    /// [`backend_choices`]; the row's subtitle tracks the current choice.
+    pub secret_backend_dropdown: adw::ComboRow,
+    pub enable_fallback: adw::SwitchRow,
+    /// Opens the credential transfer dialog.
+    ///
+    /// Left unwired by [`create_secrets_page`]: the transfer is driven by the
+    /// connection and group lists, which this page never sees.
+    /// `SettingsDialog::connect_credential_transfer` attaches the handler.
+    pub transfer_button: Button,
+    /// Opens the portable file's passphrase change dialog.
+    ///
+    /// Left unwired here for the same reason as `transfer_button`: a successful
+    /// change has to be installed in the session settings and the live backend,
+    /// and this page holds neither. `SettingsDialog::connect_portable_passphrase_change`
+    /// attaches the handler.
+    pub portable_change_passphrase_button: Button,
     pub kdbx_path_entry: Entry,
     pub kdbx_password_entry: adw::PasswordEntryRow,
     pub kdbx_enabled_row: adw::SwitchRow,
@@ -197,6 +212,10 @@ pub struct SecretsPageWidgets {
     pub pass_store_dir_entry: Entry,
     pub pass_store_dir_browse_button: Button,
     pub pass_status_label: Label,
+    /// Machine-bound encrypted file group. It has nothing to configure, but it
+    /// tells the user where the file is and what is in it — selecting the backend
+    /// used to display nothing at all.
+    pub encrypted_file_group: adw::PreferencesGroup,
     // Portable encrypted file widgets
     pub portable_group: adw::PreferencesGroup,
     pub portable_path_entry: Entry,
@@ -207,6 +226,12 @@ pub struct SecretsPageWidgets {
     pub portable_confirm_entry: adw::PasswordEntryRow,
     /// 3-state credential storage selector for portable file passphrase.
     pub portable_storage_combo: adw::ComboRow,
+    /// The portable group's shared outcome row.
+    ///
+    /// Exposed so `SettingsDialog::connect_portable_passphrase_change` can report
+    /// into the same slot as *Create File* and *Copy Credentials*, rather than
+    /// adding a fourth status row to a group that already has two.
+    pub portable_status_label: Label,
 }
 
 /// Finds the preferences dialog a widget lives in, for reporting an outcome.
@@ -350,6 +375,412 @@ fn warn_about_unavailable_keyring(combos: &[(&adw::ComboRow, &Label)]) {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Backend selector
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Selector position of the `KeePassXC` / KDBX backend.
+const BACKEND_KEEPASSXC_INDEX: u32 = 0;
+/// Selector position of the platform system keyring (libsecret, or Keychain on macOS).
+const BACKEND_SYSTEM_KEYRING_INDEX: u32 = 1;
+/// Selector position of the Bitwarden backend.
+const BACKEND_BITWARDEN_INDEX: u32 = 2;
+/// Selector position of the 1Password backend.
+const BACKEND_ONEPASSWORD_INDEX: u32 = 3;
+/// Selector position of the Passbolt backend.
+const BACKEND_PASSBOLT_INDEX: u32 = 4;
+/// Selector position of the `pass` backend.
+const BACKEND_PASS_INDEX: u32 = 5;
+/// Selector position of the machine-bound encrypted file backend.
+const BACKEND_ENCRYPTED_FILE_INDEX: u32 = 6;
+/// Selector position of the portable, passphrase-protected file backend.
+const BACKEND_PORTABLE_INDEX: u32 = 7;
+
+/// One row of the backend selector.
+pub struct BackendChoice {
+    /// Name shown in the row and in the popup list.
+    pub label: String,
+    /// One line under the name saying what this backend actually does.
+    ///
+    /// Shown in the popup list, and as the row's subtitle for the current
+    /// choice. Without it the two file backends read as near-duplicates:
+    /// nothing in "Encrypted file" next to "Portable encrypted file" says that
+    /// the difference is where the encryption key comes from, which is the only
+    /// thing that matters when picking between them.
+    description: String,
+    /// Configuration value this row selects.
+    pub backend: SecretBackendType,
+}
+
+/// The backend selector's rows, in model order.
+///
+/// One table instead of the four hand-written index matches this page used to
+/// carry: the labels, the [`SecretBackendType`] each position maps to, and now
+/// the explanations, were written out separately in the page builder, the
+/// visibility handler, [`load_secret_settings`] and [`collect_secret_settings`],
+/// so reordering the list silently changed what a saved configuration meant.
+pub fn backend_choices() -> Vec<BackendChoice> {
+    /// Shorthand so the table below reads as a table.
+    fn choice(label: &str, description: String, backend: SecretBackendType) -> BackendChoice {
+        BackendChoice {
+            label: label.to_owned(),
+            description,
+            backend,
+        }
+    }
+
+    // Index 1 is the platform system keyring: libsecret on Linux/BSD, the native
+    // Keychain on macOS (libsecret does not exist there). Product names are not
+    // translated; the explanations are.
+    #[cfg(target_os = "macos")]
+    let keyring = choice(
+        "macOS Keychain",
+        i18n("This Mac's login keychain, unlocked with your session"),
+        SecretBackendType::MacOsKeychain,
+    );
+    #[cfg(not(target_os = "macos"))]
+    let keyring = choice(
+        "libsecret",
+        i18n("This computer's login keyring, unlocked with your session"),
+        SecretBackendType::LibSecret,
+    );
+
+    vec![
+        choice(
+            "KeePassXC",
+            i18n("A KeePass database, through the KeePassXC application"),
+            SecretBackendType::KeePassXc,
+        ),
+        keyring,
+        choice(
+            "Bitwarden",
+            i18n("Your Bitwarden vault, through the bw command line tool"),
+            SecretBackendType::Bitwarden,
+        ),
+        choice(
+            "1Password",
+            i18n("Your 1Password vault, through the op command line tool"),
+            SecretBackendType::OnePassword,
+        ),
+        choice(
+            "Passbolt",
+            i18n("Your Passbolt server, through the passbolt command line tool"),
+            SecretBackendType::Passbolt,
+        ),
+        choice(
+            "Pass",
+            i18n("The pass password store, encrypted with your GPG key"),
+            SecretBackendType::Pass,
+        ),
+        // The two file backends differ only in where the key comes from, so each
+        // description names that and nothing else.
+        choice(
+            // Descriptive rather than a product name — sentence case per GNOME HIG.
+            &i18n("Encrypted file"),
+            i18n("A file on this computer, encrypted with a key tied to this machine"),
+            SecretBackendType::EncryptedFile,
+        ),
+        choice(
+            &i18n("Portable encrypted file"),
+            i18n(
+                "A file encrypted with a passphrase you choose, so it opens on your other computers",
+            ),
+            SecretBackendType::PortableEncryptedFile,
+        ),
+    ]
+}
+
+/// Maps a selector position to the backend it selects.
+///
+/// An index outside the table falls back to the configuration default, which is
+/// what a config written by a newer version would produce.
+pub fn index_to_backend(index: u32) -> SecretBackendType {
+    backend_choices()
+        .get(index as usize)
+        .map_or_else(SecretBackendType::default, |choice| choice.backend)
+}
+
+/// Maps a backend to its selector position.
+///
+/// Several variants share a row: the KDBX file backend is reached through the
+/// `KeePassXC` entry, and the two system-keyring variants share the one entry
+/// whose identity depends on the platform. That folding is why this is a match
+/// rather than a table lookup.
+pub const fn backend_to_index(backend: SecretBackendType) -> u32 {
+    match backend {
+        SecretBackendType::KeePassXc | SecretBackendType::KdbxFile => BACKEND_KEEPASSXC_INDEX,
+        SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain => {
+            BACKEND_SYSTEM_KEYRING_INDEX
+        }
+        SecretBackendType::Bitwarden => BACKEND_BITWARDEN_INDEX,
+        SecretBackendType::OnePassword => BACKEND_ONEPASSWORD_INDEX,
+        SecretBackendType::Passbolt => BACKEND_PASSBOLT_INDEX,
+        SecretBackendType::Pass => BACKEND_PASS_INDEX,
+        SecretBackendType::EncryptedFile => BACKEND_ENCRYPTED_FILE_INDEX,
+        SecretBackendType::PortableEncryptedFile => BACKEND_PORTABLE_INDEX,
+    }
+}
+
+/// Puts the selected backend's explanation into the selector row's subtitle.
+///
+/// Called on every selection change *and* explicitly after `set_selected`,
+/// because selecting the value that is already current emits no
+/// `selected-notify` — which is the common case when a saved configuration is
+/// loaded, and would have left the row describing the wrong backend.
+fn sync_backend_subtitle(row: &adw::ComboRow) {
+    let choices = backend_choices();
+    if let Some(choice) = choices.get(row.selected() as usize) {
+        row.set_subtitle(&choice.description);
+    }
+}
+
+/// Builds the popup-list factory for the backend selector: the name, with its
+/// explanation on a second, dimmed line.
+///
+/// `AdwComboRow` renders one line per item by default, which is why the selector
+/// could not say how two similarly named backends differ. Only the *list*
+/// factory is replaced: the collapsed row keeps the plain name and carries the
+/// explanation in its own subtitle, so the row itself does not grow to two lines
+/// of its own on top of the title.
+fn backend_list_factory(descriptions: Vec<String>) -> gtk4::SignalListItemFactory {
+    let factory = gtk4::SignalListItemFactory::new();
+
+    factory.connect_setup(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk4::ListItem>() else {
+            return;
+        };
+        let name = Label::builder().xalign(0.0).build();
+        // `max_width_chars` with `wrap` keeps a long explanation from stretching
+        // the popover to the width of the whole dialog.
+        let description = Label::builder()
+            .xalign(0.0)
+            .wrap(true)
+            .max_width_chars(40)
+            .css_classes(["dim-label", "caption"])
+            .build();
+        let column = GtkBox::new(Orientation::Vertical, 2);
+        column.append(&name);
+        column.append(&description);
+        item.set_child(Some(&column));
+    });
+
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk4::ListItem>() else {
+            return;
+        };
+        let Some(column) = item.child().and_downcast::<GtkBox>() else {
+            return;
+        };
+        let Some(name) = column.first_child().and_downcast::<Label>() else {
+            return;
+        };
+        let Some(description) = name.next_sibling().and_downcast::<Label>() else {
+            return;
+        };
+        let text = item
+            .item()
+            .and_downcast::<gtk4::StringObject>()
+            .map(|obj| obj.string().to_string())
+            .unwrap_or_default();
+        name.set_label(&text);
+        // The model is a `StringList`, so the explanation is matched by position
+        // rather than carried on the item. Both come from `backend_choices()` in
+        // the same order, and a position past the end simply shows no second
+        // line instead of the wrong one.
+        description.set_label(
+            descriptions
+                .get(item.position() as usize)
+                .map_or("", String::as_str),
+        );
+        description.set_visible(!description.label().is_empty());
+    });
+
+    factory
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Credential file rows
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Expands a leading `~` in a user-typed path, returning `None` for a blank one.
+///
+/// Every path row on this page is free text, and a `~/Dropbox/…` typed into one
+/// was stored verbatim: `PathBuf` gives `~` no special meaning, so the file
+/// ended up in a literal directory called `~` next to the working directory.
+/// Only a leading `~/` is handled — `~user` needs the password database and is
+/// not something a GTK settings row should be resolving.
+pub fn expand_user_path(text: &str) -> Option<std::path::PathBuf> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let expanded = if trimmed == "~" {
+        dirs::home_dir()
+    } else if let Some(rest) = trimmed.strip_prefix("~/") {
+        dirs::home_dir().map(|home| home.join(rest))
+    } else {
+        None
+    };
+    Some(expanded.unwrap_or_else(|| std::path::PathBuf::from(trimmed)))
+}
+
+/// Fills `label` with the state of a credential file, off the GTK main thread.
+///
+/// Three states matter to someone setting one of the file backends up, and none
+/// of them used to be visible anywhere: the file holds passwords, it does not
+/// exist yet, or it is there and cannot be read. A user who had typed a path had
+/// no way to tell which, and found out only when a connection failed to save.
+///
+/// `count` runs on a blocking thread. The read is small, but the portable store
+/// is frequently on a cloud-sync or FUSE mount where even `metadata` can block
+/// for seconds, and freezing the Settings dialog on the setup this row exists to
+/// explain would be the wrong trade.
+fn refresh_credential_file_status<F>(label: &Label, path: std::path::PathBuf, count: F)
+where
+    F: FnOnce(&std::path::Path) -> Result<usize, String> + Send + 'static,
+{
+    let label = label.clone();
+    glib::spawn_future_local(async move {
+        let outcome = gtk4::gio::spawn_blocking(move || {
+            // `exists()` and the count in the same closure: splitting them would
+            // put a second round trip to the mount on the main thread.
+            path.exists().then(|| count(&path))
+        })
+        .await;
+
+        let (text, css) = match outcome {
+            Ok(None) => (i18n("Not created yet"), "dim-label"),
+            Ok(Some(Ok(0))) => (i18n("Ready, no passwords yet"), "dim-label"),
+            // A count rather than a plural form: "Passwords stored: 3" needs no
+            // plural rules, and this page would otherwise be the first user of
+            // `ngettext` in the project — 16 catalogues' worth of plural forms
+            // for one row.
+            Ok(Some(Ok(count))) => (
+                i18n_f("Passwords stored: {}", &[&count.to_string()]),
+                "success",
+            ),
+            Ok(Some(Err(e))) => (i18n_f("Cannot read the file: {}", &[&e]), "error"),
+            Err(_panic) => (i18n("Could not check the file"), "error"),
+        };
+        update_status_label(&label, &text, css);
+    });
+}
+
+/// Validates the portable passphrase entries before an action that uses them.
+///
+/// Returns the passphrase, or the reason it cannot be used yet.
+///
+/// A store that does not exist cannot have its passphrase checked against
+/// anything, and the first write makes whatever was typed the only key to the
+/// file forever, so the confirmation is required there and optional for a file
+/// that is already present. That is the rule [`collect_secret_settings`] and
+/// `rustconn-cli` already apply; the migration button used to accept an
+/// unconfirmed passphrase for a destination it was about to create, which is the
+/// one case where a typo cannot be found out later.
+fn portable_passphrase_for_action(
+    passphrase: &adw::PasswordEntryRow,
+    confirm: &adw::PasswordEntryRow,
+    store_path: &std::path::Path,
+) -> Result<SecretString, String> {
+    let pass_text = passphrase.text();
+    let confirm_text = confirm.text();
+
+    if pass_text.is_empty() {
+        return Err(i18n(
+            "Enter the passphrase that will protect the portable file",
+        ));
+    }
+    if !confirm_text.is_empty() && confirm_text != pass_text {
+        return Err(i18n("The two passphrases do not match"));
+    }
+    if confirm_text.is_empty() && !store_path.exists() {
+        return Err(i18n(
+            "Repeat the passphrase to confirm it. A new file cannot be recovered if the passphrase is wrong.",
+        ));
+    }
+    Ok(SecretString::from(pass_text.to_string()))
+}
+
+/// Builds a "File" row whose suffix label reports the file's state.
+///
+/// Returns the row and its label; the caller refreshes the label with
+/// [`refresh_credential_file_status`] whenever the path it describes changes.
+fn credential_file_status_row() -> (adw::ActionRow, Label) {
+    let label = Label::builder()
+        .halign(gtk4::Align::End)
+        .valign(gtk4::Align::Center)
+        .wrap(true)
+        // Wrapping without a ceiling lets a long error push the row's title out
+        // of the dialog instead of taking a second line.
+        .max_width_chars(32)
+        .justify(gtk4::Justification::Right)
+        .label(i18n("Checking..."))
+        .css_classes(["dim-label"])
+        .build();
+    let row = adw::ActionRow::builder()
+        .title(i18n("File"))
+        .activatable(false)
+        .build();
+    row.add_suffix(&label);
+    (row, label)
+}
+
+#[cfg(test)]
+mod backend_table_tests {
+    use super::{BACKEND_PORTABLE_INDEX, backend_choices, backend_to_index, index_to_backend};
+
+    /// The table and the `BACKEND_*_INDEX` constants are two separate statements
+    /// of the same fact, and `backend_to_index` is a third. Without this,
+    /// reordering `backend_choices()` would still silently change what a saved
+    /// configuration means — which is the failure the table was introduced to
+    /// prevent.
+    #[test]
+    fn the_table_order_agrees_with_the_index_mapping() {
+        for (position, choice) in backend_choices().iter().enumerate() {
+            let index = u32::try_from(position).expect("the table is eight rows long");
+            assert_eq!(
+                backend_to_index(choice.backend),
+                index,
+                "row {position} ({}) does not map back to its own position",
+                choice.label
+            );
+            assert_eq!(
+                index_to_backend(index),
+                choice.backend,
+                "position {position} does not resolve to the backend in that row"
+            );
+        }
+    }
+
+    /// The two variants that share a row with another must still land on it, or a
+    /// configuration written on the other platform would select the wrong entry.
+    #[test]
+    fn shared_rows_fold_onto_one_position() {
+        use rustconn_core::config::SecretBackendType;
+
+        assert_eq!(
+            backend_to_index(SecretBackendType::KdbxFile),
+            backend_to_index(SecretBackendType::KeePassXc)
+        );
+        assert_eq!(
+            backend_to_index(SecretBackendType::LibSecret),
+            backend_to_index(SecretBackendType::MacOsKeychain)
+        );
+    }
+
+    /// An index from a newer version's configuration must not silently select a
+    /// neighbouring backend.
+    #[test]
+    fn an_index_past_the_table_falls_back_to_the_default() {
+        use rustconn_core::config::SecretBackendType;
+
+        assert_eq!(
+            index_to_backend(BACKEND_PORTABLE_INDEX + 1),
+            SecretBackendType::default()
+        );
+    }
+}
+
 /// Creates the secrets settings page using AdwPreferencesPage
 pub fn create_secrets_page() -> SecretsPageWidgets {
     let page = adw::PreferencesPage::builder()
@@ -363,39 +794,27 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         .description(i18n("Choose how passwords are stored"))
         .build();
 
-    // Simplified: KeePassXC, libsecret, Bitwarden, 1Password, Passbolt, Pass,
-    // Encrypted file. Index 1 is the system keyring: libsecret on Linux/BSD, the
-    // native Keychain on macOS (libsecret does not exist there). Index 6 is the
-    // application-managed encrypted-file backend (no system keyring required).
-    #[cfg(target_os = "macos")]
-    let system_keyring_label = "macOS Keychain";
-    #[cfg(not(target_os = "macos"))]
-    let system_keyring_label = "libsecret";
-    // Descriptive (non-brand) label — sentence case per GNOME HIG and i18n-wrapped.
-    let encrypted_file_label = i18n("Encrypted file (no system keyring)");
-    let portable_file_label = i18n("Portable encrypted file (cloud-syncable)");
-    let backend_strings = StringList::new(&[
-        "KeePassXC",
-        system_keyring_label,
-        "Bitwarden",
-        "1Password",
-        "Passbolt",
-        "Pass",
-        encrypted_file_label.as_str(),
-        portable_file_label.as_str(),
-    ]);
-    let secret_backend_dropdown = DropDown::builder()
-        .model(&backend_strings)
-        .selected(0)
-        .valign(gtk4::Align::Center)
-        .build();
-    let backend_row = adw::ActionRow::builder()
+    // The selector's contents, order and index→backend mapping all come from
+    // `backend_choices()`; see there for why they are one table.
+    let choices = backend_choices();
+    let backend_labels: Vec<&str> = choices.iter().map(|c| c.label.as_str()).collect();
+    let backend_descriptions: Vec<String> = choices.iter().map(|c| c.description.clone()).collect();
+    let backend_strings = StringList::new(&backend_labels);
+
+    // An `AdwComboRow` rather than a `GtkDropDown` in a suffix: the row is what
+    // has a subtitle to put the current backend's explanation in, and it is the
+    // widget the project's own HIG notes ask for inside a preferences group.
+    let secret_backend_dropdown = adw::ComboRow::builder()
         .title(i18n("Backend"))
-        .subtitle(i18n("Primary password storage method"))
+        .model(&backend_strings)
+        .selected(BACKEND_KEEPASSXC_INDEX)
         .build();
-    backend_row.add_suffix(&secret_backend_dropdown);
-    backend_row.set_activatable_widget(Some(&secret_backend_dropdown));
-    backend_group.add(&backend_row);
+    secret_backend_dropdown.set_list_factory(Some(&backend_list_factory(backend_descriptions)));
+    // The subtitle carries the current choice's explanation instead of a static
+    // "Primary password storage method", which described the row rather than
+    // anything the user had selected.
+    sync_backend_subtitle(&secret_backend_dropdown);
+    backend_group.add(&secret_backend_dropdown);
 
     // Version info row - shows version of selected backend
     let version_label = Label::builder()
@@ -423,17 +842,43 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     availability_row.set_visible(false);
     backend_group.add(&availability_row);
 
-    let enable_fallback = CheckButton::builder()
-        .valign(gtk4::Align::Center)
+    // An `AdwSwitchRow`, not a `GtkCheckButton` in a row prefix: a checkbox in a
+    // boxed list is the odd one out on this page and against the project's HIG
+    // notes. The subtitle names the actual fallback store, which is the Keychain
+    // on macOS — it read "libsecret" there, a library that does not exist on the
+    // platform.
+    #[cfg(target_os = "macos")]
+    let fallback_subtitle = i18n("Use the macOS Keychain if the primary backend is unavailable");
+    #[cfg(not(target_os = "macos"))]
+    let fallback_subtitle = i18n("Use libsecret if the primary backend is unavailable");
+    let enable_fallback = adw::SwitchRow::builder()
+        .title(i18n("Enable fallback"))
+        .subtitle(fallback_subtitle)
         .active(true)
         .build();
-    let fallback_row = adw::ActionRow::builder()
-        .title(i18n("Enable fallback"))
-        .subtitle(i18n("Use libsecret if primary backend unavailable"))
-        .activatable_widget(&enable_fallback)
+    backend_group.add(&enable_fallback);
+
+    // Switching backend does not move anything, and until now the only thing that
+    // could was a button inside the portable group that copied from one hardcoded
+    // source. This sits at the group level because a transfer is between two
+    // backends and belongs to neither.
+    //
+    // The handler needs the connection list, which the Secrets page has no access
+    // to, so it is wired by `SettingsDialog::connect_credential_transfer` once the
+    // dialog has the application state.
+    let transfer_button = Button::builder()
+        .label(i18n("Copy Passwords…"))
+        .valign(gtk4::Align::Center)
         .build();
-    fallback_row.add_prefix(&enable_fallback);
-    backend_group.add(&fallback_row);
+    let transfer_row = adw::ActionRow::builder()
+        .title(i18n("Move between stores"))
+        .subtitle(i18n(
+            "Copy the passwords you already have from one store into another, for example into the portable file",
+        ))
+        .activatable_widget(&transfer_button)
+        .build();
+    transfer_row.add_suffix(&transfer_button);
+    backend_group.add(&transfer_row);
 
     page.add(&backend_group);
 
@@ -984,17 +1429,56 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
 
     page.add(&pass_group);
 
+    // === Machine-Bound Encrypted File Group ===
+    //
+    // This backend has nothing to configure — the path is fixed and the key comes
+    // from the machine — but selecting it used to show *nothing at all*, so there
+    // was no way to tell the choice had registered, where the file was, or how it
+    // differs from the portable one right below it.
+    let encrypted_file_group = adw::PreferencesGroup::builder()
+        .title(i18n("Encrypted File"))
+        .description(i18n(
+            "Credentials in a file on this computer. The key is derived from this machine, so the file cannot be opened anywhere else — and cannot be recovered if the machine is lost.",
+        ))
+        .build();
+
+    let encrypted_file_path = rustconn_core::secret::default_encrypted_store_path();
+    let encrypted_path_row = adw::ActionRow::builder()
+        .title(i18n("File path"))
+        .subtitle(encrypted_file_path.display().to_string())
+        .subtitle_selectable(true)
+        .activatable(false)
+        .build();
+    encrypted_file_group.add(&encrypted_path_row);
+
+    let (encrypted_status_row, encrypted_status_label) = credential_file_status_row();
+    encrypted_file_group.add(&encrypted_status_row);
+    {
+        let path = encrypted_file_path.clone();
+        refresh_credential_file_status(&encrypted_status_label, path, |p| {
+            rustconn_core::secret::migration::encrypted_entry_count(p).map_err(|e| e.to_string())
+        });
+    }
+
+    page.add(&encrypted_file_group);
+
     // === Portable Encrypted File Group ===
     let portable_group = adw::PreferencesGroup::builder()
         .title(i18n("Portable Encrypted File"))
         .description(i18n(
-            "Passphrase-protected credential file that can be synced via cloud services",
+            "Credentials in a file encrypted with a passphrase you choose. Put it in a folder your cloud client syncs and the same file opens on your other computers. There is no way to recover the passphrase, so it is asked for twice.",
         ))
         .build();
 
-    // File path row
+    // File path row.
+    //
+    // The placeholder is the real default path rather than a description of one:
+    // the entry is empty until the user types something, and the location that
+    // was actually in use — `~/.local/share/rustconn/credentials-portable.enc` —
+    // appeared nowhere in the interface at all.
+    let default_portable_path = rustconn_core::secret::resolve_portable_store_path(None);
     let portable_path_entry = Entry::builder()
-        .placeholder_text(i18n("Path to credential file"))
+        .placeholder_text(default_portable_path.display().to_string())
         .hexpand(true)
         .build();
     let portable_browse_button = Button::builder()
@@ -1008,12 +1492,38 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     let portable_path_box = GtkBox::new(gtk4::Orientation::Horizontal, 6);
     portable_path_box.append(&portable_path_entry);
     portable_path_box.append(&portable_browse_button);
+    // The previous subtitle, "Can be a cloud-synced directory", asked for a
+    // directory. A directory is accepted here without complaint and then fails at
+    // the rename on first write, as a generic "cannot save the password".
     let portable_path_row = adw::ActionRow::builder()
         .title(i18n("File path"))
-        .subtitle(i18n("Can be a cloud-synced directory"))
+        .subtitle(i18n("Name a file inside a folder your cloud client syncs. Leave empty for the default location."))
         .build();
     portable_path_row.add_suffix(&portable_path_box);
     portable_group.add(&portable_path_row);
+
+    let (portable_file_status_row, portable_file_status_label) = credential_file_status_row();
+    portable_group.add(&portable_file_status_row);
+
+    // Tracks the entry rather than the saved setting, so the row answers "is
+    // there a file where I just pointed this?" while the path is being typed.
+    let refresh_portable_status = {
+        let entry = portable_path_entry.clone();
+        let label = portable_file_status_label.clone();
+        move || {
+            let path = rustconn_core::secret::resolve_portable_store_path(
+                expand_user_path(entry.text().as_str()).as_deref(),
+            );
+            refresh_credential_file_status(&label, path, |p| {
+                rustconn_core::secret::portable_entry_count(p).map_err(|e| e.to_string())
+            });
+        }
+    };
+    refresh_portable_status();
+    {
+        let refresh = refresh_portable_status.clone();
+        portable_path_entry.connect_changed(move |_| refresh());
+    }
 
     // Browse button: pick an existing store, or name a new one.
     //
@@ -1028,7 +1538,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         portable_browse_button.connect_clicked(move |button| {
             let entry_clone = entry.clone();
             let current = entry.text();
-            let existing = !current.is_empty() && std::path::Path::new(current.as_str()).is_file();
+            let existing = expand_user_path(current.as_str()).is_some_and(|path| path.is_file());
 
             let Some(window) = button
                 .root()
@@ -1075,6 +1585,29 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         .build();
     portable_group.add(&portable_confirm_entry);
 
+    // The passphrase validator gets a row of its own, rather than sharing the
+    // group's status row with everything else.
+    //
+    // It runs on every keystroke and clears the row whenever it has no complaint,
+    // so while it shared the slot it wiped whatever else had just been put there:
+    // the "System keyring unavailable" warning that explains a reverted choice,
+    // the path reported by Create File, the outcome of a credential copy. One
+    // keystroke and the message the user needed was gone. Splitting the slots is
+    // what makes each writer's message the writer's to clear.
+    let portable_validation_label = Label::builder()
+        .label("")
+        .wrap(true)
+        .xalign(0.0)
+        .visible(false)
+        .build();
+    let portable_validation_row = adw::ActionRow::builder().activatable(false).build();
+    portable_validation_row.add_prefix(&portable_validation_label);
+    portable_validation_label
+        .bind_property("visible", &portable_validation_row, "visible")
+        .sync_create()
+        .build();
+    portable_group.add(&portable_validation_row);
+
     let portable_status_label = Label::builder()
         .label("")
         .wrap(true)
@@ -1083,6 +1616,19 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         .build();
     let portable_status_row = adw::ActionRow::builder().activatable(false).build();
     portable_status_row.add_prefix(&portable_status_label);
+    // The row follows the label rather than being toggled alongside it.
+    //
+    // Hiding only the label left the row in the boxed list as a full-height
+    // empty band between "Confirm passphrase" and "Save passphrase", because
+    // hiding a prefix widget does not remove the row that holds it. Every
+    // writer of this label — the passphrase validator, the migration handler
+    // and `update_status_label` via `make_storage_combo` — would have had to
+    // remember to hide the row too, and the third one is not even in this file.
+    // A binding makes the empty row unrepresentable instead.
+    portable_status_label
+        .bind_property("visible", &portable_status_row, "visible")
+        .sync_create()
+        .build();
     portable_group.add(&portable_status_row);
 
     // Live mismatch feedback, so the error is visible while typing rather than
@@ -1090,7 +1636,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     {
         let passphrase = portable_passphrase_entry.clone();
         let confirm = portable_confirm_entry.clone();
-        let status = portable_status_label.clone();
+        let status = portable_validation_label.clone();
         let path_entry = portable_path_entry.clone();
         let update = move || {
             let pass_text = passphrase.text();
@@ -1099,31 +1645,68 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
             // A store that does not exist yet cannot check the passphrase, so the
             // confirmation is required rather than optional — say so here instead
             // of letting Save quietly drop it.
-            let path_text = path_entry.text();
             let creating_new_store = !rustconn_core::secret::resolve_portable_store_path(
-                Some(path_text.as_str())
-                    .filter(|t| !t.is_empty())
-                    .map(std::path::Path::new),
+                expand_user_path(path_entry.text().as_str()).as_deref(),
             )
             .exists();
             let unconfirmed_new =
                 creating_new_store && !pass_text.is_empty() && confirm_text.is_empty();
 
+            // Strength is only assessed for a store being created. For one that
+            // already exists this entry is how it is *opened*, and the passphrase
+            // it wants is whatever it was created with — telling the user it is
+            // weak there would be a complaint about a decision they can no longer
+            // change from this field, on the way to unlocking their own file.
+            //
+            // The verdict is deliberately not logged: `strength = ?s` in a
+            // tracing field records "this user's passphrase is weak", which helps
+            // exactly one audience.
+            let weakness = if creating_new_store {
+                Some(rustconn_core::secret::assess_passphrase(pass_text.as_str()))
+                    .filter(|strength| strength.deserves_a_warning())
+            } else {
+                None
+            };
+
             if mismatch {
                 status.set_label(&i18n("The two passphrases do not match"));
                 status.add_css_class("error");
+                status.remove_css_class("warning");
                 status.set_visible(true);
                 confirm.add_css_class("error");
+            } else if let Some(strength) = weakness {
+                // Ranked above the "repeat it" hint on purpose: there is no point
+                // confirming a passphrase that should be replaced, and this is the
+                // last moment it can be replaced for free.
+                let message = if matches!(
+                    strength,
+                    rustconn_core::secret::PassphraseStrength::TooShort
+                ) {
+                    i18n(
+                        "A passphrase this short can be guessed quickly. This file is meant to be copied to your other computers, so the passphrase is the only thing protecting it.",
+                    )
+                } else {
+                    i18n(
+                        "This passphrase would not take long to guess. Several unrelated words make a much stronger one, and are easier to remember than symbols.",
+                    )
+                };
+                status.set_label(&message);
+                status.remove_css_class("error");
+                status.add_css_class("warning");
+                status.set_visible(true);
+                confirm.remove_css_class("error");
             } else if unconfirmed_new {
                 status.set_label(&i18n(
                     "Repeat the passphrase to confirm it. A new file cannot be recovered if the passphrase is wrong.",
                 ));
                 status.remove_css_class("error");
+                status.remove_css_class("warning");
                 status.set_visible(true);
                 confirm.remove_css_class("error");
             } else {
                 status.set_visible(false);
                 status.remove_css_class("error");
+                status.remove_css_class("warning");
                 confirm.remove_css_class("error");
             }
         };
@@ -1144,6 +1727,117 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         portable_status_label.clone(),
     );
     portable_group.add(&portable_storage_combo);
+
+    // Create the file as its own step.
+    //
+    // Until now the file appeared as a side effect of the first credential save,
+    // so a fresh setup could not be confirmed or corrected: a mistyped directory
+    // surfaced much later as "could not save the password". The other thing that
+    // created it, "Copy Credentials", refuses when there is nothing to copy —
+    // exactly the state a new installation is in. On a second machine the same
+    // button checks that the passphrase opens the file the sync client delivered,
+    // without rewriting it.
+    let portable_create_button = Button::builder()
+        .label(i18n("Create File"))
+        .halign(gtk4::Align::Start)
+        .valign(gtk4::Align::Center)
+        .build();
+    let portable_create_row = adw::ActionRow::builder()
+        .title(i18n("Set up the file"))
+        .subtitle(i18n(
+            "Create the file now, or check that your passphrase opens one that is already there",
+        ))
+        .activatable_widget(&portable_create_button)
+        .build();
+    portable_create_row.add_suffix(&portable_create_button);
+    portable_group.add(&portable_create_row);
+
+    {
+        let passphrase_entry = portable_passphrase_entry.clone();
+        let confirm_entry = portable_confirm_entry.clone();
+        let path_entry = portable_path_entry.clone();
+        let status = portable_status_label.clone();
+        let refresh = refresh_portable_status.clone();
+        portable_create_button.connect_clicked(move |button| {
+            let path = rustconn_core::secret::resolve_portable_store_path(
+                expand_user_path(path_entry.text().as_str()).as_deref(),
+            );
+
+            let passphrase =
+                match portable_passphrase_for_action(&passphrase_entry, &confirm_entry, &path) {
+                    Ok(passphrase) => passphrase,
+                    Err(message) => {
+                        update_status_label(&status, &message, "error");
+                        passphrase_entry.grab_focus();
+                        return;
+                    }
+                };
+
+            // On a blocking thread: this is an Argon2id derivation with the
+            // file's own parameters, and for an existing file those come from a
+            // shared folder. The Settings dialog froze for the duration when the
+            // passphrase check ran inline, which is the bug this avoids repeating.
+            update_status_label(&status, &i18n("Setting up the file…"), "dim-label");
+            button.set_sensitive(false);
+
+            let status_async = status.clone();
+            let button_async = button.clone();
+            let refresh_async = refresh.clone();
+            let work_path = path.clone();
+            glib::spawn_future_local(async move {
+                let outcome = gtk4::gio::spawn_blocking(move || {
+                    rustconn_core::secret::prepare_portable_store(&work_path, &passphrase)
+                })
+                .await;
+                button_async.set_sensitive(true);
+
+                let (message, css) = match outcome {
+                    Ok(Ok(rustconn_core::secret::PortableStoreSetup::Created)) => (
+                        i18n_f("Created {}", &[&path.display().to_string()]),
+                        "success",
+                    ),
+                    Ok(Ok(rustconn_core::secret::PortableStoreSetup::AlreadyUsable)) => (
+                        i18n("That file is already there and your passphrase opens it"),
+                        "success",
+                    ),
+                    Ok(Err(rustconn_core::error::SecretError::IncorrectPassphrase)) => (
+                        i18n(
+                            "That passphrase does not open the existing portable file. Enter the passphrase the file was created with.",
+                        ),
+                        "error",
+                    ),
+                    Ok(Err(e)) => (
+                        i18n_f("Cannot set up the file: {}", &[&e.to_string()]),
+                        "error",
+                    ),
+                    Err(_panic) => (i18n("Could not set up the file"), "error"),
+                };
+                update_status_label(&status_async, &message, css);
+                refresh_async();
+            });
+        });
+    }
+
+    // Change the passphrase.
+    //
+    // Unwired here: re-keying the file is only half of a passphrase change. The
+    // other half is replacing every copy of the old one — the session settings,
+    // the live backend, the remembered copy — and none of those are reachable from
+    // this page. `SettingsDialog::connect_portable_passphrase_change` does it.
+    let portable_change_passphrase_button = Button::builder()
+        .label(i18n("Change Passphrase…"))
+        .halign(gtk4::Align::Start)
+        .valign(gtk4::Align::Center)
+        .build();
+    let portable_change_passphrase_row = adw::ActionRow::builder()
+        .title(i18n("Passphrase"))
+        .subtitle(i18n(
+            "Choose a new passphrase and encrypt every password in the file again under it",
+        ))
+        .activatable_widget(&portable_change_passphrase_button)
+        .build();
+    portable_change_passphrase_row.add_suffix(&portable_change_passphrase_button);
+    portable_group.add(&portable_change_passphrase_row);
 
     // Migrate button row
     let portable_migrate_button = Button::builder()
@@ -1170,37 +1864,28 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         let confirm_entry_clone = portable_confirm_entry.clone();
         let path_entry_clone = portable_path_entry.clone();
         let status_clone = portable_status_label.clone();
+        let refresh_status_clone = refresh_portable_status.clone();
         portable_migrate_button.connect_clicked(move |button| {
-            let passphrase_text = passphrase_entry_clone.text();
-            let confirm_text = confirm_entry_clone.text();
+            let source_path = rustconn_core::secret::default_encrypted_store_path();
+            let dest_path = rustconn_core::secret::resolve_portable_store_path(
+                expand_user_path(path_entry_clone.text().as_str()).as_deref(),
+            );
 
             // Refuse rather than flash: the reason has to stay on screen, since
             // the fix (type the passphrase, make both fields agree) is not
             // obvious from a border that recolours for two seconds.
-            let complaint = if passphrase_text.is_empty() {
-                Some(i18n(
-                    "Enter the passphrase that will protect the portable file",
-                ))
-            } else if !confirm_text.is_empty() && confirm_text != passphrase_text {
-                Some(i18n("The two passphrases do not match"))
-            } else {
-                None
+            let passphrase = match portable_passphrase_for_action(
+                &passphrase_entry_clone,
+                &confirm_entry_clone,
+                &dest_path,
+            ) {
+                Ok(passphrase) => passphrase,
+                Err(message) => {
+                    update_status_label(&status_clone, &message, "error");
+                    passphrase_entry_clone.grab_focus();
+                    return;
+                }
             };
-            if let Some(message) = complaint {
-                status_clone.set_label(&message);
-                status_clone.add_css_class("error");
-                status_clone.set_visible(true);
-                passphrase_entry_clone.grab_focus();
-                return;
-            }
-
-            let passphrase = secrecy::SecretString::from(passphrase_text.to_string());
-            let source_path = rustconn_core::secret::default_encrypted_store_path();
-            let dest_path = rustconn_core::secret::resolve_portable_store_path(
-                Some(path_entry_clone.text().as_str())
-                    .filter(|t| !t.is_empty())
-                    .map(std::path::Path::new),
-            );
 
             let Some(prefs_dialog) = enclosing_preferences_dialog(button) else {
                 tracing::warn!("Migration button is not inside a preferences dialog");
@@ -1229,10 +1914,8 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
             let verify_pass = passphrase.clone();
             let status_async = status_clone.clone();
             let button_async = button.clone();
-            status_clone.set_label(&i18n("Checking the passphrase…"));
-            status_clone.remove_css_class("error");
-            status_clone.add_css_class("dim-label");
-            status_clone.set_visible(true);
+            let refresh_async = refresh_status_clone.clone();
+            update_status_label(&status_clone, &i18n("Checking the passphrase…"), "dim-label");
             button.set_sensitive(false);
 
             glib::spawn_future_local(async move {
@@ -1241,7 +1924,6 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                 })
                 .await;
                 button_async.set_sensitive(true);
-                status_async.remove_css_class("dim-label");
 
                 let failure = match outcome {
                     Ok(Ok(())) => None,
@@ -1262,9 +1944,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                 };
 
                 if let Some(message) = failure {
-                    status_async.set_label(&message);
-                    status_async.add_css_class("error");
-                    status_async.set_visible(true);
+                    update_status_label(&status_async, &message, "error");
                     return;
                 }
                 status_async.set_visible(false);
@@ -1276,11 +1956,16 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                         if response
                             == crate::dialogs::portable_migration::MigrationResponse::Transfer
                         {
+                            let refresh_after = refresh_async.clone();
                             crate::dialogs::portable_migration::run_migration(
                                 source_path.clone(),
                                 dest_path.clone(),
                                 passphrase.clone(),
                                 prefs_dialog.clone(),
+                                // The file row would otherwise keep reporting the
+                                // count from before the copy, which is the state
+                                // it exists to stop being invisible.
+                                move || refresh_after(),
                             );
                         }
                     },
@@ -1483,6 +2168,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     let passbolt_group_clone = passbolt_group.clone();
     let pass_group_clone = pass_group.clone();
     let portable_group_clone = portable_group.clone();
+    let encrypted_file_group_clone = encrypted_file_group.clone();
     let kdbx_group_clone = kdbx_group.clone();
     let auth_group_clone2 = auth_group.clone();
     let status_group_clone2 = status_group.clone();
@@ -1507,18 +2193,17 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     let keyring_gaps_switch = keyring_gaps.clone();
     secret_backend_dropdown.connect_selected_notify(move |dropdown| {
         let selected = dropdown.selected();
-        // Show Bitwarden group only when Bitwarden is selected (index 2)
-        bitwarden_group_clone.set_visible(selected == 2);
-        // Show 1Password group only when 1Password is selected (index 3)
-        onepassword_group_clone.set_visible(selected == 3);
-        // Show Passbolt group only when Passbolt is selected (index 4)
-        passbolt_group_clone.set_visible(selected == 4);
-        // Show Pass group only when Pass is selected (index 5)
-        pass_group_clone.set_visible(selected == 5);
-        // Show portable group only when portable encrypted file is selected (index 7)
-        portable_group_clone.set_visible(selected == 7);
-        // Show KDBX groups only when KeePassXC is selected (index 0)
-        let show_kdbx = selected == 0;
+        // The two file backends are told apart only by this line once the popup
+        // has closed.
+        sync_backend_subtitle(dropdown);
+
+        bitwarden_group_clone.set_visible(selected == BACKEND_BITWARDEN_INDEX);
+        onepassword_group_clone.set_visible(selected == BACKEND_ONEPASSWORD_INDEX);
+        passbolt_group_clone.set_visible(selected == BACKEND_PASSBOLT_INDEX);
+        pass_group_clone.set_visible(selected == BACKEND_PASS_INDEX);
+        encrypted_file_group_clone.set_visible(selected == BACKEND_ENCRYPTED_FILE_INDEX);
+        portable_group_clone.set_visible(selected == BACKEND_PORTABLE_INDEX);
+        let show_kdbx = selected == BACKEND_KEEPASSXC_INDEX;
         kdbx_group_clone.set_visible(show_kdbx);
         // Auth and status groups depend on both backend selection and kdbx_enabled
         let kdbx_enabled = kdbx_enabled_row_clone.is_active();
@@ -1526,9 +2211,9 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         status_group_clone2.set_visible(show_kdbx && kdbx_enabled);
 
         // System-keyring availability indicator: only the system-keyring entry
-        // (index 1) uses the keyring probe; other backends show their own
-        // status rows, so hide this indicator for them (R4.3).
-        if selected == 1 {
+        // uses the keyring probe; other backends show their own status rows, so
+        // hide this indicator for them (R4.3).
+        if selected == BACKEND_SYSTEM_KEYRING_INDEX {
             render_keyring_availability(
                 &availability_row_clone,
                 &availability_label_clone,
@@ -1559,18 +2244,18 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
 
         // Update version label based on selected backend
         match selected {
-            0 => set_ver(&keepassxc_version_clone.borrow()),
-            1 => version_row_clone.set_visible(false),
-            2 => set_ver(&bitwarden_version_clone.borrow()),
-            3 => set_ver(&onepassword_version_clone.borrow()),
-            4 => set_ver(&passbolt_version_clone.borrow()),
-            5 => set_ver(&pass_version_clone.borrow()),
+            BACKEND_KEEPASSXC_INDEX => set_ver(&keepassxc_version_clone.borrow()),
+            BACKEND_SYSTEM_KEYRING_INDEX => version_row_clone.set_visible(false),
+            BACKEND_BITWARDEN_INDEX => set_ver(&bitwarden_version_clone.borrow()),
+            BACKEND_ONEPASSWORD_INDEX => set_ver(&onepassword_version_clone.borrow()),
+            BACKEND_PASSBOLT_INDEX => set_ver(&passbolt_version_clone.borrow()),
+            BACKEND_PASS_INDEX => set_ver(&pass_version_clone.borrow()),
             _ => version_row_clone.set_visible(false),
         }
 
         // On-demand keyring loading when user switches to a new backend
         match selected {
-            2 => {
+            BACKEND_BITWARDEN_INDEX => {
                 // Bitwarden selected — trigger auto-unlock from keyring
                 let status_label = bw_status_label_switch.clone();
                 let gaps = keyring_gaps_switch.clone();
@@ -1618,7 +2303,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                     }
                 });
             }
-            3 => {
+            BACKEND_ONEPASSWORD_INDEX => {
                 // 1Password selected — load token from keyring
                 let token_entry = op_token_entry_switch.clone();
                 let status_label = op_status_label_switch.clone();
@@ -1640,7 +2325,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                     }
                 });
             }
-            4 => {
+            BACKEND_PASSBOLT_INDEX => {
                 // Passbolt selected — load passphrase from keyring
                 let passphrase_entry = pb_passphrase_entry_switch.clone();
                 let gaps = keyring_gaps_switch.clone();
@@ -1656,7 +2341,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                     }
                 });
             }
-            0 => {
+            BACKEND_KEEPASSXC_INDEX => {
                 // KeePassXC selected — load password from keyring
                 let password_entry = kdbx_password_entry_switch.clone();
                 let gaps = keyring_gaps_switch.clone();
@@ -1686,6 +2371,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     onepassword_group.set_visible(false);
     passbolt_group.set_visible(false);
     pass_group.set_visible(false);
+    encrypted_file_group.set_visible(false);
     portable_group.set_visible(false);
 
     // Initial version display set above as "Detecting..."
@@ -2008,6 +2694,8 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         page,
         secret_backend_dropdown,
         enable_fallback,
+        transfer_button,
+        portable_change_passphrase_button,
         kdbx_path_entry,
         kdbx_password_entry,
         kdbx_enabled_row,
@@ -2052,18 +2740,33 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         pass_store_dir_entry,
         pass_store_dir_browse_button,
         pass_status_label,
+        encrypted_file_group,
         portable_group,
         portable_path_entry,
         portable_browse_button,
         portable_passphrase_entry,
         portable_confirm_entry,
         portable_storage_combo,
+        portable_status_label,
     }
 }
 
-/// Gets CLI version from command output
-fn update_status_label(label: &Label, text: &str, css_class: &str) {
+/// Sets a status label's text, tooltip, visibility and severity class.
+///
+/// The previous doc comment on this function read "Gets CLI version from command
+/// output", left over from a neighbour it was moved past.
+///
+/// `pub(crate)` so `SettingsDialog::connect_portable_passphrase_change` can write
+/// into the portable group's status row; every other caller is in this module.
+pub(crate) fn update_status_label(label: &Label, text: &str, css_class: &str) {
     label.set_text(text);
+    // A label handed text has something to say, so it is revealed here rather
+    // than at each call site. Most status labels in this page live in a row of
+    // their own and are visible already; the portable group's is hidden until
+    // there is a message, and `make_storage_combo` writes its "System keyring
+    // unavailable" warning into exactly that one. Without this the combo
+    // reverted the user's choice with no visible explanation.
+    label.set_visible(true);
     // Full text in a tooltip so ellipsized status (e.g. long errors) stays
     // readable on hover (#182).
     label.set_tooltip_text(Some(text));
@@ -2100,19 +2803,14 @@ fn render_keyring_availability(
 }
 
 pub fn load_secret_settings(widgets: &SecretsPageWidgets, settings: &SecretSettings) {
-    // Indices: 0=KeePassXC, 1=libsecret/Keychain, 2=Bitwarden, 3=1Password,
-    // 4=Passbolt, 5=Pass, 6=Encrypted file.
-    let backend_index = match settings.preferred_backend {
-        SecretBackendType::KeePassXc | SecretBackendType::KdbxFile => 0,
-        SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain => 1,
-        SecretBackendType::Bitwarden => 2,
-        SecretBackendType::OnePassword => 3,
-        SecretBackendType::Passbolt => 4,
-        SecretBackendType::Pass => 5,
-        SecretBackendType::EncryptedFile => 6,
-        SecretBackendType::PortableEncryptedFile => 7,
-    };
+    let backend_index = backend_to_index(settings.preferred_backend);
+    // `set_selected` emits `selected-notify`, so the handler in
+    // `create_secrets_page` puts the backend's explanation in the row's subtitle
+    // and shows the matching group. The duplicate visibility block further down
+    // covers the case where the saved backend is already the selected one and no
+    // notify fires.
     widgets.secret_backend_dropdown.set_selected(backend_index);
+    sync_backend_subtitle(&widgets.secret_backend_dropdown);
     widgets.enable_fallback.set_active(settings.enable_fallback);
     widgets.kdbx_enabled_row.set_active(settings.kdbx_enabled);
 
@@ -2243,7 +2941,7 @@ pub fn load_secret_settings(widgets: &SecretsPageWidgets, settings: &SecretSetti
     set_storage_combo_value(&widgets.portable_storage_combo, settings.portable_storage());
 
     // Show/hide groups based on selected backend
-    let show_kdbx = backend_index == 0;
+    let show_kdbx = backend_index == BACKEND_KEEPASSXC_INDEX;
     widgets.kdbx_group.set_visible(show_kdbx);
     widgets
         .auth_group
@@ -2251,11 +2949,24 @@ pub fn load_secret_settings(widgets: &SecretsPageWidgets, settings: &SecretSetti
     widgets
         .status_group
         .set_visible(show_kdbx && settings.kdbx_enabled);
-    widgets.bitwarden_group.set_visible(backend_index == 2);
-    widgets.onepassword_group.set_visible(backend_index == 3);
-    widgets.passbolt_group.set_visible(backend_index == 4);
-    widgets.pass_group.set_visible(backend_index == 5);
-    widgets.portable_group.set_visible(backend_index == 7);
+    widgets
+        .bitwarden_group
+        .set_visible(backend_index == BACKEND_BITWARDEN_INDEX);
+    widgets
+        .onepassword_group
+        .set_visible(backend_index == BACKEND_ONEPASSWORD_INDEX);
+    widgets
+        .passbolt_group
+        .set_visible(backend_index == BACKEND_PASSBOLT_INDEX);
+    widgets
+        .pass_group
+        .set_visible(backend_index == BACKEND_PASS_INDEX);
+    widgets
+        .encrypted_file_group
+        .set_visible(backend_index == BACKEND_ENCRYPTED_FILE_INDEX);
+    widgets
+        .portable_group
+        .set_visible(backend_index == BACKEND_PORTABLE_INDEX);
     widgets.password_row.set_visible(settings.kdbx_use_password);
     widgets
         .kdbx_storage_combo
@@ -2533,31 +3244,12 @@ pub fn collect_secret_settings(
     widgets: &SecretsPageWidgets,
     settings: &Rc<RefCell<rustconn_core::config::AppSettings>>,
 ) -> SecretSettings {
-    // Indices: 0=KeePassXC, 1=libsecret/Keychain, 2=Bitwarden, 3=1Password, 4=Passbolt, 5=Pass, 6=Encrypted file
-    let preferred_backend = match widgets.secret_backend_dropdown.selected() {
-        0 => SecretBackendType::KeePassXc,
-        // Index 1 is the platform system keyring (see create_secrets_page).
-        #[cfg(target_os = "macos")]
-        1 => SecretBackendType::MacOsKeychain,
-        #[cfg(not(target_os = "macos"))]
-        1 => SecretBackendType::LibSecret,
-        2 => SecretBackendType::Bitwarden,
-        3 => SecretBackendType::OnePassword,
-        4 => SecretBackendType::Passbolt,
-        5 => SecretBackendType::Pass,
-        6 => SecretBackendType::EncryptedFile,
-        7 => SecretBackendType::PortableEncryptedFile,
-        _ => SecretBackendType::default(),
-    };
+    let preferred_backend = index_to_backend(widgets.secret_backend_dropdown.selected());
 
-    let kdbx_path = {
-        let path_text = widgets.kdbx_path_entry.text();
-        if path_text.is_empty() {
-            None
-        } else {
-            Some(std::path::PathBuf::from(path_text.as_str()))
-        }
-    };
+    // Every path row on this page goes through `expand_user_path`: a typed
+    // `~/…` was stored verbatim, and `PathBuf` gives `~` no meaning, so the
+    // file was looked for in a directory literally called `~`.
+    let kdbx_path = expand_user_path(widgets.kdbx_path_entry.text().as_str());
 
     // The "Use key file" / "Use password" switches decide which credentials the
     // KDBX backend is handed. Until 0.19.10 they only hid the rows, so a key
@@ -2566,14 +3258,9 @@ pub fn collect_secret_settings(
     let kdbx_use_key_file = widgets.kdbx_use_key_file_check.is_active();
     let kdbx_use_password = widgets.kdbx_use_password_check.is_active();
 
-    let kdbx_key_file = {
-        let key_file_text = widgets.kdbx_key_file_entry.text();
-        if !kdbx_use_key_file || key_file_text.is_empty() {
-            None
-        } else {
-            Some(std::path::PathBuf::from(key_file_text.as_str()))
-        }
-    };
+    let kdbx_key_file = kdbx_use_key_file
+        .then(|| expand_user_path(widgets.kdbx_key_file_entry.text().as_str()))
+        .flatten();
 
     let (kdbx_password, kdbx_password_encrypted) = {
         let storage = storage_combo_value(&widgets.kdbx_storage_combo);
@@ -2862,11 +3549,8 @@ pub fn collect_secret_settings(
         // whatever was typed the key to the file forever, so the confirmation is
         // required. This is the same rule `rustconn-cli` applies when it decides
         // whether to prompt twice.
-        let path_text = widgets.portable_path_entry.text();
         let store_path = rustconn_core::secret::resolve_portable_store_path(
-            Some(path_text.as_str())
-                .filter(|t| !t.is_empty())
-                .map(std::path::Path::new),
+            expand_user_path(widgets.portable_path_entry.text().as_str()).as_deref(),
         );
         let confirmed = if store_path.exists() {
             confirm_text.is_empty() || confirm_text == pass_text
@@ -2959,23 +3643,11 @@ pub fn collect_secret_settings(
             }
         },
         // Collect Pass store directory
-        pass_store_dir: {
-            let path_text = widgets.pass_store_dir_entry.text();
-            if path_text.is_empty() {
-                None
-            } else {
-                Some(std::path::PathBuf::from(path_text.as_str()))
-            }
-        },
-        // Collect portable encrypted file settings
-        portable_file_path: {
-            let path_text = widgets.portable_path_entry.text();
-            if path_text.is_empty() {
-                None
-            } else {
-                Some(std::path::PathBuf::from(path_text.as_str()))
-            }
-        },
+        pass_store_dir: expand_user_path(widgets.pass_store_dir_entry.text().as_str()),
+        // Collect portable encrypted file settings. An empty entry stays `None`,
+        // which is what makes the default location the default rather than a
+        // path this dialog writes into the config the first time it is opened.
+        portable_file_path: expand_user_path(widgets.portable_path_entry.text().as_str()),
         portable_passphrase,
         portable_passphrase_encrypted,
         portable_save_to_keyring: portable_storage == CredentialStorage::SystemKeyring,

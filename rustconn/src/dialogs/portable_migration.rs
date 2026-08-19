@@ -86,13 +86,20 @@ where
 /// * `source_path` — the machine-bound `credentials.enc`
 /// * `dest_path` — the portable store
 /// * `passphrase` — protects the portable store
-/// * `toast_overlay` — where the outcome is reported
-pub fn run_migration(
+/// * `prefs_dialog` — where the outcome is reported
+/// * `on_finished` — run once the copy has ended, however it ended, so the
+///   caller can re-read what is now in the file. It runs after a failure too: a
+///   partial copy still changed the destination, and a row showing the count
+///   from before would be wrong in the case that most needs to be accurate.
+pub fn run_migration<F>(
     source_path: std::path::PathBuf,
     dest_path: std::path::PathBuf,
     passphrase: secrecy::SecretString,
     prefs_dialog: adw::PreferencesDialog,
-) {
+    on_finished: F,
+) where
+    F: Fn() + 'static,
+{
     glib::spawn_future_local(async move {
         let result = gtk4::gio::spawn_blocking(move || {
             rustconn_core::secret::migration::migrate_encrypted_to_portable(
@@ -143,6 +150,8 @@ pub fn run_migration(
                 );
             }
         }
+
+        on_finished();
     });
 }
 

@@ -3094,6 +3094,11 @@ impl MainWindow {
             let groups: Vec<_> = state_ref.list_groups_owned();
             dialog.populate_cloud_sync(&groups, state_ref.sync_manager(), &state);
         }
+        // Outside the borrow above: the handler takes its own snapshot when the
+        // button is pressed, and holding a `Ref` while wiring it would mean the
+        // dialog owned one for as long as it was open.
+        dialog.connect_credential_transfer(&state);
+        dialog.connect_portable_passphrase_change(&state);
         tracing::debug!(
             elapsed_ms = opened_at.elapsed().as_millis() as u64,
             "settings dialog constructed and populated"

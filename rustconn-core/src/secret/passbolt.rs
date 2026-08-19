@@ -26,6 +26,7 @@ use serde::Deserialize;
 use tokio::process::Command;
 
 use super::backend::SecretBackend;
+use super::serde_helpers::serde_error_kind;
 use crate::error::{SecretError, SecretResult};
 use crate::models::Credentials;
 
@@ -150,6 +151,53 @@ impl PassboltBackend {
         cmd
     }
 
+    /// Removes the secret values this client passes on the command line from
+    /// `text`.
+    ///
+    /// `go-passbolt-cli` takes both the account passphrase and the resource
+    /// password as flags (see [`Self::build_command`]), and it answers a rejected
+    /// invocation by quoting the invocation. That put the credential into
+    /// [`SecretError::ConnectionFailed`], which callers log: `vault_ops` logs it on
+    /// every failed connection and group password save, and the bulk credential
+    /// transfer would have multiplied it by the number of stored passwords.
+    ///
+    /// Redacting at the point the error is built covers every caller, rather than
+    /// asking each one to remember. Short values are left alone: a two-character
+    /// password would otherwise turn every occurrence of those characters in a
+    /// legitimate diagnostic into `***`, destroying the message to protect
+    /// something already trivially guessable.
+    fn redact_secrets(&self, text: &str, args: &[&str]) -> String {
+        /// Below this length, redaction destroys more than it protects.
+        const MIN_REDACTED_LEN: usize = 4;
+
+        let mut redacted = text.to_owned();
+        // Wiped on drop: this is a function whose whole purpose is handling secret
+        // values, so the copies it makes of them are the last place to be casual
+        // about it.
+        let mut secrets: Vec<zeroize::Zeroizing<String>> = Vec::new();
+
+        if let Some(ref passphrase) = self.user_password {
+            secrets.push(zeroize::Zeroizing::new(
+                passphrase.expose_secret().to_owned(),
+            ));
+        }
+        // Values that follow a password-bearing flag. Taken from the argv this
+        // call actually built, so a new flag added to `store` is covered as soon
+        // as it is named here rather than silently leaking.
+        for pair in args.windows(2) {
+            if matches!(pair[0], "--password" | "--userPassword") {
+                secrets.push(zeroize::Zeroizing::new(pair[1].to_owned()));
+            }
+        }
+
+        for secret in &secrets {
+            if secret.len() >= MIN_REDACTED_LEN {
+                redacted = redacted.replace(secret.as_str(), "***");
+            }
+        }
+        redacted
+    }
+
     /// Runs a passbolt command and returns stdout
     async fn run_command(&self, args: &[&str]) -> SecretResult<String> {
         let output =
@@ -160,7 +208,8 @@ impl PassboltBackend {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(SecretError::ConnectionFailed(format!(
-                "passbolt command failed: {stderr}"
+                "passbolt command failed: {}",
+                self.redact_secrets(&stderr, args)
             )));
         }
 
@@ -195,8 +244,20 @@ impl PassboltBackend {
             .run_command(&["get", "resource", "--id", resource_id])
             .await?;
 
-        serde_json::from_str(&output)
-            .map_err(|e| SecretError::RetrieveFailed(format!("Failed to parse resource: {e}")))
+        // The serde error's `Display` is deliberately not used. It quotes the
+        // value it choked on, and the value being parsed here is the resource's
+        // password: a numeric password arrives as a JSON number, the deserializer
+        // reports `invalid type: integer \`1234\`, expected a string`, and that
+        // string then reaches `tracing::error!` through `vault_ops`. The position
+        // is what a report needs; the token is what leaks.
+        serde_json::from_str(&output).map_err(|e| {
+            SecretError::RetrieveFailed(format!(
+                "Failed to parse resource: {} error at line {}, column {}",
+                serde_error_kind(&e),
+                e.line(),
+                e.column()
+            ))
+        })
     }
 
     /// Checks if the CLI is configured and can connect
@@ -225,10 +286,15 @@ impl SecretBackend for PassboltBackend {
 
         let name = Self::entry_name(connection_id);
         let username = credentials.username.clone().unwrap_or_default();
-        let password = credentials
-            .expose_password()
-            .unwrap_or_default()
-            .to_string();
+        // Wiped on drop. The CLI needs the password as a plain argument (it has no
+        // stdin path — see `build_command`), but that is no reason to also leave
+        // the copy behind in freed memory.
+        let password = zeroize::Zeroizing::new(
+            credentials
+                .expose_password()
+                .unwrap_or_default()
+                .to_string(),
+        );
 
         // Check if resource already exists
         if let Some(existing) = self.find_resource(connection_id).await? {
@@ -519,5 +585,51 @@ mod debug_tests {
             rendered.contains("[REDACTED]"),
             "Debug must show redacted marker: {rendered}"
         );
+    }
+
+    /// The CLI answers a rejected invocation by quoting it, and the invocation
+    /// carries the password as a flag, so its stderr is a credential source.
+    #[test]
+    fn redaction_removes_the_resource_password_from_backend_output() {
+        let backend = PassboltBackend::new();
+        let args = ["create", "resource", "--password", "correct-horse"];
+        let stderr =
+            "Error: unknown flag\nUsage: passbolt create resource --password correct-horse";
+
+        let redacted = backend.redact_secrets(stderr, &args);
+
+        assert!(
+            !redacted.contains("correct-horse"),
+            "password survived redaction: {redacted}"
+        );
+        assert!(
+            redacted.contains("unknown flag"),
+            "the diagnostic itself must survive: {redacted}"
+        );
+    }
+
+    #[test]
+    fn redaction_removes_the_account_passphrase_from_backend_output() {
+        let backend = PassboltBackend::new()
+            .with_user_password(SecretString::from("s3cret-phrase".to_owned()));
+
+        let redacted = backend.redact_secrets("failed with --userPassword s3cret-phrase", &[]);
+
+        assert!(
+            !redacted.contains("s3cret-phrase"),
+            "passphrase survived redaction: {redacted}"
+        );
+    }
+
+    /// A very short secret appears inside ordinary words, so replacing it would
+    /// shred the diagnostic to protect something already trivially guessable.
+    #[test]
+    fn redaction_leaves_a_too_short_secret_alone() {
+        let backend = PassboltBackend::new();
+        let args = ["create", "resource", "--password", "ab"];
+
+        let redacted = backend.redact_secrets("unable to reach the server", &args);
+
+        assert_eq!(redacted, "unable to reach the server");
     }
 }
