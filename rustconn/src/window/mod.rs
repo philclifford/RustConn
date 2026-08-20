@@ -3952,10 +3952,13 @@ impl MainWindow {
         // In Flatpak, spawn the shell on the host via flatpak-spawn so the
         // user gets their full system shell with all tools and dotfiles (#122).
         //
-        // VTE allocates a PTY for the child process. We need the host shell
-        // to inherit this PTY. `flatpak-spawn --host` with the Development
-        // interface forwards stdin/stdout/stderr (including the PTY fd) to
-        // the host process, but the shell must be told it's a login shell.
+        // The session runs on a PTY of our own (see `pty_spawn::spawn_on_pty`).
+        // `flatpak-spawn --host` with the Development interface forwards
+        // stdin/stdout/stderr — the PTY fd included — to the host process, but
+        // the host shell needs a controlling terminal of its own for job
+        // control, which is what `script` provides. That second PTY is why the
+        // spawn waits for the widget's allocation; see
+        // `spawn_host_shell_when_allocated`.
         //
         // $SHELL inside the sandbox is /bin/sh, not the user's host shell.
         // Query the host $SHELL first, then exec into it.
@@ -3986,46 +3989,7 @@ impl MainWindow {
                     "flatpak-spawn --host --env=TERM=xterm-256color -- script -qfc '{host_shell} --login' /dev/null"
                 )
             };
-            notebook.spawn_command(session_id, &["/bin/sh", "-c", &spawn_cmd], None, None, None);
-
-            // Wire up PTY resize propagation for Flatpak host shell (#122).
-            //
-            // VTE automatically resizes its own PTY (sandbox-side), but the
-            // host-side PTY created by `script` never receives TIOCSWINSZ.
-            // On each VTE char-size-changed, forward the new dimensions to the
-            // host via `flatpak-spawn --host -- stty rows R cols C`.
-            //
-            // Debounced: only the last resize in a 200ms window is sent to
-            // avoid spawning dozens of threads during rapid window dragging.
-            if let Some(terminal) = notebook.get_terminal(session_id) {
-                use vte4::prelude::*;
-                let last_resize = std::sync::Arc::new(std::sync::Mutex::new(
-                    std::time::Instant::now()
-                        .checked_sub(std::time::Duration::from_secs(1))
-                        .unwrap_or_else(std::time::Instant::now),
-                ));
-                terminal.connect_char_size_changed(move |term, _width, _height| {
-                    let rows = term.row_count();
-                    let cols = term.column_count();
-                    let last = last_resize.clone();
-                    // Debounce: skip if last resize was less than 200ms ago
-                    // (the spawned thread will use the latest values).
-                    let mut guard = last.lock().unwrap_or_else(|e| e.into_inner());
-                    if guard.elapsed() < std::time::Duration::from_millis(200) {
-                        return;
-                    }
-                    *guard = std::time::Instant::now();
-                    drop(guard);
-
-                    // Spawn a background process to resize the host PTY.
-                    // `stty` on the host sets the PTY dimensions and the kernel
-                    // delivers SIGWINCH to the foreground process group.
-                    let cmd = format!("flatpak-spawn --host -- stty rows {rows} cols {cols}");
-                    std::thread::spawn(move || {
-                        let _ = std::process::Command::new("sh").args(["-c", &cmd]).output();
-                    });
-                });
-            }
+            Self::spawn_host_shell_when_allocated(notebook, session_id, spawn_cmd);
         } else if let Some(ref cmd) = custom_command {
             // Custom command: run via user's shell with -c
             notebook.spawn_command(session_id, &[&shell, "-c", cmd], None, None, None);
@@ -4039,6 +4003,81 @@ impl MainWindow {
         }
 
         session_id
+    }
+
+    /// Starts the Flatpak host shell once its terminal widget has a size.
+    ///
+    /// `flatpak-spawn --host` hands this session's PTY to the host, where
+    /// `script` creates a *second* PTY and copies the window size from its own
+    /// stdin — once, at startup, and never again. Spawning before the widget has
+    /// been allocated therefore freezes the host PTY at VTE's 24×80 default: the
+    /// later `TIOCSWINSZ` from `TerminalNotebook::watch_grid_size` reaches the
+    /// sandbox PTY only, and the `SIGWINCH` it raises goes to the sandbox
+    /// foreground process group — `flatpak-spawn`, which forwards `SIGHUP`,
+    /// `SIGINT`, `SIGQUIT`, `SIGTERM`, `SIGCONT`, `SIGTSTP`, `SIGUSR1` and
+    /// `SIGUSR2` to the host, and not `SIGWINCH`. Programs that read their
+    /// geometry once at startup (`mc`, `htop`, shells) then draw at the wrong
+    /// size (issue #294).
+    ///
+    /// Waiting for the widget's first non-zero allocation is the whole fix: the
+    /// spawn path's `grid_size` reports the real grid from then on and `script`
+    /// inherits it. The predicate is the allocation rather than "is the grid
+    /// still 24×80", because a window genuinely that size is a valid state and
+    /// not a symptom.
+    ///
+    /// There is deliberately no resize forwarding beside this. The
+    /// `flatpak-spawn --host -- stty rows R cols C` that used to sit here ran
+    /// `stty` against *its own* stdin, which is the stdin `RustConn` itself was
+    /// started with — `/dev/null` under a desktop launcher, the user's own
+    /// terminal when started from a shell, never the session's PTY. It could
+    /// only fail silently or resize the wrong terminal, and it did both without
+    /// anyone noticing because the exit status was discarded. A mid-session
+    /// resize consequently does not reach the Flatpak host shell.
+    fn spawn_host_shell_when_allocated(
+        notebook: &SharedNotebook,
+        session_id: Uuid,
+        spawn_cmd: String,
+    ) {
+        /// Re-check interval. GTK lays out on the frame clock, so the first tick
+        /// normally already sees an allocation; 20 ms is short enough that the
+        /// later shell start is imperceptible.
+        const POLL: std::time::Duration = std::time::Duration::from_millis(20);
+        /// Ceiling on the wait, so ~1 s. A terminal that never gets an
+        /// allocation — a tab in a window the compositor never maps — must still
+        /// get its shell, at whatever size VTE reports.
+        const POLL_LIMIT: u32 = 50;
+
+        let notebook = Rc::downgrade(notebook);
+        let mut ticks = 0_u32;
+        glib::timeout_add_local(POLL, move || {
+            let Some(notebook) = notebook.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let Some(terminal) = notebook.get_terminal(session_id) else {
+                // The tab was closed before the shell started.
+                return glib::ControlFlow::Break;
+            };
+            ticks += 1;
+            let allocated = terminal.width() > 0 && terminal.height() > 0;
+            if !allocated && ticks < POLL_LIMIT {
+                return glib::ControlFlow::Continue;
+            }
+            if !allocated {
+                tracing::warn!(
+                    %session_id,
+                    "Terminal never received an allocation; starting the host shell at VTE's default size"
+                );
+            }
+            tracing::debug!(
+                %session_id,
+                rows = terminal.row_count(),
+                cols = terminal.column_count(),
+                ticks,
+                "Starting the Flatpak host shell"
+            );
+            notebook.spawn_command(session_id, &["/bin/sh", "-c", &spawn_cmd], None, None, None);
+            glib::ControlFlow::Break
+        });
     }
 
     /// Shows the quick connect dialog with protocol selection

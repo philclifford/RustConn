@@ -5,6 +5,24 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.5] - 2026-08-21
+
+### Fixed
+
+- **Flatpak: terminal still started at 24×80 on some hosts (issue [#294](https://github.com/totoshko88/RustConn/issues/294))** — 0.20.4 sized RustConn's own PTY correctly, but inside Flatpak the shell runs on a *second* one: `flatpak-spawn` forwards our PTY to the host, where `script` creates its own and copies the window size across once, at startup. The host shell was started before the terminal widget had been allocated, so that copy captured VTE's 24×80 default and nothing corrected it afterwards — the later `TIOCSWINSZ` reaches the sandbox PTY only, and the `SIGWINCH` it raises is not among the eight signals `flatpak-spawn` forwards to the host. The host shell now starts once the widget has a size, which is all `script` needs in order to inherit the right one, so programs that read their geometry at startup (`mc`, `htop`, shells) open at the real size.
+
+  Known limitation: resizing the window mid-session still does not reach a Flatpak host shell. The `stty` call that was supposed to handle this (added with the host shell itself, issue #122) could never have worked — it ran against RustConn's own stdin, which is `/dev/null` under a desktop launcher and the launching terminal when started from a shell, but never the session's PTY. Its exit status was discarded, so it either failed silently or resized the wrong terminal. It has been removed rather than left in place looking functional.
+
+- **Shortcut recorder did not warn about conflicts with fixed shortcuts (issue [#295](https://github.com/totoshko88/RustConn/issues/295))** — recording e.g. `Ctrl+V` for terminal paste showed no conflict even though the sidebar's "Paste connection" handler occupies that key whenever the sidebar has focus. The checker now consults all eleven non-rebindable shortcuts — sidebar row actions, terminal zoom, the primary menu — reading the same list the keyboard-shortcuts dialog shows, and names the conflicting action in the warning.
+
+### Documentation
+
+- **WSL guide: added Flatpak install option and single-line Ubuntu command** — `docs/WSL.md` now offers three install paths (OBS repo, .deb, Flatpak) with a copy-paste one-liner for Ubuntu 24.04. Flatpak section includes sandbox permission notes and portal integration requirements.
+
+### Dependencies
+
+- **Updated**: either 1.17.0→1.18.0, h2 0.4.16→0.4.18, zerovec 0.11.7→0.11.8
+
 ## [0.20.4] - 2026-08-19
 
 ### Added

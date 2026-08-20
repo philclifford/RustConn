@@ -359,7 +359,12 @@ pub fn collect_keybinding_settings(
 
 /// Checks whether `accel` conflicts with another action's shortcut.
 ///
-/// Returns the human-readable label of the conflicting action, or `None`.
+/// Returns the translated label of the conflicting action, or `None`.
+///
+/// Two sources have to be consulted: the rebindable registry, and the eleven
+/// fixed shortcuts that widget key controllers own — sidebar row actions, VTE
+/// font zoom, the primary menu. The latter never reach `set_accels_for_action`,
+/// yet they occupy the combination just as firmly (issue #295).
 fn find_accel_conflict(
     accel: &str,
     current_action: &str,
@@ -374,11 +379,21 @@ fn find_accel_conflict(
         // Check each pipe-separated accelerator
         for existing in effective.split('|') {
             if accelerators_equivalent(existing, accel) {
-                return Some(def.label.clone());
+                return Some(i18n(&def.label));
             }
         }
     }
-    None
+
+    // Then the shortcuts that live in widget key controllers and never reach
+    // the rebindable registry. Without them, recording e.g. Ctrl+V for terminal
+    // paste shows no conflict even though the sidebar's paste-connection handler
+    // fires on Ctrl+V whenever the sidebar has focus (issue #295). The list
+    // comes from the help dialog so the two cannot drift apart; its labels are
+    // already translated.
+    crate::dialogs::shortcuts::fixed_shortcut_accels()
+        .into_iter()
+        .find(|(fixed_accel, _)| accelerators_equivalent(fixed_accel, accel))
+        .map(|(_, label)| label)
 }
 
 /// Returns `true` if the keyval is a modifier key (Shift, Control, Alt, Super).

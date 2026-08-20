@@ -87,6 +87,23 @@ fn fixed_shortcuts(category: KeybindingCategory) -> Vec<HelpEntry> {
     }
 }
 
+/// Every fixed shortcut, in category order, as `(accelerator, translated label)`.
+///
+/// The conflict checker on the *Settings ▸ Keybindings* page needs exactly the
+/// list this dialog shows: a combination a widget key controller already owns is
+/// a conflict even though it is absent from the rebindable registry (issue
+/// #295). It reads the list from here rather than keeping its own, because the
+/// copy it started with held seven of the eleven — `Delete`, `F2`, `Return` and
+/// `F10` were missing — with nothing but a comment to keep the two in step.
+pub(crate) fn fixed_shortcut_accels() -> Vec<(String, String)> {
+    KeybindingCategory::all()
+        .iter()
+        .copied()
+        .flat_map(fixed_shortcuts)
+        .map(|entry| (entry.accel, entry.label))
+        .collect()
+}
+
 /// Every line the dialog shows for one category: registry entries first, then
 /// the fixed ones, so a remappable shortcut is never buried under a static list.
 fn entries_for(

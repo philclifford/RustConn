@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.20.4
+Version:        0.20.5
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -282,6 +282,15 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Fri Aug 21 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.5-0
+- Version bump to 0.20.5
+- Fixed: Flatpak terminal still started at 24x80 on some hosts (issue #294)
+- Fixed: shortcut recorder did not warn about conflicts with fixed
+  shortcuts like Ctrl+V (issue #295)
+- Removed: the stty call that claimed to forward window resizes to a
+  Flatpak host shell; it acted on the wrong terminal and never worked
+- Documentation: WSL guide updated with Flatpak install option
+
 * Wed Aug 19 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.4-0
 - Version bump to 0.20.4
 - Added: portable encrypted file backend, passphrase-protected and syncable
