@@ -1,9 +1,10 @@
 //! Isolated FFI helpers for RustConn's PTY layer.
 //!
-//! This crate is one of the workspace's three sanctioned locations for `unsafe`
+//! This crate is one of the workspace's four sanctioned locations for `unsafe`
 //! code (per the M-UNSAFE guideline), alongside `rustconn-locale-sys` for the
-//! startup `setlocale` call and `rustconn-env-sys` for the startup environment
-//! writes. It was the first, hence the wording it used to carry. It provides:
+//! startup `setlocale` call, `rustconn-env-sys` for the startup environment
+//! writes, and `rustconn-dock-sys` for the macOS Dock tile image. It was the
+//! first, hence the wording it used to carry. It provides:
 //!
 //! - [`set_controlling_terminal`] — `pre_exec` hook for `setsid` + `TIOCSCTTY`
 //! - [`open_pty_pair`] — creates a PTY master/slave pair via `openpty(2)`
@@ -57,24 +58,47 @@ mod controlling_terminal {
     ///   process-group leader, which is sufficient for job control
     ///   (`Ctrl-C` → `SIGINT` to the foreground group).
     pub fn set_controlling_terminal(cmd: &mut Command) {
+        // The hook is defined outside the `unsafe` block below on purpose. An
+        // `unsafe` block extends lexically into a closure body, so writing the
+        // closure inline would put these two calls inside the block that
+        // registers it — one block covering three distinct contracts, which is
+        // what `clippy::multiple_unsafe_ops_per_block` objects to. Defining it
+        // here lets each call carry the SAFETY comment that actually applies to
+        // it.
+        let hook = || -> io::Result<()> {
+            // New session: detach from any inherited controlling terminal
+            // and become a session + process-group leader.
+            //
+            // SAFETY: `setsid` takes no arguments and mutates only the calling
+            // process's own session and process-group membership. It is
+            // async-signal-safe, which is the requirement that matters here
+            // because this runs in the forked child.
+            if unsafe { libc::setsid() } == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            // Claim fd 0 (the PTY slave) as the controlling terminal.
+            //
+            // SAFETY: fd 0 is the PTY slave the caller is required to have
+            // wired up before spawning (see this function's docs). `TIOCSCTTY`
+            // takes no pointer argument, so the third parameter is an ignored
+            // integer and there is no buffer for the kernel to write through.
+            // Note that `ioctl` is *not* on POSIX's async-signal-safe list; what
+            // holds is the weaker property `pre_exec` actually needs — both
+            // glibc and Apple's libc implement it as a thin syscall wrapper that
+            // neither allocates nor takes a lock.
+            if unsafe { libc::ioctl(0, libc::TIOCSCTTY as _, 0) } == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        };
+
         // SAFETY: the registered hook runs in the forked child, after `std`
         // has wired up the stdio descriptors and before `execvp`. It calls
         // only async-signal-safe libc functions (`setsid`, `ioctl`) and does
         // not allocate, lock, or touch shared state, satisfying the contract
         // of `CommandExt::pre_exec`.
         unsafe {
-            cmd.pre_exec(|| {
-                // New session: detach from any inherited controlling terminal
-                // and become a session + process-group leader.
-                if libc::setsid() == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-                // Claim fd 0 (the PTY slave) as the controlling terminal.
-                if libc::ioctl(0, libc::TIOCSCTTY as _, 0) == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
+            cmd.pre_exec(hook);
         }
     }
 }
@@ -264,11 +288,23 @@ mod tests {
             .stderr(Stdio::null());
         set_controlling_terminal(&mut cmd);
 
-        let result = cmd.spawn();
+        let err = cmd
+            .spawn()
+            .expect_err("spawn must fail: TIOCSCTTY on a /dev/null stdin errors, proving the pre_exec hook ran in the child");
+
+        // Pin the errno to one the hook itself can produce. `is_err()` alone was
+        // satisfied by *any* spawn failure — including `ENOENT` if `true` were
+        // missing from the image — so the test could pass without the hook ever
+        // running. Both values are accepted rather than just `ENOTTY` because
+        // which call fails first depends on the harness: normally `setsid`
+        // succeeds and `TIOCSCTTY` returns `ENOTTY`, but if the test process is
+        // already a process-group leader `setsid` fails first with `EPERM`.
+        // Asserting one of the two keeps this robust across CI runners while
+        // still ruling out an unrelated failure.
+        let errno = err.raw_os_error();
         assert!(
-            result.is_err(),
-            "spawn should fail: TIOCSCTTY on a /dev/null stdin returns an error, \
-             proving the pre_exec hook executed in the child",
+            errno == Some(libc::ENOTTY) || errno == Some(libc::EPERM),
+            "expected ENOTTY (TIOCSCTTY path) or EPERM (setsid path), got {errno:?}: {err}",
         );
     }
 

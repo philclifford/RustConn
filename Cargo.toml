@@ -118,6 +118,17 @@ tempfile = "3.26"
 # else is still a hard error, and the pre-write hook blocks it before the
 # compiler is reached.
 unsafe_code = "deny"
+# Unsafe-hardening set, IronRDP-derived, added 2026-08-20. These three are off by
+# default and sit in no lint group, so nothing was enforcing them. They became
+# relevant when the workspace moved from `forbid` to `deny` + a crate-level
+# `#![expect(unsafe_code)]` in the four -sys crates: under `forbid` there was no
+# sanctioned `unsafe` to check, now there is.
+# No `unsafe fn` exists in the workspace today, so the first is a forward guard —
+# it makes an `unsafe fn` require its own inner `unsafe` block rather than
+# silently treating the whole body as unsafe.
+unsafe_op_in_unsafe_fn = "warn"
+missing_unsafe_on_extern = "warn"
+unsafe_attr_outside_unsafe = "warn"
 # Low-risk hygiene lints from rust-pragmatic-guidelines.md. missing_debug_implementations
 # is intentionally NOT enabled: on a GTK4 codebase it would fire on hundreds of
 # widget-wrapping structs, breaking the 0-warning gate and forcing manual Debug impls
@@ -178,6 +189,23 @@ clone_on_ref_ptr = "warn"   # catches .clone() on Rc/Arc — prefer Rc::clone(&x
 redundant_clone = "warn"   # catches .clone() where the value is not used again
 empty_drop = "warn"         # flags empty Drop impls (usually a mistake)
 
+# Unsafe-hardening set (clippy side), IronRDP-derived, added 2026-08-20.
+# All three live in clippy::restriction, which this workspace does NOT enable, so
+# none of them was active. The repo already writes a `// SAFETY:` comment on every
+# unsafe block by convention — 9 blocks, 9 comments — but nothing enforced it, and
+# convention does not survive a hurried edit. These make it a compile-time rule.
+# Deliberately NOT added, having been checked against this codebase:
+#   allow_attributes           — 111 `#[allow]` sites across 34 files would all
+#                                warn at once; that is a bounded refactor to
+#                                `#[expect]`, not a lint flip. See M-LINT-OVERRIDE-EXPECT.
+#   unused_crate_dependencies  — duplicates the `cargo machete` CI gate and fires
+#                                on `native-tls`, which exists only to pin a version.
+#   transmute_ptr_to_ptr, ptr_cast_constness, as_ptr_cast_mut, cast_ptr_alignment,
+#   missing_safety_doc         — already covered by pedantic/nursery/default.
+undocumented_unsafe_blocks = "warn"
+unnecessary_safety_comment = "warn"
+multiple_unsafe_ops_per_block = "warn"
+
 # IronRDP-inspired: catch debug/development leftovers before they reach main
 unwrap_used = "warn"        # forces explicit error handling (expect/? instead of unwrap)
 dbg_macro = "warn"          # no dbg!() in committed code
@@ -192,11 +220,28 @@ redundant_pub_crate = "allow"
 
 
 
-# IronRDP-inspired: compile proptest and rand_chacha with optimizations even in
-# test builds — dramatically speeds up property tests (argon2 suite goes from
-# ~120s to ~30s in debug).
+# IronRDP-inspired: compile the test-only hot crates with optimizations even in
+# debug test builds.
+#
+# Measured 2026-08-20, `cargo test -p rustconn-core --test property_tests`,
+# 1453 tests, same machine, back to back:
+#
+#   argon2 at opt-level 0 (proptest/rand_chacha only):  192.7s test time
+#   argon2 at opt-level 3:                               37.9s test time
+#
+# 5.1x, for +21s of one-time compile (1m12s -> 1m33s). The dominant cost was
+# `bitwarden_password_encrypt_decrypt_roundtrip`, which the harness itself flags
+# as "running for over 60 seconds": that is argon2 doing KDF rounds, and argon2
+# is a *different* crate that was still building unoptimized. Optimizing proptest
+# speeds up the generator, not the code under test — which is why the older claim
+# here ("argon2 suite goes from ~120s to ~30s") never matched reality. ~30s is
+# roughly right, but only with the entry below.
 [profile.test.package.proptest]
 opt-level = 3
 
 [profile.test.package.rand_chacha]
+opt-level = 3
+
+# The actual hot spot: argon2's KDF rounds in the credential round-trip tests.
+[profile.test.package.argon2]
 opt-level = 3

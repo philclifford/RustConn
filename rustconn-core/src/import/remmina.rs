@@ -429,10 +429,11 @@ impl RemminaImporter {
             }
         }
 
-        // SAFETY: parent_id is always Some after the loop because:
+        // INVARIANT: parent_id is always Some after the loop because:
         // 1. group_path is non-empty (precondition)
         // 2. split('/') on non-empty string always yields at least one part
         // 3. Each part either finds an existing group or creates a new one
+        // Justifies the `expect` below as a programming-bug invariant (M-PANIC-ON-BUG).
         parent_id.expect("parent_id is always Some for non-empty group_path")
     }
 }

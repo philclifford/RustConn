@@ -32,6 +32,13 @@ Instead:
 
 ## Available Tools
 
+> **Sub-agents do not reliably inherit the injected PATH.** The
+> `rust-quality-check` agent reported on 2026-08-20 that `cargo` was not on its
+> PATH despite the terminal-profile injection described above, and it had to
+> `export PATH="$HOME/.cargo/bin:$PATH"` in every call. If a sub-agent reports
+> `cargo: command not found`, that is the cause, not a broken toolchain. Use the
+> absolute path `~/.cargo/bin/cargo` in anything a sub-agent will run.
+
 | Tool | Path | Notes |
 |------|------|-------|
 | cargo | ~/.cargo/bin/cargo | Rust toolchain via rustup |
@@ -59,6 +66,13 @@ non-negotiable parts live here where they are always loaded.
 - **Never pipe cargo output** through `tail`, `grep`, `head` or any filter.
   Redirect to a file and read the file instead. Piping is the main way the shell
   tool ends up returning nothing at all.
+- **Logs go under `target/`, not `/tmp`.** The file-reading tool reaches both, so
+  this is not about access: a log under `target/` is gitignored, is visible to
+  sub-agents and to the developer looking at the same checkout, and survives the
+  rest of the session. The one cost is that `cargo clean` wipes it — copy a log
+  you still need before cleaning. The examples below used `/tmp` until
+  2026-08-20, contradicting `project-rules.md`, which had this rule and the
+  better reason for it.
 - **One cargo at a time.** Check `pgrep -f cargo` before starting a build or test
   run. Two concurrent runs block on the same target-dir lock and both appear to
   hang.
@@ -74,13 +88,18 @@ non-negotiable parts live here where they are always loaded.
 - **If the shell tool returns empty output twice in a row**, stop retrying it:
   delegate the run to the `rust-quality-check` sub-agent, or write to a log file
   and read it with the file-reading tool.
-- Tests take ~120 s (argon2 property tests in debug). That is normal, not a hang.
+- A full `cargo test --workspace` is **~2.5 min wall** — measured 2026-08-20:
+  1m 49s compile plus ~45 s of test time, 3843 tests. That is normal, not a hang.
+  The single slowest test is the argon2 credential round-trip at ~38 s; it used to
+  be ~193 s until `[profile.test.package.argon2] opt-level = 3` was added.
 - **Never wait with `sleep`.** See the next section. A sleep cannot observe
   another terminal, and if the terminal is busy the line queues behind the
   running job instead of executing.
-- **Pass an explicit `timeout`** to any cargo build or test: the tool's default
-  is 120 000 ms and the workspace test run is ~120 s, so the default is a
-  coin flip on losing the output while the process stays alive.
+- **Pass an explicit `timeout`** to any cargo build or test: the tool's default is
+  120 000 ms and the workspace test run is ~2.5 min, so the default loses the
+  output while the process stays alive. Use `timeout=900000`. Do not "tune" it
+  down to 180 000 — that was the old advice and it is below the measured wall
+  time, so it fails exactly the way the default does.
 
 The `bash-serialization-guard` hook (`.kiro/hooks/`) enforces the four rules
 above that are mechanically checkable — sleep waiting, piped cargo output, a
@@ -104,10 +123,10 @@ Three ways out, cheapest first.
 
 ```bash
 cd /home/totoshko88/Documents/RustConn || exit 1
-cargo test --workspace > /tmp/rc-test.log 2>&1
+cargo test --workspace > target/rc-test.log 2>&1
 ```
 
-with `timeout=900000`, then read `/tmp/rc-test.log` with the file-reading tool
+with `timeout=900000`, then read `target/rc-test.log` with the file-reading tool
 (it takes line ranges, so a 20 k-line log costs nothing).
 
 **2. Take a handle when you want to keep working.** Poll the filesystem, never
@@ -115,11 +134,11 @@ the clock — the run is finished exactly when the `.rc` file appears:
 
 ```bash
 cd /home/totoshko88/Documents/RustConn || exit 1
-rm -f /tmp/rc-test.log /tmp/rc-test.rc
-nohup sh -c 'cargo test --workspace > /tmp/rc-test.log 2>&1; echo $? > /tmp/rc-test.rc' >/dev/null 2>&1 &
+rm -f target/rc-test.log target/rc-test.rc
+nohup sh -c 'cargo test --workspace > target/rc-test.log 2>&1; echo $? > target/rc-test.rc' >/dev/null 2>&1 &
 ```
 
-Check it by reading `/tmp/rc-test.rc` with the file-reading tool between other
+Check it by reading `target/rc-test.rc` with the file-reading tool between other
 work. `control_bash_process` + `get_process_output` is the same idea with a
 managed terminal; if you use it, stop the process when done.
 

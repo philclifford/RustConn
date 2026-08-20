@@ -54,6 +54,7 @@ Before writing any code, stop at the first rung that holds:
 - Mark intentional simplifications with a `// ponytail:` comment that names the ceiling and the upgrade path, e.g. `// ponytail: O(n²) scan, fine for <100 hosts; index if the list grows`.
 - **Never lazy about** (these are never on the chopping block): trust-boundary input validation, error handling that prevents data loss, security/credentials (see Absolute Rules), accessibility (see GNOME HIG).
 - Tests are **not** subject to laziness: the existing test policy below stands — keep at least the rustconn-core property-test coverage; never drop a test to "save code".
+- **Lazy code without its check is unfinished.** The rule above is a prohibition; this is the matching obligation, and it was missing until 2026-08-20. Non-trivial logic leaves behind ONE runnable check — the smallest thing that fails if the logic breaks. In this repo that is a property test in `rustconn-core/tests/properties/` (registered in `mod.rs`) or an integration test in `tests/integration/`; for a `-sys` crate it is the contract test that asserts the precondition guard, since the FFI call itself is not reachable from a test harness. No frameworks, no fixtures beyond `tempfile`. A trivial one-liner needs no test — the bar is "would a reader be able to tell this broke?".
 
 ## Absolute Rules
 
@@ -135,9 +136,9 @@ sanctioned workarounds. Each requires a tracking comment and must be reported to
   tool return nothing at all. (Same rule, stated once more in
   `shell-environment.md`, which unlike this file is always loaded.)
 - **NEVER** start `cargo test` if another instance is already running (`pgrep -f 'cargo test'`).
-- Tests take ~120s (argon2 property tests). This is normal — wait for completion, do NOT assume timeout.
+- A full `cargo test --workspace` is ~2.5 min wall (~45s of test time + ~1m49s compile, 3843 tests, measured 2026-08-20). This is normal — wait for completion, do NOT assume timeout.
 - If a hook or sub-agent already ran tests in this turn, do NOT re-run them.
-- Use timeout 180s for test commands.
+- Use `timeout=900000` for test commands. This said 180s until 2026-08-20, which is *below* the measured wall time and therefore fails the same way the tool default does.
 
 ### Shared Terminal & Sub-agents (CRITICAL)
 
@@ -164,9 +165,13 @@ Apply this discipline to avoid them:
 - **One command per `executeBash` call.** Do not chain unrelated commands with
   `;`/`&&` into a single line that the shared shell may split incorrectly.
 
-## 16 Translation Languages
+## 17 Translation Languages
 
-be, cs, da, de, es, fr, it, kk, nl, pl, pt, sk, sv, uk, uz, zh-cn
+be, cs, da, de, es, fr, it, ka, kk, nl, pl, pt, sk, sv, uk, uz, zh-cn
+
+This list said 16 and omitted `ka` (Georgian) until 2026-08-20, while
+`core-rules.md` and `AGENTS.md` both said 17 and included it. `ls po/*.po` is the
+authoritative count — check it rather than any of the three prose copies.
 
 ## External Standards
 

@@ -460,7 +460,7 @@ impl TaskExecutor {
         timeout_ms: Option<u32>,
         abort_on_failure: bool,
     ) -> TaskResult<i32> {
-        // SAFETY: Variable values are validated by validate_command_value() which rejects
+        // SECURITY: Variable values are validated by validate_command_value() which rejects
         // shell metacharacters (;|&`$()<>!) to prevent injection via variable substitution.
         // The command template itself is defined by the user (not from untrusted input),
         // and all dynamic variable values are sanitized before substitution in

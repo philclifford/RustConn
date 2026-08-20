@@ -44,6 +44,8 @@ Do not apply superficial fixes — find the root cause.
 | `option_if_let_else` (allowed) | Ignore — allowed in .clippy.toml |
 | `similar_names` | Fires on pairs that differ by one letter. `stale` next to an existing `state` binding trips it — name the local `stale_frame`. Rename the *local*, not the struct field; field names are not checked. |
 | `unreadable_literal` / large `Duration` | `Duration::from_secs(7_200)` is rejected in favour of a larger unit: use `Duration::from_hours(2)`, `from_mins(90)`. |
+| `unnecessary_safety_comment` | Fires on a `// SAFETY:` comment attached to code that is not `unsafe`. Correct fix is to rename the marker to what the comment actually justifies — `// SECURITY:` for injection/validation rationale, `// INVARIANT:` for an `expect` on a programming-bug invariant. **The trap**: the lint scans the *whole* comment block for the literal token `SAFETY:` and does not care about context, so prose that merely *mentions* `SAFETY:` — even inside backticks, even in a sentence explaining that the marker was removed — re-triggers it. Do not write the token at all in a comment that is not documenting an `unsafe` block. |
+| `multiple_unsafe_ops_per_block` | One `unsafe` block containing several unsafe operations. Split so each op gets its own block and its own SAFETY comment. Note that an `unsafe` block extends lexically **into a closure body**, so an inline closure registered by an unsafe call puts its own unsafe calls in the outer block. Define the closure in a `let` binding first, then call the unsafe registrar in a minimal block — see `set_controlling_terminal` in `rustconn-pty-sys`. |
 
 ## Platform Traps
 

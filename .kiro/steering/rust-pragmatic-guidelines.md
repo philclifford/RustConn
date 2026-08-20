@@ -144,27 +144,36 @@ MS guideline recommends avoiding `Manager` / `Service` / `Factory`. We historica
 For **new** code — choose more specific names: `ConnectionStore`, `SessionRouter`,
 `CredentialResolver`, `SnippetCatalog`.
 
-## Universal lints — recommended additions
+## Universal lints — state, not a wishlist
 
-Consider adding to `[workspace.lints.rust]` (optional, non-blocking):
+This section used to be a list of suggestions. Most of it had already been
+applied, so it read as a TODO of finished work, and two entries were dismissed
+with `# not relevant, we have forbid` — which stopped being true when the
+workspace moved from `forbid` to `deny` + a crate-level `#![expect(unsafe_code)]`
+in the four helpers, as the M-UNSAFE section above describes. `Cargo.toml` is the
+source of truth; this is a reader's map of it.
 
-```toml
-missing_debug_implementations = "warn"
-unsafe_op_in_unsafe_fn = "warn"  # not relevant, we have forbid
-unused_lifetimes = "warn"
-redundant_lifetimes = "warn"
-```
+**Already in `[workspace.lints.rust]`:** `unsafe_code = "deny"`,
+`unused_lifetimes`, `redundant_lifetimes`, `unreachable_pub`, `redundant_imports`.
 
-And to `[workspace.lints.clippy]` from the restriction group:
+**Already in `[workspace.lints.clippy]`:** `all` / `pedantic` / `nursery`,
+`allow_attributes_without_reason`, `clone_on_ref_ptr`, `redundant_clone`,
+`empty_drop`, `unwrap_used`, `dbg_macro`, `todo`, `print_stdout`, `print_stderr`,
+`wildcard_imports`.
 
-```toml
-allow_attributes_without_reason = "warn"  # forces reason = "..." in #[allow] / #[expect]
-clone_on_ref_ptr = "warn"                 # catches .clone() on Rc/Arc — write Rc::clone()
-empty_drop = "warn"
-undocumented_unsafe_blocks = "warn"        # not relevant, we have forbid
-```
+**Deliberately not enabled:** `missing_debug_implementations`. On a GTK4 codebase
+it fires on hundreds of widget-wrapping structs, breaking the 0-warning gate and
+forcing manual `Debug` impls nobody asked for. The reason is recorded in
+`Cargo.toml` too — do not "fix" this by turning it on.
 
-Verify this does not break the build: `cargo clippy --all-targets`.
+**The unsafe-hardening set** (`unsafe_op_in_unsafe_fn`,
+`undocumented_unsafe_blocks`, and the rest of the IronRDP block) is documented in
+the next section rather than here, because it is the part that actually still
+needed doing.
+
+Whenever this table changes, verify with a run that genuinely re-checked:
+`cargo clippy --all-targets`. A cache hit prints `Finished ... in 0.2s` and
+reports zero warnings without looking at anything.
 
 ## References
 
