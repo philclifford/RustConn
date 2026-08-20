@@ -128,23 +128,31 @@ impl SecretBackend for MyBackend {
         secret: &SecretString,
     ) -> Result<(), SecretError> {
         // Implementation — pass secret via stdin, never as arg
-        todo!()
+        Err(SecretError::StoreFailed("my-backend: not implemented".into()))
     }
 
     async fn retrieve(&self, key: &str) -> Result<SecretString, SecretError> {
         // Implementation — 10s timeout for vault ops
-        todo!()
+        Err(SecretError::RetrieveFailed("my-backend: not implemented".into()))
     }
 
     async fn delete(&self, key: &str) -> Result<(), SecretError> {
-        todo!()
+        Err(SecretError::DeleteFailed("my-backend: not implemented".into()))
     }
 
     async fn has_secret(&self, key: &str) -> Result<bool, SecretError> {
-        todo!()
+        Ok(false)
     }
 }
 ```
+
+These four bodies were `todo!()` until 2026-08-20, which made the scaffold ship
+three Definition-of-Done violations at once: `todo = "warn"` is a workspace clippy
+lint, "no `todo!`" is item 5 of the gate, and a `todo!()` in a credential path
+turns an unimplemented backend into a panic instead of a handled error. Returning
+the real per-operation `SecretError` variant compiles clean, stays greppable
+(`grep -rn 'not implemented' rustconn-core/src/secret/`), and lets a caller
+pattern-match while the backend is still a stub.
 
 Registration: add to backend list in `secret/mod.rs`.
 

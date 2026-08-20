@@ -69,6 +69,17 @@ manager fail.
 
 ## Step 3 — Install RustConn
 
+### Quick copy-paste (Ubuntu 24.04)
+
+A single command that adds the repository, imports the key, and installs
+RustConn:
+
+```bash
+curl -fsSL https://download.opensuse.org/repositories/home:/totoshko88:/rustconn/xUbuntu_24.04/Release.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/rustconn.gpg > /dev/null && echo 'deb http://download.opensuse.org/repositories/home:/totoshko88:/rustconn/xUbuntu_24.04/ /' | sudo tee /etc/apt/sources.list.d/rustconn.list && sudo apt update && sudo apt install -y rustconn
+```
+
+### Option A — OBS repository (step by step)
+
 Inside Ubuntu (24.04 LTS shown; for other releases see
 [INSTALL.md](INSTALL.md)):
 
@@ -81,14 +92,46 @@ sudo apt update
 sudo apt install rustconn
 ```
 
-Or install the `.deb` from
-[GitHub Releases](https://github.com/totoshko88/RustConn/releases):
+### Option B — .deb from GitHub Releases
 
 ```bash
 sudo apt install ./rustconn_*_amd64.deb
 ```
 
-Both paths pull in the GTK4/libadwaita/VTE runtime automatically. Optional
+### Option C — Flatpak (any distro)
+
+Flatpak works regardless of your WSL distribution (Ubuntu, Fedora, Arch…):
+
+```bash
+sudo apt install flatpak                # Ubuntu; on Fedora it's preinstalled
+flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user flathub io.github.totoshko88.RustConn
+```
+
+Launch with:
+
+```bash
+flatpak run io.github.totoshko88.RustConn
+```
+
+> **Note:** Flatpak apps run sandboxed. RustConn's Flatpak manifest already
+> requests the necessary permissions, but if you encounter issues accessing
+> `~/.ssh` or serial devices, grant them explicitly:
+>
+> ```bash
+> flatpak override --user --filesystem=~/.ssh:ro io.github.totoshko88.RustConn
+> ```
+>
+> Portal integration (file chooser, secrets) requires
+> `xdg-desktop-portal-gtk`:
+>
+> ```bash
+> sudo apt install xdg-desktop-portal-gtk
+> ```
+
+---
+
+All paths pull in the GTK4/libadwaita/VTE runtime automatically. Optional
 external clients (`freerdp3-x11`, `tigervnc-viewer`, `virt-viewer`,
 `picocom`) are Recommends — install the ones you need.
 

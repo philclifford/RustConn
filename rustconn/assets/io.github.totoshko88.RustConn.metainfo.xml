@@ -140,6 +140,16 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.20.5" date="2026-08-21">
+      <description>
+        <p>Version 0.20.5 - Flatpak terminal size fix and shortcut conflict warnings:</p>
+        <ul>
+          <li>Fixed: Flatpak terminal still started at 24x80 on some hosts — the host shell now starts once the terminal widget has been allocated, so the host-side PTY inherits the real size (issue #294)</li>
+          <li>Fixed: shortcut recorder did not warn about conflicts with fixed shortcuts like Ctrl+V for Paste connection (issue #295)</li>
+          <li>Documentation: WSL guide updated with Flatpak install option and single-line Ubuntu command</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.4" date="2026-08-19">
       <description>
         <p>Version 0.20.4 - cloud-syncable credential storage:</p>

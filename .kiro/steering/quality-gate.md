@@ -25,7 +25,7 @@ Run sequentially in workspace root:
 1. `cargo fmt --check` — if formatting errors, run `cargo fmt --all`, report changes.
 2. `cargo clippy --all-targets -- -D warnings` — must produce 0 warnings. Fix and re-run if any.
 3. Before tests: `pgrep -f 'cargo test'` — if running, report "Tests already in progress, skipping" and stop.
-4. `cargo test --workspace` — run directly, NO pipes (no tail/grep). Allow 180s timeout (argon2 ~120s is normal).
+4. `cargo test --workspace` — run directly, NO pipes (no tail/grep). Use `timeout=900000`; the run is ~2.5 min wall (~45s tests + ~1m49s compile, 3843 tests).
 
 ### A cached clippy run reports zero warnings even when warnings exist
 
@@ -57,7 +57,7 @@ Report pass/fail for each step. If tests fail — list failing test names.
 Use when the developer explicitly asks to run tests.
 
 1. `pgrep -f 'cargo test'` — if running, report "Tests already in progress, skipping."
-2. `cargo test --workspace` — run directly, NO pipes. Allow 180s.
+2. `cargo test --workspace` — run directly, NO pipes. Use `timeout=900000`.
 3. Report final summary (e.g. "test result: ok. 42 passed; 0 failed"). If failures — list test names.
 
 ## Hygiene checks (no toolchain needed)
@@ -137,5 +137,5 @@ Both also run in CI as the `i18n` job.
 
 - **Never** pipe cargo output through `tail`, `grep`, or any filter.
 - **Never** start cargo if another instance is already running (`pgrep -f 'cargo'`).
-- Tests take ~120s (argon2 property tests in debug) — this is normal, do not assume timeout.
+- A full `cargo test --workspace` is ~2.5 min wall (~45s tests + ~1m49s compile) — this is normal, do not assume timeout.
 - One terminal owner at a time — do not run bash while a sub-agent is active.

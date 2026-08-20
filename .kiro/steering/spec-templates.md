@@ -47,6 +47,20 @@ Skips requirements, goes straight to design → tasks.
 ```markdown
 # Tasks: {Protocol} Protocol
 
+## Dependencies
+
+Kiro builds a dependency graph from this file and runs independent tasks
+concurrently in waves, so state the dependencies instead of implying a single
+sequence. For a new protocol the shape is almost always:
+
+- Wave 1: Task 1 (core) — everything else needs `ProtocolType::{Protocol}` to exist
+- Wave 2: Task 2 (tests), Task 3 (dialog), Task 5 (CLI) — all depend only on Task 1,
+  and on nothing from each other; the CLI in particular does not wait on the GUI
+- Wave 3: Task 4 (session handling, needs the dialog), Task 6 (i18n, needs the strings)
+
+Listing them by crate top-to-bottom, as this template did until 2026-08-20, reads
+as strictly sequential and serialises work that has no reason to be serial.
+
 ## Task 1: Core protocol implementation (rustconn-core)
 - [ ] 1.1 Add `ProtocolType::{Protocol}` variant to enum
 - [ ] 1.2 Create `rustconn-core/src/protocol/{protocol}.rs`
@@ -100,24 +114,52 @@ Use for critical bugs where traceability is needed.
 # Requirements: Fix {Bug Title}
 
 ## Problem Statement
-{Bug description, reproduction steps}
+{Bug description, exact reproduction steps — the conditions that trigger it}
 
-## Expected Behavior
-{What should happen}
+## Behaviour, in EARS
 
-## Actual Behavior
-{What actually happens}
+Write all three. The third one is the regression guard and is the reason this
+template exists.
+
+### Current (the defect)
+WHEN {condition} THEN the system {incorrect behaviour}
+
+### Expected (the fix)
+WHEN {condition} THEN the system SHALL {correct behaviour}
+
+### Unchanged (must keep working)
+WHEN {sibling condition} THEN the system SHALL CONTINUE TO {existing behaviour}
+WHEN {adjacent feature} THEN the system SHALL CONTINUE TO {existing behaviour}
 
 ## Constraints
-- MUST NOT break: {list of things that must not break}
-- MUST preserve: {API compatibility, data format, etc.}
+- MUST NOT break: {list}
+- MUST preserve: {API compatibility, on-disk config format, etc.}
 
 ## Acceptance Criteria
-- [ ] Bug no longer reproduces
-- [ ] Existing tests pass
-- [ ] New regression test added
-- [ ] No clippy warnings
+
+Each criterion restates one EARS line, so it maps to a test rather than to a
+feeling. Phrase it as a property (a universal statement) where possible —
+"for any {input class}, {invariant} holds" — because that is what turns into a
+property test in `rustconn-core/tests/properties/`.
+
+- [ ] Expected: WHEN {condition} THEN {correct behaviour}  → test `{name}`
+- [ ] Unchanged: WHEN {sibling} THEN CONTINUE TO {behaviour} → test `{name}`
+- [ ] Regression test added and fails against the pre-fix commit
+- [ ] `cargo clippy --all-targets` → 0 warnings, from a run that re-checked
+- [ ] CHANGELOG.md `### Fixed` entry
 ```
+
+Why EARS and why the third clause: the format makes a requirement unambiguous,
+directly testable and traceable, and the `SHALL CONTINUE TO` line is what stops a
+fix from breaking a sibling caller. This repo has the scar — `quality-gate.md`
+records three consecutive web-toolbar/split-view focus fixes in 0.20.0, each one
+repairing the previous one's incompleteness. Naming the unchanged behaviour up
+front is cheaper than the third fix.
+
+Sources: [Kiro bugfix specs](https://kiro.dev/docs/specs/bugfix-specs.md),
+[best practices](https://kiro.dev/docs/specs/best-practices.md). Note that
+kiro.dev serves clean Markdown at any docs URL with a `.md` suffix; the HTML
+returns only site chrome.
 
 ### tasks.md template
 
@@ -126,17 +168,26 @@ Use for critical bugs where traceability is needed.
 
 ## Task 1: Reproduce
 - [ ] 1.1 Write failing test that demonstrates the bug
+- [ ] 1.2 Write a test for each `SHALL CONTINUE TO` line — it must pass *before*
+      the fix too, otherwise it is not a regression guard
 
 ## Task 2: Fix
-- [ ] 2.1 Identify root cause
-- [ ] 2.2 Implement minimal fix
-- [ ] 2.3 Verify test passes
+- [ ] 2.1 Identify root cause; grep every caller of the function being changed
+- [ ] 2.2 Implement minimal fix in the shared function, not per call site
+- [ ] 2.3 Verify the bug test passes and the unchanged-behaviour tests still pass
 
-## Task 3: Verify (optional)
+## Task 3: Verify
 - [ ] 3.1 Run full test suite
 - [ ] 3.2 Check related functionality not broken
-- [ ] 3.3 Update CHANGELOG.md
+
+## Task 4: Record (required)
+- [ ] 4.1 Update CHANGELOG.md under `### Fixed`
 ```
+
+`CHANGELOG.md` sat under an `(optional)` Task 3 here until 2026-08-20. It is item
+6 of the Definition of Done, and a bugfix is user-facing by definition, so the
+template was marking a required gate optional. Steps 3.1/3.2 are the genuinely
+skippable ones for a small, well-isolated fix.
 
 ---
 

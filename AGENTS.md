@@ -32,7 +32,7 @@ Source of truth, in order:
 ```bash
 cargo fmt --all                                   # format
 cargo clippy --all-targets                        # lint — must be 0 warnings
-cargo test --workspace                            # ~120s; argon2 is slow, not hung
+cargo test --workspace                            # ~45s test time, ~2.5 min with compile
 cargo test -p rustconn-core --test property_tests  # property tests only
 typos                                             # spell check (typos.toml)
 cargo machete                                     # unused dependencies
@@ -51,7 +51,8 @@ first. A repeat `cargo clippy` with nothing changed prints `Finished ... in 0.2s
 and reports zero warnings **without checking anything**; force a real re-check
 before claiming it passed.
 
-**Never wait with `sleep`.** The test run is ~120 s and the shell tool's default
+**Never wait with `sleep`.** A full `cargo test --workspace` is ~2.5 min wall
+(measured 2026-08-20: 1m49s compile + ~45 s of tests) and the shell tool's default
 timeout is 120 s, so a plain `cargo test` tends to return while cargo is still
 alive. Give the call explicit headroom (`timeout` ≈ 900 000 ms) and redirect to a
 log file, or start it in the background with a sentinel — `sh -c 'cargo test
