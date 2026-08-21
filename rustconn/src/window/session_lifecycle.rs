@@ -633,7 +633,20 @@ impl MainWindow {
             // owned by the handlers in `setup_logging_handlers`, which flush it
             // on the same signal.
             if let Ok(mut state_mut) = state_clone.try_borrow_mut()
-                && let Err(e) = state_mut.terminate_session(session_id) { tracing::warn!(?e, %session_id, "Failed to terminate session"); }
+                && let Err(e) = state_mut.terminate_session(session_id)
+            {
+                // At shutdown this handler races the exit it is reacting to:
+                // close_all_control_sockets() kills the SSH connections, the
+                // child is reaped, and the session is gone from the manager
+                // before we ask it to terminate. "Session not found" is then the
+                // expected outcome, not a problem, and warning about it only
+                // fills the log a user is about to attach to a bug report.
+                if crate::app::is_shutting_down() {
+                    tracing::debug!(?e, %session_id, "Session already gone at shutdown");
+                } else {
+                    tracing::warn!(?e, %session_id, "Failed to terminate session");
+                }
+            }
 
             // Check if session still exists in notebook
             // If it doesn't, the tab was closed by user

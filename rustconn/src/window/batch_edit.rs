@@ -59,6 +59,12 @@ pub fn show_batch_edit_dialog(
         .default_width(480)
         .build();
 
+    // A separate top-level does not inherit the main window's CSS classes, so
+    // the macOS overrides have to be tagged here too or this dialog keeps the
+    // unscaled Adwaita font while the rest of the app is scaled up.
+    #[cfg(target_os = "macos")]
+    dialog.add_css_class("macos");
+
     let header = adw::HeaderBar::new();
     let cancel_btn = gtk4::Button::builder().label(i18n("Cancel")).build();
     let apply_btn = gtk4::Button::builder()

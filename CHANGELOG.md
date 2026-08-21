@@ -9,13 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **macOS: Dock icon changed to generic "exec" when app was pinned and closed** — the `.app` bundle was not registered with LaunchServices during `brew install`, so macOS could not associate the correct icon with the pinned Dock tile. `post_install` now runs `lsregister` to register the bundle. Updated caveats with explicit Dock pinning instructions (symlink to `/Applications` first, then pin from there).
+- **RDP used the RemoteFX path even with OpenH264 installed** — the H.264 probe looked only for the unversioned `libopenh264.so`, which a distribution ships in its `-dev` package. A runtime-only install carries `libopenh264.so.8` and the real `libopenh264.so.2.6.0` and nothing else, so RustConn reported "OpenH264 not found" on machines that had the library, skipped the EGFX pipeline, and ran every session over RemoteFX — noticeably more bandwidth and CPU against a modern Windows host. The known library directories are now scanned for versioned sonames, newest ABI first, and `libopenh264` is listed as a recommended package for the .deb and RPM builds. Flatpak was never affected: it builds its own copy.
+
+- **Portable file passphrase could be discarded without saying why** — a store that does not exist yet requires the confirmation entry, and the notice saying so was outranked by the passphrase-strength advice. A passphrase that was both weak and unconfirmed therefore showed only the advice, which is phrased as advice and never refuses anything, and the passphrase was then dropped with nothing on screen having warned that it would. Three changes: the requirement is shown whenever it applies, with the strength advice below it rather than instead of it; editing the file path re-checks it, where previously the path could be moved to a not-yet-created file — making the confirmation mandatory — without the notice updating; and because Preferences saves when it *closes*, a dialog now reports the discarded passphrase afterwards, since the inline notice is destroyed along with the window that carried it.
+
+- **Warning about a portable passphrase that was never entered** — with no portable file on disk, the "a new store requires the confirmation entry" rule was applied to two empty fields, so simply opening Preferences and closing it again logged a warning about a passphrase the user had not typed. The check now treats an empty field as nothing to save.
+
+- **Spurious warnings when quitting with sessions open** — shutdown closes the SSH control sockets first, so a session's child is normally reaped before the teardown handler asks the session manager to terminate it. The resulting "Session not found" is the expected outcome at that point and is now logged at debug level, rather than leaving warnings in a log the user is about to attach to a bug report.
+
+- **macOS: Dock icon changed to generic "exec" when app was pinned and closed** — the `.app` bundle was not registered with LaunchServices during `brew install`, so macOS could not associate the correct icon with the pinned Dock tile. `post_install` now runs `lsregister` to register the bundle, as a best-effort step that cannot fail the installation. Updated caveats with explicit Dock pinning instructions (symlink to `/Applications` first, then pin from there).
 
 ### Improved
 
+- **Sidebar status is set once per change instead of twice** — both the outer action handler and the connection-start path marked a connection "connecting", so every status change walked the connection tree twice and re-rendered the row twice. The outer call is the one kept: it runs before credential resolution, which can take a second against a vault, and is what puts the status on screen while the user waits.
+
 - **Header bar Shell button restyled** — replaced the oversized pill-shaped button with a flat accent-colored button that blends better with the header bar chrome, especially on macOS where libadwaita pill buttons inflate the toolbar height. The button retains full functionality and keyboard shortcut (Ctrl+Shift+T).
 
-- **macOS: increased font size for Retina displays** — the default libadwaita font (11pt) appeared disproportionately small on macOS where the system font is 13pt. UI text is now scaled up 10% on macOS so labels, buttons, and list rows look natural next to native AppKit applications.
+- **macOS: increased font size for Retina displays** — the default libadwaita font (11pt) appeared disproportionately small on macOS where the system font is 13pt. UI text is now scaled up 10% on macOS so labels, buttons, and list rows look natural next to native AppKit applications. The scaling is carried by a `.macos` class on each top-level window, which includes the "Move" and "Edit Connections" dialogs — a separate top-level does not inherit it, and those two would otherwise have kept the unscaled font.
 
 - **macOS: Settings dialog uses icon-only tabs** — switched from a wide (1000px) dialog with text labels to a narrower (600px) dialog where the ViewSwitcher shows only icons, matching macOS native sheet proportions.
 

@@ -7,7 +7,7 @@ class Rustconn < Formula
   # active `sha256` at this indentation — the sed patterns and the CI
   # verification gate are anchored to `^  url` and `^  sha256` (issue #251).
   # PLACEHOLDER_SHA256 is expected here in-tree; only the tap copy has a hash.
-  url "https://github.com/totoshko88/RustConn/archive/refs/tags/v0.20.5.tar.gz"
+  url "https://github.com/totoshko88/RustConn/archive/refs/tags/v0.20.6.tar.gz"
   sha256 "PLACEHOLDER_SHA256"
   license "GPL-3.0-or-later"
   head "https://github.com/totoshko88/RustConn.git", branch: "main"
@@ -167,8 +167,19 @@ class Rustconn < Formula
   def post_install
     # Register .app bundle with LaunchServices so macOS recognises the bundle
     # identity for Dock pinning, file associations and the Cmd-Tab switcher.
-    system "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
-           "-f", "#{prefix}/RustConn.app"
+    #
+    # Best effort on purpose: lsregister is a private tool at an undocumented
+    # path, and `system` raises on a non-zero exit, so treating a failure as
+    # fatal would turn a cosmetic Dock icon into a failed install.
+    lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/" \
+                 "LaunchServices.framework/Support/lsregister"
+    if File.executable?(lsregister)
+      begin
+        system lsregister, "-f", "#{prefix}/RustConn.app"
+      rescue StandardError => e
+        opoo "Could not register RustConn.app with LaunchServices: #{e.message}"
+      end
+    end
     # Compile GSettings schemas (required for GTK4 apps)
     system "#{Formula["glib"].opt_bin}/glib-compile-schemas",
            "#{HOMEBREW_PREFIX}/share/glib-2.0/schemas"

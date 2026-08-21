@@ -1492,6 +1492,49 @@ impl SettingsDialog {
             };
             let secrets = collect_secret_settings(&secrets_widgets_for_collect, &settings_clone);
 
+            // Settings are collected on `closed`, so by the time the portable
+            // passphrase is refused the dialog carrying the inline notice is
+            // already gone. Without this the value the user typed disappeared
+            // with nothing but a log line to say so. The inline notice is still
+            // the primary feedback — it appears while typing, which is when it
+            // can still be acted on cheaply — and this is the backstop for
+            // closing the dialog past it.
+            {
+                let store_path = rustconn_core::secret::resolve_portable_store_path(
+                    secrets_tab::expand_user_path(
+                        portable_path_entry_clone.text().as_str(),
+                    )
+                    .as_deref(),
+                );
+                if secrets_tab::portable_passphrase_is_unconfirmed(
+                    &store_path,
+                    portable_passphrase_entry_clone.text().as_str(),
+                    portable_confirm_entry_clone.text().as_str(),
+                ) {
+                    // Deferred to an idle callback: presenting a dialog from
+                    // inside another dialog's `closed` handler races that
+                    // dialog's own teardown.
+                    gtk4::glib::idle_add_local_once(|| {
+                        let Some(window) = gtk4::gio::Application::default()
+                            .and_then(|app| app.downcast::<gtk4::Application>().ok())
+                            .and_then(|app| app.active_window())
+                        else {
+                            tracing::warn!(
+                                "No active window — cannot report the discarded portable passphrase"
+                            );
+                            return;
+                        };
+                        crate::alert::show_error(
+                            &window,
+                            &i18n("Passphrase was not saved"),
+                            &i18n(
+                                "The passphrase for the portable file was not confirmed, so it was not saved. Everything else you changed was. Open Secrets again and type the passphrase in both fields.",
+                            ),
+                        );
+                    });
+                }
+            }
+
             // Collect UI settings
             let conn_list = connections_clone.borrow();
             let conn_refs: Vec<&Connection> = conn_list.iter().collect();

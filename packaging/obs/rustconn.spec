@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.20.5
+Version:        0.20.6
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -85,6 +85,9 @@ Recommends:     tigervnc
 Recommends:     virt-viewer
 Recommends:     picocom
 Recommends:     kubectl
+# Without an H.264 decoder the embedded RDP client cannot use the EGFX pipeline
+# and falls back to RemoteFX, which costs noticeably more bandwidth and CPU.
+Recommends:     libopenh264
 
 %description
 RustConn is a modern connection manager for Linux with a GTK4/Wayland-native
@@ -282,6 +285,19 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Fri Aug 21 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.6-0
+- Version bump to 0.20.6
+- Fixed: RDP used the RemoteFX path even with OpenH264 installed — the probe
+  looked only for the unversioned libopenh264.so, which ships in the -dev
+  package; versioned sonames are now scanned for
+- Fixed: portable file passphrase could be discarded without saying why
+- Fixed: warning logged about a portable passphrase that was never entered
+- Fixed: spurious "Session not found" warnings when quitting with sessions open
+- Fixed: macOS Dock icon changed to a generic tile when pinned and closed
+- Improved: sidebar connection status is set once per change instead of twice
+- Improved: header bar Shell button restyled flat
+- Packaging: libopenh264 added as a recommended package
+
 * Fri Aug 21 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.5-0
 - Version bump to 0.20.5
 - Fixed: Flatpak terminal still started at 24x80 on some hosts (issue #294)
