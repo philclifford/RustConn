@@ -5,6 +5,22 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.6] - 2026-08-21
+
+### Fixed
+
+- **macOS: Dock icon changed to generic "exec" when app was pinned and closed** — the `.app` bundle was not registered with LaunchServices during `brew install`, so macOS could not associate the correct icon with the pinned Dock tile. `post_install` now runs `lsregister` to register the bundle. Updated caveats with explicit Dock pinning instructions (symlink to `/Applications` first, then pin from there).
+
+### Improved
+
+- **Header bar Shell button restyled** — replaced the oversized pill-shaped button with a flat accent-colored button that blends better with the header bar chrome, especially on macOS where libadwaita pill buttons inflate the toolbar height. The button retains full functionality and keyboard shortcut (Ctrl+Shift+T).
+
+- **macOS: increased font size for Retina displays** — the default libadwaita font (11pt) appeared disproportionately small on macOS where the system font is 13pt. UI text is now scaled up 10% on macOS so labels, buttons, and list rows look natural next to native AppKit applications.
+
+- **macOS: Settings dialog uses icon-only tabs** — switched from a wide (1000px) dialog with text labels to a narrower (600px) dialog where the ViewSwitcher shows only icons, matching macOS native sheet proportions.
+
+- **macOS: Welcome screen rows more compact** — reduced vertical spacing between list rows on the welcome page so all content (Features, Keyboard Shortcuts, Quick Access, Import Formats) fits without scrolling on standard MacBook displays.
+
 ## [0.20.5] - 2026-08-21
 
 ### Fixed

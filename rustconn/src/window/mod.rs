@@ -220,6 +220,11 @@ impl MainWindow {
             .icon_name("io.github.totoshko88.RustConn")
             .build();
 
+        // macOS: tag the window so platform-specific CSS rules (reduced
+        // headerbar height, tighter button padding) engage unconditionally.
+        #[cfg(target_os = "macos")]
+        window.add_css_class("macos");
+
         // Apply saved window geometry if available
         with_state(&state, |state_ref| {
             let settings = state_ref.settings();

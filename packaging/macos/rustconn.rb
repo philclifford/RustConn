@@ -157,12 +157,18 @@ class Rustconn < Formula
     # Create a launch script in bin for convenience (no env vars needed)
     (bin/"rustconn-app").write <<~EOS
       #!/bin/bash
+      # Launch RustConn via its .app bundle for proper LaunchServices identity.
+      # For Dock pinning: symlink to /Applications first, then pin from there.
       open "#{prefix}/RustConn.app" "$@"
     EOS
     chmod 0755, bin/"rustconn-app"
   end
 
   def post_install
+    # Register .app bundle with LaunchServices so macOS recognises the bundle
+    # identity for Dock pinning, file associations and the Cmd-Tab switcher.
+    system "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+           "-f", "#{prefix}/RustConn.app"
     # Compile GSettings schemas (required for GTK4 apps)
     system "#{Formula["glib"].opt_bin}/glib-compile-schemas",
            "#{HOMEBREW_PREFIX}/share/glib-2.0/schemas"
@@ -176,11 +182,17 @@ class Rustconn < Formula
       RustConn has been installed with all dependencies.
 
       To launch the GUI:
-        rustconn-app
-        # or: open #{prefix}/RustConn.app
+        open #{prefix}/RustConn.app
+        # or from terminal (tray icon works on all macOS versions this way):
+        rustconn
 
-      To add to Applications (Launchpad):
+      To pin to Dock with the correct icon:
         ln -sf #{prefix}/RustConn.app /Applications/RustConn.app
+        # Then open from /Applications and right-click the Dock icon →
+        # Options → Keep in Dock.
+
+      Convenience launcher (calls `open RustConn.app`):
+        rustconn-app
 
       CLI tool:
         rustconn-cli --help

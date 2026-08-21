@@ -190,10 +190,13 @@ impl SettingsDialog {
             );
             last_mark = now;
         };
-        // On macOS the header bar ViewSwitcher shares space with traffic lights,
-        // so we need extra width for 6 tab labels to display without truncation.
+        // adw::PreferencesDialog always shows tabs in the header bar. On macOS
+        // with 1.1em font scaling the 7 labels would need ~1000px to display
+        // fully. Instead use a narrower width (600px) which triggers the
+        // ViewSwitcher's narrow (icon-only) mode — more compact and closer to
+        // macOS native sheet proportions.
         #[cfg(target_os = "macos")]
-        let width = 1000;
+        let width = 600;
         #[cfg(not(target_os = "macos"))]
         let width = 800;
 

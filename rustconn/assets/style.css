@@ -944,3 +944,59 @@ togglebutton.broadcasting image {
     opacity: 0.9;
     background-color: alpha(@view_bg_color, 0.8);
 }
+
+/* ============================================================
+ * macOS Platform Overrides
+ * Applied unconditionally on macOS via the `.macos` class set in
+ * Rust at window creation (cfg(target_os = "macos")).
+ *
+ * Note: libadwaita's AdwHeaderBar ignores CSS min-height — the
+ * internal layout hardcodes its minimum size around the traffic
+ * lights and child widgets. Only rules that do not attempt to
+ * shrink the headerbar below that floor are effective here.
+ * The .macos class is retained for future overrides as GTK4's
+ * macOS backend matures.
+ * ============================================================ */
+
+/* Font size: Adwaita default is ~11pt, macOS System Font is 13pt.
+ * Scale up slightly so text does not look disproportionately small
+ * next to the large Adwaita padding (which cannot be CSS-shrunk). */
+window.macos {
+    font-size: 1.1em;
+}
+
+/* Tab bar — slightly slimmer on macOS */
+window.macos tabbar tab {
+    min-height: 26px;
+    padding-top: 1px;
+    padding-bottom: 1px;
+}
+
+window.macos tabbar .start-action,
+window.macos tabbar .end-action {
+    min-height: 26px;
+    padding: 0 3px;
+}
+
+window.macos tabbar tabbox > tabboxchild {
+    min-height: 26px;
+}
+
+window.macos tabbar {
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+/* Welcome screen rows — adw::ActionRow has ~56px default height from
+ * internal padding around title/prefix. On macOS reduce it by shrinking
+ * the row's content box padding and the prefix image margins. */
+window.macos list.boxed-list row .header {
+    padding-top: 4px;
+    padding-bottom: 4px;
+    min-height: 28px;
+}
+
+window.macos list.boxed-list row image {
+    margin-top: 2px;
+    margin-bottom: 2px;
+}
