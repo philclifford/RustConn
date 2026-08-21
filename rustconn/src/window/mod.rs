@@ -220,6 +220,11 @@ impl MainWindow {
             .icon_name("io.github.totoshko88.RustConn")
             .build();
 
+        // macOS: tag the window so platform-specific CSS rules (reduced
+        // headerbar height, tighter button padding) engage unconditionally.
+        #[cfg(target_os = "macos")]
+        window.add_css_class("macos");
+
         // Apply saved window geometry if available
         with_state(&state, |state_ref| {
             let settings = state_ref.settings();
@@ -2138,8 +2143,20 @@ impl MainWindow {
         activity: Option<&types::SharedActivityCoordinator>,
         observer: Option<types::SessionStartObserver>,
     ) -> Option<Uuid> {
-        // Update status to connecting
-        sidebar.update_connection_status(&connection_id.to_string(), "connecting");
+        // Show "connecting" unless a caller already did. Most entry points set
+        // it before resolving credentials, which is the moment worth reporting —
+        // a vault lookup can take a second and the user should see something in
+        // the sidebar meanwhile. Repeating it here walked the whole tree a second
+        // time and re-notified the row for no visible change. Anything other than
+        // "connecting" (no status, or "failed" from a previous attempt) still gets
+        // set, so paths that arrive here without an outer call are unaffected.
+        if sidebar
+            .get_connection_status(&connection_id.to_string())
+            .as_deref()
+            != Some("connecting")
+        {
+            sidebar.update_connection_status(&connection_id.to_string(), "connecting");
+        }
 
         let session_id = match Self::start_connection_observed(
             state,

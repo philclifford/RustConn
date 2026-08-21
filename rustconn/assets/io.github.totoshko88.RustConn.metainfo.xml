@@ -140,6 +140,20 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.20.6" date="2026-08-21">
+      <description>
+        <p>Version 0.20.6 - H.264 for RDP on more systems, and clearer credential feedback:</p>
+        <ul>
+          <li>Fixed: RDP used the RemoteFX path even with OpenH264 installed — the H.264 probe looked only for the unversioned library name, which ships in the development package, so a normal install was reported as missing. Versioned library names are now found, which restores the more efficient H.264 pipeline</li>
+          <li>Fixed: the passphrase for the portable credential file could be discarded without saying why — the confirmation requirement is now always visible, is re-checked when the file path changes, and is reported after the Preferences window closes</li>
+          <li>Fixed: spurious warnings logged when quitting with sessions open, and about a portable passphrase that was never entered</li>
+          <li>Fixed: macOS Dock icon changed to a generic tile when the application was pinned and closed</li>
+          <li>Improved: sidebar connection status is updated once per change instead of twice</li>
+          <li>Improved: the header bar Shell button no longer competes visually with the welcome screen's primary action</li>
+          <li>Improved: macOS font scaling, icon-only Settings tabs, and more compact welcome rows</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.5" date="2026-08-21">
       <description>
         <p>Version 0.20.5 - Flatpak terminal size fix and shortcut conflict warnings:</p>

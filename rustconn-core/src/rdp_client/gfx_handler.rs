@@ -691,6 +691,10 @@ fn negotiated_graphics_mode(caps: &CapabilitySet) -> GraphicsMode {
 /// Flatpak puts it under `/app/lib/`, native installs use `/usr/lib/` or
 /// `/usr/lib64/`. The `openh264` crate's libloading backend handles the
 /// actual dlopen; we just need to find the `.so` file.
+///
+/// These are the *unversioned* names, which a distribution ships only in its
+/// `-dev`/`-devel` package. A runtime-only install has none of them, which is
+/// why [`OPENH264_SEARCH_DIRS`] is scanned for versioned sonames as well.
 #[cfg(not(target_os = "macos"))]
 const OPENH264_SEARCH_PATHS: &[&str] = &[
     "/app/lib/libopenh264.so",
@@ -726,10 +730,107 @@ fn bundled_openh264_path() -> Option<std::path::PathBuf> {
     Some(contents.join("Frameworks").join("libopenh264.dylib"))
 }
 
+/// Prefix every versioned OpenH264 soname starts with.
+const OPENH264_SONAME_PREFIX: &str = "libopenh264.so.";
+
+/// Directories scanned for a versioned OpenH264 soname.
+///
+/// Needed because [`OPENH264_SEARCH_PATHS`] names only the unversioned
+/// `libopenh264.so`, which lives in the `-dev` package. Debian's
+/// `libopenh264-8` installs `libopenh264.so.8` and `libopenh264.so.2.6.0` and
+/// nothing else, so probing the unversioned name alone reports "not found" on a
+/// machine that has the library — and RDP silently drops to the RemoteFX path.
+#[cfg(not(target_os = "macos"))]
+const OPENH264_SEARCH_DIRS: &[&str] = &[
+    "/app/lib",
+    "/app/lib64",
+    "/usr/lib",
+    "/usr/lib64",
+    "/usr/lib/x86_64-linux-gnu",
+    "/usr/lib/aarch64-linux-gnu",
+];
+
+/// Directories scanned for a versioned OpenH264 soname — none on macOS.
+///
+/// The bundled copy and the Homebrew prefixes are unversioned `.dylib` files
+/// that [`OPENH264_SEARCH_PATHS`] and [`bundled_openh264_path`] already name.
+/// Mach-O version naming puts the version before the extension
+/// (`libopenh264.2.6.0.dylib`), so it would not match the ELF soname pattern
+/// this scan looks for anyway.
+#[cfg(target_os = "macos")]
+const OPENH264_SEARCH_DIRS: &[&str] = &[];
+
+/// Parses the version segments of a versioned OpenH264 soname.
+///
+/// Returns the dot-separated numbers after `libopenh264.so.`, or `None` when
+/// `name` is not a versioned soname of that library. Every segment must parse
+/// as a number, which drops companions like `libopenh264.so.debug`.
+fn soname_version(name: &str) -> Option<Vec<u64>> {
+    let suffix = name.strip_prefix(OPENH264_SONAME_PREFIX)?;
+    if suffix.is_empty() {
+        return None;
+    }
+    suffix
+        .split('.')
+        .map(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
+/// Returns the versioned OpenH264 sonames among `names`, newest ABI first.
+///
+/// Takes names rather than a directory so the ordering is testable without a
+/// filesystem. Sorted by major version descending — a numeric compare, so
+/// `.so.10` outranks `.so.9` where a string sort would not — then by segment
+/// count ascending, which prefers the bare soname `libopenh264.so.8` over the
+/// `libopenh264.so.8.0.1` it points at, then by the remaining segments
+/// descending so the result does not depend on directory order.
+fn sonames_newest_first(names: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut versioned: Vec<(Vec<u64>, String)> = names
+        .into_iter()
+        .filter_map(|name| soname_version(&name).map(|version| (version, name)))
+        .collect();
+
+    versioned.sort_by(|(a, _), (b, _)| {
+        b.first()
+            .cmp(&a.first())
+            .then_with(|| a.len().cmp(&b.len()))
+            .then_with(|| b.cmp(a))
+    });
+
+    versioned.into_iter().map(|(_, name)| name).collect()
+}
+
+/// Returns versioned OpenH264 sonames found on disk, newest ABI first.
+///
+/// An unreadable directory is skipped: the list is a set of guesses about where
+/// a distribution might have put the library, so most of them are expected to
+/// be absent on any given machine.
+fn versioned_openh264_candidates() -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+
+    for dir in OPENH264_SEARCH_DIRS {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        let names: Vec<String> = entries
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .collect();
+        found.extend(
+            sonames_newest_first(names)
+                .into_iter()
+                .map(|name| std::path::Path::new(dir).join(name)),
+        );
+    }
+
+    found
+}
+
 /// Returns OpenH264 candidates in priority order.
 ///
 /// The bundled copy is tried first so a self-contained macOS `.app` never
-/// depends on a Homebrew installation at runtime.
+/// depends on a Homebrew installation at runtime. Unversioned names come before
+/// versioned sonames because an unversioned name is a deliberate pointer at the
+/// installation the system considers current.
 fn openh264_candidates() -> Vec<std::path::PathBuf> {
     let mut candidates = Vec::new();
 
@@ -739,6 +840,7 @@ fn openh264_candidates() -> Vec<std::path::PathBuf> {
     }
 
     candidates.extend(OPENH264_SEARCH_PATHS.iter().map(std::path::PathBuf::from));
+    candidates.extend(versioned_openh264_candidates());
     candidates
 }
 
@@ -1268,5 +1370,83 @@ mod tests {
                 "Expected '{expected_substr}' in '{display}'"
             );
         }
+    }
+
+    #[test]
+    fn soname_version_accepts_only_numeric_segments() {
+        assert_eq!(soname_version("libopenh264.so.8"), Some(vec![8]));
+        assert_eq!(soname_version("libopenh264.so.2.6.0"), Some(vec![2, 6, 0]));
+
+        // The unversioned name is handled by OPENH264_SEARCH_PATHS, not here.
+        assert_eq!(soname_version("libopenh264.so"), None);
+        assert_eq!(soname_version("libopenh264.so."), None);
+        assert_eq!(soname_version("libopenh264.so.debug"), None);
+        assert_eq!(soname_version("libopenh264.so.8.debug"), None);
+        assert_eq!(soname_version("libavcodec.so.60"), None);
+    }
+
+    #[test]
+    fn sonames_sort_newest_abi_first() {
+        // Deliberately not in the answer's order, and not in an order a string
+        // sort would fix: "10" < "9" lexicographically.
+        let names = vec![
+            "libopenh264.so.2.6.0".to_string(),
+            "libopenh264.so.9".to_string(),
+            "libopenh264.so.10".to_string(),
+            "libopenh264.so.7".to_string(),
+        ];
+
+        assert_eq!(
+            sonames_newest_first(names),
+            vec![
+                "libopenh264.so.10",
+                "libopenh264.so.9",
+                "libopenh264.so.7",
+                "libopenh264.so.2.6.0",
+            ]
+        );
+    }
+
+    #[test]
+    fn bare_soname_wins_over_the_file_it_points_at() {
+        let names = vec![
+            "libopenh264.so.8.0.1".to_string(),
+            "libopenh264.so.8".to_string(),
+        ];
+
+        assert_eq!(
+            sonames_newest_first(names),
+            vec!["libopenh264.so.8", "libopenh264.so.8.0.1"]
+        );
+    }
+
+    #[test]
+    fn sonames_drop_unrelated_entries() {
+        let names = vec![
+            "libopenh264.so".to_string(),
+            "libopenh264.so.8".to_string(),
+            "libx264.so.164".to_string(),
+            "pkgconfig".to_string(),
+        ];
+
+        assert_eq!(sonames_newest_first(names), vec!["libopenh264.so.8"]);
+    }
+
+    /// The Debian layout that made H.264 unreachable before the scan existed:
+    /// a runtime-only install carries the soname symlink and the real file, and
+    /// never the unversioned name the old candidate list looked for.
+    #[test]
+    fn debian_runtime_only_layout_resolves() {
+        let names = vec![
+            "libopenh264.so.2.6.0".to_string(),
+            "libopenh264.so.8".to_string(),
+        ];
+
+        let ordered = sonames_newest_first(names);
+        assert_eq!(
+            ordered.first().map(String::as_str),
+            Some("libopenh264.so.8")
+        );
+        assert_eq!(ordered.len(), 2, "the real file stays as a fallback");
     }
 }

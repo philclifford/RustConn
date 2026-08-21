@@ -1918,6 +1918,9 @@ impl SplitViewBridge {
                 .title(gtk4::glib::markup_escape_text(description))
                 .build();
             row.add_prefix(&gtk4::Image::from_icon_name(icon));
+            // macOS: reduce row height to match tighter native list spacing.
+            #[cfg(target_os = "macos")]
+            row.set_height_request(36);
             features_group.add(&row);
         }
         col.append(&features_group);
@@ -1988,6 +1991,8 @@ impl SplitViewBridge {
                 .css_classes(["dim-label", "monospace"])
                 .build();
             row.add_suffix(&label);
+            #[cfg(target_os = "macos")]
+            row.set_height_request(36);
             shortcuts_group.add(&row);
         }
         col.append(&shortcuts_group);
@@ -2019,6 +2024,8 @@ impl SplitViewBridge {
                 .title(gtk4::glib::markup_escape_text(description))
                 .build();
             row.add_prefix(&gtk4::Image::from_icon_name(icon));
+            #[cfg(target_os = "macos")]
+            row.set_height_request(36);
             quick_group.add(&row);
         }
         col.append(&quick_group);
@@ -2039,6 +2046,8 @@ impl SplitViewBridge {
         for format in formats {
             let row = adw::ActionRow::builder().title(format).build();
             row.add_prefix(&gtk4::Image::from_icon_name("document-open-symbolic"));
+            #[cfg(target_os = "macos")]
+            row.set_height_request(36);
             formats_group.add(&row);
         }
         col.append(&formats_group);

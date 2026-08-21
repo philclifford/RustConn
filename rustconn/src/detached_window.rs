@@ -124,6 +124,9 @@ impl DetachedSessionWindow {
             .height_request(MIN_HEIGHT)
             .build();
 
+        #[cfg(target_os = "macos")]
+        window.add_css_class("macos");
+
         let window_title =
             adw::WindowTitle::new(display_name(params.title, params.protocol), params.protocol);
         let attach_button = build_attach_button();

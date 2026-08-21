@@ -137,8 +137,8 @@ pub fn create_header_bar() -> (
     shell_button.set_child(Some(&shell_box));
     shell_button.set_tooltip_text(Some(&i18n("Local Shell (Ctrl+Shift+T)")));
     shell_button.set_action_name(Some("win.local-shell"));
-    shell_button.add_css_class("suggested-action");
-    shell_button.add_css_class("pill");
+    shell_button.add_css_class("flat");
+    shell_button.add_css_class("accent");
     shell_button.update_property(&[gtk4::accessible::Property::Label(&i18n("Open Local Shell"))]);
     header_bar.pack_end(&shell_button);
 

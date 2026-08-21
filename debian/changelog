@@ -1,3 +1,29 @@
+rustconn (0.20.6-1) unstable; urgency=medium
+
+  * Version bump to 0.20.6
+  * Fixed: RDP used the RemoteFX path even with OpenH264 installed — the H.264
+    probe looked only for the unversioned libopenh264.so, which ships in the
+    -dev package, so a runtime-only install of libopenh264-8 was reported as
+    "not found". The known library directories are now scanned for versioned
+    sonames, newest ABI first
+  * Fixed: portable file passphrase could be discarded without saying why —
+    the confirmation requirement was outranked by the strength advice, was not
+    re-checked when the file path changed, and was reported nowhere after the
+    Preferences window closed
+  * Fixed: warning logged about a portable passphrase that was never entered
+  * Fixed: spurious "Session not found" warnings when quitting with sessions
+    open — the child is normally reaped before teardown asks to terminate it
+  * Fixed: macOS Dock icon changed to a generic tile when the app was pinned
+    and closed; the bundle is now registered with LaunchServices
+  * Improved: sidebar connection status is set once per change instead of twice
+  * Improved: header bar Shell button restyled flat so it no longer competes
+    with the welcome screen's primary action
+  * Improved: macOS UI font scaling, icon-only Settings tabs, tighter welcome
+    rows
+  * Packaging: libopenh264 added as a recommended package
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Fri, 21 Aug 2026 12:00:00 +0000
+
 rustconn (0.20.5-1) unstable; urgency=medium
 
   * Version bump to 0.20.5

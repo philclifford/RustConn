@@ -1,4 +1,22 @@
 -------------------------------------------------------------------
+Fri Aug 21 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.6
+- Version bump to 0.20.6
+- Fixed: RDP used the RemoteFX path even with OpenH264 installed — the H.264
+  probe looked only for the unversioned libopenh264.so, which ships in the
+  -dev package, so a runtime-only install was reported as "not found". The
+  known library directories are now scanned for versioned sonames
+- Fixed: portable file passphrase could be discarded without saying why — the
+  confirmation requirement was outranked by the strength advice, was not
+  re-checked when the file path changed, and was reported nowhere after the
+  Preferences window closed
+- Fixed: warning logged about a portable passphrase that was never entered
+- Fixed: spurious "Session not found" warnings when quitting with sessions open
+- Fixed: macOS Dock icon changed to a generic tile when pinned and closed
+- Improved: sidebar connection status is set once per change instead of twice
+- Improved: header bar Shell button restyled flat
+- Improved: macOS UI font scaling, icon-only Settings tabs, tighter welcome rows
+- Packaging: libopenh264 added as a recommended package
+-------------------------------------------------------------------
 Fri Aug 21 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.5
 - Version bump to 0.20.5
 - Fixed: Flatpak terminal still started at 24x80 on some hosts — the host

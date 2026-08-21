@@ -781,6 +781,124 @@ mod backend_table_tests {
     }
 }
 
+#[cfg(test)]
+mod portable_confirmation_tests {
+    use super::portable_passphrase_is_unconfirmed;
+
+    /// Nothing typed is not a refusal. This is the case that used to warn about a
+    /// passphrase the user had never entered: with no portable file on disk the
+    /// "confirmation required" rule applied to two empty fields and reported a
+    /// discard, every time Preferences was opened and closed.
+    #[test]
+    fn an_empty_passphrase_is_never_a_refusal() {
+        let absent = std::path::Path::new("/nonexistent/rustconn-portable-store.enc");
+
+        assert!(!portable_passphrase_is_unconfirmed(absent, "", ""));
+        assert!(!portable_passphrase_is_unconfirmed(
+            absent,
+            "",
+            "typed only here"
+        ));
+    }
+
+    /// A store that does not exist yet cannot check the passphrase against
+    /// anything, so the confirmation is mandatory rather than optional.
+    #[test]
+    fn a_new_store_requires_the_confirmation() {
+        let absent = std::path::Path::new("/nonexistent/rustconn-portable-store.enc");
+
+        assert!(portable_passphrase_is_unconfirmed(
+            absent,
+            "correct horse",
+            ""
+        ));
+        assert!(portable_passphrase_is_unconfirmed(
+            absent,
+            "correct horse",
+            "correct hors"
+        ));
+        assert!(!portable_passphrase_is_unconfirmed(
+            absent,
+            "correct horse",
+            "correct horse"
+        ));
+    }
+
+    /// An existing store checks the passphrase against the file, so a blank
+    /// confirmation means "I did not retype it" and is accepted — but a filled
+    /// one that disagrees is still a typo worth refusing.
+    #[test]
+    fn an_existing_store_accepts_a_blank_confirmation() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let present = dir.path().join("store.enc");
+        std::fs::write(&present, b"not a real store, only has to exist").expect("write");
+
+        assert!(!portable_passphrase_is_unconfirmed(
+            &present,
+            "correct horse",
+            ""
+        ));
+        assert!(!portable_passphrase_is_unconfirmed(
+            &present,
+            "correct horse",
+            "correct horse"
+        ));
+        assert!(portable_passphrase_is_unconfirmed(
+            &present,
+            "correct horse",
+            "correct hors"
+        ));
+    }
+}
+
+/// Reports whether a typed portable passphrase will be discarded when saving.
+///
+/// A confirmation that is merely blank is accepted for a store that already
+/// exists — the passphrase is checked against the file itself there, and "I did
+/// not retype it" is the same answer the other backends accept. For a store that
+/// does not exist yet there is nothing to check against and the first write
+/// makes whatever was typed the key forever, so the confirmation is required.
+///
+/// Returns `false` when nothing was typed. That case used to reach the same
+/// refusal branch as a real mismatch, so opening Preferences on a machine with
+/// no portable file and closing it again logged a warning about a passphrase the
+/// user had never entered.
+///
+/// [`collect_secret_settings`] and the dialog's close handler both call this, so
+/// the value that is dropped and the message that reports it cannot disagree.
+pub fn portable_passphrase_is_unconfirmed(
+    store_path: &std::path::Path,
+    pass_text: &str,
+    confirm_text: &str,
+) -> bool {
+    if pass_text.is_empty() {
+        return false;
+    }
+    let confirmed = if store_path.exists() {
+        confirm_text.is_empty() || confirm_text == pass_text
+    } else {
+        !confirm_text.is_empty() && confirm_text == pass_text
+    };
+    !confirmed
+}
+
+// Shared by the two branches that can report a weak passphrase, so the wording
+// cannot drift between "weak" alone and "weak and unconfirmed".
+fn passphrase_weakness_message(strength: rustconn_core::secret::PassphraseStrength) -> String {
+    if matches!(
+        strength,
+        rustconn_core::secret::PassphraseStrength::TooShort
+    ) {
+        i18n(
+            "A passphrase this short can be guessed quickly. This file is meant to be copied to your other computers, so the passphrase is the only thing protecting it.",
+        )
+    } else {
+        i18n(
+            "This passphrase would not take long to guess. Several unrelated words make a much stronger one, and are easier to remember than symbols.",
+        )
+    }
+}
+
 /// Creates the secrets settings page using AdwPreferencesPage
 pub fn create_secrets_page() -> SecretsPageWidgets {
     let page = adw::PreferencesPage::builder()
@@ -1674,33 +1792,31 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                 status.remove_css_class("warning");
                 status.set_visible(true);
                 confirm.add_css_class("error");
-            } else if let Some(strength) = weakness {
-                // Ranked above the "repeat it" hint on purpose: there is no point
-                // confirming a passphrase that should be replaced, and this is the
-                // last moment it can be replaced for free.
-                let message = if matches!(
-                    strength,
-                    rustconn_core::secret::PassphraseStrength::TooShort
-                ) {
-                    i18n(
-                        "A passphrase this short can be guessed quickly. This file is meant to be copied to your other computers, so the passphrase is the only thing protecting it.",
-                    )
-                } else {
-                    i18n(
-                        "This passphrase would not take long to guess. Several unrelated words make a much stronger one, and are easier to remember than symbols.",
-                    )
-                };
+            } else if unconfirmed_new {
+                // Checked before the strength verdict, not after. The verdict used
+                // to rank higher, on the reasoning that there is no point
+                // confirming a passphrase that should be replaced — but it is
+                // advice, phrased as advice, while this is the one condition that
+                // makes Save drop the passphrase. Ranking advice above the blocker
+                // meant a weak *and* unconfirmed passphrase showed only the
+                // advice, and Save then discarded it with nothing on screen having
+                // said it would. Both are shown instead, requirement first.
+                let mut message = i18n(
+                    "Repeat the passphrase to confirm it. A new file cannot be recovered if the passphrase is wrong.",
+                );
+                if let Some(strength) = weakness {
+                    message.push('\n');
+                    message.push_str(&passphrase_weakness_message(strength));
+                }
                 status.set_label(&message);
-                status.remove_css_class("error");
-                status.add_css_class("warning");
+                status.add_css_class("error");
+                status.remove_css_class("warning");
                 status.set_visible(true);
                 confirm.remove_css_class("error");
-            } else if unconfirmed_new {
-                status.set_label(&i18n(
-                    "Repeat the passphrase to confirm it. A new file cannot be recovered if the passphrase is wrong.",
-                ));
+            } else if let Some(strength) = weakness {
+                status.set_label(&passphrase_weakness_message(strength));
                 status.remove_css_class("error");
-                status.remove_css_class("warning");
+                status.add_css_class("warning");
                 status.set_visible(true);
                 confirm.remove_css_class("error");
             } else {
@@ -1710,8 +1826,16 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                 confirm.remove_css_class("error");
             }
         };
+        // The path matters to this check, not just the two passphrase fields:
+        // whether the confirmation is required at all depends on the store
+        // already existing. Without this the requirement could appear silently —
+        // type the passphrase while the path points at an existing file, then
+        // point it at a new one, and Save would drop the passphrase while the
+        // label still showed the state from before the path changed.
         let on_pass = update.clone();
+        let on_path = update.clone();
         portable_passphrase_entry.connect_changed(move |_| on_pass());
+        portable_path_entry.connect_changed(move |_| on_path());
         portable_confirm_entry.connect_changed(move |_| update());
     }
 
@@ -3535,8 +3659,15 @@ pub fn collect_secret_settings(
     // only key to every credential in the portable file, it is not checked
     // against anything when the file is first created, and there is no recovery.
     // Writing a typo would produce a store that opens with a passphrase nobody
-    // knows. The mismatch is already shown inline next to the two entries, so
-    // dropping it here is not a silent refusal.
+    // knows.
+    //
+    // Both refusal conditions — a mismatch, and a missing confirmation for a
+    // store that does not exist yet — are shown inline next to the two entries
+    // before Save is reached, so dropping the value here is not a silent
+    // refusal. That claim used to be made about the mismatch alone, while a
+    // missing confirmation could be hidden behind the passphrase-strength
+    // advice or go unrechecked after the path changed; keep the two in step if
+    // either side is edited.
     let portable_storage = storage_combo_value(&widgets.portable_storage_combo);
     let (portable_passphrase, portable_passphrase_encrypted) = {
         let pass_text = widgets.portable_passphrase_entry.text();
@@ -3552,14 +3683,14 @@ pub fn collect_secret_settings(
         let store_path = rustconn_core::secret::resolve_portable_store_path(
             expand_user_path(widgets.portable_path_entry.text().as_str()).as_deref(),
         );
-        let confirmed = if store_path.exists() {
-            confirm_text.is_empty() || confirm_text == pass_text
-        } else {
-            !confirm_text.is_empty() && confirm_text == pass_text
-        };
+        let discarded = portable_passphrase_is_unconfirmed(
+            &store_path,
+            pass_text.as_str(),
+            confirm_text.as_str(),
+        );
 
-        if pass_text.is_empty() || !confirmed {
-            if !confirmed {
+        if pass_text.is_empty() || discarded {
+            if discarded {
                 tracing::warn!(
                     "Portable passphrase was not confirmed — not saving it; a new store \
                      requires the confirmation entry"
