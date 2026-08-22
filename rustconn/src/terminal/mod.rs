@@ -162,6 +162,28 @@ fn eligibility_from(
     }
 }
 
+/// Which part of the application owns a session's `child-exited` handler.
+///
+/// A single VTE widget carries several independent handlers, and each of them
+/// has to be replaceable on its own: an in-place reconnect re-registers the
+/// disconnect path on the same widget and must not end up running it twice
+/// (issue #283), while session logging registers from an async callback long
+/// after the disconnect path is already wired. Keying the handler map by
+/// purpose is what lets a re-registration replace its own predecessor instead
+/// of evicting somebody else's handler (issue #297).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChildExitHook {
+    /// Session teardown: disconnect indicator, reconnect banner, history
+    /// record, post-disconnect task and auto-reconnect.
+    Disconnect,
+    /// Shutting the activity monitor's timers down.
+    ActivityMonitor,
+    /// Flushing the session-log transcript's last partial line.
+    Transcript,
+    /// Flushing the session log so it is readable while the tab lingers.
+    SessionLog,
+}
+
 /// Terminal notebook widget for managing multiple terminal sessions
 /// Now using adw::TabView for modern GNOME HIG compliance
 pub struct TerminalNotebook {
@@ -364,8 +386,8 @@ pub struct TerminalNotebook {
     /// Some terminal clients (e.g. telnet) do not exit on PTY close (SIGHUP),
     /// so an explicit kill is needed (#172).
     vte_child_pids: Rc<RefCell<HashMap<Uuid, i32>>>,
-    /// The live `child-exited` handler of each session, with the terminal it is
-    /// attached to.
+    /// The live `child-exited` handlers of each session, with the terminal each
+    /// one is attached to.
     ///
     /// An in-place reconnect calls `connect_child_exited` again on the *same*
     /// VTE widget, so without this the previous handler stays attached and the
@@ -374,8 +396,15 @@ pub struct TerminalNotebook {
     /// session has ever had. The terminal is kept beside the id because a
     /// handler id is only meaningful to the widget it came from — disconnecting
     /// a stale one from a fresh widget is a GLib error, hence the weak ref.
-    child_exited_handlers:
-        Rc<RefCell<HashMap<Uuid, (glib::WeakRef<Terminal>, glib::SignalHandlerId)>>>,
+    ///
+    /// The key carries a [`ChildExitHook`] as well as the session id because
+    /// four unrelated parts of the app watch the same signal. Keying by session
+    /// alone made every registration evict the previous one, so whichever
+    /// registered last was the only one left — and session logging registers
+    /// from an async callback, i.e. *after* the disconnect path (issue #297).
+    child_exited_handlers: Rc<
+        RefCell<HashMap<(Uuid, ChildExitHook), (glib::WeakRef<Terminal>, glib::SignalHandlerId)>>,
+    >,
     /// Whether to show the Welcome tab when no sessions are open (issue #232).
     /// Shared with signal handlers via `Rc<Cell<bool>>`.
     show_welcome: Rc<std::cell::Cell<bool>>,
@@ -664,9 +693,11 @@ impl TerminalNotebook {
                 output_observers_on_close.borrow_mut().remove(&session_id);
                 commit_forwarded_on_close.borrow_mut().remove(&session_id);
                 auto_reconnect_on_close.borrow_mut().remove(&session_id);
-                // The widget goes with the tab, so the handler dies with it —
+                // The widget goes with the tab, so the handlers die with it —
                 // this only keeps the map from growing for the app's lifetime.
-                child_exited_on_close.borrow_mut().remove(&session_id);
+                child_exited_on_close
+                    .borrow_mut()
+                    .retain(|(id, _), _| *id != session_id);
 
                 // Kill VTE child process group explicitly (#172).
                 // Some CLI clients (notably telnet) do not exit on SIGHUP
@@ -2111,21 +2142,26 @@ impl TerminalNotebook {
         ordered
     }
 
-    /// Connects a callback for when a terminal child exits
-    pub fn connect_child_exited<F>(&self, session_id: Uuid, callback: F)
+    /// Connects a callback for when a terminal child exits.
+    ///
+    /// `hook` identifies the caller. Registering the same hook twice for a
+    /// session replaces the earlier handler; different hooks coexist. Both
+    /// halves matter: an in-place reconnect re-registers
+    /// [`ChildExitHook::Disconnect`] on the same VTE widget and a leftover
+    /// handler would run the whole disconnect path once per reconnect the
+    /// session ever had (two post-disconnect tasks, two host-probe polls, the
+    /// sidebar's active-session count decremented twice for one exit) — while
+    /// evicting a *different* caller's handler is what left the reconnect
+    /// banner unreachable whenever session logging was enabled (issue #297).
+    pub fn connect_child_exited<F>(&self, session_id: Uuid, hook: ChildExitHook, callback: F)
     where
         F: Fn(i32) + 'static,
     {
         if let Some(terminal) = self.get_terminal(session_id) {
-            // Drop whatever a previous connection left on this widget. An
-            // in-place reconnect lands here again on the same terminal, and a
-            // second handler would mean the whole disconnect path runs twice:
-            // two post-disconnect tasks, two host-probe polls, and the
-            // sidebar's active-session count decremented twice for one exit —
-            // which drops a connection to "no active sessions" while another
-            // of its tabs is still live.
-            if let Some((previous_terminal, handler)) =
-                self.child_exited_handlers.borrow_mut().remove(&session_id)
+            if let Some((previous_terminal, handler)) = self
+                .child_exited_handlers
+                .borrow_mut()
+                .remove(&(session_id, hook))
                 && let Some(previous_terminal) = previous_terminal.upgrade()
             {
                 previous_terminal.disconnect(handler);
@@ -2140,7 +2176,17 @@ impl TerminalNotebook {
 
             self.child_exited_handlers
                 .borrow_mut()
-                .insert(session_id, (terminal.downgrade(), handler));
+                .insert((session_id, hook), (terminal.downgrade(), handler));
+        } else {
+            // The signal is attached to the widget, so with no terminal there
+            // is nothing to attach to and the caller's cleanup would never run.
+            // Silent before, and silence here is how issue #297 stayed
+            // invisible for two releases.
+            tracing::warn!(
+                %session_id,
+                ?hook,
+                "No terminal for session — child-exited handler not connected"
+            );
         }
     }
 

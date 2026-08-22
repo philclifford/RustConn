@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.20.6
+Version:        0.20.7
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -285,6 +285,25 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Sun Aug 23 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.7-0
+- Version bump to 0.20.7
+- Fixed: SSH sessions offered no way to reconnect once the connection ended —
+  session logging evicted the disconnect handler from the same signal, so no
+  reconnect banner or auto-reconnect ever ran; handlers are now keyed by
+  purpose as well as by session (issue #297)
+- Fixed: cloned connections could not be edited and their right-click menu did
+  not open — a recycled list row cleared the sidebar selection that every
+  action resolves through (issue #298)
+- Fixed: sidebar context menu opened and vanished within a frame on GNOME
+  Wayland — the menu is now parented to the enclosing scrolled window and
+  takes the input grab on Wayland (issue #299)
+- Changed: moving the sidebar context menu between rows takes a second
+  right-click on Wayland; X11 is unchanged
+- Dependencies: cc 1.4.3→1.4.4, cfg-expr 0.20.8→0.20.9, crc32fast 1.5.0→1.5.1,
+  font-types 0.12.3→0.12.4, icu_provider 2.3.0→2.3.1, keccak 0.2.1→0.2.2,
+  log 0.4.33→0.4.34, rustls-webpki 0.103.14→0.103.15, uuid 1.24.1→1.25.0,
+  zerovec-derive 0.11.5→0.11.6
+
 * Fri Aug 21 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.6-0
 - Version bump to 0.20.6
 - Fixed: RDP used the RemoteFX path even with OpenH264 installed — the probe

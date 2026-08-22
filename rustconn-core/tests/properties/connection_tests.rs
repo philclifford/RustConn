@@ -713,9 +713,19 @@ proptest! {
     /// **Feature: rustconn, Property 14: Group Hierarchy Integrity**
     /// **Validates: Requirements 1.4**
     ///
-    /// Moving a group to root (None parent) should always succeed and maintain hierarchy.
+    /// Moving a group to root succeeds unless root already holds that name, and
+    /// leaves the hierarchy valid either way.
+    ///
+    /// The refusal is part of the contract rather than an exception to it:
+    /// `move_group` rejects a destination that already contains a folder with
+    /// the same name, compared case-insensitively via
+    /// `sibling_group_name_exists`. A parent and child differing only in case —
+    /// "q" and "Q" — therefore cannot both sit at root. This property used to
+    /// assert that the move *always* succeeds, which held only until proptest
+    /// generated such a pair; the expected outcome is now derived from the
+    /// manager's own predicate instead of assumed.
     #[test]
-    fn move_to_root_always_succeeds(
+    fn move_to_root_succeeds_unless_the_name_is_taken(
         parent_name in arb_group_name(),
         child_name in arb_group_name(),
     ) {
@@ -727,16 +737,36 @@ proptest! {
             .create_group_with_parent(child_name, parent_id)
             .expect("Should create child");
 
-        // Move child to root
-        manager
-            .move_group(child_id, None)
-            .expect("Moving to root should succeed");
+        // Ask the manager what it will decide, using the name it actually
+        // stored rather than the generated string.
+        let child_stored_name = manager
+            .get_group(child_id)
+            .expect("Child should exist")
+            .name
+            .clone();
+        let name_taken_at_root =
+            manager.sibling_group_name_exists(&child_stored_name, None, Some(child_id));
 
-        // Verify child is now root
-        let child = manager.get_group(child_id).expect("Child should exist");
-        prop_assert!(child.parent_id.is_none(), "Child should be root after move");
+        let moved = manager.move_group(child_id, None);
 
-        // Hierarchy should be valid
+        if name_taken_at_root {
+            prop_assert!(
+                moved.is_err(),
+                "A name already present at root must be refused, not silently moved"
+            );
+            let child = manager.get_group(child_id).expect("Child should exist");
+            prop_assert_eq!(
+                child.parent_id,
+                Some(parent_id),
+                "A refused move must leave the group where it was"
+            );
+        } else {
+            moved.expect("Moving to root should succeed");
+            let child = manager.get_group(child_id).expect("Child should exist");
+            prop_assert!(child.parent_id.is_none(), "Child should be root after move");
+        }
+
+        // Hierarchy should be valid whichever branch was taken
         prop_assert!(
             manager.validate_hierarchy(),
             "Hierarchy should be valid after move to root"
