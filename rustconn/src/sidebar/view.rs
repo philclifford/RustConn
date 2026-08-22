@@ -75,6 +75,18 @@ fn find_child_by_css_class(parent: &GtkBox, class: &str) -> Option<gtk4::Widget>
     None
 }
 
+/// Finds the position of a tree row in a selection model, by identity.
+///
+/// A `ListItem` normally knows its own position, but one the `ListView` has
+/// recycled reports `GTK_INVALID_LIST_POSITION` — and passing that on clears the
+/// selection instead of moving it (#298). Searching the model is what the
+/// `ListView`-level fallback gesture already does for the same reason (#157).
+#[must_use]
+pub fn position_of_row(model: &gtk4::SelectionModel, row: &gtk4::TreeListRow) -> Option<u32> {
+    let row_obj: &glib::Object = row.upcast_ref();
+    (0..model.n_items()).find(|i| model.item(*i).as_ref() == Some(row_obj))
+}
+
 /// Selects only `position` in the list view's selection model
 /// (works for both single and multi-selection modes).
 pub fn select_single_position(model: &gtk4::SelectionModel, position: u32) {
@@ -319,44 +331,83 @@ pub fn setup_list_item(
     gesture.set_propagation_phase(gtk4::PropagationPhase::Capture);
     let list_item_weak = list_item.downgrade();
     gesture.connect_pressed(move |gesture, _n_press, x, y| {
-        if let Some(widget) = gesture.widget() {
-            // First, select this item so context menu actions work on it
-            if let Some(list_item) = list_item_weak.upgrade() {
-                // Get the position of this item and select it
-                let position = list_item.position();
-                if let Some(list_view) = widget.ancestor(ListView::static_type())
-                    && let Some(list_view) = list_view.downcast_ref::<ListView>()
-                    && let Some(model) = list_view.model()
-                {
-                    select_single_position(&model, position);
-                }
-            }
+        let Some(widget) = gesture.widget() else {
+            return;
+        };
+        let list_item = list_item_weak.upgrade();
 
-            if let Some(item) = list_item_weak
-                .upgrade()
-                .and_then(|li| li.item())
-                .and_then(|obj| obj.downcast::<gtk4::TreeListRow>().ok())
-                .and_then(|row| row.item())
-                .and_then(|obj| obj.downcast::<ConnectionItem>().ok())
-            {
-                show_context_menu_for_connection_item(
-                    &widget,
-                    x,
-                    y,
-                    &item,
-                    &recording_checker,
-                    sidebar_ui::MenuActivation::PointerRow,
+        // Resolve the row this press belongs to. `ListItem::item()` is empty
+        // while the ListView holds the item recycled but not yet rebound, so
+        // fall back to the TreeExpander's own list row — set at bind time,
+        // never cleared on unbind, and already what the ListView-level
+        // fallback gesture resolves through (#157).
+        let row = list_item
+            .as_ref()
+            .and_then(|li| li.item())
+            .and_downcast::<gtk4::TreeListRow>()
+            .or_else(|| {
+                widget
+                    .downcast_ref::<TreeExpander>()
+                    .and_then(|e| e.list_row())
+            });
+        let Some(item) = row
+            .as_ref()
+            .and_then(|r| r.item())
+            .and_downcast::<ConnectionItem>()
+        else {
+            // Deliberately not claimed: the ListView-level fallback gesture
+            // resolves the row from the pointer position instead and would very
+            // likely succeed. Claiming a press this handler then did nothing
+            // with is what made a right-click look like it had been swallowed —
+            // no menu, no log, nothing to go on (issue #298).
+            tracing::debug!(
+                "Sidebar right-click resolved no connection item — leaving the press to the fallback gesture"
+            );
+            return;
+        };
+
+        // Select the row so the context-menu actions target it: every action
+        // re-resolves through the sidebar selection rather than being handed
+        // this item. A recycled list item reports GTK_INVALID_LIST_POSITION,
+        // and handing that to the selection model *clears* the selection —
+        // after which Edit, Duplicate, Rename and Delete all return silently
+        // and the row appears to be uneditable (issue #298).
+        if let Some(list_view) = widget
+            .ancestor(ListView::static_type())
+            .and_downcast::<ListView>()
+            && let Some(model) = list_view.model()
+        {
+            let position = list_item
+                .map(|li| li.position())
+                .filter(|p| *p != gtk4::INVALID_LIST_POSITION)
+                .or_else(|| row.as_ref().and_then(|r| position_of_row(&model, r)));
+            if let Some(position) = position {
+                select_single_position(&model, position);
+            } else {
+                tracing::debug!(
+                    name = %item.name(),
+                    "Sidebar right-click could not locate its row in the selection model — leaving the press to the fallback gesture"
                 );
+                return;
             }
-
-            // Claim the gesture so the event does not propagate further into
-            // ListView / TreeExpander internals.  Without this, GTK4 may apply
-            // :active / :focus-within pseudo-classes to the row widget that
-            // persist after the context menu is dismissed, causing stale
-            // highlight artifacts when right-clicking multiple rows in
-            // succession.
-            gesture.set_state(gtk4::EventSequenceState::Claimed);
         }
+
+        show_context_menu_for_connection_item(
+            &widget,
+            x,
+            y,
+            &item,
+            &recording_checker,
+            sidebar_ui::MenuActivation::PointerRow,
+        );
+
+        // Claim the gesture so the event does not propagate further into
+        // ListView / TreeExpander internals.  Without this, GTK4 may apply
+        // :active / :focus-within pseudo-classes to the row widget that
+        // persist after the context menu is dismissed, causing stale
+        // highlight artifacts when right-clicking multiple rows in
+        // succession.
+        gesture.set_state(gtk4::EventSequenceState::Claimed);
     });
     expander.add_controller(gesture);
 }

@@ -60,7 +60,7 @@ use crate::monitoring::MonitoringCoordinator;
 use crate::sidebar::{ConnectionItem, ConnectionSidebar};
 use crate::split_view::{SplitDirection, SplitViewBridge};
 use crate::state::{SharedAppState, try_with_state_mut, with_state};
-use crate::terminal::TerminalNotebook;
+use crate::terminal::{ChildExitHook, TerminalNotebook};
 use crate::toast::ToastOverlay;
 
 /// Shared color pool type for global color allocation across all split containers

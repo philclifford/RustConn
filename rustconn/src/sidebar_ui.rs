@@ -19,15 +19,75 @@ thread_local! {
     /// The `closed` handler reads it (the emission is synchronous) to tell
     /// an intentional close apart from a compositor dismissal (#157).
     static INTENTIONAL_POPDOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set once this session has seen a non-grabbing context menu cancelled by
+    /// the compositor.
+    ///
+    /// The display-server check in [`pointer_row_takes_grab`] covers the known
+    /// cases, but "which compositors cancel a grab-less xdg_popup" is not a
+    /// question a client can ask. So the answer is also *learned*: one cancelled
+    /// menu switches every later one to a grab for the rest of the session,
+    /// which is how an environment nobody anticipated still ends up with a
+    /// working context menu after the first attempt (#299).
+    static NONGRABBING_POPUP_CANCELLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Compositor-dismissal retry window (#157): KWin cancels non-grabbing
-/// xdg_popups (autohide=false) on focus changes, so on KDE Plasma the menu
-/// could close immediately after popup. If a context-menu popover closes
-/// within this window without any user interaction, it is re-opened once
-/// with autohide=true (grab taken — KWin keeps it; costs the #87
-/// double-click nicety on that attempt, which beats no menu at all).
+/// Compositor-dismissal window (#157, #299): a Wayland compositor cancels a
+/// non-grabbing xdg_popup (autohide=false) on the focus change that follows the
+/// click — KWin does, and mutter 50 does too (7–27 ms, reported on Fedora 44 /
+/// GTK 4.22). A context-menu popover that closes within this window with no
+/// user interaction was therefore not closed by the user.
 const EARLY_DISMISS_WINDOW: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Whether a per-row right-click menu should take the input grab.
+///
+/// `false` is the nicer behaviour and the reason [`MenuActivation::PointerRow`]
+/// exists: without a grab, a right-click on a *different* row reaches that row's
+/// gesture directly, so switching the menu between rows costs one click instead
+/// of two (#87). It is only available where a grab-less popup survives.
+///
+/// On Wayland it does not. The compositor cancels the popup milliseconds after
+/// it maps, and the deferred `autohide=true` retry cannot rescue it because a
+/// grab must be requested against the serial of a real input event and the retry
+/// runs from an idle callback (#157). Every Wayland session therefore grabs from
+/// the start: two right-clicks to switch rows is a smaller price than a menu
+/// that never appears (#299). X11 has no such cancellation and keeps the
+/// one-click behaviour.
+fn pointer_row_takes_grab() -> bool {
+    if NONGRABBING_POPUP_CANCELLED.with(std::cell::Cell::get) {
+        return true;
+    }
+    // `Unknown` (no display server identified) is treated as X11: the grab-less
+    // path is the one with the better behaviour, and a cancellation flips the
+    // sticky flag above on the first attempt anyway.
+    crate::display::DisplayServer::detect().is_wayland()
+}
+
+/// Resolves a popover anchor that survives a `ListView` re-layout, with the
+/// click point translated into the anchor's coordinate space.
+///
+/// A sidebar row is a virtualized widget: `ListView` recycles, re-realizes and
+/// re-allocates it as the list changes. A `GtkPopover` is a native surface tied
+/// to its parent, so any of that while the menu is parented to the row unmaps
+/// the popup — and the menu disappears roughly one frame after it opened, which
+/// is the 7–27 ms measured in issue #299 (and why forcing a different `GSK`
+/// renderer changed how often it happened, without fixing it: it changed the
+/// frame timing, not the anchor).
+///
+/// The enclosing `ScrolledWindow` is not recycled, so it becomes the parent.
+/// `ancestor()` includes the widget itself, so the empty-space menu — already
+/// invoked on the `ScrolledWindow` — resolves to itself with the coordinates
+/// unchanged. Anything outside a `ScrolledWindow` keeps its original anchor.
+fn stable_anchor(widget: &impl IsA<gtk4::Widget>, x: f64, y: f64) -> (gtk4::Widget, f64, f64) {
+    let widget: &gtk4::Widget = widget.upcast_ref();
+    let Some(scrolled) = widget.ancestor(gtk4::ScrolledWindow::static_type()) else {
+        return (widget.clone(), x, y);
+    };
+    let point = gtk4::graphene::Point::new(x as f32, y as f32);
+    widget.compute_point(&scrolled, &point).map_or_else(
+        || (widget.clone(), x, y),
+        |p| (scrolled.clone(), f64::from(p.x()), f64::from(p.y())),
+    )
+}
 
 /// Pops a context-menu popover down, marking the close as intentional so
 /// the early-dismissal retry in `show_popover` does not re-open it.
@@ -87,14 +147,15 @@ pub fn clear_active_popover(popover: &gtk4::Popover) {
 
 /// How the context menu was invoked. Determines popover grab behaviour:
 ///
-/// - `PointerRow`: per-row right-click gesture. Uses `autohide=false` so a
+/// - `PointerRow`: per-row right-click gesture. Prefers `autohide=false` so a
 ///   right-click on a *different* row reaches that row's gesture directly
-///   (#87). Early compositor dismissals are retried with a grab (#157).
+///   (#87), but takes the grab where a grab-less popup does not survive —
+///   see [`pointer_row_takes_grab`] (#157, #299).
 /// - `PointerFallback`: ListView-level right-click / touch long-press
 ///   fallback used when per-row dispatch fails (deep nesting, #157). Pops
 ///   up with `autohide=true` immediately: the grab is then tied to the
-///   fresh input serial of the triggering press, which KWin honours —
-///   a deferred re-popup with a stale serial is dismissed again.
+///   fresh input serial of the triggering press, which the compositor
+///   honours — a deferred re-popup with a stale serial is dismissed again.
 /// - `Keyboard`: Menu key / Shift+F10. Takes a grab and moves focus to the
 ///   first menu item so the menu is keyboard-navigable.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -106,7 +167,10 @@ pub enum MenuActivation {
 
 impl MenuActivation {
     fn takes_grab(self) -> bool {
-        !matches!(self, Self::PointerRow)
+        match self {
+            Self::PointerFallback | Self::Keyboard => true,
+            Self::PointerRow => pointer_row_takes_grab(),
+        }
     }
 }
 
@@ -355,8 +419,12 @@ fn show_popover(
 ) {
     close_active_popover();
 
+    // Anchor to something the ListView cannot pull out from under the menu,
+    // translating the click point into that widget's coordinates (#299).
+    let (anchor, x, y) = stable_anchor(widget, x, y);
+
     let popover = gtk4::Popover::new();
-    popover.set_parent(widget);
+    popover.set_parent(&anchor);
     // Pin the popover's own background/foreground to the libadwaita popover
     // palette. Third-party GTK themes (e.g. Breeze on KDE) otherwise colour
     // the flat-button text to clash with the popover background, rendering the
@@ -413,22 +481,26 @@ fn show_popover(
     )]
     let rect = gdk::Rectangle::new(x as i32, y as i32, 1, 1);
     popover.set_pointing_to(Some(&rect));
-    // PointerRow uses autohide=false so GTK4 does not grab the pointer.
-    // With a grab, a right-click on a *different* sidebar row is consumed by
-    // the autohide mechanism and never reaches the row's GestureClick
-    // handler, causing the context menu to intermittently fail to open
-    // (issue #87). Dismissal is then handled manually:
+    // Resolved once and reused by the `closed` handler below: the per-row
+    // decision can flip mid-session (see [`pointer_row_takes_grab`]) and the
+    // handler must reason about the popup it actually created, not about what a
+    // fresh one would do now.
+    let takes_grab = activation.takes_grab();
+
+    // Without a grab, a right-click on a *different* sidebar row reaches that
+    // row's GestureClick directly, so switching the menu between rows takes one
+    // click rather than two (issue #87). Dismissal is then handled manually:
     // - Left-click dismiss gesture on ScrolledWindow (CAPTURE phase)
     // - close_active_popover() called before every new context menu
     // - Each button closes the popover before activating its action
     // - Escape key handler below
     //
-    // PointerFallback / Keyboard take the grab immediately (see
-    // [`MenuActivation`]): on KDE Plasma a non-grabbing xdg_popup is
-    // cancelled by KWin on the focus change that follows the click, and a
-    // deferred re-popup cannot acquire a grab because its input serial is
-    // stale (#157, deep-nesting reports).
-    popover.set_autohide(activation.takes_grab());
+    // Wayland does not allow that: the compositor cancels a non-grabbing
+    // xdg_popup on the focus change that follows the click, and the deferred
+    // re-popup cannot acquire a grab because its input serial is stale
+    // (#157, #299). There the grab is taken from the start — as it always was
+    // for PointerFallback and Keyboard.
+    popover.set_autohide(takes_grab);
     popover.set_has_arrow(false);
 
     // Escape key closes the popover (autohide=false means GTK4 won't do it)
@@ -519,17 +591,23 @@ fn show_popover(
         }
 
         let intentional = INTENTIONAL_POPDOWN.with(std::cell::Cell::get);
-        // Only the non-grabbing PointerRow popup retries: a grabbing popup
-        // that the compositor still dismissed cannot be saved by re-popping
-        // (the input serial is already stale, #157).
-        if !activation.takes_grab()
+        // Only a non-grabbing popup can be cancelled this way: a grabbing popup
+        // dismissed by the compositor cannot be saved by re-popping either (the
+        // input serial is already stale, #157).
+        if !takes_grab
             && popup_at.elapsed() < EARLY_DISMISS_WINDOW
             && !retried.get()
             && !intentional
         {
             retried.set(true);
+            // Remember it for the session. The deferred re-popup below is a long
+            // shot — it is the same stale-serial grab that #157 established
+            // cannot be acquired — so what actually fixes the menu is that every
+            // later one starts with a grab (#299).
+            NONGRABBING_POPUP_CANCELLED.with(|flag| flag.set(true));
             tracing::debug!(
-                "Context menu dismissed {}ms after popup — retrying with autohide=true",
+                "Context menu dismissed {}ms after popup — retrying with autohide=true; \
+                 later menus will take the grab immediately",
                 popup_at.elapsed().as_millis()
             );
             p.set_autohide(true);

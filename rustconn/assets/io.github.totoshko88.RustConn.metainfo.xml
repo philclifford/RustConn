@@ -140,6 +140,17 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.20.7" date="2026-08-23">
+      <description>
+        <p>Version 0.20.7 - reconnect, cloned connections and the sidebar context menu:</p>
+        <ul>
+          <li>Fixed: an SSH session that ended or dropped offered no way to reconnect — the "Session disconnected" banner, the sidebar offline indicator and automatic reconnection were all suppressed whenever session logging was enabled, because both used the same notification slot and logging claimed it last</li>
+          <li>Fixed: cloned connections could not be edited and their right-click menu did not open — a rebuilt sidebar row cleared the selection that Edit, Rename, Duplicate and Delete all act on, and an unresolved right-click blocked the fallback that would have opened the menu</li>
+          <li>Fixed: the sidebar context menu opened and disappeared again within a frame on GNOME Wayland — the menu was attached to a row widget the list reuses, and it held no input grab, which a Wayland compositor cancels. It is now attached to the connection list itself and takes the grab</li>
+          <li>Changed: on Wayland, moving the context menu from one row to another takes a second right-click, a consequence of the grab above. X11 is unchanged</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.6" date="2026-08-21">
       <description>
         <p>Version 0.20.6 - H.264 for RDP on more systems, and clearer credential feedback:</p>

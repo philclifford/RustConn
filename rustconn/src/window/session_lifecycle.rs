@@ -403,9 +403,13 @@ impl MainWindow {
 
         // 4.7: On child exit, stop the coordinator to clean up timers
         let activity_for_exit = Rc::clone(activity);
-        notebook.connect_child_exited(session_id, move |_exit_status| {
-            activity_for_exit.stop(session_id);
-        });
+        notebook.connect_child_exited(
+            session_id,
+            ChildExitHook::ActivityMonitor,
+            move |_exit_status| {
+                activity_for_exit.stop(session_id);
+            },
+        );
 
         tracing::debug!(
             %session_id,
@@ -525,7 +529,7 @@ impl MainWindow {
                 .ok()
                 .is_some_and(|s| s.settings().terminal.close_on_clean_exit);
 
-        notebook.connect_child_exited(session_id, move |exit_status| {
+        notebook.connect_child_exited(session_id, ChildExitHook::Disconnect, move |exit_status| {
             // The child can linger on a reconnect overlay, but its expect rules
             // must not: cancel polling and scrub resolved responses immediately.
             notebook_clone.clear_automation_session(session_id);
@@ -1068,11 +1072,15 @@ impl MainWindow {
             // the observer, so a session ending normally still gets its final
             // line.
             let writer_on_exit = Rc::clone(&writer);
-            notebook.connect_child_exited(session_id, move |_exit_status| {
-                if let Ok(mut writer) = writer_on_exit.try_borrow_mut() {
-                    writer.finish();
-                }
-            });
+            notebook.connect_child_exited(
+                session_id,
+                ChildExitHook::Transcript,
+                move |_exit_status| {
+                    if let Ok(mut writer) = writer_on_exit.try_borrow_mut() {
+                        writer.finish();
+                    }
+                },
+            );
 
             // A prompt carries no line break, so a trailing partial line needs a
             // deadline of its own rather than waiting for output that will only
@@ -1099,7 +1107,7 @@ impl MainWindow {
         // so closing the writer here would silently end logging for the rest of
         // the tab's life. The "Session ended" marker is written by the logger's
         // `Drop` when the tab is finally closed.
-        notebook.connect_child_exited(session_id, move |_exit_status| {
+        notebook.connect_child_exited(session_id, ChildExitHook::SessionLog, move |_exit_status| {
             if let Ok(mut logger) = logger.try_borrow_mut()
                 && let Err(e) = logger.flush()
             {
