@@ -1531,9 +1531,19 @@ impl ConnectionDialog {
     pub(super) fn set_web_config(&self, web: &rustconn_core::models::WebConfig) {
         use crate::dialogs::connection::web::combo_index_from_browser_mode;
 
-        if let Some(ref browser) = web.browser {
-            self.web_browser_entry.set_text(browser);
-        }
+        // Keep the whole config: saving overlays the widgets onto it so the two
+        // fields with no widget survive. See `ConnectionDialog::web_config_seed`.
+        *self.web_config_seed.borrow_mut() = Some(web.clone());
+
+        // Both of these are set unconditionally, empty string included. The
+        // `set_text` calls used to sit inside `if let Some(...)`, so a connection
+        // with no custom browser or user agent left whatever the previously
+        // edited connection had typed in the row — and saving then adopted it.
+        self.web_browser_entry
+            .set_text(web.browser.as_deref().unwrap_or_default());
+        self.web_user_agent_row
+            .set_text(web.user_agent.as_deref().unwrap_or_default());
+
         self.web_private_mode_switch.set_active(web.private_mode);
         self.web_browser_mode_combo
             .set_selected(combo_index_from_browser_mode(web.browser_mode));
@@ -1542,8 +1552,5 @@ impl ConnectionDialog {
         // Inverted: the switch offers the toolbar, the field hides it.
         self.web_floating_toolbar_switch
             .set_active(!web.hide_floating_toolbar);
-        if let Some(ref user_agent) = web.user_agent {
-            self.web_user_agent_row.set_text(user_agent);
-        }
     }
 }

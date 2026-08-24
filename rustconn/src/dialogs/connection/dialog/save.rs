@@ -39,6 +39,7 @@ impl ConnectionDialog {
         on_save: &crate::dialogs::connection::ConnectionCallback,
         state: &crate::state::SharedAppState,
         editing_id: &Rc<RefCell<Option<Uuid>>>,
+        web_config_seed: &Rc<RefCell<Option<rustconn_core::models::WebConfig>>>,
         name_entry: &Entry,
         icon_entry: &Entry,
         description_view: &TextView,
@@ -436,6 +437,7 @@ impl ConnectionDialog {
         let theme_fg_button = theme_fg_button.clone();
         let theme_cursor_button = theme_cursor_button.clone();
         let editing_id = editing_id.clone();
+        let web_config_seed = web_config_seed.clone();
         let connections_data = connections_data.clone();
         let script_command_entry = script_command_entry.clone();
         let monitoring_toggle = monitoring_toggle.clone();
@@ -657,6 +659,7 @@ impl ConnectionDialog {
                 rdp_performance_mode_dropdown: &rdp_performance_mode_dropdown,
                 vnc_performance_mode_dropdown: &vnc_performance_mode_dropdown,
                 editing_id: &editing_id,
+                web_config_seed: &web_config_seed,
                 script_command_entry: &script_command_entry,
                 monitoring_toggle: &monitoring_toggle,
                 recording_toggle: &recording_toggle,

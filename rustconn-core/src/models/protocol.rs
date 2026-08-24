@@ -3406,14 +3406,32 @@ mod zerotrust_tests {
 /// Determines how a Web connection URL is opened: embedded inside the tab,
 /// in the system default browser, or via a custom command.
 ///
-/// Uses a manual `Deserialize` so that a config containing
-/// `browser_mode = "embedded"` (saved with `web-embedded` enabled) falls back
-/// to `System` on a build without the feature instead of failing to parse.
+/// Every variant exists in every build, `web-embedded` or not. It is the feature
+/// that decides whether `Embedded` can be *run*, not whether it can be
+/// *represented* — and the difference is the whole point. `Embedded` used to be
+/// `#[cfg]`-gated, so a build without the feature parsed
+/// `browser_mode = "embedded"` as `System`; the connection then sat in memory as
+/// `System`, and the next save of *any* connection — updating `last_connected`
+/// on connect is enough — rewrote the file with `browser_mode = "system"` and
+/// destroyed the user's choice for good, silently, at debug log level. That is
+/// not a hypothetical mixed install: `rustconn-cli` takes `rustconn-core` with
+/// `default-features = false` and never enables the feature, so a CLI built on
+/// its own did it too, and every distribution build without WebKitGTK 6.0 does
+/// it to a config written by a Flatpak build that has it. See
+/// [`crate::protocol::web`] and the GUI's web connect path for where the
+/// feature is honoured instead: at the point of use, where falling back to the
+/// system browser costs the user nothing permanent.
+///
+/// Uses a manual `Deserialize` so an unrecognised mode from a newer release
+/// falls back to `System` instead of failing the whole config parse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WebBrowserMode {
-    /// Embedded WebKitGTK 6.0 WebView inside the tab
-    #[cfg(feature = "web-embedded")]
+    /// Embedded WebKitGTK 6.0 WebView inside the tab.
+    ///
+    /// Requires the `web-embedded` feature to actually open a WebView; builds
+    /// without it fall back to the system browser at launch time and leave the
+    /// stored value alone.
     Embedded,
     /// System default browser (xdg-open / UriLauncher)
     System,
@@ -3428,16 +3446,7 @@ impl<'de> serde::Deserialize<'de> for WebBrowserMode {
     {
         let s = String::deserialize(deserializer)?;
         match s.as_str() {
-            #[cfg(feature = "web-embedded")]
             "embedded" => Ok(Self::Embedded),
-            #[cfg(not(feature = "web-embedded"))]
-            "embedded" => {
-                tracing::debug!(
-                    "browser_mode \"embedded\" unavailable (web-embedded feature disabled); \
-                     falling back to System"
-                );
-                Ok(Self::System)
-            }
             "system" => Ok(Self::System),
             "custom" => Ok(Self::Custom),
             other => {
@@ -3451,10 +3460,15 @@ impl<'de> serde::Deserialize<'de> for WebBrowserMode {
     }
 }
 
-#[expect(
-    clippy::derivable_impls,
-    reason = "Default is conditional on web-embedded feature flag"
-)]
+/// Unlike the enum itself, the *default* stays feature-conditional: a brand-new
+/// Web connection created on a build that cannot open a WebView should not start
+/// out asking for one. Nothing is lost either way — a default only applies where
+/// no stored value exists.
+///
+/// This doc comment is also what keeps `clippy::derivable_impls` quiet, which is
+/// why the `#[expect]` that used to sit here is gone: clippy skips a `Default`
+/// impl that carries documentation, on the reasoning that a documented manual
+/// impl is deliberate. Delete the comment and the lint comes back.
 impl Default for WebBrowserMode {
     fn default() -> Self {
         #[cfg(feature = "web-embedded")]
@@ -3583,6 +3597,53 @@ impl<'de> Deserialize<'de> for WebConfig {
             accept_invalid_certs: raw.accept_invalid_certs,
             hide_floating_toolbar: raw.hide_floating_toolbar,
         })
+    }
+}
+
+#[cfg(test)]
+mod web_browser_mode_tests {
+    use super::*;
+
+    /// The regression that made this file's `#[cfg]` on `Embedded` a bug: a build
+    /// without `web-embedded` read `"embedded"` as `System`, and the next save of
+    /// any connection wrote `"system"` back. The round trip has to hold in *both*
+    /// feature configurations, which is why this test carries no `#[cfg]` of its
+    /// own — that is the entire assertion.
+    #[test]
+    fn embedded_browser_mode_round_trips() {
+        let config: WebConfig = toml::from_str("browser_mode = \"embedded\"\n")
+            .expect("a stored embedded browser_mode must parse");
+        assert_eq!(config.browser_mode, WebBrowserMode::Embedded);
+
+        let rendered = toml::to_string(&config).expect("WebConfig must serialize");
+        assert!(
+            rendered.contains("browser_mode = \"embedded\""),
+            "saving must not downgrade the stored mode, got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn system_and_custom_browser_modes_round_trip() {
+        for (stored, expected) in [
+            ("system", WebBrowserMode::System),
+            ("custom", WebBrowserMode::Custom),
+        ] {
+            let config: WebConfig = toml::from_str(&format!("browser_mode = \"{stored}\"\n"))
+                .expect("a stored browser_mode must parse");
+            assert_eq!(config.browser_mode, expected);
+            let rendered = toml::to_string(&config).expect("WebConfig must serialize");
+            assert!(rendered.contains(&format!("browser_mode = \"{stored}\"")));
+        }
+    }
+
+    /// A mode written by a future release must not fail the whole config parse —
+    /// one unknown value would otherwise take every connection in the file down
+    /// with it.
+    #[test]
+    fn unknown_browser_mode_falls_back_to_system() {
+        let config: WebConfig = toml::from_str("browser_mode = \"holographic\"\n")
+            .expect("an unknown browser_mode must not fail the parse");
+        assert_eq!(config.browser_mode, WebBrowserMode::System);
     }
 }
 

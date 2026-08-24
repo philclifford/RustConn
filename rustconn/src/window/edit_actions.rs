@@ -1056,6 +1056,18 @@ impl MainWindow {
             let _ = &notebook;
             let _ = &conn_name;
             let _ = &observer;
+
+            // The stored mode is kept as-is even though this build cannot honour
+            // it — see `rustconn_core::models::WebBrowserMode`. Say so out loud:
+            // the user asked for an in-tab browser and is getting the system one,
+            // and at debug level nobody would ever find out why.
+            if web_config.browser_mode == rustconn_core::models::WebBrowserMode::Embedded {
+                tracing::info!(
+                    connection = %conn_name,
+                    "Connection asks for the embedded browser, which this build was \
+                     compiled without; opening in the system browser instead"
+                );
+            }
         }
 
         // Embedded mode: create an in-tab WebKitGTK widget

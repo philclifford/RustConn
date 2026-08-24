@@ -200,8 +200,13 @@ pub fn browser_mode_from_combo_index(index: u32) -> WebBrowserMode {
 
 /// Maps a `WebBrowserMode` to the correct `ComboRow` selection index.
 ///
-/// Handles the fallback case: if stored mode is Embedded but the feature
-/// is disabled, returns the index for System.
+/// Handles the fallback case: a stored `Embedded` mode on a build without the
+/// feature has no row of its own, so the combo shows System. Note what that
+/// costs — saving the connection from this dialog then writes System, because
+/// the combo is the only thing the save path reads. That is deliberate: the user
+/// is looking at the value that will be stored. Every *other* save path leaves
+/// the stored `Embedded` untouched, which is the difference from the silent
+/// rewrite this used to cause on every connect.
 #[must_use]
 pub fn combo_index_from_browser_mode(mode: WebBrowserMode) -> u32 {
     #[cfg(feature = "web-embedded")]
@@ -215,8 +220,8 @@ pub fn combo_index_from_browser_mode(mode: WebBrowserMode) -> u32 {
     #[cfg(not(feature = "web-embedded"))]
     {
         match mode {
-            // Fallback: Embedded not available, select System
-            WebBrowserMode::System => 0,
+            // Embedded has no row in this build — show System, its runtime fallback
+            WebBrowserMode::Embedded | WebBrowserMode::System => 0,
             WebBrowserMode::Custom => 1,
         }
     }

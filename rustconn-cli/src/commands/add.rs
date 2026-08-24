@@ -458,11 +458,14 @@ pub(super) fn cmd_add(config_path: Option<&Path>, params: AddParams<'_>) -> Resu
         if let rustconn_core::models::ProtocolConfig::Web(ref mut cfg) = connection.protocol_config
         {
             if let Some(mode) = params.browser_mode {
+                // Clap's `value_parser` already restricts this to the three
+                // names, so the catch-all is unreachable in practice. "embedded"
+                // is stored as asked even though the CLI never opens a WebView —
+                // see the same spot in `update.rs`.
                 cfg.browser_mode = match mode {
-                    "system" => rustconn_core::models::WebBrowserMode::System,
+                    "embedded" => rustconn_core::models::WebBrowserMode::Embedded,
                     "custom" => rustconn_core::models::WebBrowserMode::Custom,
-                    // "embedded" or any other value → compile-time default
-                    _ => rustconn_core::models::WebBrowserMode::default(),
+                    _ => rustconn_core::models::WebBrowserMode::System,
                 };
             }
             if let Some(js) = params.javascript {

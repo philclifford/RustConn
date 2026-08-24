@@ -455,6 +455,8 @@ impl ConnectionDialog {
 
         let on_save: crate::dialogs::connection::ConnectionCallback = Rc::new(RefCell::new(None));
         let editing_id: Rc<RefCell<Option<Uuid>>> = Rc::new(RefCell::new(None));
+        let web_config_seed: Rc<RefCell<Option<rustconn_core::models::WebConfig>>> =
+            Rc::new(RefCell::new(None));
         let groups_data: Rc<RefCell<Vec<(Option<Uuid>, String)>>> =
             Rc::new(RefCell::new(vec![(None, "(Root)".to_string())]));
         let connections_data: Rc<RefCell<Vec<(Option<Uuid>, String)>>> =
@@ -473,6 +475,7 @@ impl ConnectionDialog {
             &on_save,
             &state,
             &editing_id,
+            &web_config_seed,
             &name_entry,
             &icon_entry,
             &description_view,
@@ -914,6 +917,7 @@ impl ConnectionDialog {
             spa_port_spin,
             spa_allow_ip_combo,
             editing_id,
+            web_config_seed,
             on_save,
             connections_data,
         };

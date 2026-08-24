@@ -897,32 +897,27 @@ togglebutton.broadcasting image {
  * the revealer container stays fully transparent when hidden, and so the
  * toolbar floats without consuming vertical space.
  *
- * Geometry is shared; the background is not, and deliberately so — see the two
- * rules below. These classes used to be byte-identical copies, which meant a
- * change to one silently stopped matching the other; splitting only the single
- * declaration that has to differ keeps that from coming back. */
+ * All of them follow the local theme, the way a header bar does. The RDP/VNC bar
+ * used to carry a fixed dark scrim instead, on the reasoning that it floats over
+ * a remote desktop whose colours are not ours — but the *contents* of the bar
+ * are ours and take their colour from the local theme whatever the background
+ * does, so a fixed background is a promise the rest of the widget cannot keep.
+ * The RDP bar labels Copy, Paste, Autotype and Ctrl+Alt+Del in text, and under a
+ * light theme those are near-black on a near-black scrim. Web had already been
+ * split back out for the same reason one release earlier — a light GtkEntry
+ * inside a dark bar — which was the same defect showing a different symptom.
+ *
+ * What separates the bar from the content underneath is the shadow, not a
+ * contrasting fill. Keep this one rule: the two classes were byte-identical
+ * copies once before, and a change to one silently stopped matching the other. */
 .rdp-toolbar-overlay,
 .web-toolbar-overlay {
     border-bottom-left-radius: 8px;
     border-bottom-right-radius: 8px;
     margin-top: 4px;
     margin-bottom: 4px;
-}
-
-/* RDP, VNC and SPICE float over a remote desktop. What is underneath is not ours
- * and follows the *remote* theme, so a fixed dark scrim is the only value that
- * reads correctly in every case — and these toolbars carry nothing but symbolic
- * icons, which stay legible on it whatever the local theme is. */
-.rdp-toolbar-overlay {
-    background-color: rgba(36, 36, 36, 0.85);
-}
-
-/* Web floats over a page but is local chrome, and unlike its siblings it carries
- * a GtkEntry, which takes its colours from the local theme. The fixed dark scrim
- * put a light URL bar inside a dark bar on a light desktop, so this one follows
- * the theme the way a header bar does. */
-.web-toolbar-overlay {
-    background-color: alpha(@headerbar_bg_color, 0.9);
+    background-color: alpha(@headerbar_bg_color, 0.92);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
 }
 
 /* Toolbar reveal handle — small arrow indicator along the top edge that

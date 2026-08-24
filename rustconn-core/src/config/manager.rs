@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use fs2::FileExt;
-use tokio::io::AsyncWriteExt;
 
 use super::settings::AppSettings;
 use crate::cluster::Cluster;
@@ -30,6 +29,38 @@ const TRASH_FILE: &str = "trash.toml";
 const WORKSPACE_PROFILES_FILE: &str = "workspace_profiles.toml";
 const TOMBSTONES_FILE: &str = "tombstones.toml";
 const CONFIG_FILE: &str = "config.toml";
+
+/// How long a config write waits for the `.lock` another *process* holds.
+///
+/// Bounded on purpose. `save_settings` runs synchronously on the GTK main
+/// thread, so an unbounded `flock(LOCK_EX)` there is an unbounded UI freeze —
+/// and a stale lock is easy to come by: a `rustconn-cli` stopped in a debugger,
+/// a second instance wedged on a hung network filesystem. Generous next to the
+/// work it protects (serialize a few hundred KB, fsync, rename).
+const LOCK_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Poll interval while waiting for the lock.
+///
+/// `fs2` offers no timed acquire, so the wait is a poll. Short enough that the
+/// ordinary case — a lock held for the length of one fsync — is barely delayed.
+const LOCK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// Serializes config writes inside this process.
+///
+/// `flock(2)` is held per *open file description*, so two `acquire_lock()` calls
+/// contend even on the same thread — and the app has four independent writers:
+/// the three debounce workers in [`crate::connection::ConnectionManager`]
+/// (connections, groups, trash), the history flusher on its own thread, and the
+/// synchronous `save_settings` calls from GTK callbacks. A single connect starts
+/// two of those 2-second debounces at the same instant, so they woke together
+/// and one found the lock taken — which is what produced a steady stream of
+/// "waiting for another rustconn instance" with no other instance running.
+///
+/// Taking this first means the in-process writers queue instead of racing, and
+/// the `flock` below is left doing the job it is actually for: keeping *other
+/// processes* out. Held only inside [`ConfigManager::write_locked`], which does
+/// not call itself, so it cannot deadlock against itself.
+static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Wrapper for serializing a list of connections
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -187,12 +218,20 @@ impl ConfigManager {
 
     /// Acquires an exclusive advisory lock on the configuration directory.
     ///
-    /// Returns the lock file handle which holds the lock until dropped.
-    /// If another process holds the lock, this will block until it is released.
+    /// Returns the lock file handle, which holds the lock until dropped. When the
+    /// lock is held elsewhere this waits for it, but only up to
+    /// [`LOCK_WAIT_TIMEOUT`] — it used to block forever, which on the GTK main
+    /// thread means a frozen window with no way out.
+    ///
+    /// Callers that write should go through [`Self::write_locked`], which also
+    /// takes [`CONFIG_WRITE_LOCK`] so this process's own writers do not contend
+    /// here.
     ///
     /// # Errors
     ///
-    /// Returns an error if the lock file cannot be created or locked.
+    /// Returns [`ConfigError::Lock`] if the lock file cannot be created, if
+    /// locking fails outright, or if the lock is still held after
+    /// [`LOCK_WAIT_TIMEOUT`].
     pub fn acquire_lock(&self) -> ConfigResult<fs::File> {
         self.ensure_config_dir()?;
         let lock_path = self.config_dir.join(".lock");
@@ -210,19 +249,97 @@ impl ConfigManager {
                 ))
             })?;
 
-        // Try non-blocking first; if busy, log and block
-        if lock_file.try_lock_exclusive().is_err() {
-            tracing::info!("Waiting for another rustconn instance to release config lock…");
-            lock_file.lock_exclusive().map_err(|e| {
-                ConfigError::Lock(format!(
-                    "Failed to acquire exclusive lock on {}: {}",
-                    lock_path.display(),
+        if lock_file.try_lock_exclusive().is_ok() {
+            return Ok(lock_file);
+        }
+
+        // Busy. Poll to a deadline rather than blocking indefinitely. The message
+        // no longer claims another *instance* holds it: with CONFIG_WRITE_LOCK in
+        // front of every write, reaching here does mean another process, but this
+        // function is public and says only what it can actually observe.
+        tracing::info!(
+            lock = %lock_path.display(),
+            timeout_secs = LOCK_WAIT_TIMEOUT.as_secs(),
+            "Config lock is held elsewhere; waiting"
+        );
+        let deadline = std::time::Instant::now() + LOCK_WAIT_TIMEOUT;
+        loop {
+            std::thread::sleep(LOCK_POLL_INTERVAL);
+            if lock_file.try_lock_exclusive().is_ok() {
+                return Ok(lock_file);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(ConfigError::Lock(format!(
+                    "timed out after {}s waiting for the config lock on {}; \
+                     another process may be holding it",
+                    LOCK_WAIT_TIMEOUT.as_secs(),
+                    lock_path.display()
+                )));
+            }
+        }
+    }
+
+    /// Writes `content` to `path` atomically, holding both write locks.
+    ///
+    /// The single place config bytes reach the disk: temp file, owner-only
+    /// permissions, fsync, rename. [`Self::save_toml_file`] and
+    /// [`Self::save_toml_file_async`] both funnel through here, which is how the
+    /// two stay in step — they used to be separate copies of this sequence, each
+    /// commented "matches the other".
+    fn write_locked(&self, path: &Path, content: &str) -> ConfigResult<()> {
+        // In-process writers queue here; see CONFIG_WRITE_LOCK. The guard holds
+        // `()`, so a poisoned mutex carries no invalid state and recovering is
+        // strictly better than propagating a panic from an unrelated writer.
+        let _serialized = CONFIG_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        // Advisory lock against other processes (released on drop)
+        let _lock = self.acquire_lock()?;
+
+        let temp_path = path.with_extension("tmp");
+
+        fs::write(&temp_path, content).map_err(|e| {
+            ConfigError::Write(format!("Failed to write {}: {}", temp_path.display(), e))
+        })?;
+
+        // Restrict file permissions to owner-only (0600)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600)).map_err(|e| {
+                ConfigError::Write(format!(
+                    "Failed to set permissions on {}: {}",
+                    temp_path.display(),
                     e
                 ))
             })?;
         }
 
-        Ok(lock_file)
+        // Sync data to disk before rename
+        {
+            let file = fs::File::open(&temp_path).map_err(|e| {
+                ConfigError::Write(format!(
+                    "Failed to open {} for sync: {}",
+                    temp_path.display(),
+                    e
+                ))
+            })?;
+            file.sync_all().map_err(|e| {
+                ConfigError::Write(format!("Failed to sync {}: {}", temp_path.display(), e))
+            })?;
+        }
+
+        fs::rename(&temp_path, path).map_err(|e| {
+            ConfigError::Write(format!(
+                "Failed to rename {} to {}: {}",
+                temp_path.display(),
+                path.display(),
+                e
+            ))
+        })?;
+
+        Ok(())
     }
 
     /// Ensures the logs directory exists
@@ -652,139 +769,38 @@ impl ConfigManager {
         let content = toml::to_string_pretty(data)
             .map_err(|e| ConfigError::Serialize(format!("Failed to serialize: {e}")))?;
 
-        // Acquire advisory lock (released on drop)
-        let _lock = self.acquire_lock()?;
-
-        // Atomic write: temp file + rename (matches save_toml_file_async pattern)
-        let temp_path = path.with_extension("tmp");
-
-        fs::write(&temp_path, content).map_err(|e| {
-            ConfigError::Write(format!("Failed to write {}: {}", temp_path.display(), e))
-        })?;
-
-        // Restrict file permissions to owner-only (0600)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600)).map_err(|e| {
-                ConfigError::Write(format!(
-                    "Failed to set permissions on {}: {}",
-                    temp_path.display(),
-                    e
-                ))
-            })?;
-        }
-
-        // Sync data to disk before rename (matches async version)
-        {
-            let file = fs::File::open(&temp_path).map_err(|e| {
-                ConfigError::Write(format!(
-                    "Failed to open {} for sync: {}",
-                    temp_path.display(),
-                    e
-                ))
-            })?;
-            file.sync_all().map_err(|e| {
-                ConfigError::Write(format!("Failed to sync {}: {}", temp_path.display(), e))
-            })?;
-        }
-
-        fs::rename(&temp_path, path).map_err(|e| {
-            ConfigError::Write(format!(
-                "Failed to rename {} to {}: {}",
-                temp_path.display(),
-                path.display(),
-                e
-            ))
-        })?;
-
-        Ok(())
+        self.write_locked(path, &content)
     }
 
-    /// Saves data to a TOML file asynchronously with atomic write.
+    /// Saves data to a TOML file from async context, without blocking the runtime.
     ///
-    /// Uses a temp file + rename pattern to prevent data corruption
-    /// if the process crashes during write. Acquires an exclusive advisory
-    /// lock before writing to prevent concurrent modifications.
-    #[expect(
-        clippy::future_not_send,
-        reason = "future borrows GTK/Path types that are pinned to the calling thread; never moved to another runtime"
-    )] // Path is not Sync, effectively pinned to thread which is fine for our use case
+    /// The write itself is [`Self::write_locked`] on a blocking-pool thread. It
+    /// used to be a second, hand-maintained copy of that sequence built out of
+    /// `tokio::fs`, which looked asynchronous but opened with a synchronous
+    /// `flock(LOCK_EX)` — parking a runtime worker for as long as another writer's
+    /// fsync took, and making the caller's `tokio::time::timeout` useless: a timer
+    /// only fires when the future yields, and a future stuck in a syscall never
+    /// does. `spawn_blocking` puts the blocking work where blocking work belongs
+    /// and restores the yield point the timeout needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Serialize`] if `data` cannot be rendered as TOML,
+    /// [`ConfigError::Write`] if the blocking task could not be joined, or
+    /// whatever [`Self::write_locked`] reports.
     async fn save_toml_file_async<T>(&self, path: &Path, data: &T) -> ConfigResult<()>
     where
-        T: serde::Serialize,
+        T: serde::Serialize + Sync,
     {
         let content = toml::to_string_pretty(data)
             .map_err(|e| ConfigError::Serialize(format!("Failed to serialize: {e}")))?;
 
-        // Acquire advisory lock (released on drop)
-        let _lock = self.acquire_lock()?;
-
-        // Use temp file for atomic write
-        let temp_path = path.with_extension("tmp");
-
-        // Write to temp file
-        let mut file = tokio::fs::File::create(&temp_path).await.map_err(|e| {
-            ConfigError::Write(format!(
-                "Failed to create temp file {}: {}",
-                temp_path.display(),
-                e
-            ))
-        })?;
-
-        file.write_all(content.as_bytes()).await.map_err(|e| {
-            ConfigError::Write(format!(
-                "Failed to write temp file {}: {}",
-                temp_path.display(),
-                e
-            ))
-        })?;
-
-        file.flush().await.map_err(|e| {
-            ConfigError::Write(format!(
-                "Failed to flush temp file {}: {}",
-                temp_path.display(),
-                e
-            ))
-        })?;
-
-        // Ensure data is synced to disk before rename
-        file.sync_all().await.map_err(|e| {
-            ConfigError::Write(format!(
-                "Failed to sync temp file {}: {}",
-                temp_path.display(),
-                e
-            ))
-        })?;
-
-        // Drop the file handle before rename
-        drop(file);
-
-        // Restrict file permissions to owner-only (0600) before rename
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            tokio::fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))
-                .await
-                .map_err(|e| {
-                    ConfigError::Write(format!(
-                        "Failed to set permissions on {}: {}",
-                        temp_path.display(),
-                        e
-                    ))
-                })?;
-        }
-
-        // Atomic rename (on POSIX systems, rename is atomic)
-        tokio::fs::rename(&temp_path, path).await.map_err(|e| {
-            ConfigError::Write(format!(
-                "Failed to finalize config file {}: {}",
-                path.display(),
-                e
-            ))
-        })?;
-
-        Ok(())
+        // Owned copies: `spawn_blocking` needs 'static + Send.
+        let path = path.to_path_buf();
+        let manager = self.clone();
+        tokio::task::spawn_blocking(move || manager.write_locked(&path, &content))
+            .await
+            .map_err(|e| ConfigError::Write(format!("Config write task failed: {e}")))?
     }
 
     // ========== Validation ==========

@@ -89,6 +89,33 @@ fn stable_anchor(widget: &impl IsA<gtk4::Widget>, x: f64, y: f64) -> (gtk4::Widg
     )
 }
 
+/// Largest height a context menu is allowed to request, in logical pixels.
+///
+/// A `GtkPopover` can never be smaller than its child, and a connection menu is
+/// up to twenty rows and six separators tall — around 700 px. With no cap that
+/// is the popover's *minimum* height, so on a short display, or with the window
+/// low enough that neither anchoring below nor flipping above the pointer leaves
+/// that much room, the popup did not map at all: no menu, no error, nothing in
+/// the log. Moving the window up made the same right-click work, which is what
+/// identified it (issue [#298](https://github.com/totoshko88/RustConn/issues/298)).
+///
+/// Two thirds of the monitor keeps room for the flip in either direction and
+/// still shows most of the menu at once; the remainder scrolls. Falls back to
+/// the floor when the monitor cannot be resolved — before the window's surface
+/// is realized, or on a backend that reports no monitor for it.
+fn menu_max_height(window: &gtk4::ApplicationWindow) -> i32 {
+    /// Floor for the cap, so the menu stays usable on a very short display and
+    /// is still a sane value when the monitor is unknown.
+    const MIN_MAX_HEIGHT: i32 = 240;
+
+    window
+        .surface()
+        .and_then(|surface| surface.display().monitor_at_surface(&surface))
+        .map_or(MIN_MAX_HEIGHT, |monitor| {
+            (monitor.geometry().height() * 2 / 3).max(MIN_MAX_HEIGHT)
+        })
+}
+
 /// Pops a context-menu popover down, marking the close as intentional so
 /// the early-dismissal retry in `show_popover` does not re-open it.
 fn popdown_intentionally(popover: &gtk4::Popover) {
@@ -473,7 +500,21 @@ fn show_popover(
         }
     }
 
-    popover.set_child(Some(&vbox));
+    // Cap the menu's height so the popover always has somewhere to go — see
+    // [`menu_max_height`] for why an uncapped menu simply failed to open (#298).
+    // `propagate_natural_*` keeps a short menu exactly as tall and wide as its
+    // items, so nothing changes for the common case; a long one scrolls.
+    // Arrow-key navigation still works: a `ScrolledWindow` scrolls to whichever
+    // child takes focus.
+    let scroller = gtk4::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .vscrollbar_policy(gtk4::PolicyType::Automatic)
+        .propagate_natural_height(true)
+        .propagate_natural_width(true)
+        .max_content_height(menu_max_height(window))
+        .child(&vbox)
+        .build();
+    popover.set_child(Some(&scroller));
 
     #[expect(
         clippy::cast_possible_truncation,
@@ -620,6 +661,20 @@ fn show_popover(
                 }
             });
             return;
+        }
+
+        // A close this soon after popup was not the user's doing. The retry
+        // above only covers the grab-less case, so without this line a grabbing
+        // menu that the compositor refused went away with nothing in the log —
+        // which is how both #299 and #298 arrived as "the menu just does not
+        // open", with no way to tell a refused popup from a handler that never
+        // ran.
+        if !intentional && popup_at.elapsed() < EARLY_DISMISS_WINDOW {
+            tracing::debug!(
+                elapsed_ms = popup_at.elapsed().as_millis(),
+                takes_grab,
+                "Context menu closed immediately after popup without user interaction"
+            );
         }
 
         // Defer unparent to idle: this handler runs synchronously inside
