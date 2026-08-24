@@ -1,3 +1,36 @@
+rustconn (0.20.8-1) unstable; urgency=medium
+
+  * Version bump to 0.20.8
+  * Fixed: the sidebar context menu did not open when there was no room for it
+    below the pointer — the menu's minimum height was its full content, around
+    700px, so near the bottom of a short display GTK had nowhere to place the
+    popup and it never appeared. The menu now scrolls within a cap derived from
+    the monitor height (issue #298)
+  * Fixed: Embedded mode on Web connections reverted to System permanently —
+    a build without the web-embedded feature read a stored "embedded" as
+    System, and the next save of any connection rewrote the file, destroying
+    the choice for every Web bookmark. All modes now exist in every build; the
+    feature decides only whether Embedded can be run
+  * Fixed: rustconn-cli --browser-mode embedded stored System instead
+  * Fixed: editing a Web connection reset its page zoom and its certificate
+    exception, and could adopt the custom browser command or user agent of the
+    previously edited connection
+  * Fixed: embedded RDP and VNC toolbars were barely readable on a light theme
+    — a fixed dark background carried theme-coloured labels, so Copy, Paste
+    and Autotype were near-black on near-black. All embedded toolbars now
+    follow the local theme
+  * Fixed: config writes contended with each other inside a single process,
+    logging "waiting for another rustconn instance" with no other instance
+    running; the wait was unbounded from the GTK thread, the async write held a
+    blocking lock, and a single failure in the shutdown flush discarded all
+    three pending files
+  * Fixed: one credential lookup opened 25 encrypted Secret Service sessions —
+    a separate D-Bus connection per credential field, times five lookup keys.
+    Each operation now opens one, and the availability probe is cached
+  * Dependencies: h2 0.4.18→0.4.19, open 5.4.1→5.4.2, syn 3.0.3→3.0.4
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Mon, 24 Aug 2026 12:00:00 +0000
+
 rustconn (0.20.7-1) unstable; urgency=medium
 
   * Version bump to 0.20.7

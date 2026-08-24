@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.20.7
+Version:        0.20.8
 Release:        0
 Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
 License:        GPL-3.0-or-later
@@ -285,6 +285,26 @@ done
 %{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Mon Aug 24 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.8-0
+- Version bump to 0.20.8
+- Fixed: the sidebar context menu did not open when there was no room for it
+  below the pointer — its minimum height was the full menu, so GTK had nowhere
+  to place the popup; the menu now scrolls within a monitor-derived cap
+  (issue #298)
+- Fixed: Embedded mode on Web connections reverted to System permanently — a
+  build without the web-embedded feature read a stored "embedded" as System and
+  the next save rewrote the file; all modes now exist in every build
+- Fixed: rustconn-cli --browser-mode embedded stored System instead
+- Fixed: editing a Web connection reset its page zoom and certificate exception
+- Fixed: embedded RDP and VNC toolbars were barely readable on a light theme —
+  all embedded toolbars now follow the local theme
+- Fixed: config writes contended with each other inside a single process, with
+  an unbounded wait from the GTK thread and a shutdown flush that discarded all
+  three pending files on one error
+- Fixed: one credential lookup opened 25 encrypted Secret Service sessions;
+  each operation now opens one
+- Dependencies: h2 0.4.18→0.4.19, open 5.4.1→5.4.2, syn 3.0.3→3.0.4
+
 * Sun Aug 23 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.7-0
 - Version bump to 0.20.7
 - Fixed: SSH sessions offered no way to reconnect once the connection ended —

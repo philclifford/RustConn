@@ -244,6 +244,9 @@ pub(super) struct ConnectionDialogData<'a> {
     pub theme_fg_button: &'a ColorDialogButton,
     pub theme_cursor_button: &'a ColorDialogButton,
     pub editing_id: &'a Rc<RefCell<Option<Uuid>>>,
+    /// `WebConfig` the dialog was populated from — carries the two fields the
+    /// Web page has no widget for. See `ConnectionDialog::web_config_seed`.
+    pub web_config_seed: &'a Rc<RefCell<Option<rustconn_core::models::WebConfig>>>,
     // Jump Host fields
     pub ssh_jump_host_dropdown: &'a DropDown,
     pub connections_data: &'a Rc<RefCell<Vec<(Option<Uuid>, String)>>>,
@@ -1263,15 +1266,19 @@ impl ConnectionDialogData<'_> {
             }
         };
 
+        // Start from what the dialog was populated with, so the two fields the
+        // Web page has no widget for are carried over rather than rebuilt from
+        // literals — `zoom_level` used to snap back to 100% and
+        // `accept_invalid_certs` to false on every save. A new connection has no
+        // seed and correctly gets the defaults.
         rustconn_core::models::WebConfig {
             browser,
             private_mode: self.web_private_mode_switch.is_active(),
             browser_mode,
             javascript_enabled: self.web_javascript_switch.is_active(),
             user_agent,
-            zoom_level: 1.0,
-            accept_invalid_certs: false,
             hide_floating_toolbar: !self.web_floating_toolbar_switch.is_active(),
+            ..self.web_config_seed.borrow().clone().unwrap_or_default()
         }
     }
 

@@ -140,6 +140,19 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.20.8" date="2026-08-24">
+      <description>
+        <p>Version 0.20.8 - context menu placement, Web connection settings and readability:</p>
+        <ul>
+          <li>Fixed: the sidebar right-click menu did not open at all when the window sat low enough that the menu had no room below the pointer. Moving the window up made the same click work. The menu now scrolls instead of demanding its full height</li>
+          <li>Fixed: Web bookmarks set to open in the embedded browser reverted to the system browser, and the choice was then lost for good. A build without the embedded browser used to overwrite that setting silently on the next save of any connection</li>
+          <li>Fixed: editing a Web bookmark reset its saved page zoom and its certificate exception, and could pick up the custom browser command or user agent of whichever connection was edited before it</li>
+          <li>Fixed: the toolbar over an embedded RDP or VNC session was barely readable on a light theme — Copy, Paste and Autotype were dark text on a dark bar. Embedded toolbars now follow the desktop theme</li>
+          <li>Fixed: saving settings could briefly freeze the window, and a message about "another rustconn instance" appeared after every connection even with no second instance running</li>
+          <li>Fixed: looking up a password opened 25 separate encrypted keyring sessions instead of one, adding a third of a second to every connection whose password was not found</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.7" date="2026-08-23">
       <description>
         <p>Version 0.20.7 - reconnect, cloned connections and the sidebar context menu:</p>

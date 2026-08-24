@@ -389,6 +389,17 @@ pub struct ConnectionDialog {
     spa_allow_ip_combo: adw::ComboRow,
     // State
     editing_id: Rc<RefCell<Option<Uuid>>>,
+    /// The `WebConfig` this dialog was populated from, when editing a Web
+    /// connection.
+    ///
+    /// The Web page has a widget for six of `WebConfig`'s eight fields. The
+    /// other two — `zoom_level`, persisted by the embedded browser's own zoom
+    /// controls, and `accept_invalid_certs`, which only `rustconn-cli` sets —
+    /// have nowhere to come from at save time, and were rebuilt from literals:
+    /// editing a bookmark's URL silently reset the page zoom to 100% and cleared
+    /// the certificate exception. Saving now starts from this value and overlays
+    /// what the widgets know.
+    web_config_seed: Rc<RefCell<Option<rustconn_core::models::WebConfig>>>,
     // Callback
     on_save: super::ConnectionCallback,
     connections_data: Rc<RefCell<Vec<(Option<Uuid>, String)>>>,

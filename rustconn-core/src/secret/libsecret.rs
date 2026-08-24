@@ -89,27 +89,23 @@ impl LibSecretBackend {
         attrs
     }
 
-    /// Stores a single field value as a Secret Service item via oo7.
+    /// Stores a single field value as a Secret Service item, on an open collection.
     ///
     /// Uses `replace = true` so re-saving a connection overwrites the previous
     /// item that matches the same attributes, and `window_id = None` since this
     /// backend runs headless in `rustconn-core` (no GUI handle).
+    ///
+    /// Takes the collection rather than opening one: see [`Self::open_collection`]
+    /// for why that distinction is worth a parameter.
     async fn store_value(
         &self,
+        collection: &oo7::dbus::Collection,
         connection_id: &str,
         key: &str,
         value: &str,
         label: &str,
     ) -> SecretResult<()> {
         let attrs = self.build_attributes(connection_id, key);
-
-        let service = oo7::dbus::Service::new()
-            .await
-            .map_err(super::keyring::map_oo7_service_error)?;
-        let collection = service
-            .default_collection()
-            .await
-            .map_err(super::keyring::map_oo7_service_error)?;
 
         // `Secret::text` stores the raw UTF-8 string with a `text/plain` content
         // type so values round-trip byte-for-byte like the old secret-tool path.
@@ -121,17 +117,14 @@ impl LibSecretBackend {
         Ok(())
     }
 
-    /// Retrieves a single field value from the Secret Service via oo7.
-    async fn retrieve_value(&self, connection_id: &str, key: &str) -> SecretResult<Option<String>> {
+    /// Retrieves a single field value from the Secret Service, on an open collection.
+    async fn retrieve_value(
+        &self,
+        collection: &oo7::dbus::Collection,
+        connection_id: &str,
+        key: &str,
+    ) -> SecretResult<Option<String>> {
         let attrs = self.build_attributes(connection_id, key);
-
-        let service = oo7::dbus::Service::new()
-            .await
-            .map_err(super::keyring::map_oo7_service_error)?;
-        let collection = service
-            .default_collection()
-            .await
-            .map_err(super::keyring::map_oo7_service_error)?;
 
         let items = collection
             .search_items(&attrs)
@@ -170,17 +163,14 @@ impl LibSecretBackend {
         }
     }
 
-    /// Deletes every Secret Service item matching a single field via oo7.
-    async fn delete_value(&self, connection_id: &str, key: &str) -> SecretResult<()> {
+    /// Deletes every Secret Service item matching a single field, on an open collection.
+    async fn delete_value(
+        &self,
+        collection: &oo7::dbus::Collection,
+        connection_id: &str,
+        key: &str,
+    ) -> SecretResult<()> {
         let attrs = self.build_attributes(connection_id, key);
-
-        let service = oo7::dbus::Service::new()
-            .await
-            .map_err(super::keyring::map_oo7_service_error)?;
-        let collection = service
-            .default_collection()
-            .await
-            .map_err(super::keyring::map_oo7_service_error)?;
 
         let items = collection
             .search_items(&attrs)
@@ -196,6 +186,30 @@ impl LibSecretBackend {
         Ok(())
     }
 
+    /// Opens the default collection on an already-connected service.
+    ///
+    /// Paired with [`Self::connect`]: every operation calls both once and then
+    /// passes the collection down to the per-field helpers. Each field used to
+    /// open its own connection instead, and `Service::new()` performs a DH
+    /// handshake ("Starting an encrypted Secret Service session", ~12 ms) — so
+    /// one `retrieve` cost five of them, the availability probe plus one per
+    /// field, and a single credential resolution, which tries five different
+    /// lookup keys, opened 25 sessions in ~330 ms. Once per operation makes that
+    /// one, and the probe is cached (see [`Self::availability_probe`]).
+    async fn open_collection(service: &oo7::dbus::Service) -> SecretResult<oo7::dbus::Collection> {
+        service
+            .default_collection()
+            .await
+            .map_err(super::keyring::map_oo7_service_error)
+    }
+
+    /// Connects to the Secret Service.
+    async fn connect() -> SecretResult<oo7::dbus::Service> {
+        oo7::dbus::Service::new()
+            .await
+            .map_err(super::keyring::map_oo7_service_error)
+    }
+
     /// Probes availability via oo7's typed `Service::new()` result.
     ///
     /// A successful connection means a Secret Service answered (`Available`);
@@ -208,11 +222,55 @@ impl LibSecretBackend {
     /// bus at all" from other transport failures (all surface as
     /// `Error::ZBus`/`Error::IO`), so collapsing every error to
     /// `ServiceUnavailable` is both correct and the least-code option.
+    ///
+    /// The result is cached for [`AVAILABILITY_TTL`]. `SecretManager::retrieve`
+    /// probes every backend before every lookup, and a credential resolution
+    /// makes five lookups, so an uncached probe was five DH handshakes on its own
+    /// — for an answer that cannot meaningfully change inside one resolution. A
+    /// keyring that disappears mid-TTL simply fails the lookup, which the backend
+    /// chain already absorbs by moving to the next backend.
     async fn availability_probe(&self) -> BackendAvailability {
-        match oo7::dbus::Service::new().await {
+        if let Some(cached) = cached_availability() {
+            return cached;
+        }
+        let availability = match oo7::dbus::Service::new().await {
             Ok(_) => BackendAvailability::Available,
             Err(_) => BackendAvailability::ServiceUnavailable,
-        }
+        };
+        cache_availability(availability.clone());
+        availability
+    }
+}
+
+/// How long a Secret Service availability probe is trusted.
+///
+/// Matches the window `AppState` already uses for its own backend-availability
+/// cache. Long enough to cover one credential resolution end to end, short
+/// enough that a keyring started after RustConn is picked up promptly.
+const AVAILABILITY_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Last availability answer and when it was taken.
+static AVAILABILITY_CACHE: std::sync::RwLock<Option<(std::time::Instant, BackendAvailability)>> =
+    std::sync::RwLock::new(None);
+
+/// Returns the cached availability if it is still within [`AVAILABILITY_TTL`].
+///
+/// Borrows through the guard and clones the answer rather than moving it out:
+/// `BackendAvailability` is deliberately not `Copy`, and making it `Copy` to
+/// save this clone would turn every existing `.clone()` on it elsewhere into a
+/// `clippy::clone_on_copy` warning.
+fn cached_availability() -> Option<BackendAvailability> {
+    let guard = AVAILABILITY_CACHE.read().ok()?;
+    let (taken_at, availability) = guard.as_ref()?;
+    let fresh = (taken_at.elapsed() < AVAILABILITY_TTL).then(|| availability.clone());
+    drop(guard);
+    fresh
+}
+
+/// Records an availability answer for the next [`AVAILABILITY_TTL`].
+fn cache_availability(availability: BackendAvailability) {
+    if let Ok(mut guard) = AVAILABILITY_CACHE.write() {
+        *guard = Some((std::time::Instant::now(), availability));
     }
 }
 
@@ -221,27 +279,37 @@ impl SecretBackend for LibSecretBackend {
     async fn store(&self, connection_id: &str, credentials: &Credentials) -> SecretResult<()> {
         let label = Self::item_label(connection_id);
 
+        // One session for all four fields — see `open_collection`.
+        let service = Self::connect().await?;
+        let collection = Self::open_collection(&service).await?;
+
         // Store username if present
         if let Some(username) = &credentials.username {
-            self.store_value(connection_id, "username", username, &label)
+            self.store_value(&collection, connection_id, "username", username, &label)
                 .await?;
         }
 
         // Store password if present
         if let Some(password) = credentials.expose_password() {
-            self.store_value(connection_id, "password", password, &label)
+            self.store_value(&collection, connection_id, "password", password, &label)
                 .await?;
         }
 
         // Store key passphrase if present
         if let Some(passphrase) = credentials.expose_key_passphrase() {
-            self.store_value(connection_id, "key_passphrase", passphrase, &label)
-                .await?;
+            self.store_value(
+                &collection,
+                connection_id,
+                "key_passphrase",
+                passphrase,
+                &label,
+            )
+            .await?;
         }
 
         // Store domain if present
         if let Some(domain) = &credentials.domain {
-            self.store_value(connection_id, "domain", domain, &label)
+            self.store_value(&collection, connection_id, "domain", domain, &label)
                 .await?;
         }
 
@@ -249,18 +317,26 @@ impl SecretBackend for LibSecretBackend {
     }
 
     async fn retrieve(&self, connection_id: &str) -> SecretResult<Option<Credentials>> {
+        // One session for all four fields — see `open_collection`.
+        let service = Self::connect().await?;
+        let collection = Self::open_collection(&service).await?;
+
         // Non-secret fields first, then the secret ones. Each secret is wrapped
         // in `SecretString` on the same line it is retrieved, so no plain
         // `String` holding secret material stays alive across a later fallible
         // `?` await (where it would drop un-wiped).
-        let username = self.retrieve_value(connection_id, "username").await?;
-        let domain = self.retrieve_value(connection_id, "domain").await?;
+        let username = self
+            .retrieve_value(&collection, connection_id, "username")
+            .await?;
+        let domain = self
+            .retrieve_value(&collection, connection_id, "domain")
+            .await?;
         let password = self
-            .retrieve_value(connection_id, "password")
+            .retrieve_value(&collection, connection_id, "password")
             .await?
             .map(SecretString::from);
         let key_passphrase = self
-            .retrieve_value(connection_id, "key_passphrase")
+            .retrieve_value(&collection, connection_id, "key_passphrase")
             .await?
             .map(SecretString::from);
 
@@ -279,12 +355,24 @@ impl SecretBackend for LibSecretBackend {
     }
 
     async fn delete(&self, connection_id: &str) -> SecretResult<()> {
+        // One session for all four fields — see `open_collection`.
+        let service = Self::connect().await?;
+        let collection = Self::open_collection(&service).await?;
+
         // Delete all stored values for this connection
         // Ignore errors for individual keys (they might not exist)
-        let _ = self.delete_value(connection_id, "username").await;
-        let _ = self.delete_value(connection_id, "password").await;
-        let _ = self.delete_value(connection_id, "key_passphrase").await;
-        let _ = self.delete_value(connection_id, "domain").await;
+        let _ = self
+            .delete_value(&collection, connection_id, "username")
+            .await;
+        let _ = self
+            .delete_value(&collection, connection_id, "password")
+            .await;
+        let _ = self
+            .delete_value(&collection, connection_id, "key_passphrase")
+            .await;
+        let _ = self
+            .delete_value(&collection, connection_id, "domain")
+            .await;
 
         Ok(())
     }

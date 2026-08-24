@@ -1245,30 +1245,65 @@ impl ConnectionManager {
     ///
     /// This should be called before application exit to ensure all data is saved.
     ///
+    /// All three files are attempted even when one fails, and each pending
+    /// snapshot is cleared only after its write succeeds. Both matter on the
+    /// shutdown path, which is the main caller: the previous version took each
+    /// snapshot out of its `watch` channel *before* awaiting the write, then used
+    /// `?`, so a failure on `connections.toml` discarded that snapshot **and**
+    /// returned before groups and trash were written at all — three files lost to
+    /// one error, with a single `tracing::error!` to show for it.
+    ///
     /// # Errors
-    /// Returns a `ConfigError` if saving to disk fails
+    /// Returns the first `ConfigError` encountered, after attempting all three.
     pub async fn flush_persistence(&self) -> ConfigResult<()> {
-        // Flush connections — take current pending value and save directly
-        let pending_conns = self.conn_tx.send_replace(None);
+        let mut first_error = None;
+
+        // `borrow()` rather than `send_replace(None)`: a snapshot that failed to
+        // write stays in the channel, so a later flush — or the debounce worker —
+        // can still get it to disk.
+        let pending_conns = self.conn_tx.borrow().clone();
         if let Some(conns) = pending_conns {
-            self.config_manager.save_connections_async(&conns).await?;
+            match self.config_manager.save_connections_async(&conns).await {
+                Ok(()) => {
+                    self.conn_tx.send_replace(None);
+                }
+                Err(e) => {
+                    tracing::error!(%e, "Failed to flush connections");
+                    first_error = Some(e);
+                }
+            }
         }
 
-        // Flush groups
-        let pending_groups = self.group_tx.send_replace(None);
+        let pending_groups = self.group_tx.borrow().clone();
         if let Some(groups) = pending_groups {
-            self.config_manager.save_groups_async(&groups).await?;
+            match self.config_manager.save_groups_async(&groups).await {
+                Ok(()) => {
+                    self.group_tx.send_replace(None);
+                }
+                Err(e) => {
+                    tracing::error!(%e, "Failed to flush groups");
+                    first_error = first_error.or(Some(e));
+                }
+            }
         }
 
-        // Flush trash
-        let pending_trash = self.trash_tx.send_replace(None);
+        let pending_trash = self.trash_tx.borrow().clone();
         if let Some((conns, groups)) = pending_trash {
-            self.config_manager
-                .save_trash_async(&conns, &groups)
-                .await?;
+            match self.config_manager.save_trash_async(&conns, &groups).await {
+                Ok(()) => {
+                    self.trash_tx.send_replace(None);
+                }
+                Err(e) => {
+                    tracing::error!(%e, "Failed to flush trash");
+                    first_error = first_error.or(Some(e));
+                }
+            }
         }
 
-        Ok(())
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// Reloads connections and groups from storage

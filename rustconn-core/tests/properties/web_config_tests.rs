@@ -181,7 +181,6 @@ proptest! {
         let mode_str = match mode {
             WebBrowserMode::System => "system",
             WebBrowserMode::Custom => "custom",
-            #[cfg(feature = "web-embedded")]
             WebBrowserMode::Embedded => "embedded",
         };
         let json = serde_json::json!({

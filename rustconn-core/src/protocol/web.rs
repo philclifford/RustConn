@@ -111,9 +111,26 @@ impl Protocol for WebProtocol {
         let web_config = Self::get_web_config(connection).ok()?;
 
         match web_config.browser_mode {
-            // Embedded mode: session manager creates the widget directly
-            #[cfg(feature = "web-embedded")]
-            WebBrowserMode::Embedded => None,
+            // Embedded mode: the session manager creates the widget directly, so
+            // there is no command to build. A build without `web-embedded` has no
+            // widget to create and hands the URL to the system browser instead —
+            // the fallback lives here, at the point of use, rather than in
+            // `WebBrowserMode`, so the stored mode survives a build that cannot
+            // honour it (see [`crate::models::WebBrowserMode`]).
+            WebBrowserMode::Embedded => {
+                #[cfg(feature = "web-embedded")]
+                {
+                    None
+                }
+                #[cfg(not(feature = "web-embedded"))]
+                {
+                    tracing::info!(
+                        "browser_mode is embedded but this build has no WebView; \
+                         opening the URL in the system browser"
+                    );
+                    Some(vec!["xdg-open".to_string(), connection.host.clone()])
+                }
+            }
 
             // System mode: delegate to xdg-open (Linux) / UriLauncher (GUI)
             WebBrowserMode::System => {
