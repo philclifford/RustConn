@@ -150,6 +150,40 @@ const PROTOCOL_MARKERS: &[&str] = &[
     "unsupported fast-path update code",
 ];
 
+/// Markers of a failure inside the RDP licensing exchange.
+///
+/// A subset of [`PROTOCOL_MARKERS`] rather than a class of its own: handing the
+/// session to the external client is still the right response, so the *decision*
+/// does not change. What changes is what the user is told — `"decode error"` is
+/// broad enough to swallow this case, and "server incompatible" says nothing
+/// about a server that is merely running RDS licensing.
+///
+/// The cause is upstream and open:
+/// [IronRDP #1629](https://github.com/Devolutions/IronRDP/issues/1629). A
+/// Windows host with RDS licensing sends `SEC_AUTODETECT_REQ` (an RTT probe,
+/// flag `0x1000`) during the licensing exchange; `ironrdp-connector` feeds
+/// whatever arrives to the licensing decoder without checking the channel or the
+/// security header, and `LicenseHeader::decode` rejects it because
+/// `SEC_LICENSE_PKT` (`0x0080`) is absent. Not to be confused with
+/// [#1457](https://github.com/Devolutions/IronRDP/issues/1457) /
+/// [#1458](https://github.com/Devolutions/IronRDP/pull/1458), which relaxed
+/// `BasicSecurityHeader` and does not touch this check — and is in any case not
+/// yet published (`ironrdp-pdu` on crates.io is still 0.9.0).
+const LICENSE_MARKERS: &[&str] = &[
+    "server_new_license",
+    "licenseexchangestate",
+    "securityheaderflags",
+];
+
+/// Returns `true` when the failure happened in the RDP licensing exchange.
+///
+/// Used only to choose the message shown to the user; see [`LICENSE_MARKERS`].
+#[must_use]
+pub fn is_license_exchange_failure(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    LICENSE_MARKERS.iter().any(|m| lower.contains(m))
+}
+
 /// Classifies an embedded RDP failure message into a [`RdpFailureClass`].
 ///
 /// Authentication is checked first, then RD Gateway tunnel failures. TLS,
@@ -180,7 +214,9 @@ pub fn classify_rdp_failure(msg: &str) -> RdpFailureClass {
     if SECURITY_MARKERS.iter().any(|m| lower.contains(m)) {
         return RdpFailureClass::SecurityUnsupported;
     }
-    if PROTOCOL_MARKERS.iter().any(|m| lower.contains(m)) {
+    if PROTOCOL_MARKERS.iter().any(|m| lower.contains(m))
+        || LICENSE_MARKERS.iter().any(|m| lower.contains(m))
+    {
         return RdpFailureClass::ProtocolIncompatible;
     }
     RdpFailureClass::Other
@@ -377,5 +413,52 @@ mod tests {
         let msg = "TLS handshake; unexpected Share Control Pdu; \
                    nstatus: Some(NStatusCode(0xc000006d))";
         assert_eq!(classify_rdp_failure(msg), RdpFailureClass::Authentication);
+    }
+
+    /// Verbatim from a user report against a Windows host with RDS licensing.
+    const LICENSE_EXCHANGE_FAILURE: &str = "Connection failed: Connection finalize failed: \
+         [decode during SERVER_NEW_LICENSE/LicenseExchangeState::UpgradeLicense] decode error \
+         [kind: Decode(Error { context: \"<ironrdp_pdu::rdp::server_license::LicenseHeader as \
+         ironrdp_core::decode::Decode<'_>>::decode\", kind: InvalidField { field: \
+         \"securityHeaderFlags\", reason: \"invalid security header flags\" }, source: None })]";
+
+    #[test]
+    fn license_exchange_failure_is_recognised() {
+        assert!(is_license_exchange_failure(LICENSE_EXCHANGE_FAILURE));
+    }
+
+    #[test]
+    fn license_exchange_failure_still_falls_back() {
+        // The class must not change: the external client connects to these hosts.
+        let class = classify_rdp_failure(LICENSE_EXCHANGE_FAILURE);
+        assert_eq!(class, RdpFailureClass::ProtocolIncompatible);
+        assert!(class.warrants_freerdp_fallback());
+        assert!(!class.requires_explicit_consent());
+    }
+
+    #[test]
+    fn license_markers_are_classified_without_the_generic_decode_wording() {
+        // `"decode error"` is what catches this message today; the licensing
+        // markers have to stand on their own so a reworded upstream error still
+        // reaches the fallback.
+        let class = classify_rdp_failure(
+            "[decode during SERVER_NEW_LICENSE/LicenseExchangeState::UpgradeLicense]",
+        );
+        assert_eq!(class, RdpFailureClass::ProtocolIncompatible);
+    }
+
+    #[test]
+    fn unrelated_failures_are_not_license_failures() {
+        for msg in [
+            ISSUE_235,
+            CREDSSP_LOGON_FAILURE,
+            "unexpected Share Control Pdu",
+            "gfx unsupported codec: Avc444v2",
+        ] {
+            assert!(
+                !is_license_exchange_failure(msg),
+                "wrongly reported as a licensing failure: {msg}"
+            );
+        }
     }
 }

@@ -29,8 +29,12 @@ Depends: ${shlibs:Depends}, ${misc:Depends},
          libvte-2.91-gtk4-0,
          libadwaita-1-0,
          openssh-client
+# libopenh264 is for the external FreeRDP fallback client, which accepts a
+# distribution build. The embedded client loads through openh264-sys2, which
+# validates the library's SHA-256 against Cisco's own published binaries and
+# refuses everything else — see docs/INSTALL.md and RUSTCONN_OPENH264.
 Recommends: freerdp2-x11 | freerdp3-x11 | freerdp3-wayland, tigervnc-viewer, virt-viewer, picocom, libopenh264-8 | libopenh264-7
-Description: Modern connection manager for Linux (SSH, RDP, VNC, SPICE, Telnet, Serial, Kubernetes, Zero Trust)
+Description: Modern connection manager for SSH, RDP, VNC, SPICE and more
  RustConn is a modern connection manager for Linux with a GTK4/Wayland-native
  interface. Manage SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, and
  Zero Trust connections from a single application. Core protocols use embedded

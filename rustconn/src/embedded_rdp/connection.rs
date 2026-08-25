@@ -1833,12 +1833,22 @@ impl super::EmbeddedRdpWidget {
             error = %msg,
             "[IronRDP] Server incompatible with the embedded client"
         );
+        if rustconn_core::rdp_client::is_license_exchange_failure(msg) {
+            tracing::info!(
+                protocol = "rdp",
+                reason = "license_exchange_unsupported",
+                "The server runs RDS licensing and the embedded client cannot complete the \
+                 licensing exchange (upstream IronRDP #1629) — handing the session to the \
+                 external client"
+            );
+        }
+
         Self::prepare_freerdp_fallback(ctx);
 
         if class.requires_explicit_consent() {
-            Self::request_legacy_security_consent(ctx);
+            Self::request_legacy_security_consent(ctx, msg);
         } else {
-            Self::launch_freerdp_fallback(ctx);
+            Self::launch_freerdp_fallback(ctx, msg);
         }
     }
 
@@ -1855,9 +1865,13 @@ impl super::EmbeddedRdpWidget {
     }
 
     /// Requests explicit consent before retrying with legacy Standard RDP Security.
+    ///
+    /// `reason` is carried through to [`Self::launch_freerdp_fallback`] so the
+    /// banner can name the cause once the external client is running.
     #[cfg(feature = "rdp-embedded")]
-    fn request_legacy_security_consent(ctx: &RdpConnectionContext) {
+    fn request_legacy_security_consent(ctx: &RdpConnectionContext, reason: &str) {
         let decision_ctx = ctx.clone();
+        let decision_reason = reason.to_string();
         let decision: super::types::LegacySecurityDecision = Box::new(move |accepted| {
             if *decision_ctx.connection_generation.borrow() != decision_ctx.generation {
                 tracing::debug!(
@@ -1868,7 +1882,7 @@ impl super::EmbeddedRdpWidget {
                 return;
             }
             if accepted {
-                Self::launch_freerdp_fallback(&decision_ctx);
+                Self::launch_freerdp_fallback(&decision_ctx, &decision_reason);
             } else {
                 tracing::info!(protocol = "rdp", "Legacy RDP security fallback rejected");
                 Self::report_ironrdp_error(
@@ -1894,8 +1908,11 @@ impl super::EmbeddedRdpWidget {
     }
 
     /// Launches the external FreeRDP compatibility path after policy approval.
+    ///
+    /// `reason` is the original failure message, used only to word the banner
+    /// shown once the external client is up.
     #[cfg(feature = "rdp-embedded")]
-    fn launch_freerdp_fallback(ctx: &RdpConnectionContext) {
+    fn launch_freerdp_fallback(ctx: &RdpConnectionContext, reason: &str) {
         if *ctx.connection_generation.borrow() != ctx.generation {
             tracing::debug!(
                 protocol = "rdp",
@@ -1910,6 +1927,17 @@ impl super::EmbeddedRdpWidget {
                 &i18n("Could not prepare the external RDP compatibility client."),
             );
             return;
+        };
+
+        // Name the cause when we can. A Windows host running RDS licensing is
+        // not "incompatible" in any way the user can act on, and the generic
+        // wording sent issue #218 chasing credentials for the wrong reason; the
+        // embedded client cannot finish the licensing exchange yet (upstream
+        // IronRDP #1629), which is a different and more useful thing to say.
+        let fallback_notice = if rustconn_core::rdp_client::is_license_exchange_failure(reason) {
+            i18n("Using external RDP client (server requires RDS licensing)")
+        } else {
+            i18n("Using external RDP client (server incompatible)")
         };
 
         let launch_handle = SafeFreeRdpLauncher::new().launch_background(config.clone());
@@ -1970,7 +1998,7 @@ impl super::EmbeddedRdpWidget {
             Self::notify_ironrdp_state(&context, RdpConnectionState::Connected);
             let callback = context.on_fallback.borrow_mut().take();
             if let Some(ref callback) = callback {
-                callback(&i18n("Using external RDP client (server incompatible)"));
+                callback(&fallback_notice);
             }
             *context.on_fallback.borrow_mut() = callback;
 
