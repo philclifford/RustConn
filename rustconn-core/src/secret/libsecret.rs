@@ -109,10 +109,12 @@ impl LibSecretBackend {
 
         // `Secret::text` stores the raw UTF-8 string with a `text/plain` content
         // type so values round-trip byte-for-byte like the old secret-tool path.
-        collection
-            .create_item(label, &attrs, oo7::Secret::text(value), true, None)
-            .await
-            .map_err(super::keyring::map_oo7_store_error)?;
+        super::keyring::with_dbus_timeout(
+            "store a credential field",
+            collection.create_item(label, &attrs, oo7::Secret::text(value), true, None),
+        )
+        .await?
+        .map_err(super::keyring::map_oo7_store_error)?;
 
         Ok(())
     }
@@ -126,19 +128,22 @@ impl LibSecretBackend {
     ) -> SecretResult<Option<String>> {
         let attrs = self.build_attributes(connection_id, key);
 
-        let items = collection
-            .search_items(&attrs)
-            .await
-            .map_err(super::keyring::map_oo7_retrieve_error)?;
+        let items = super::keyring::with_dbus_timeout(
+            "search for a credential field",
+            collection.search_items(&attrs),
+        )
+        .await?
+        .map_err(super::keyring::map_oo7_retrieve_error)?;
 
         let Some(item) = items.into_iter().next() else {
             // No matching item is not an error, just an absent value.
             return Ok(None);
         };
 
-        let secret = item
-            .secret()
-            .await
+        // The call that can wait on a human: reading from a locked collection
+        // makes the Secret Service prompt for the keyring password.
+        let secret = super::keyring::with_dbus_timeout("read a stored secret", item.secret())
+            .await?
             .map_err(super::keyring::map_oo7_retrieve_error)?;
 
         // Values were written as UTF-8 text; decode them back the same way. The
@@ -172,14 +177,16 @@ impl LibSecretBackend {
     ) -> SecretResult<()> {
         let attrs = self.build_attributes(connection_id, key);
 
-        let items = collection
-            .search_items(&attrs)
-            .await
-            .map_err(super::keyring::map_oo7_retrieve_error)?;
+        let items = super::keyring::with_dbus_timeout(
+            "search for a credential field",
+            collection.search_items(&attrs),
+        )
+        .await?
+        .map_err(super::keyring::map_oo7_retrieve_error)?;
 
         for item in items {
-            item.delete(None)
-                .await
+            super::keyring::with_dbus_timeout("delete a credential field", item.delete(None))
+                .await?
                 .map_err(super::keyring::map_oo7_delete_error)?;
         }
 
@@ -197,17 +204,22 @@ impl LibSecretBackend {
     /// lookup keys, opened 25 sessions in ~330 ms. Once per operation makes that
     /// one, and the probe is cached (see [`Self::availability_probe`]).
     async fn open_collection(service: &oo7::dbus::Service) -> SecretResult<oo7::dbus::Collection> {
-        service
-            .default_collection()
-            .await
-            .map_err(super::keyring::map_oo7_service_error)
+        super::keyring::with_dbus_timeout(
+            "open the default collection",
+            service.default_collection(),
+        )
+        .await?
+        .map_err(super::keyring::map_oo7_service_error)
     }
 
     /// Connects to the Secret Service.
     async fn connect() -> SecretResult<oo7::dbus::Service> {
-        oo7::dbus::Service::new()
-            .await
-            .map_err(super::keyring::map_oo7_service_error)
+        super::keyring::with_dbus_timeout(
+            "connect to the Secret Service",
+            oo7::dbus::Service::new(),
+        )
+        .await?
+        .map_err(super::keyring::map_oo7_service_error)
     }
 
     /// Probes availability via oo7's typed `Service::new()` result.
@@ -233,9 +245,16 @@ impl LibSecretBackend {
         if let Some(cached) = cached_availability() {
             return cached;
         }
-        let availability = match oo7::dbus::Service::new().await {
-            Ok(_) => BackendAvailability::Available,
-            Err(_) => BackendAvailability::ServiceUnavailable,
+        // A timeout counts as unavailable: the answer to "is there a service"
+        // is no if nothing replies in time.
+        let availability = match super::keyring::with_dbus_timeout(
+            "probe the Secret Service",
+            oo7::dbus::Service::new(),
+        )
+        .await
+        {
+            Ok(Ok(_)) => BackendAvailability::Available,
+            Ok(Err(_)) | Err(_) => BackendAvailability::ServiceUnavailable,
         };
         cache_availability(availability.clone());
         availability

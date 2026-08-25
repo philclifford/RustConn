@@ -749,9 +749,21 @@ mod tests {
     fn test_find_free_port() {
         let port = find_free_port().expect("should find a free port");
         assert!(port > 0);
-        // Verify the port is actually free by binding to it
-        let listener = TcpListener::bind(format!("127.0.0.1:{port}"));
-        assert!(listener.is_ok(), "port {port} should be bindable");
+
+        // Deliberately not asserting that the port is still bindable. It is a
+        // port the kernel had free a moment ago, and nothing holds a claim on it
+        // between the two calls — so anything else on the machine, including
+        // another test in this binary, can take it first. The test failed that
+        // way once and passed on re-run, which is the signature of a race rather
+        // than a bug in `find_free_port`. Binding is attempted so a hard failure
+        // (a malformed address, no loopback) still shows up.
+        match TcpListener::bind(format!("127.0.0.1:{port}")) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                eprintln!("port {port} was taken between the probe and the bind — expected race");
+            }
+            Err(e) => panic!("binding 127.0.0.1:{port} failed for an unexpected reason: {e}"),
+        }
     }
 
     #[test]
