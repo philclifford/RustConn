@@ -248,6 +248,7 @@ pub(super) struct ConnectionDialogData<'a> {
     /// Web page has no widget for. See `ConnectionDialog::web_config_seed`.
     pub web_config_seed: &'a Rc<RefCell<Option<rustconn_core::models::WebConfig>>>,
     // Jump Host fields
+    pub ssh_network_mode_row: &'a adw::ComboRow,
     pub ssh_jump_host_dropdown: &'a DropDown,
     pub connections_data: &'a Rc<RefCell<Vec<(Option<Uuid>, String)>>>,
     // Script credential fields
@@ -554,6 +555,14 @@ impl ConnectionDialogData<'_> {
                 PasswordSource::Script(cmd)
             }
             _ => PasswordSource::Prompt, // 0 and any other value default to Prompt
+        };
+
+        // Network mode — Inherit(0) / Direct(1). Set for every protocol, not
+        // just SSH: RDP, VNC and SPICE also inherit a bastion (issue #301).
+        conn.network_mode = if self.ssh_network_mode_row.selected() == 1 {
+            rustconn_core::models::NetworkMode::Direct
+        } else {
+            rustconn_core::models::NetworkMode::Inherit
         };
 
         // Set local variables

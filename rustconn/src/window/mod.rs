@@ -3103,9 +3103,12 @@ impl MainWindow {
         // Load current settings and connections
         {
             let state_ref = state.borrow();
-            dialog.set_settings(state_ref.settings().clone());
+            // Connections first: `set_settings` populates the startup-action and
+            // global jump-host dropdowns from this list, so it has to be there
+            // already. The old order left both showing nothing to pick.
             let connections: Vec<_> = state_ref.list_connections_owned();
             dialog.set_connections(connections);
+            dialog.set_settings(state_ref.settings().clone());
 
             // Populate Cloud Sync sections
             let groups: Vec<_> = state_ref.list_groups_owned();

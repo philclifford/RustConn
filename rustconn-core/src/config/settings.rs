@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::activity_monitor::ActivityMonitorDefaults;
@@ -33,6 +34,9 @@ pub struct AppSettings {
     /// Connection settings
     #[serde(default)]
     pub connection: ConnectionSettings,
+    /// Application-wide bastion settings, the outermost tier of proxy inheritance
+    #[serde(default)]
+    pub network: NetworkSettings,
     /// Global variables
     #[serde(default)]
     pub global_variables: Vec<Variable>,
@@ -898,6 +902,35 @@ pub struct ConnectionSettings {
     /// Timeout in seconds for port check (default: 3)
     #[serde(default = "default_port_check_timeout")]
     pub port_check_timeout_secs: u32,
+}
+
+/// Application-wide bastion settings — the outermost tier of proxy inheritance.
+///
+/// Resolution order for a connection's bastion is: its own `proxy_jump` /
+/// `jump_host_id`, then the group chain (`ConnectionGroup::ssh_proxy_jump` /
+/// `ssh_jump_host_id`), then this. A connection with
+/// [`NetworkMode::Direct`](crate::models::NetworkMode) stops before the group
+/// chain and never reaches here.
+///
+/// This tier exists because a group cannot express "everything". There is no
+/// single implicit root group — `parent_id: None` just means top level, and
+/// there can be many — and an ungrouped connection has `group_id: None`, so its
+/// chain is empty and it inherits nothing at all (issue
+/// [#301](https://github.com/totoshko88/RustConn/issues/301)).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkSettings {
+    /// `ProxyJump` applied to every connection that inherits, in OpenSSH syntax
+    /// (`user@host`, or several hops comma-separated, client-first).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_jump: Option<String>,
+    /// ID of a saved SSH connection to use as the bastion for every connection
+    /// that inherits.
+    ///
+    /// Preferred over [`Self::proxy_jump`] when both are set, matching the group
+    /// level, because a saved connection also carries its port, its identity
+    /// file and its own bastion chain — none of which fit in the text field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_host_id: Option<Uuid>,
 }
 
 const fn default_port_check_timeout() -> u32 {

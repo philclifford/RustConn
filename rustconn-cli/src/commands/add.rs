@@ -69,6 +69,7 @@ pub(super) struct AddParams<'a> {
     pub compression: bool,
     pub startup_command: Option<&'a str>,
     pub proxy_command: Option<&'a str>,
+    pub network_mode: Option<&'a str>,
     pub ssh_option: &'a [(String, String)],
     pub local_forward: &'a [String],
     pub remote_forward: &'a [String],
@@ -511,6 +512,15 @@ pub(super) fn cmd_add(config_path: Option<&Path>, params: AddParams<'_>) -> Resu
 
     if let Some(domain) = params.domain {
         connection.domain = Some(domain.to_string());
+    }
+
+    if let Some(mode_str) = params.network_mode {
+        // `value_parser` restricts this to the two known values, so the wildcard
+        // is unreachable rather than a silent fallback.
+        connection.network_mode = match mode_str {
+            "direct" => rustconn_core::models::NetworkMode::Direct,
+            _ => rustconn_core::models::NetworkMode::Inherit,
+        };
     }
 
     if let Some(mode_str) = params.window_mode {

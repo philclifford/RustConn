@@ -21,6 +21,7 @@ fn run_mc(
     connection: &rustconn_core::Connection,
     connections: &[rustconn_core::Connection],
     groups: &[rustconn_core::ConnectionGroup],
+    network: &rustconn_core::NetworkSettings,
 ) -> Result<(), CliError> {
     let cmd = rustconn_core::sftp::build_mc_sftp_command(connection)
         .ok_or_else(|| CliError::Protocol("Failed to build mc command".to_string()))?;
@@ -34,7 +35,8 @@ fn run_mc(
     // A fresh id per invocation keeps two concurrent runs against the same
     // connection from tearing down each other's wrapper directory.
     let wrapper_id = uuid::Uuid::new_v4();
-    let mc_ssh = rustconn_core::prepare_mc_ssh_env(wrapper_id, connection, connections, groups);
+    let mc_ssh =
+        rustconn_core::prepare_mc_ssh_env(wrapper_id, connection, connections, groups, network);
     if let Some(ref env) = mc_ssh {
         proc.env("PATH", env.path_env().trim_start_matches("PATH="));
     }
@@ -87,6 +89,13 @@ pub(super) fn cmd_sftp(
         .load_groups()
         .map_err(|e| CliError::Config(format!("Failed to load groups: {e}")))?;
 
+    // The outermost bastion tier: a global ProxyJump or jump host applies to
+    // every connection that inherits, including this one.
+    let network = config_manager
+        .load_settings()
+        .map(|settings| settings.network)
+        .unwrap_or_default();
+
     // A connection whose protocol *is* SFTP carries the same `SshConfig` and is
     // exactly what this command is for; only rejecting non-SSH-family protocols
     // is correct here.
@@ -109,10 +118,11 @@ pub(super) fn cmd_sftp(
     }
 
     if use_mc {
-        run_mc(connection, &connections, &groups)?;
+        run_mc(connection, &connections, &groups, &network)?;
     } else if use_cli {
-        let cmd = rustconn_core::sftp::build_sftp_command(connection, &connections, &groups)
-            .ok_or_else(|| CliError::Protocol("Failed to build SFTP command".to_string()))?;
+        let cmd =
+            rustconn_core::sftp::build_sftp_command(connection, &connections, &groups, &network)
+                .ok_or_else(|| CliError::Protocol("Failed to build SFTP command".to_string()))?;
 
         println!("Connecting via sftp CLI to '{}'...", connection.name);
 
@@ -140,8 +150,13 @@ pub(super) fn cmd_sftp(
             // GVFS spawns its own `ssh` with a hardcoded argument list and reads
             // no configuration we can point it at, so a bastion cannot be
             // applied on this path at all.
-            if !rustconn_core::connection::resolve_jump_chain(connection, &connections, &groups)
-                .is_empty()
+            if !rustconn_core::connection::resolve_jump_chain(
+                connection,
+                &connections,
+                &groups,
+                &network,
+            )
+            .is_empty()
             {
                 tracing::warn!(
                     name = %connection.name,

@@ -10,6 +10,7 @@ pub mod cloud_sync_tab;
 mod keybindings_tab;
 mod logging_tab;
 mod monitoring_tab;
+mod network_tab;
 pub mod secrets_tab;
 mod ssh_agent_tab;
 mod terminal_tab;
@@ -160,6 +161,8 @@ pub struct SettingsDialog {
     // Global highlight rules
     highlight_rules_list: gtk4::ListBox,
     highlight_rules: Rc<RefCell<Vec<rustconn_core::models::HighlightRule>>>,
+    // Global network settings (outermost bastion tier)
+    network_widgets: network_tab::NetworkPageWidgets,
     // Cloud Sync settings
     cloud_sync_widgets: CloudSyncPageWidgets,
     // Current settings
@@ -385,11 +388,13 @@ impl SettingsDialog {
         // 3. Secrets page already has secrets groups; add SSH agent groups
         move_groups(&ssh_agent_page, &secrets_widgets.page);
 
-        // 4. Connection page — only clients
+        // 4. Connection page — network defaults, then clients
         let connection_page = adw::PreferencesPage::builder()
             .title(i18n("Connection"))
             .icon_name("network-server-symbolic")
             .build();
+        let network_widgets = network_tab::create_network_group();
+        connection_page.add(&network_widgets.group);
         move_groups(&clients_page, &connection_page);
 
         // 5. Monitoring as its own page
@@ -714,6 +719,7 @@ impl SettingsDialog {
             keybindings_page,
             highlight_rules_list,
             highlight_rules,
+            network_widgets,
             cloud_sync_widgets,
             settings,
             was_restored,
@@ -735,7 +741,11 @@ impl SettingsDialog {
         *self.settings.borrow_mut() = settings;
     }
 
-    /// Sets the connections list for the startup action dropdown
+    /// Sets the connections list used by the connection-picking dropdowns.
+    ///
+    /// Call this **before** [`Self::set_settings`]: both the startup-action
+    /// dropdown and the global jump-host picker are populated from this list
+    /// while the settings are loaded, so a later call leaves them empty.
     pub fn set_connections(&self, connections: Vec<Connection>) {
         *self.connections.borrow_mut() = connections;
     }
@@ -1229,6 +1239,14 @@ impl SettingsDialog {
             &settings.keybindings,
         );
 
+        // Load the global network settings, rebuilding the jump-host picker.
+        // Depends on `set_connections` having run first — see its doc comment.
+        network_tab::load_network_settings(
+            &self.network_widgets,
+            &settings.network,
+            &self.connections.borrow(),
+        );
+
         // Load monitoring settings
         self.monitoring_widgets.load(&settings.monitoring);
 
@@ -1365,6 +1383,9 @@ impl SettingsDialog {
         let ssh_agent_custom_socket_entry_clone = self.ssh_agent_custom_socket_entry.clone();
 
         // Cloud Sync controls
+        let network_proxy_jump_row_clone = self.network_widgets.proxy_jump_row.clone();
+        let network_jump_host_dropdown_clone = self.network_widgets.jump_host_dropdown.clone();
+        let network_jump_host_data_clone = self.network_widgets.jump_host_data.clone();
         let cloud_sync_dir_row_clone = self.cloud_sync_widgets.sync_dir_row.clone();
         let cloud_sync_device_name_clone = self.cloud_sync_widgets.device_name_row.clone();
         let cloud_sync_simple_sync_clone = self.cloud_sync_widgets.simple_sync_row.clone();
@@ -1608,6 +1629,11 @@ impl SettingsDialog {
                 secrets,
                 ui,
                 connection: settings_clone.borrow().connection.clone(),
+                network: network_tab::collect_network_settings(
+                    &network_proxy_jump_row_clone,
+                    &network_jump_host_dropdown_clone,
+                    &network_jump_host_data_clone,
+                ),
                 global_variables: settings_clone.borrow().global_variables.clone(),
                 history: settings_clone.borrow().history.clone(),
                 keybindings: collect_keybinding_settings(&keybindings_overrides_clone),

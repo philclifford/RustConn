@@ -36,8 +36,13 @@ pub struct SshOptionsWidgets {
     pub key_entry: Entry,
     pub key_button: Button,
     pub agent_key_dropdown: DropDown,
+    /// Where the bastion comes from: Inherit or Direct (issue #301).
+    pub network_mode_row: adw::ComboRow,
     pub jump_host_dropdown: DropDown,
     pub proxy_entry: Entry,
+    /// The row wrapping [`Self::proxy_entry`], so its subtitle can name an
+    /// inherited bastion instead of leaving one invisible.
+    pub proxy_row: adw::ActionRow,
     pub proxy_command_entry: Entry,
     pub identities_only: CheckButton,
     pub control_master: CheckButton,
@@ -93,16 +98,18 @@ pub fn create_ssh_options() -> SshOptionsWidgets {
     content.append(&auth_group);
 
     // === Connection Options Group ===
-    let (
-        connection_group,
+    let ConnectionGroupWidgets {
+        group: connection_group,
+        network_mode_row,
         jump_host_dropdown,
         proxy_entry,
+        proxy_row,
         proxy_command_entry,
         identities_only,
         control_master,
         keep_alive_interval,
         keep_alive_count_max,
-    ) = create_connection_group();
+    } = create_connection_group();
     content.append(&connection_group);
 
     // === Session Group ===
@@ -173,8 +180,10 @@ pub fn create_ssh_options() -> SshOptionsWidgets {
         key_entry,
         key_button,
         agent_key_dropdown,
+        network_mode_row,
         jump_host_dropdown,
         proxy_entry,
+        proxy_row,
         proxy_command_entry,
         identities_only,
         control_master,
@@ -455,20 +464,41 @@ fn connect_auth_method_visibility(
     });
 }
 
+/// Widgets of the Connection preferences group.
+struct ConnectionGroupWidgets {
+    group: adw::PreferencesGroup,
+    network_mode_row: adw::ComboRow,
+    jump_host_dropdown: DropDown,
+    proxy_entry: Entry,
+    proxy_row: adw::ActionRow,
+    proxy_command_entry: Entry,
+    identities_only: CheckButton,
+    control_master: CheckButton,
+    keep_alive_interval: adw::SpinRow,
+    keep_alive_count_max: adw::SpinRow,
+}
+
 /// Creates the Connection preferences group
-fn create_connection_group() -> (
-    adw::PreferencesGroup,
-    DropDown,
-    Entry,
-    Entry,
-    CheckButton,
-    CheckButton,
-    adw::SpinRow,
-    adw::SpinRow,
-) {
+fn create_connection_group() -> ConnectionGroupWidgets {
     let connection_group = adw::PreferencesGroup::builder()
         .title(i18n("Connection"))
         .build();
+
+    // Network mode — the only way to refuse a bastion inherited from the group
+    // chain or the global network settings (issue #301). Placed above the two
+    // bastion fields because it decides whether they are consulted at all.
+    let network_mode_list = StringList::new(&[
+        i18n("Inherit from group or global").as_str(),
+        i18n("Direct").as_str(),
+    ]);
+    let network_mode_row = adw::ComboRow::builder()
+        .title(i18n("Network Mode"))
+        .subtitle(i18n(
+            "Direct ignores any jump host inherited from a group or the global settings",
+        ))
+        .model(&network_mode_list)
+        .build();
+    connection_group.add(&network_mode_row);
 
     // Jump Host dropdown
     let none_items: Vec<String> = vec![i18n("(None)")];
@@ -532,16 +562,18 @@ fn create_connection_group() -> (
     keep_alive_count_max.set_subtitle(&i18n("Disconnect after this many unanswered packets"));
     connection_group.add(&keep_alive_count_max);
 
-    (
-        connection_group,
+    ConnectionGroupWidgets {
+        group: connection_group,
+        network_mode_row,
         jump_host_dropdown,
         proxy_entry,
+        proxy_row,
         proxy_command_entry,
         identities_only,
         control_master,
         keep_alive_interval,
         keep_alive_count_max,
-    )
+    }
 }
 
 /// Creates the Session preferences group

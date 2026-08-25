@@ -944,6 +944,7 @@ impl RdmImporter {
             sort_order: 0,
             last_connected: None,
             password_source,
+            network_mode: crate::models::NetworkMode::default(),
             domain,
             custom_properties: Vec::new(),
             pre_connect_task: None,

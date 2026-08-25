@@ -14,7 +14,7 @@ pub use keybindings::{
 pub use manager::ConfigManager;
 pub use settings::{
     AppSettings, ColorScheme, ConnectionSettings, KeyringRevocations, LoggingSettings,
-    QuickConnectHistoryItem, RendererPreference, SecretBackendType, SecretSettings,
-    SessionRestoreSettings, StartupAction, TerminalSettings, UiSettings,
+    NetworkSettings, QuickConnectHistoryItem, RendererPreference, SecretBackendType,
+    SecretSettings, SessionRestoreSettings, StartupAction, TerminalSettings, UiSettings,
 };
 // MonitoringSettings is re-exported from the monitoring module, not config

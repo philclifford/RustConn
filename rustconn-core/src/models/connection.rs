@@ -81,6 +81,37 @@ pub enum PasswordSource {
     Script(String),
 }
 
+/// Where a connection takes its bastion / proxy configuration from.
+///
+/// The connection's own `proxy_jump` / `jump_host_id` always win when set; this
+/// only decides what happens when they are not, and it is the only way to say
+/// "nothing" as opposed to "not configured here" (issue
+/// [#301](https://github.com/totoshko88/RustConn/issues/301)).
+///
+/// Deliberately two variants rather than the four network modes the request
+/// listed. *Jump* and *Local Proxy* are already expressible — a `jump_host_id`
+/// or a `proxy_jump`, and a `ProxyCommand` or a dynamic (`-D`) forward
+/// respectively — so an enum variant for each would duplicate state that
+/// already exists and need a migration to keep the two copies agreeing. What
+/// could not be expressed is the choice between inheriting and refusing to.
+///
+/// Lives on [`Connection`] rather than on `SshConfig` so it reads the same for
+/// every protocol: RDP, VNC and SPICE carry a `jump_host_id` too, and their
+/// "proxy" is an SSH tunnel to it. This mirrors [`PasswordSource`], which is
+/// also connection-level and also has an `Inherit`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkMode {
+    /// Take the bastion from the group chain, then from the global setting.
+    ///
+    /// The default, and what every connection written before this field existed
+    /// deserializes to.
+    #[default]
+    Inherit,
+    /// Connect straight to the host, ignoring any inherited bastion.
+    Direct,
+}
+
 /// Window mode for connection display
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -281,6 +312,13 @@ pub struct Connection {
     /// Source of password for this connection
     #[serde(default)]
     pub password_source: PasswordSource,
+    /// Where this connection takes its bastion / proxy configuration from.
+    ///
+    /// `Inherit` (the default) walks the group chain and then the global
+    /// network settings; `Direct` refuses an inherited bastion. A `proxy_jump`
+    /// or `jump_host_id` set on the connection itself outranks both.
+    #[serde(default)]
+    pub network_mode: NetworkMode,
     /// Domain for RDP/Windows authentication
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
@@ -393,6 +431,7 @@ impl Connection {
             sort_order: 0,
             last_connected: None,
             password_source: PasswordSource::None,
+            network_mode: NetworkMode::default(),
             domain: None,
             custom_properties: Vec::new(),
             pre_connect_task: None,

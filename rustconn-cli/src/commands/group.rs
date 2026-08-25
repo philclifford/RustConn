@@ -646,13 +646,29 @@ fn cmd_group_edit(
         group.ssh_auth_method = Some(method.clone());
         updated.push(format!("ssh_auth_method = {method:?}"));
     }
+    // An empty value clears the setting rather than storing a blank one. Storing
+    // `Some("")` used to survive all the way to `ssh -J ""`, which breaks the
+    // command instead of disabling the proxy — and `--ssh-proxy-jump ""` is the
+    // obvious way to ask for "no bastion". Same for the agent socket.
     if let Some(jump) = ssh_proxy_jump {
-        group.ssh_proxy_jump = Some(jump.to_string());
-        updated.push(format!("ssh_proxy_jump = {jump}"));
+        let jump = jump.trim();
+        if jump.is_empty() {
+            group.ssh_proxy_jump = None;
+            updated.push("ssh_proxy_jump cleared".to_string());
+        } else {
+            group.ssh_proxy_jump = Some(jump.to_string());
+            updated.push(format!("ssh_proxy_jump = {jump}"));
+        }
     }
     if let Some(socket) = ssh_agent_socket {
-        group.ssh_agent_socket = Some(socket.to_string());
-        updated.push(format!("ssh_agent_socket = {socket}"));
+        let socket = socket.trim();
+        if socket.is_empty() {
+            group.ssh_agent_socket = None;
+            updated.push("ssh_agent_socket cleared".to_string());
+        } else {
+            group.ssh_agent_socket = Some(socket.to_string());
+            updated.push(format!("ssh_agent_socket = {socket}"));
+        }
     }
 
     // Handle expect rules

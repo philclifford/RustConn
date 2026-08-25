@@ -104,8 +104,10 @@ impl ConnectionDialog {
         let ssh_key_entry = ssh_widgets.key_entry;
         let ssh_key_button = ssh_widgets.key_button;
         let ssh_agent_key_dropdown = ssh_widgets.agent_key_dropdown;
+        let ssh_network_mode_row = ssh_widgets.network_mode_row;
         let ssh_jump_host_dropdown = ssh_widgets.jump_host_dropdown;
         let ssh_proxy_entry = ssh_widgets.proxy_entry;
+        let ssh_proxy_row = ssh_widgets.proxy_row;
         let ssh_proxy_command_entry = ssh_widgets.proxy_command_entry;
         let ssh_identities_only = ssh_widgets.identities_only;
         let ssh_control_master = ssh_widgets.control_master;
@@ -495,6 +497,7 @@ impl ConnectionDialog {
             &ssh_key_entry,
             &ssh_agent_key_dropdown,
             &ssh_agent_keys,
+            &ssh_network_mode_row,
             &ssh_jump_host_dropdown,
             &ssh_proxy_entry,
             &ssh_proxy_command_entry,
@@ -718,8 +721,10 @@ impl ConnectionDialog {
             ssh_agent_key_dropdown,
             ssh_agent_keys,
             pending_agent_selection,
+            ssh_network_mode_row,
             ssh_jump_host_dropdown,
             ssh_proxy_entry,
+            ssh_proxy_row,
             ssh_proxy_command_entry,
             ssh_identities_only,
             ssh_control_master,

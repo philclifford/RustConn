@@ -18,8 +18,8 @@ mod tunnel;
 mod workspace;
 
 pub use connection::{
-    AutomationConfig, Connection, ConnectionThemeOverride, PasswordSource, WindowGeometry,
-    WindowMode,
+    AutomationConfig, Connection, ConnectionThemeOverride, NetworkMode, PasswordSource,
+    WindowGeometry, WindowMode,
 };
 pub use credentials::Credentials;
 pub use custom_property::{CustomProperty, PropertyType};

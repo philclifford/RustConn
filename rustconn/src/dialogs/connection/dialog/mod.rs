@@ -137,8 +137,12 @@ pub struct ConnectionDialog {
     ssh_agent_keys: Rc<RefCell<Vec<rustconn_core::ssh_agent::AgentKey>>>,
     /// Pending agent key selection (fingerprint, comment) to restore after refresh
     pending_agent_selection: Rc<RefCell<Option<(String, String)>>>,
+    /// Where the bastion comes from: Inherit or Direct (issue #301).
+    ssh_network_mode_row: adw::ComboRow,
     ssh_jump_host_dropdown: DropDown,
     ssh_proxy_entry: Entry,
+    /// Row around `ssh_proxy_entry`, so its subtitle can name an inherited bastion.
+    ssh_proxy_row: adw::ActionRow,
     ssh_proxy_command_entry: Entry,
     ssh_identities_only: CheckButton,
     ssh_control_master: CheckButton,

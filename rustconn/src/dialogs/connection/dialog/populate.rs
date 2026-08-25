@@ -167,6 +167,13 @@ impl ConnectionDialog {
             self.script_command_entry.set_text(cmd);
         }
 
+        // Network mode — connection-level, so it is set for every protocol
+        // rather than inside the SSH branch below (issue #301).
+        self.ssh_network_mode_row.set_selected(u32::from(
+            conn.network_mode == rustconn_core::models::NetworkMode::Direct,
+        ));
+        self.update_inherited_proxy_subtitle(conn);
+
         // Protocol and protocol-specific fields
         match &conn.protocol_config {
             ProtocolConfig::Ssh(ssh) => {
@@ -1056,6 +1063,57 @@ impl ConnectionDialog {
             self.ssh_key_source_row.set_subtitle(&i18n(
                 "Default tries ~/.ssh/id_rsa, id_ed25519, id_ecdsa automatically",
             ));
+        }
+    }
+
+    /// Names the bastion this connection inherits, in the ProxyJump row's subtitle.
+    ///
+    /// An inherited bastion used to be invisible here: the field showed the
+    /// connection's own `proxy_jump` and nothing else, so a connection routed
+    /// through a group's or the global jump host looked as if it went direct.
+    /// That matters more now that inheritance no longer depends on the SSH key
+    /// source and therefore applies to far more connections (issue #301).
+    ///
+    /// Only the group tier is resolved: the global tier lives in `AppSettings`,
+    /// which this dialog is not given, and saying "from a group" wrongly would be
+    /// worse than saying nothing. `Direct` reports that it is ignoring one.
+    pub(super) fn update_inherited_proxy_subtitle(&self, conn: &rustconn_core::models::Connection) {
+        use rustconn_core::config::NetworkSettings;
+        use rustconn_core::connection::ssh_inheritance::resolve_ssh_proxy_jump;
+        use rustconn_core::models::NetworkMode;
+
+        let default_subtitle = i18n("Jump host for tunneling (-J)");
+
+        if conn.network_mode == NetworkMode::Direct {
+            self.ssh_proxy_row
+                .set_subtitle(&i18n("Direct — an inherited jump host is ignored"));
+            return;
+        }
+
+        // A connection with its own value is not inheriting anything.
+        let own = match &conn.protocol_config {
+            ProtocolConfig::Ssh(cfg) | ProtocolConfig::Sftp(cfg) => cfg
+                .proxy_jump
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty()),
+            _ => false,
+        };
+        if own {
+            self.ssh_proxy_row.set_subtitle(&default_subtitle);
+            return;
+        }
+
+        let full_groups = self.full_groups_data.borrow();
+        let groups: Vec<rustconn_core::models::ConnectionGroup> =
+            full_groups.values().cloned().collect();
+        drop(full_groups);
+
+        match resolve_ssh_proxy_jump(conn, &groups, &NetworkSettings::default()) {
+            Some(inherited) => self
+                .ssh_proxy_row
+                .set_subtitle(&i18n_f("Inherited: {}", &[&inherited])),
+            None => self.ssh_proxy_row.set_subtitle(&default_subtitle),
         }
     }
 

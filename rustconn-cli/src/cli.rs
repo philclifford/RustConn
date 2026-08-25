@@ -276,6 +276,11 @@ pub enum Commands {
         #[arg(long, value_name = "TEXT")]
         proxy_command: Option<String>,
 
+        /// Where the bastion comes from: inherit (group chain, then the global
+        /// network settings) or direct (ignore any inherited bastion)
+        #[arg(long, value_name = "MODE", value_parser = ["inherit", "direct"])]
+        network_mode: Option<String>,
+
         /// Custom SSH option (repeatable, format: Key=Value)
         #[arg(long, value_name = "K=V", value_parser = parse_key_val)]
         ssh_option: Vec<(String, String)>,
@@ -781,6 +786,11 @@ pub enum Commands {
         /// (e.g., "ncat --proxy 127.0.0.1:9050 --proxy-type socks5 %h %p")
         #[arg(long, value_name = "TEXT")]
         proxy_command: Option<String>,
+
+        /// Where the bastion comes from: inherit (group chain, then the global
+        /// network settings) or direct (ignore any inherited bastion)
+        #[arg(long, value_name = "MODE", value_parser = ["inherit", "direct"])]
+        network_mode: Option<String>,
 
         /// Custom SSH option (repeatable, format: Key=Value)
         #[arg(long, value_name = "K=V", value_parser = parse_key_val)]

@@ -158,9 +158,10 @@ fn build_ssh_config(
     connection: &Connection,
     connections: &[Connection],
     groups: &[ConnectionGroup],
+    network: &crate::config::NetworkSettings,
 ) -> Option<String> {
     let cfg = ssh_config(connection)?;
-    let chain = crate::connection::resolve_jump_chain(connection, connections, groups);
+    let chain = crate::connection::resolve_jump_chain(connection, connections, groups, network);
     let known_hosts = crate::flatpak::get_flatpak_known_hosts_path();
 
     let mut out = String::with_capacity(512);
@@ -333,8 +334,9 @@ pub fn prepare_mc_ssh_env(
     connection: &Connection,
     connections: &[Connection],
     groups: &[ConnectionGroup],
+    network: &crate::config::NetworkSettings,
 ) -> Option<McSshEnv> {
-    let config_text = build_ssh_config(connection, connections, groups)?;
+    let config_text = build_ssh_config(connection, connections, groups, network)?;
 
     let root = wrapper_root();
     let wrapper_dir = root.join(session_id.as_hyphenated().to_string());
@@ -491,7 +493,9 @@ mod tests {
     #[test]
     fn non_ssh_connection_produces_no_config() {
         let conn = Connection::new_rdp("rdp".to_string(), "host".to_string(), 3389);
-        assert!(build_ssh_config(&conn, &[], &[]).is_none());
+        assert!(
+            build_ssh_config(&conn, &[], &[], &crate::config::NetworkSettings::default()).is_none()
+        );
     }
 
     #[test]
@@ -500,7 +504,13 @@ mod tests {
         let mut conn = ssh("target", "target.example.com", 22, Some("me"));
         set_jump_host_id(&mut conn, bastion.id);
 
-        let cfg = build_ssh_config(&conn, std::slice::from_ref(&bastion), &[]).unwrap();
+        let cfg = build_ssh_config(
+            &conn,
+            std::slice::from_ref(&bastion),
+            &[],
+            &crate::config::NetworkSettings::default(),
+        )
+        .unwrap();
         assert!(cfg.contains("Host target.example.com\n"));
         assert!(cfg.contains("ProxyJump ops@jump.example.com\n"));
     }
@@ -508,7 +518,8 @@ mod tests {
     #[test]
     fn config_ends_with_a_reset_before_the_user_include() {
         let conn = ssh("target", "target.example.com", 22, Some("me"));
-        let cfg = build_ssh_config(&conn, &[], &[]).unwrap();
+        let cfg =
+            build_ssh_config(&conn, &[], &[], &crate::config::NetworkSettings::default()).unwrap();
         // `Match all` must precede the include, or it would be scoped to the
         // preceding Host block and never apply.
         assert!(cfg.ends_with("Match all\n    Include ~/.ssh/config\n"));
@@ -526,7 +537,13 @@ mod tests {
         set_key(&mut conn, &target_key);
         set_jump_host_id(&mut conn, bastion.id);
 
-        let cfg = build_ssh_config(&conn, std::slice::from_ref(&bastion), &[]).unwrap();
+        let cfg = build_ssh_config(
+            &conn,
+            std::slice::from_ref(&bastion),
+            &[],
+            &crate::config::NetworkSettings::default(),
+        )
+        .unwrap();
         assert!(cfg.contains("Host jump.example.com\n"));
         // Each key lands under its own host, not merged into one block.
         let mut blocks = cfg.split("\nHost jump.example.com");
@@ -542,7 +559,13 @@ mod tests {
         let mut conn = ssh("target", "target.example.com", 22, Some("me"));
         set_jump_host_id(&mut conn, bastion.id);
 
-        let cfg = build_ssh_config(&conn, std::slice::from_ref(&bastion), &[]).unwrap();
+        let cfg = build_ssh_config(
+            &conn,
+            std::slice::from_ref(&bastion),
+            &[],
+            &crate::config::NetworkSettings::default(),
+        )
+        .unwrap();
         // Nothing to say about the hop, so no empty block is emitted. (Outside
         // Flatpak there is no known_hosts override to add either.)
         if crate::flatpak::get_flatpak_known_hosts_path().is_none() {
@@ -558,7 +581,8 @@ mod tests {
                 .insert("HostKeyAlias".to_string(), "printer.local".to_string());
         }
 
-        let cfg = build_ssh_config(&conn, &[], &[]).unwrap();
+        let cfg =
+            build_ssh_config(&conn, &[], &[], &crate::config::NetworkSettings::default()).unwrap();
         assert!(cfg.contains("HostKeyAlias printer.local\n"));
     }
 
@@ -571,7 +595,13 @@ mod tests {
             cfg.proxy_command = Some("ncat --proxy 127.0.0.1:9050 %h %p".to_string());
         }
 
-        let cfg = build_ssh_config(&conn, std::slice::from_ref(&bastion), &[]).unwrap();
+        let cfg = build_ssh_config(
+            &conn,
+            std::slice::from_ref(&bastion),
+            &[],
+            &crate::config::NetworkSettings::default(),
+        )
+        .unwrap();
         assert!(cfg.contains("ProxyCommand ncat --proxy 127.0.0.1:9050 %h %p\n"));
         assert!(!cfg.contains("ProxyJump "));
     }
@@ -585,11 +615,13 @@ mod tests {
         }
         // IdentitiesOnly without an identity file would hide every agent key and
         // break authentication outright, so it is gated on having one.
-        let without_key = build_ssh_config(&conn, &[], &[]).unwrap();
+        let without_key =
+            build_ssh_config(&conn, &[], &[], &crate::config::NetworkSettings::default()).unwrap();
         assert!(!without_key.contains("IdentitiesOnly"));
 
         set_key(&mut conn, &key_file(dir.path(), "target"));
-        let with_key = build_ssh_config(&conn, &[], &[]).unwrap();
+        let with_key =
+            build_ssh_config(&conn, &[], &[], &crate::config::NetworkSettings::default()).unwrap();
         assert!(with_key.contains("IdentitiesOnly yes\n"));
     }
 
@@ -609,7 +641,13 @@ mod tests {
         set_key(&mut conn, &target_key);
         set_jump_host_id(&mut conn, bastion.id);
 
-        let text = build_ssh_config(&conn, std::slice::from_ref(&bastion), &[]).unwrap();
+        let text = build_ssh_config(
+            &conn,
+            std::slice::from_ref(&bastion),
+            &[],
+            &crate::config::NetworkSettings::default(),
+        )
+        .unwrap();
         let path = dir.path().join("config");
         std::fs::write(&path, &text).unwrap();
 
@@ -640,7 +678,13 @@ mod tests {
     fn wrapper_is_written_and_points_at_a_real_ssh() {
         let conn = ssh("target", "target.example.com", 22, Some("me"));
         let session = Uuid::new_v4();
-        let Some(env) = prepare_mc_ssh_env(session, &conn, &[], &[]) else {
+        let Some(env) = prepare_mc_ssh_env(
+            session,
+            &conn,
+            &[],
+            &[],
+            &crate::config::NetworkSettings::default(),
+        ) else {
             return;
         };
 
@@ -683,8 +727,13 @@ mod tests {
         set_jump_host_id(&mut conn, bastion.id);
 
         let session = Uuid::new_v4();
-        let Some(env) = prepare_mc_ssh_env(session, &conn, std::slice::from_ref(&bastion), &[])
-        else {
+        let Some(env) = prepare_mc_ssh_env(
+            session,
+            &conn,
+            std::slice::from_ref(&bastion),
+            &[],
+            &crate::config::NetworkSettings::default(),
+        ) else {
             return;
         };
 

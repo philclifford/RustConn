@@ -291,8 +291,14 @@ fn build_ssh_command_args(
     // the nested ProxyCommand ssh, NOT via the VTE prompt.
     let mut first_hop_password: Option<SecretString> = None;
 
-    // Handle string-based proxy jump (legacy/manual or inherited from group)
-    if let Some(proxy) = ssh_inheritance::resolve_ssh_proxy_jump(conn, groups) {
+    // Handle string-based proxy jump: the connection's own, or one inherited
+    // from its group chain or from the global network settings.
+    let network = state
+        .try_borrow()
+        .ok()
+        .map(|s| s.settings().network.clone())
+        .unwrap_or_default();
+    if let Some(proxy) = ssh_inheritance::resolve_ssh_proxy_jump(conn, groups, &network) {
         jump_hosts.push(proxy);
     }
 
@@ -827,7 +833,8 @@ pub fn start_ssh_connection_observed(
         .ok()
         .map(|s| s.list_groups_owned())
         .unwrap_or_default();
-    let has_inherited_proxy = ssh_inheritance::resolve_ssh_proxy_jump(conn, &groups).is_some();
+    let has_inherited_proxy =
+        ssh_inheritance::resolve_ssh_proxy_jump(conn, &groups, &settings.network).is_some();
     // Use centralized probe-bypass logic + inherited proxy jump from groups
     let should_check = conn.should_pre_connect_check(&settings.connection) && !has_inherited_proxy;
 
@@ -1007,13 +1014,20 @@ fn start_ssh_connection_internal(
         .ok()
         .map(|s| s.list_groups_owned())
         .unwrap_or_default();
+    // The outermost bastion tier, below the group chain.
+    let network = state
+        .try_borrow()
+        .ok()
+        .map(|s| s.settings().network.clone())
+        .unwrap_or_default();
 
     // Detect jump host / proxy for status detection and monitoring
     let has_jump_host = matches!(
         &conn.protocol_config,
         rustconn_core::ProtocolConfig::Ssh(ssh)
             if ssh.jump_host_id.is_some() || ssh.proxy_command.is_some()
-    ) || ssh_inheritance::resolve_ssh_proxy_jump(conn, &groups).is_some();
+    ) || ssh_inheritance::resolve_ssh_proxy_jump(conn, &groups, &network)
+        .is_some();
 
     // Apply variable substitution to host and username (e.g., ${VAR_NAME} -> actual value)
     let host = substitute_variables(&conn.host, &global_variables);
@@ -1403,12 +1417,19 @@ pub fn reconnect_ssh_in_place(
         .ok()
         .map(|s| s.list_groups_owned())
         .unwrap_or_default();
+    // The outermost bastion tier, below the group chain.
+    let network = state
+        .try_borrow()
+        .ok()
+        .map(|s| s.settings().network.clone())
+        .unwrap_or_default();
 
     let has_jump_host = matches!(
         &conn.protocol_config,
         rustconn_core::ProtocolConfig::Ssh(ssh)
             if ssh.jump_host_id.is_some() || ssh.proxy_command.is_some()
-    ) || ssh_inheritance::resolve_ssh_proxy_jump(&conn, &groups).is_some();
+    ) || ssh_inheritance::resolve_ssh_proxy_jump(&conn, &groups, &network)
+        .is_some();
 
     // Build SSH args (shared with start_ssh_connection).
     let (identity_file, extra_args, use_waypipe, jump_host_chain, jump_host_passwords) =

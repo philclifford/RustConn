@@ -544,9 +544,14 @@ pub fn show_edit_group_dialog(
         .subtitle(i18n("SSH settings inherited by connections in this group"))
         .show_enable_switch(true)
         .build();
+    // `ssh_jump_host_id` belongs in this list: a group configured with *only* a
+    // Jump Host used to open with the switch off, and because the off branch of
+    // the save handler clears all five fields, the next save silently threw it
+    // away.
     let has_ssh_settings = group.ssh_auth_method.is_some()
         || group.ssh_key_path.is_some()
         || group.ssh_proxy_jump.is_some()
+        || group.ssh_jump_host_id.is_some()
         || group.ssh_agent_socket.is_some();
     ssh_expander.set_enable_expansion(has_ssh_settings);
     ssh_expander.set_expanded(has_ssh_settings);
@@ -770,14 +775,18 @@ pub fn show_edit_group_dialog(
         let agent_socket = ssh_agent_socket_row.clone();
         move |selected: u32| {
             // 0=None, 1=Password, 2=PublicKey, 3=Agent, 4=KeyboardInteractive, 5=SecurityKey
-            let method_selected = selected != 0;
             let needs_key = matches!(selected, 2 | 5); // PublicKey or SecurityKey
             let needs_agent = selected == 3; // Agent
 
             key_path.set_visible(needs_key);
-            jump_host_row.set_visible(method_selected);
-            proxy_jump.set_visible(method_selected);
             agent_socket.set_visible(needs_agent);
+            // The two bastion rows stay visible for every auth method, including
+            // "None". A bastion is how the group is *reached*; which credential
+            // the connections then present is a separate question, and hiding
+            // them behind an auth method meant a group could not have a jump host
+            // without also picking one.
+            jump_host_row.set_visible(true);
+            proxy_jump.set_visible(true);
         }
     };
 
