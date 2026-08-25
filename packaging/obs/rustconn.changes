@@ -1,4 +1,60 @@
 -------------------------------------------------------------------
+Tue Aug 25 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.9
+- Version bump to 0.20.9
+- Added: a connection can take its jump host from its group or from the
+  application — three tiers are consulted, nearest first: the connection's own
+  Jump Host, then the group chain, then a new Settings → Connection → Network
+  group holding a Global Jump Host and a Global ProxyJump. A new Network Mode
+  row chooses between "Inherit from group or global" and "Direct";
+  rustconn-cli gained --network-mode inherit|direct (issue #301)
+- Fixed: a group's Jump Host was never used — the picker stored the choice and
+  showed it again when reopened, but nothing read it at connect time. Two
+  further defects in the same dialog: a group configured with only a jump host
+  opened with the SSH switch off and threw the host away on the next save, and
+  the bastion rows were hidden until an authentication method was chosen
+  (issue #301)
+- Fixed: whether a connection inherited its proxy depended on where it got its
+  SSH key — the group chain was walked only when the key source was "Inherit
+  from group", which made a group bastion and a connection-level key file
+  mutually exclusive, while RDP, VNC and SPICE inherited unconditionally with
+  no way to refuse. Inheritance now keys off Network Mode and reads the same
+  for every protocol
+- Fixed: rustconn-cli group set --ssh-proxy-jump "" produced ssh -J "" — an
+  empty value now clears the setting, for --ssh-agent-socket too
+- Fixed: a pinned connection's real row never updated — a pinned connection is
+  in the sidebar twice and the four update walkers stopped at the first match,
+  so the row in its group or at the root had no status icon, recording dot,
+  external-viewer emblem or split marker, and its context menu offered Connect
+  for a session that was already open (issue #302)
+- Fixed: the recording dot, the external-viewer emblem and the split marker
+  vanished on any sidebar reload — a rename, a duplicate, a pin toggle, a
+  re-sort or a drag-drop cleared them until the next session event
+- Fixed: the Simplified Chinese translation has never loaded, in any package —
+  every install path derives the locale directory from the catalogue filename,
+  so zh-cn.po was installed to share/locale/zh-cn/ while gettext looks up
+  zh_CN. The catalogue is now po/zh_CN.po and a stored zh-cn language choice
+  keeps working
+- Fixed: Settings populated its connection dropdowns before it was given the
+  connection list, so the startup-action picker had nothing to choose
+- Changed: the sidebar's "Open new session" is offered whenever there is a
+  session to duplicate, not only for external-viewer sessions (issue #302)
+- Changed: a server that runs RDS licensing is named as such instead of
+  "incompatible" — the session still falls back to the external FreeRDP
+  client, which connects; the cause is upstream (IronRDP #1629)
+- Changed: an OpenH264 library that is installed but refused now says why —
+  the loader compares its SHA-256 against the binaries Cisco itself publishes,
+  so no distribution build can pass. RUSTCONN_OPENH264 names a library to try
+  before anything else
+- Improved: every Secret Service call has a deadline, not just the GUI's whole
+  credential resolution — rustconn-cli had no bound at all and could wait
+  forever on a locked keyring
+- Improved: the ProxyJump row's subtitle names the bastion a connection has
+  inherited, or says that Direct is ignoring one
+- Packaging: the rpmlint errors on the OBS build are cleared — the Summary is
+  within the 79-character limit, %find_lang generates the locale file list, and
+  Requires on libadwaita and libasound2 are gone since rpm derives both from
+  the linked binary. A %check section runs the rustconn-core suites
+-------------------------------------------------------------------
 Mon Aug 24 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.8
 - Version bump to 0.20.8
 - Fixed: the sidebar context menu did not open when there was no room for it

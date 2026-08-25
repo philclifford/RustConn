@@ -308,6 +308,41 @@ cargo test --release --offline -p rustconn-core
 %{_datadir}/icons/hicolor/*/apps/io.github.totoshko88.RustConn.*
 
 %changelog
+* Tue Aug 25 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.9-0
+- Version bump to 0.20.9
+- Added: a connection can take its jump host from its group or from the
+  application — the connection's own Jump Host, then the group chain, then a
+  new global tier in Settings → Connection → Network. A Network Mode row
+  chooses between inheriting and Direct; rustconn-cli gained --network-mode
+  (issue #301)
+- Fixed: a group's Jump Host was never used — the picker stored the choice but
+  nothing read it at connect time, a group with only a jump host lost it on the
+  next save, and the bastion rows were hidden until an authentication method
+  was chosen (issue #301)
+- Fixed: whether a connection inherited its proxy depended on where it got its
+  SSH key, and RDP, VNC and SPICE inherited unconditionally with no way to
+  refuse; inheritance now keys off Network Mode
+- Fixed: rustconn-cli group set --ssh-proxy-jump "" produced ssh -J ""
+- Fixed: a pinned connection's real row never updated — no status icon,
+  recording dot, external-viewer emblem or split marker, and a context menu
+  that offered Connect for an open session (issue #302)
+- Fixed: the recording dot, external-viewer emblem and split marker vanished on
+  any sidebar reload
+- Fixed: the Simplified Chinese translation has never loaded in any package —
+  zh-cn.po was installed to share/locale/zh-cn/ while gettext looks up zh_CN;
+  the catalogue is now po/zh_CN.po
+- Fixed: Settings populated its connection dropdowns before it had the list
+- Changed: the sidebar's "Open new session" is offered whenever there is a
+  session to duplicate, not only for external viewers (issue #302)
+- Changed: a server that runs RDS licensing is named as such instead of
+  "incompatible"; the external FreeRDP fallback is unchanged
+- Changed: an OpenH264 library that is installed but refused now says why, and
+  RUSTCONN_OPENH264 names a library to try first
+- Improved: every Secret Service call has a deadline, not just the GUI's whole
+  credential resolution
+- Packaging: rpmlint errors cleared — Summary within 79 characters, %find_lang
+  for the locale files, no Requires that rpm already derives, and a %check
+  section running the rustconn-core suites
 * Mon Aug 24 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.8-0
 - Version bump to 0.20.8
 - Fixed: the sidebar context menu did not open when there was no room for it
