@@ -225,6 +225,30 @@ For hardware tokens that expose keys through a PKCS#11 library (YubiKey PIV, Ope
 
 > **Through a jump host:** OpenSSH does **not** pass `-o PKCS11Provider` to `ProxyJump` child connections. To authenticate the bastion itself with the token, enable the **PKCS#11 Provider** field on the *jump-host connection* — RustConn injects it into the first hop's `ProxyCommand` for terminal SSH and for RDP/VNC/SPICE tunnels. With a jump host the token may prompt once per hop, because each hop is a separate SSH process.
 
+### Network Mode and Where a Jump Host Comes From
+
+A connection can reach its target through a bastion without naming one itself. Three tiers are consulted, nearest first, and the first one that has a value wins:
+
+| Tier | Where it is set | Applies to |
+|------|-----------------|------------|
+| Connection | Edit connection → **SSH options → Connection** → *Jump Host* / *ProxyJump* | this connection only |
+| Group | Edit group → **SSH Settings** → *Jump Host* / *SSH Proxy Jump* | every connection in the group, and in its subgroups |
+| Global | Settings → **Connection** → *Network* → *Global Jump Host* / *Global ProxyJump* | every connection that inherits, including ungrouped ones |
+
+**Network Mode** (same group in the connection editor) decides whether the inherited tiers are consulted at all:
+
+- **Inherit from group or global** (default) — walk the group chain, then the global settings.
+- **Direct** — connect straight to the host and ignore any inherited bastion. A jump host set on the connection *itself* still applies; *Direct* refuses inherited ones, not explicit ones.
+
+The *ProxyJump* field's subtitle names the bastion a connection has inherited, so a connection routed through one is not silently doing so.
+
+Two notes on scope:
+
+- The **global** tier exists because a group cannot stand in for "everything". There is no single implicit root group — a top-level group is just a group with no parent, and there can be many — and an ungrouped connection has no chain to walk, so nothing set on a group can reach it.
+- *Jump Host* outranks *ProxyJump* at every tier: a saved connection also carries its port, its identity file and its own bastion chain, none of which fit in the text field.
+
+For RDP, VNC and SPICE a bastion means an SSH tunnel to it, set up automatically before the viewer starts. Those protocols have no SOCKS option of their own.
+
 **Advanced Tabs:**
 - **Advanced** — Window mode (Embedded/External/Fullscreen), remember window position, hide local cursor (embedded RDP/VNC/SPICE), Wake-on-LAN configuration (MAC address, broadcast, port, wait time), monitoring override (enable/disable per connection, overrides global setting)
 - **Automation** — Automatic login (expected text of the device's username/password prompts), expect rules for auto-responding to terminal patterns, pattern tester with built-in templates (Sudo, SSH Host Key, Login, etc.), pre-connect task, post-disconnect task (with conditions: first/last connection only)

@@ -167,7 +167,7 @@ Apply this discipline to avoid them:
 
 ## 17 Translation Languages
 
-be, cs, da, de, es, fr, it, ka, kk, nl, pl, pt, sk, sv, uk, uz, zh-cn
+be, cs, da, de, es, fr, it, ka, kk, nl, pl, pt, sk, sv, uk, uz, zh_CN
 
 This list said 16 and omitted `ka` (Georgian) until 2026-08-20, while
 `core-rules.md` and `AGENTS.md` both said 17 and included it. `ls po/*.po` is the

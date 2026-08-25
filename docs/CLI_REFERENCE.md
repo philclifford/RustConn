@@ -168,6 +168,7 @@ Options:
 | `--compression` | — | Enable compression (`-C` flag, SSH/SFTP only) |
 | `--startup-command` | — | Command to execute on SSH connection startup |
 | `--proxy-command` | — | SSH ProxyCommand (e.g. `"ncat --proxy 127.0.0.1:9050 --proxy-type socks5 %h %p"`) |
+| `--network-mode` | — | Where the bastion comes from: `inherit` (group chain, then the global network settings) or `direct` (ignore any inherited bastion) |
 | `--ssh-option` | — | Custom SSH option `K=V` (repeatable, e.g. `--ssh-option StrictHostKeyChecking=no`) |
 | `--local-forward` | — | Local port forwarding `L:H:P` (repeatable, e.g. `8080:localhost:80`) |
 | `--remote-forward` | — | Remote port forwarding `R:H:P` (repeatable, e.g. `9090:localhost:3000`) |
@@ -647,7 +648,7 @@ The `run` subcommand without `--execute` only prints the expanded command (safe 
 | `group list` | List all groups (`--format`) |
 | `group show <name>` | Show group details, child groups, and connections (`--format`) |
 | `group create` | Create a group (`--name`, `--parent`, `--description`, `--icon`) |
-| `group edit <name>` | Edit group properties (`--new-name`, `--parent`, `--description`, `--icon`, `--ssh-key-path`, `--ssh-auth-method`, `--ssh-proxy-jump`, `--ssh-agent-socket`, `--add-expect-rule`, `--clear-expect-rules`, `--add-post-login-script`, `--clear-post-login-scripts`, `--username-prompt`, `--password-prompt`) |
+| `group edit <name>` | Edit group properties (`--new-name`, `--parent`, `--description`, `--icon`, `--ssh-key-path`, `--ssh-auth-method`, `--ssh-proxy-jump`, `--ssh-agent-socket`, `--add-expect-rule`, `--clear-expect-rules`, `--add-post-login-script`, `--clear-post-login-scripts`, `--username-prompt`, `--password-prompt`). Passing an empty value to `--ssh-proxy-jump` or `--ssh-agent-socket` clears the setting. |
 | `group delete <name>` | Delete a group |
 | `group add-connection` | Add connection to group (`-g group -c connection`) |
 | `group remove-connection` | Remove connection from group (`-g group -c connection`) |

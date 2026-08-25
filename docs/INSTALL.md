@@ -225,7 +225,7 @@ ln -sf $(brew --prefix)/opt/rustconn/RustConn.app /Applications/RustConn.app
 | `rustconn-cli` | CLI tool for scripting and automation |
 | `rustconn-app` | Convenience launcher (opens .app bundle) |
 | `RustConn.app` | macOS application bundle with icon and environment setup |
-| Locales | 17 languages (be, cs, da, de, es, fr, it, ka, kk, nl, pl, pt, sk, sv, uk, uz, zh-cn) |
+| Locales | 17 languages (be, cs, da, de, es, fr, it, ka, kk, nl, pl, pt, sk, sv, uk, uz, zh_CN) |
 
 ### Optional: Password Manager CLIs
 
@@ -441,6 +441,46 @@ FreeRDP detection priority: `wlfreerdp3` > `wlfreerdp` > `sdl-freerdp3` > `sdl-f
 | Wayland forwarding | waypipe | `waypipe` |
 | Kubernetes | kubectl | `kubectl` |
 | MOSH | mosh | `mosh` |
+
+### H.264 in the Embedded RDP Client
+
+The embedded RDP client can use the GFX pipeline with H.264/AVC420, which costs
+noticeably less bandwidth and CPU against a modern Windows host than the RemoteFX
+path it otherwise falls back to. It needs an OpenH264 library — and **a
+distribution package will not do**, however recent it is:
+
+```
+OpenH264 at this path is not one of Cisco's published binaries, so the loader
+refuses it — this is expected for a distribution package.
+```
+
+The loader (`openh264-sys2`, via `ironrdp-egfx`) compares the library's SHA-256
+against a list of the binaries **Cisco itself publishes** and refuses anything
+else. That is not a bug to work around: Cisco pays the H.264 patent royalties for
+the binaries it distributes, which is why the upstream crate documents downloading
+the library from Cisco rather than building or packaging it. `libopenh264-8`,
+Fedora's `libopenh264` and a local build from the Cisco *source* tarball are all
+refused for the same reason.
+
+To enable it, fetch a matching binary from
+[ciscobinary.openh264.org](http://ciscobinary.openh264.org/) (the versions the
+loader accepts are listed in `openh264-sys2`'s `blobs/hashes.txt` — 2.6.0 at the
+time of writing) and point RustConn at it:
+
+```bash
+mkdir -p ~/.local/lib
+# extract the downloaded .so, e.g. libopenh264-2.6.0-linux64.8.so
+export RUSTCONN_OPENH264=~/.local/lib/libopenh264-2.6.0-linux64.8.so
+```
+
+`RUSTCONN_OPENH264` is read at startup and tried before every other path, so no
+root and no system directory is needed. Set it in your session's environment (or
+in the `.desktop` file's `Exec=` line) to make it stick.
+
+Without it the session simply uses RemoteFX and works. Note this affects the
+**embedded** client only — the external FreeRDP fallback has no such check and
+uses the distribution package for `/gfx:AVC420`, which is why `libopenh264`
+remains a recommended package.
 
 ### Optional Password Managers
 
