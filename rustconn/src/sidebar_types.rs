@@ -40,6 +40,40 @@ pub struct SessionStatusInfo {
     pub active_count: usize,
 }
 
+/// Row decorations that have to survive a sidebar rebuild.
+///
+/// `rebuild_sidebar_sorted` throws the whole tree away and builds new
+/// [`ConnectionItem`]s, so any state that only ever arrived through a property
+/// setter is gone with the old objects. The connected/connecting/failed status
+/// already had [`SessionStatusInfo`] to be read back from; these three had
+/// nothing, so every reload — a rename, a duplicate, a pin toggle, a re-sort, a
+/// drag-drop — silently cleared the recording dot, the external-viewer emblem
+/// and the split marker, for pinned and unpinned connections alike.
+///
+/// Kept apart from [`SessionStatusInfo`] on purpose: that one is session
+/// bookkeeping (how many sessions are open), this one is what the row draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowIndicators {
+    /// A session of this connection is being recorded.
+    pub recording: bool,
+    /// The connection has at least one external-viewer session (issue #209).
+    pub external_session: bool,
+    /// Split palette index, or `-1` when the session is not in a split (R6.2).
+    pub split_color: i32,
+}
+
+impl Default for RowIndicators {
+    fn default() -> Self {
+        Self {
+            recording: false,
+            external_session: false,
+            // Matches the `split-color` property's "not in a split" value; a
+            // derived `Default` would give 0, i.e. the first palette colour.
+            split_color: -1,
+        }
+    }
+}
+
 /// Drop position relative to a target item
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DropPosition {
