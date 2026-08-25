@@ -49,10 +49,12 @@ pub struct NetworkPageWidgets {
 pub fn create_network_group() -> NetworkPageWidgets {
     let group = adw::PreferencesGroup::builder()
         .title(i18n("Network"))
-        .description(i18n(
-            "Applied to connections whose network mode is Inherit. A connection \
-             with its own jump host, or set to Direct, ignores these.",
-        ))
+        // One line, deliberately: xgettext reads this file as C, where a
+        // backslash-newline splices the literal but keeps the indentation that
+        // follows. Rust strips it. The two disagree, so a continued string ends
+        // up in the catalogue with whitespace the running program never sends and
+        // the lookup misses — the entry is translated and renders in English.
+        .description(i18n("Applied to connections that inherit their jump host"))
         .build();
 
     let jump_host_data: Rc<RefCell<Vec<(Option<Uuid>, String)>>> =
@@ -66,8 +68,7 @@ pub fn create_network_group() -> NetworkPageWidgets {
     jump_host_dropdown.set_size_request(200, -1);
     jump_host_dropdown.set_hexpand(false);
     jump_host_dropdown.set_tooltip_text(Some(&i18n(
-        "A saved SSH connection also carries its port, identity file and its own \
-         jump host, which the text field below cannot express.",
+        "A saved connection also carries its port, identity file and its own jump host",
     )));
 
     let jump_host_row = adw::ActionRow::builder()
@@ -81,9 +82,10 @@ pub fn create_network_group() -> NetworkPageWidgets {
     let proxy_jump_row = adw::EntryRow::builder()
         .title(i18n("Global ProxyJump"))
         .build();
+    // Does not quote the "(None)" label: that label is itself translated, so
+    // naming it here would leave the two to drift apart per locale.
     proxy_jump_row.set_tooltip_text(Some(&i18n(
-        "OpenSSH ProxyJump syntax, for example user@bastion. Used when Global \
-         Jump Host is (None).",
+        "OpenSSH syntax, for example user@bastion. Used when no Global Jump Host is selected",
     )));
     group.add(&proxy_jump_row);
 
