@@ -8,7 +8,10 @@
 Name:           rustconn
 Version:        0.20.8
 Release:        0
-Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
+# rpmlint caps Summary at 79 characters (summary-too-long, badness 200); the
+# protocol list belongs in %description, which has room for all of it. Kept in
+# step with debian.control's short description.
+Summary:        Modern connection manager for SSH, RDP, VNC, SPICE and more
 License:        GPL-3.0-or-later
 URL:            https://github.com/totoshko88/RustConn
 Source0:        %{name}-%{version}.tar.xz
@@ -63,20 +66,22 @@ BuildRequires:  gettext-devel
 %endif
 
 # Runtime dependencies
+#
+# libadwaita and the ALSA library are deliberately absent: rpm derives
+# `libadwaita-1.so.0()(64bit)` and `libasound.so.2()(64bit)` from the linked ELF
+# by itself, so naming them by hand only adds a second, weaker claim — rpmlint
+# flags it as explicit-lib-dependency, and on openSUSE `libadwaita` is not even a
+# package name (the shared library lives in `libadwaita-1-0`).
 %if 0%{?suse_version}
 Requires:       gtk4 >= 4.14
-Requires:       libadwaita
 Requires:       vte >= 0.74
 Requires:       openssh-clients
-Requires:       libasound2
 %endif
 
 %if 0%{?fedora} || 0%{?rhel}
 Requires:       gtk4 >= 4.14
-Requires:       libadwaita
 Requires:       vte291-gtk4
 Requires:       openssh-clients
-Requires:       alsa-lib
 %endif
 
 # Optional runtime dependencies
@@ -85,8 +90,12 @@ Recommends:     tigervnc
 Recommends:     virt-viewer
 Recommends:     picocom
 Recommends:     kubectl
-# Without an H.264 decoder the embedded RDP client cannot use the EGFX pipeline
-# and falls back to RemoteFX, which costs noticeably more bandwidth and CPU.
+# Used by the external FreeRDP fallback client for /gfx:AVC420, which accepts a
+# distribution build. The *embedded* client cannot: it loads through
+# openh264-sys2, which validates the library's SHA-256 against Cisco's own
+# published binaries and refuses everything else, so H.264 in embedded mode needs
+# a blob from ciscobinary.openh264.org and RUSTCONN_OPENH264 pointing at it.
+# See docs/INSTALL.md.
 Recommends:     libopenh264
 
 %description
@@ -260,7 +269,10 @@ if [ -f "rustconn/assets/icons/hicolor/scalable/apps/io.github.totoshko88.RustCo
         "%{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.totoshko88.RustConn.svg"
 fi
 
-# Locale files (compile .po to .mo)
+# Locale files (compile .po to .mo). The .po basename *is* the locale directory
+# name, which is why the catalogue is `zh_CN.po` and not `zh-cn.po`: gettext looks
+# up `zh_CN`, so the hyphenated directory this used to create was never found and
+# the Chinese translation never loaded.
 for po_file in po/*.po; do
     [ -f "$po_file" ] || continue
     lang=$(basename "$po_file" .po)
@@ -268,7 +280,23 @@ for po_file in po/*.po; do
     msgfmt -o "%{buildroot}%{_datadir}/locale/$lang/LC_MESSAGES/rustconn.mo" "$po_file"
 done
 
-%files
+# Generates rustconn.lang with a %%lang() marker per catalogue, so locale
+# filtering works and rpm owns the directories. Replaces the hand-maintained
+# %%dir entries that were needed for locales the base system does not create.
+%find_lang %{name}
+
+%check
+# Domain logic only: the GUI crate's tests want a display, and rustconn-core is
+# where the property and unit suites live. --offline because OBS has no network
+# and everything is vendored.
+%if 0%{?suse_version}
+%{cargo_test} -p rustconn-core
+%else
+export PATH="$PWD/rust-toolchain/bin:$PATH"
+cargo test --release --offline -p rustconn-core
+%endif
+
+%files -f %{name}.lang
 %license LICENSE
 %doc README.md CHANGELOG.md docs/
 %{_bindir}/rustconn
@@ -278,11 +306,6 @@ done
 %{_datadir}/mime/packages/io.github.totoshko88.RustConn-vv.xml
 %{_datadir}/metainfo/io.github.totoshko88.RustConn.metainfo.xml
 %{_datadir}/icons/hicolor/*/apps/io.github.totoshko88.RustConn.*
-%dir %{_datadir}/locale/uz
-%dir %{_datadir}/locale/uz/LC_MESSAGES
-%dir %{_datadir}/locale/zh-cn
-%dir %{_datadir}/locale/zh-cn/LC_MESSAGES
-%{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
 * Mon Aug 24 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.8-0
