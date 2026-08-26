@@ -171,8 +171,13 @@ else
 
     # --all-targets, never --all-features: the latter enables a gtk3 path that
     # fails at build time on a missing gdk-3.0.pc.
+    #
+    # `-- -D warnings` matches what the CI clippy job runs. Without it clippy
+    # exits 0 on a pedantic warning and this gate reported `ok` for a tree CI
+    # would reject — the Definition of Done says zero warnings, so the gate has
+    # to fail on one.
     clippy_mark=$(wc -l <"$log")
-    run_gate 'cargo clippy --all-targets' "$CARGO" clippy --all-targets
+    run_gate 'cargo clippy --all-targets' "$CARGO" clippy --all-targets -- -D warnings
 
     # A cache hit prints "Finished ... in 0.2s" and reports zero warnings without
     # looking at anything. Treat that as unverified, not as a pass.
@@ -182,9 +187,26 @@ else
         results+=("WARN	cargo clippy — cache hit, nothing re-checked")
     fi
 
+    # Every packaging build — deb, RPM, AppImage, Flatpak, snap — compiles the
+    # CLI as `-p rustconn-cli --features full`. The gate above uses default
+    # features, and `rustconn-cli` defaults to *nothing*: the `client-launch` and
+    # `secret-management` modules are `#[cfg(feature = ...)]` and are not
+    # compiled at all, so a type error inside them is invisible here.
+    #
+    # That is not hypothetical. v0.20.9 was tagged with a three-argument call to
+    # a four-argument `build_sftp_browser_uri` inside the `client-launch` block:
+    # every local gate was green, and all four packaging jobs failed on it. CI
+    # does cover it, via `cargo test -p rustconn-cli --features full`, but that
+    # job runs on the push that carries the tag — too late to stop the release,
+    # and on that day Actions was down and it never ran at all.
+    run_gate 'cargo clippy -p rustconn-cli --features full' \
+        "$CARGO" clippy -p rustconn-cli --features full --all-targets -- -D warnings
+
     if [ "$tests" -eq 1 ]; then
         say '  ...  cargo test --workspace (~2.5 min)'
         run_gate 'cargo test --workspace' "$CARGO" test --workspace
+        run_gate 'cargo test -p rustconn-cli --features full' \
+            "$CARGO" test -p rustconn-cli --features full
     fi
 fi
 

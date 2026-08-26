@@ -61,6 +61,64 @@ fn run_mc(
     }
 }
 
+/// Opens the connection's remote filesystem in a desktop file manager.
+///
+/// Tries Dolphin, then Nautilus, then the platform URL opener, injecting the
+/// agent environment into each — on KDE, `xdg-open` routes through D-Bus to an
+/// already-running Dolphin that would not otherwise see it.
+///
+/// # Errors
+///
+/// Returns [`CliError::Protocol`] if the browser URI cannot be built and
+/// [`CliError::Connection`] if no file manager could be launched.
+#[cfg(feature = "client-launch")]
+fn open_in_file_manager(
+    connection: &rustconn_core::Connection,
+    connections: &[rustconn_core::Connection],
+    groups: &[rustconn_core::ConnectionGroup],
+    network: &rustconn_core::NetworkSettings,
+) -> Result<(), CliError> {
+    // Resolve the login home directory so the file manager opens where the
+    // user has access instead of the server root (issue #212).
+    let uri = rustconn_core::sftp::build_sftp_browser_uri(connection, connections, groups, network)
+        .ok_or_else(|| CliError::Protocol("Failed to build SFTP URI".to_string()))?;
+
+    // GVFS spawns its own `ssh` with a hardcoded argument list and reads no
+    // configuration we can point it at, so a bastion cannot be applied on this
+    // path at all.
+    if !rustconn_core::connection::resolve_jump_chain(connection, connections, groups, network)
+        .is_empty()
+    {
+        tracing::warn!(
+            name = %connection.name,
+            "This connection uses a jump host, which the file-manager \
+             path cannot route through. Use --mc or --cli instead."
+        );
+    }
+
+    tracing::info!(name = %connection.name, %uri, "Opening SFTP file browser");
+
+    for launcher in ["dolphin", "nautilus"] {
+        let mut proc = std::process::Command::new(launcher);
+        proc.args(["--new-window", &uri]);
+        rustconn_core::sftp::apply_agent_env(&mut proc);
+        if proc.spawn().is_ok() {
+            return Ok(());
+        }
+    }
+
+    let mut proc = std::process::Command::new(rustconn_core::secret::url_open_command());
+    proc.arg(&uri);
+    rustconn_core::sftp::apply_agent_env(&mut proc);
+    if proc.spawn().is_ok() {
+        return Ok(());
+    }
+
+    Err(CliError::Connection(
+        "Failed to open file manager. Try --cli to use sftp directly".to_string(),
+    ))
+}
+
 /// Open SFTP session for an SSH connection
 ///
 /// # Errors
@@ -141,61 +199,7 @@ pub(super) fn cmd_sftp(
     } else {
         #[cfg(feature = "client-launch")]
         {
-            // Resolve the login home directory so the file manager opens where the
-            // user has access instead of the server root (issue #212).
-            let uri =
-                rustconn_core::sftp::build_sftp_browser_uri(connection, &connections, &groups)
-                    .ok_or_else(|| CliError::Protocol("Failed to build SFTP URI".to_string()))?;
-
-            // GVFS spawns its own `ssh` with a hardcoded argument list and reads
-            // no configuration we can point it at, so a bastion cannot be
-            // applied on this path at all.
-            if !rustconn_core::connection::resolve_jump_chain(
-                connection,
-                &connections,
-                &groups,
-                &network,
-            )
-            .is_empty()
-            {
-                tracing::warn!(
-                    name = %connection.name,
-                    "This connection uses a jump host, which the file-manager \
-                     path cannot route through. Use --mc or --cli instead."
-                );
-            }
-
-            tracing::info!(name = %connection.name, %uri, "Opening SFTP file browser");
-
-            // Launch file manager with agent env injected. On KDE,
-            // xdg-open routes through D-Bus to an already-running
-            // Dolphin that won't have our env.
-            let mut proc = std::process::Command::new("dolphin");
-            proc.args(["--new-window", &uri]);
-            rustconn_core::sftp::apply_agent_env(&mut proc);
-            if proc.spawn().is_ok() {
-                return Ok(());
-            }
-
-            let mut proc = std::process::Command::new("nautilus");
-            proc.args(["--new-window", &uri]);
-            rustconn_core::sftp::apply_agent_env(&mut proc);
-            if proc.spawn().is_ok() {
-                return Ok(());
-            }
-
-            let mut proc = std::process::Command::new(rustconn_core::secret::url_open_command());
-            proc.arg(&uri);
-            rustconn_core::sftp::apply_agent_env(&mut proc);
-            if proc.spawn().is_ok() {
-                return Ok(());
-            }
-
-            return Err(CliError::Connection(
-                "Failed to open file manager. Try --cli to use sftp \
-                 directly"
-                    .to_string(),
-            ));
+            return open_in_file_manager(connection, &connections, &groups, &network);
         }
 
         #[cfg(not(feature = "client-launch"))]
