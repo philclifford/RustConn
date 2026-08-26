@@ -49,6 +49,9 @@ rustconn (0.20.9-1) unstable; urgency=medium
     wait forever on a locked keyring
   * Improved: the ProxyJump row's subtitle names the bastion a connection has
     inherited, or says that Direct is ignoring one
+  * Localisation: Simplified Chinese now loads; 13 new strings translated in
+    all 17 locales
+  * Dependencies: combine 4.6.7→4.6.8
  -- Anton Isaiev <totoshko88@gmail.com>  Tue, 25 Aug 2026 12:00:00 +0000
 rustconn (0.20.8-1) unstable; urgency=medium
 

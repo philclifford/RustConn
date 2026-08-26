@@ -54,6 +54,9 @@ Tue Aug 25 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.9
   within the 79-character limit, %find_lang generates the locale file list, and
   Requires on libadwaita and libasound2 are gone since rpm derives both from
   the linked binary. A %check section runs the rustconn-core suites
+- Localisation: Simplified Chinese now loads; 13 new strings translated in all
+  17 locales
+- Dependencies: combine 4.6.7→4.6.8
 -------------------------------------------------------------------
 Mon Aug 24 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.8
 - Version bump to 0.20.8

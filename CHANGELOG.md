@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`--ssh-proxy-jump` and the inherited-bastion state are visible in the connection editor** — the ProxyJump row's subtitle now names the bastion a connection has inherited, or says that *Direct* is ignoring one. An inherited bastion was previously invisible: the field showed the connection's own value and nothing else, so a connection routed through a group's jump host looked as if it went direct.
 
+### Dependencies
+
+- **Updated**: combine 4.6.7→4.6.8, the only crate `cargo update` could move. `cargo outdated` reports nothing else behind its latest release, and `cargo deny check advisories` reports no known vulnerabilities. Fifteen crates of the RustCrypto stack stay on `-rc` versions, pinned through ironrdp, picky and sspi — unchanged from 0.20.8, and still an upstream release rather than a lockfile change.
+
+- **Audited, no change needed**: every auto-resolving CLI download endpoint answered — kubectl 1.36.4, Tailscale 1.102.3, Teleport 18.10.0, Boundary 0.21.3, Hoop.dev 1.149.0, Bitwarden CLI 2026.8.0, 1Password CLI 2.39.0 — and TigerVNC, the only pinned CLI download, is current at 1.16.2.
+
 ### Internal
 
 - **A flaky test asserted something it could not guarantee** — `ssh_tunnel::tests::test_find_free_port` checked that the port it had just found was still bindable. Nothing holds a claim between the two calls, so anything on the machine, including another test in the same binary, can take it first; it failed that way once and passed on re-run. The bind is still attempted so a genuine failure surfaces, but `AddrInUse` is now reported as the expected race.

@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.20.8
+Version:        0.20.9
 Release:        0
 # rpmlint caps Summary at 79 characters (summary-too-long, badness 200); the
 # protocol list belongs in %description, which has room for all of it. Kept in
@@ -343,6 +343,9 @@ cargo test --release --offline -p rustconn-core
 - Packaging: rpmlint errors cleared — Summary within 79 characters, %find_lang
   for the locale files, no Requires that rpm already derives, and a %check
   section running the rustconn-core suites
+- Localisation: Simplified Chinese now loads; 13 new strings translated in all
+  17 locales
+- Dependencies: combine 4.6.7→4.6.8
 * Mon Aug 24 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.8-0
 - Version bump to 0.20.8
 - Fixed: the sidebar context menu did not open when there was no room for it
