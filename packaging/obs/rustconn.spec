@@ -316,6 +316,20 @@ cargo test --release --offline -p rustconn-core
   editor's Basic page chooses between inheriting and Direct — on Basic because
   the choice applies to every protocol, and the protocol pages show only one at
   a time; rustconn-cli gained --network-mode (issue #301)
+- Added: the external RDP client can be told how to size its window — a new
+  External Window row in the editor's Display group offers Fit to screen (the
+  default), Fullscreen, Custom resolution and All monitors. It governs the
+  External client mode and the window an embedded session hands over to;
+  rustconn-cli gained --rdp-display-mode and --rdp-resolution
+- Fixed: an external RDP window opened at about a quarter of a 4K screen — the
+  size handed to FreeRDP came from the embedded viewer's own widget geometry in
+  logical pixels. Every RDP profile also stored a 1920x1080 resolution nobody
+  chose, which that path then applied; a connection that deliberately used a
+  fixed size needs Custom resolution selected once
+- Fixed: External client mode ignored an RD Gateway completely and never
+  filtered custom FreeRDP arguments, while Display Scale and Color Depth were
+  collected from every connection and emitted by nobody. The three argument
+  builders are now the single one in rustconn-core
 - Fixed: a group's Jump Host was never used — the picker stored the choice but
   nothing read it at connect time, a group with only a jump host lost it on the
   next save, and the bastion rows were hidden until an authentication method

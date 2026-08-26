@@ -184,6 +184,7 @@ impl ConnectionDialog {
             rdp_remote_app_args_entry,
             rdp_remote_app_name_entry,
             rdp_graphics_mode_dropdown,
+            rdp_display_mode_dropdown,
         ) = crate::dialogs::connection::rdp::create_rdp_options();
         protocol_stack.add_named(&rdp_box, Some("rdp"));
 
@@ -522,6 +523,7 @@ impl ConnectionDialog {
             &ssh_port_forwards,
             &rdp_client_mode_dropdown,
             &rdp_performance_mode_dropdown,
+            &rdp_display_mode_dropdown,
             &rdp_width_spin,
             &rdp_height_spin,
             &rdp_color_dropdown,
@@ -756,6 +758,7 @@ impl ConnectionDialog {
             ssh_port_forwards_list,
             rdp_client_mode_dropdown,
             rdp_performance_mode_dropdown,
+            rdp_display_mode_dropdown,
             rdp_width_spin,
             rdp_height_spin,
             rdp_color_dropdown,

@@ -19,6 +19,57 @@ pub fn get_display() -> Option<gdk::Display> {
     gdk::Display::default()
 }
 
+/// The scale percentage to report when no window is mapped yet.
+///
+/// Also FreeRDP's own default, so a session launched before any window exists is
+/// requested with no DPI override rather than with a guessed one.
+const UNKNOWN_DISPLAY_SCALE_PERCENT: u16 = 100;
+
+/// Returns the scale of the display the application is on, as a percentage.
+///
+/// `100` means 100%; a 2× HiDPI monitor reports `200` and a fractional 125%
+/// monitor reports `125`.
+///
+/// An external protocol client opens its own top-level window, so unlike an
+/// embedded viewer it cannot be measured through the widget it draws into. The
+/// application's own window is the best available proxy — the client is placed
+/// by the compositor and lands on the focused monitor in practice.
+///
+/// Reads [`gdk::Surface::scale`] for the true fractional value rather than the
+/// integer `scale_factor()`, which rounds 125% up to 2 and so would report a
+/// fractional display as double.
+#[must_use]
+pub fn active_display_scale_percent() -> u16 {
+    use gtk4::gdk::prelude::SurfaceExt;
+    use gtk4::prelude::{Cast, GtkApplicationExt, NativeExt, WidgetExt};
+
+    let Some(window) = gtk4::gio::Application::default()
+        .and_then(|app| app.downcast::<gtk4::Application>().ok())
+        .and_then(|app| app.active_window())
+    else {
+        return UNKNOWN_DISPLAY_SCALE_PERCENT;
+    };
+
+    let scale = window
+        .surface()
+        .map(|surface| surface.scale())
+        .filter(|scale| *scale > 0.0)
+        // No surface means the window is not mapped; the integer scale factor is
+        // still meaningful and is all X11 without fractional scaling reports.
+        .unwrap_or_else(|| f64::from(window.scale_factor()));
+
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the value is clamped into the u16 range and is positive by construction"
+    )]
+    let percent = (scale * 100.0).round().clamp(
+        f64::from(UNKNOWN_DISPLAY_SCALE_PERCENT),
+        f64::from(u16::MAX),
+    ) as u16;
+    percent
+}
+
 /// Adds a CSS provider to the default display if available
 ///
 /// This is a safe wrapper around `style_context_add_provider_for_display`

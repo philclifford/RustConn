@@ -66,6 +66,17 @@ fn _never_called() {
     crate::i18n::i18n("Balanced");
     crate::i18n::i18n("Speed");
 
+    // === External window sizing labels from `display_name()` ===
+    // The "External Window" combo on the RDP page builds its rows with
+    // `i18n(mode.display_name())`.
+    //
+    // Pinned by `display_mode_labels_are_stable` in
+    // `rustconn-core/src/models/protocol.rs` — change them there first.
+    crate::i18n::i18n("Fit to screen");
+    crate::i18n::i18n("Fullscreen");
+    crate::i18n::i18n("Custom resolution");
+    crate::i18n::i18n("All monitors");
+
     // === Erase-mode dropdown labels from `display_name()` ===
     // `BackspaceSends`/`DeleteSends` build their dropdowns with
     // `i18n(mode.display_name())`, which xgettext cannot follow, so the labels

@@ -1218,6 +1218,11 @@ impl ConnectionDialog {
                 _ => 0, // Auto and any GFX variant → Auto
             });
 
+        // Set before the resolution, so the row's own visibility handler has
+        // already run by the time the spin buttons are filled.
+        self.rdp_display_mode_dropdown
+            .set_selected(rdp.external_display_mode.index());
+
         if let Some(ref res) = rdp.resolution {
             self.rdp_width_spin.set_value(f64::from(res.width));
             self.rdp_height_spin.set_value(f64::from(res.height));

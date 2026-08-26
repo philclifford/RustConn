@@ -118,6 +118,9 @@ pub(super) struct UpdateParams<'a> {
     pub serial_parity: Option<&'a str>,
     pub serial_flow_control: Option<&'a str>,
     pub serial_custom_arg: &'a [String],
+    // RDP
+    pub rdp_display_mode: Option<&'a str>,
+    pub rdp_resolution: Option<&'a str>,
     // Web
     pub browser_mode: Option<&'a str>,
     pub javascript: Option<bool>,
@@ -603,6 +606,13 @@ pub(super) fn cmd_update(
             );
         }
     }
+
+    // Apply RDP-specific settings
+    crate::commands::add::apply_rdp_display_options(
+        connection,
+        params.rdp_display_mode,
+        params.rdp_resolution,
+    )?;
 
     // Apply Web-specific settings
     if params.browser_mode.is_some()

@@ -469,6 +469,17 @@ pub enum Commands {
         #[arg(long, value_name = "ARG")]
         serial_custom_arg: Vec<String>,
 
+        // --- RDP-specific flags ---
+        /// How an external RDP window is sized: fit (default), fullscreen,
+        /// custom (needs --rdp-resolution), or multimon
+        #[arg(long, value_name = "MODE", value_parser = ["fit", "fullscreen", "custom", "multimon"])]
+        rdp_display_mode: Option<String>,
+
+        /// Fixed RDP resolution as WIDTHxHEIGHT, e.g. 2560x1440.
+        /// Implies --rdp-display-mode custom
+        #[arg(long, value_name = "WxH")]
+        rdp_resolution: Option<String>,
+
         // --- Web-specific flags ---
         /// Web browser mode: embedded (default on Linux), system, or custom
         #[arg(long, value_name = "MODE", value_parser = ["embedded", "system", "custom"])]
@@ -979,6 +990,17 @@ pub enum Commands {
         /// Custom serial client argument (repeatable)
         #[arg(long, value_name = "ARG")]
         serial_custom_arg: Vec<String>,
+
+        // --- RDP-specific flags ---
+        /// How an external RDP window is sized: fit (default), fullscreen,
+        /// custom (needs --rdp-resolution), or multimon
+        #[arg(long, value_name = "MODE", value_parser = ["fit", "fullscreen", "custom", "multimon"])]
+        rdp_display_mode: Option<String>,
+
+        /// Fixed RDP resolution as WIDTHxHEIGHT, e.g. 2560x1440.
+        /// Implies --rdp-display-mode custom
+        #[arg(long, value_name = "WxH")]
+        rdp_resolution: Option<String>,
 
         // --- Web-specific flags ---
         /// Web browser mode: embedded (default on Linux), system, or custom

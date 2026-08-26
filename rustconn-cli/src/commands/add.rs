@@ -120,6 +120,9 @@ pub(super) struct AddParams<'a> {
     pub serial_parity: Option<&'a str>,
     pub serial_flow_control: Option<&'a str>,
     pub serial_custom_arg: &'a [String],
+    // RDP
+    pub rdp_display_mode: Option<&'a str>,
+    pub rdp_resolution: Option<&'a str>,
     // Web
     pub browser_mode: Option<&'a str>,
     pub javascript: Option<bool>,
@@ -446,6 +449,13 @@ pub(super) fn cmd_add(config_path: Option<&Path>, params: AddParams<'_>) -> Resu
             );
         }
     }
+
+    // Apply RDP-specific settings
+    apply_rdp_display_options(
+        &mut connection,
+        params.rdp_display_mode,
+        params.rdp_resolution,
+    )?;
 
     // Apply Web-specific settings
     if params.browser_mode.is_some()
@@ -1343,6 +1353,63 @@ pub(super) fn apply_mosh_fields(
     for arg in params.mosh_custom_arg {
         cfg.custom_args.push(arg.clone());
     }
+    Ok(())
+}
+
+/// Applies `--rdp-display-mode` and `--rdp-resolution` to an RDP connection.
+///
+/// Shared by `add` and `update` because the two answer the same question. A
+/// resolution on its own implies the custom mode: asking for a specific size and
+/// then not using it is never what was meant. An explicit mode still wins, so
+/// `--rdp-resolution 2560x1440 --rdp-display-mode fullscreen` stores the size
+/// without applying it.
+///
+/// # Errors
+/// Returns [`CliError::Config`] if the resolution is not `WIDTHxHEIGHT` with two
+/// positive integers, or if either flag is given for a non-RDP connection —
+/// silently ignoring them would report success for a setting that was discarded.
+pub(super) fn apply_rdp_display_options(
+    connection: &mut rustconn_core::models::Connection,
+    display_mode: Option<&str>,
+    resolution: Option<&str>,
+) -> Result<(), CliError> {
+    if display_mode.is_none() && resolution.is_none() {
+        return Ok(());
+    }
+
+    let rustconn_core::models::ProtocolConfig::Rdp(ref mut cfg) = connection.protocol_config else {
+        return Err(CliError::Config(
+            "--rdp-display-mode and --rdp-resolution apply only to RDP connections".to_string(),
+        ));
+    };
+
+    if let Some(text) = resolution {
+        let parsed = rustconn_core::models::Resolution::parse(text).ok_or_else(|| {
+            CliError::Config(format!(
+                "--rdp-resolution expects WIDTHxHEIGHT with positive values, got {text:?}"
+            ))
+        })?;
+        cfg.resolution = Some(parsed);
+        cfg.external_display_mode = rustconn_core::models::RdpDisplayMode::Custom;
+    }
+
+    if let Some(name) = display_mode {
+        // Clap's `value_parser` restricts this to the four names, so a failure
+        // here means the two lists have drifted apart, not bad user input.
+        cfg.external_display_mode = rustconn_core::models::RdpDisplayMode::from_cli_name(name)
+            .ok_or_else(|| {
+                CliError::Config(format!("unknown --rdp-display-mode value {name:?}"))
+            })?;
+    }
+
+    if cfg.external_display_mode == rustconn_core::models::RdpDisplayMode::Custom
+        && cfg.resolution.is_none()
+    {
+        return Err(CliError::Config(
+            "--rdp-display-mode custom needs --rdp-resolution WIDTHxHEIGHT".to_string(),
+        ));
+    }
+
     Ok(())
 }
 

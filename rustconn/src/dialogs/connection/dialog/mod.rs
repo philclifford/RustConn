@@ -179,6 +179,7 @@ pub struct ConnectionDialog {
     // RDP fields
     rdp_client_mode_dropdown: DropDown,
     rdp_performance_mode_dropdown: DropDown,
+    rdp_display_mode_dropdown: DropDown,
     rdp_width_spin: SpinButton,
     rdp_height_spin: SpinButton,
     rdp_color_dropdown: DropDown,

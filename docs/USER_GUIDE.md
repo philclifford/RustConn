@@ -514,7 +514,7 @@ Protocol-specific options are configured in the connection dialog's protocol tab
 | Protocol | Options |
 |----------|---------|
 | SSH | Auth method (password, publickey, keyboard-interactive, agent, security-key/FIDO2), key source (default/file/agent), PKCS#11 provider (hardware token/smart card), proxy jump (Jump Host), ProxyJump, IdentitiesOnly, ControlMaster, agent forwarding, Waypipe (Wayland forwarding), X11 forwarding, compression, startup command, verbose mode, backspace/delete key behavior, custom SSH options, port forwarding (local/remote/dynamic) |
-| RDP | Client mode (embedded/external), performance mode (quality/balanced/speed), resolution, color depth, display scale override, audio redirection, RDP gateway (host, port, username), keyboard layout, disable NLA, clipboard sharing, shared folders, mouse jiggler (prevent idle disconnect, configurable interval 10–600s), autotype (send text as keystrokes, configurable inter-character and initial delay), custom FreeRDP arguments |
+| RDP | Client mode (embedded/external), external window sizing (fit to screen/fullscreen/custom resolution/all monitors), performance mode (quality/balanced/speed), resolution, color depth, display scale override, audio redirection, RDP gateway (host, port, username), keyboard layout, disable NLA, clipboard sharing, shared folders, mouse jiggler (prevent idle disconnect, configurable interval 10–600s), autotype (send text as keystrokes, configurable inter-character and initial delay), custom FreeRDP arguments |
 | VNC | Client mode (embedded/external), performance mode (quality/balanced/speed), encoding (Auto/Tight/ZRLE/Hextile/Raw/CopyRect), compression level, quality level, display scale override, view-only mode, scaling, clipboard sharing, custom arguments |
 | SPICE | TLS encryption, CA certificate (with inline validation), skip certificate verification, USB redirection, clipboard sharing, image compression (Auto/Off/GLZ/LZ/QUIC), proxy URL, shared folders |
 | MOSH | Predict mode (Adaptive/Always/Never), SSH port, UDP port range, server binary path, backspace/delete key behavior, custom arguments |
@@ -803,7 +803,7 @@ The toolbar is fully transparent and pass-through when hidden — it does not bl
 
 Know what goes with it. **Ctrl+Alt+Del has no keyboard route of its own**, and neither do Fit Resolution, Autotype, Scripts, Quick Actions or Save Files — all of those live only on the toolbar. Copy and Paste survive, because Ctrl+C / Ctrl+V reach the remote session directly, as does clipboard sync. Leave the toolbar on if you ever need to unlock a Windows login screen from inside the session.
 
-The setting is per connection and defaults to on, so existing connections are unaffected. Quick Connect, which has no saved profile, always keeps the toolbar. It can also be set from the CLI for VNC and Web connections (`--vnc-toolbar false`, `--web-toolbar false`); RDP has no CLI protocol options at all, so use the connection editor there.
+The setting is per connection and defaults to on, so existing connections are unaffected. Quick Connect, which has no saved profile, always keeps the toolbar. It can also be set from the CLI for VNC and Web connections (`--vnc-toolbar false`, `--web-toolbar false`); the RDP toolbar has no CLI flag, so use the connection editor for it. RDP's only CLI protocol options are `--rdp-display-mode` and `--rdp-resolution`.
 
 #### Mouse Jiggler
 
@@ -838,6 +838,23 @@ When the remote Windows user copies files to the clipboard (Ctrl+C in Explorer),
 
 This uses the RDP clipboard channel (`CF_HDROP` / `FILEDESCRIPTORW` format) and works without shared folders. Progress is tracked per-file. Only available in embedded mode (IronRDP), not with FreeRDP external.
 
+#### External Window Sizing
+
+*New in 0.20.9.* When an RDP session opens in a separate FreeRDP window, its size comes from **External Window** in the connection dialog's Display group:
+
+| External Window | Behaviour |
+|-----------------|-----------|
+| **Fit to screen** *(default)* | A decorated window covering the monitor (`/size:100%`). |
+| **Fullscreen** | Takes over the monitor completely (`/f`). |
+| **Custom resolution** | Uses the **Resolution** row below it (`/w:` + `/h:`). That row is only shown for this mode. |
+| **All monitors** | Spans every connected monitor (`/multimon`). |
+
+The setting is shown for both client modes, not only External, because an embedded session hands over to the external client whenever the built-in IronRDP client cannot serve the server — a legacy security layer, RemoteApp, remote audio playback, or a failed connection. In that case this is the only setting that decides how large the window opens.
+
+Before 0.20.9 there was no such setting. A separate window was sized from a fixed resolution that the editor collected in a hidden row and defaulted to 1920×1080, so on a 4K display the client opened at roughly a quarter of the screen. **A connection that genuinely needs a fixed resolution has to select *Custom resolution* once** — a stored 1920×1080 cannot be told apart from that old default, so it is not assumed.
+
+From the CLI: `--rdp-display-mode fit|fullscreen|custom|multimon` and `--rdp-resolution WIDTHxHEIGHT`.
+
 #### HiDPI Support
 
 On HiDPI/4K displays the embedded RDP/VNC session's remote resolution is governed by the **Display Scale** setting in the connection dialog:
@@ -849,6 +866,8 @@ On HiDPI/4K displays the embedded RDP/VNC session's remote resolution is governe
 | **125% – 400%** | Requests a fixed multiple of the logical resolution — a sharper image at a scale you pick by hand, regardless of the monitor. |
 
 For embedded RDP, the chosen scale is also sent to the Windows server as its desktop DPI (MS-RDPEDISP), so remote UI elements render at the correct logical size, and it is re-applied on every dynamic resize.
+
+*Changed in 0.20.9:* the external FreeRDP client receives the same scale, as `/scale-desktop:` with a matching `/scale-device:`. It used to be embedded-only, and the row was hidden whenever the client mode was External — so a session in a separate window on a 4K display had no way to ask for legible text. The row is now shown for both client modes.
 
 When the available area is smaller than the minimum remote desktop resolution (640×480) — for example a very small split panel or a narrow window — the embedded viewer requests an aspect-matched resolution scaled up to that minimum, raises the remote scale so content stays legible, and locally downscales the frame to fully fill the area. The result is that a small or oddly-shaped area is filled without letterboxing rather than clipping the remote view.
 

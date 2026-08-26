@@ -1176,6 +1176,22 @@ impl Resolution {
     pub const fn new(width: u32, height: u32) -> Self {
         Self { width, height }
     }
+
+    /// Parses a `WIDTHxHEIGHT` resolution such as `2560x1440`.
+    ///
+    /// The separator may be `x` or `X`. Returns `None` for anything that is not
+    /// two positive integers, so a caller can report the bad value rather than
+    /// silently substituting a default.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        let (width, height) = text
+            .trim()
+            .split_once(['x', 'X'])
+            .map(|(width, height)| (width.trim(), height.trim()))?;
+        let width: u32 = width.parse().ok()?;
+        let height: u32 = height.parse().ok()?;
+        (width > 0 && height > 0).then_some(Self::new(width, height))
+    }
 }
 
 /// RDP gateway configuration
@@ -1311,6 +1327,153 @@ impl RdpClientMode {
     }
 }
 
+/// How the external RDP client sizes its window.
+///
+/// Read only by the external FreeRDP client. The embedded viewer has no use for
+/// it: it is drawn into a widget whose size it already knows and renegotiates
+/// over MS-RDPEDISP on every resize, so there is no monitor for it to size
+/// against.
+///
+/// [`Self::FitScreen`] is the default because the previous behaviour — a fixed
+/// resolution taken from a spin button the connection editor hides in embedded
+/// mode — produced a `1920x1080` window on every display, including 4K ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RdpDisplayMode {
+    /// Cover the monitor, keeping the window decorations (`/size:100%`).
+    #[default]
+    FitScreen,
+    /// Take over the monitor completely (`/f`).
+    Fullscreen,
+    /// Use the resolution stored in [`RdpConfig::resolution`] (`/w:` + `/h:`).
+    Custom,
+    /// Span every connected monitor (`/multimon`).
+    AllMonitors,
+}
+
+impl RdpDisplayMode {
+    /// Returns all available display modes, in dropdown order.
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::FitScreen,
+            Self::Fullscreen,
+            Self::Custom,
+            Self::AllMonitors,
+        ]
+    }
+
+    /// Returns the untranslated display name for this mode.
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::FitScreen => "Fit to screen",
+            Self::Fullscreen => "Fullscreen",
+            Self::Custom => "Custom resolution",
+            Self::AllMonitors => "All monitors",
+        }
+    }
+
+    /// Returns the dropdown index for this mode.
+    #[must_use]
+    pub const fn index(self) -> u32 {
+        match self {
+            Self::FitScreen => 0,
+            Self::Fullscreen => 1,
+            Self::Custom => 2,
+            Self::AllMonitors => 3,
+        }
+    }
+
+    /// Creates a mode from a dropdown index.
+    #[must_use]
+    pub const fn from_index(index: u32) -> Self {
+        match index {
+            1 => Self::Fullscreen,
+            2 => Self::Custom,
+            3 => Self::AllMonitors,
+            _ => Self::FitScreen,
+        }
+    }
+
+    /// Parses the `rustconn-cli` spelling of a display mode.
+    ///
+    /// Returns `None` for an unknown name so the caller can report it. The CLI's
+    /// `value_parser` already restricts the input, which makes `None` a
+    /// programming mismatch between the two lists rather than user error.
+    #[must_use]
+    pub fn from_cli_name(name: &str) -> Option<Self> {
+        match name {
+            "fit" => Some(Self::FitScreen),
+            "fullscreen" => Some(Self::Fullscreen),
+            "custom" => Some(Self::Custom),
+            "multimon" => Some(Self::AllMonitors),
+            _ => None,
+        }
+    }
+
+    /// Returns the `rustconn-cli` spelling of this mode.
+    #[must_use]
+    pub const fn cli_name(self) -> &'static str {
+        match self {
+            Self::FitScreen => "fit",
+            Self::Fullscreen => "fullscreen",
+            Self::Custom => "custom",
+            Self::AllMonitors => "multimon",
+        }
+    }
+
+    /// Whether this mode sizes the session from a stored resolution.
+    ///
+    /// The connection editor uses this to decide whether the resolution row is
+    /// worth showing, and the config builder to decide whether to store one.
+    #[must_use]
+    pub const fn uses_stored_resolution(self) -> bool {
+        matches!(self, Self::Custom)
+    }
+
+    /// Returns the FreeRDP arguments that size the session for this mode.
+    ///
+    /// `resolution` is only read for [`Self::Custom`]; a `Custom` mode with no
+    /// stored resolution falls back to filling the screen rather than letting
+    /// FreeRDP apply its own `1024x768` default, which no display has.
+    #[must_use]
+    pub fn freerdp_args(self, resolution: Option<&Resolution>) -> Vec<String> {
+        match self {
+            // `/size:<p>%` with no `w`/`h` suffix applies the percentage to both
+            // dimensions, so this is "as large as the monitor" (FreeRDP #5171).
+            Self::FitScreen => vec!["/size:100%".to_string()],
+            Self::Fullscreen => vec!["/f".to_string()],
+            Self::Custom => resolution.map_or_else(
+                || vec!["/size:100%".to_string()],
+                |res| vec![format!("/w:{}", res.width), format!("/h:{}", res.height)],
+            ),
+            Self::AllMonitors => vec!["/multimon".to_string()],
+        }
+    }
+}
+
+/// Smallest desktop scale factor MS-RDPEDISP accepts, and FreeRDP's own default.
+const FREERDP_MIN_SCALE_PERCENT: u16 = 100;
+
+/// Largest desktop scale factor MS-RDPEDISP accepts.
+const FREERDP_MAX_SCALE_PERCENT: u16 = 500;
+
+/// The only three device scale factors MS-RDPEDISP accepts.
+///
+/// A desktop scale factor is discarded outright when the device scale factor is
+/// not one of these, which is why [`ScaleOverride::freerdp_scale_args`] always
+/// emits the pair.
+const FREERDP_DEVICE_SCALE_STEPS: [u16; 3] = [100, 140, 180];
+
+/// Returns the accepted device scale factor closest to `percent`.
+fn nearest_freerdp_device_scale(percent: u16) -> u16 {
+    FREERDP_DEVICE_SCALE_STEPS
+        .into_iter()
+        .min_by_key(|step| step.abs_diff(percent))
+        .unwrap_or(FREERDP_MIN_SCALE_PERCENT)
+}
+
 /// Display scale override for embedded protocol viewers.
 ///
 /// Controls the scale factor used to convert CSS pixels to device pixels
@@ -1423,6 +1586,46 @@ impl ScaleOverride {
             Self::Scale300 => 3.0,
             Self::Scale400 => 4.0,
         }
+    }
+
+    /// Returns the FreeRDP DPI arguments for this scale override.
+    ///
+    /// `system_scale_percent` is the live compositor scale as a percentage (for
+    /// example `200` on a 2× display) and is only read for [`Self::Native`].
+    ///
+    /// Emits `/scale-desktop:` — the desktop scale factor sent to the server,
+    /// which MS-RDPEDISP accepts between
+    /// [`FREERDP_MIN_SCALE_PERCENT`] and [`FREERDP_MAX_SCALE_PERCENT`] — paired
+    /// with the nearest accepted `/scale-device:`. The pair is deliberate: a
+    /// desktop scale factor is ignored when the device scale factor is not one
+    /// of [`FREERDP_DEVICE_SCALE_STEPS`], so the desktop value alone changes
+    /// nothing.
+    ///
+    /// [`Self::Auto`] returns an empty vector, matching FreeRDP's own 100%
+    /// default: the session is requested at the window's own size with no DPI
+    /// override, which is what "Auto" means for the embedded viewer too.
+    #[must_use]
+    pub fn freerdp_scale_args(self, system_scale_percent: u16) -> Vec<String> {
+        let requested = match self {
+            Self::Auto => return Vec::new(),
+            Self::Native => system_scale_percent,
+            Self::Scale125 => 125,
+            Self::Scale150 => 150,
+            Self::Scale200 => 200,
+            Self::Scale300 => 300,
+            Self::Scale400 => 400,
+        };
+        let desktop = requested.clamp(FREERDP_MIN_SCALE_PERCENT, FREERDP_MAX_SCALE_PERCENT);
+        // A 100% desktop scale factor is FreeRDP's default; saying it explicitly
+        // adds an argument that changes nothing. This is the `Native` case on a
+        // display that is not scaled at all.
+        if desktop == FREERDP_MIN_SCALE_PERCENT {
+            return Vec::new();
+        }
+        vec![
+            format!("/scale-desktop:{desktop}"),
+            format!("/scale-device:{}", nearest_freerdp_device_scale(desktop)),
+        ]
     }
 }
 
@@ -1658,7 +1861,22 @@ pub struct RdpConfig {
     /// Only relevant for Embedded mode. (Issue #218)
     #[serde(default)]
     pub graphics_mode: crate::rdp_client::graphics::GraphicsMode,
-    /// Screen resolution
+    /// How the external client sizes its window.
+    ///
+    /// Only read when the session runs in an external FreeRDP window — either
+    /// because [`Self::client_mode`] says so, or because the embedded client
+    /// handed the connection over. The embedded viewer sizes itself from the
+    /// widget it is drawn into.
+    #[serde(default)]
+    pub external_display_mode: RdpDisplayMode,
+    /// Screen resolution, used when [`Self::external_display_mode`] is
+    /// [`RdpDisplayMode::Custom`].
+    ///
+    /// `None` means "no fixed resolution was chosen". It used to be written
+    /// unconditionally from a spin button the editor hides in embedded mode, so
+    /// every profile carried the spin button's `1920x1080` default whether the
+    /// user had ever seen the row or not — and that value then sized every
+    /// external window, including on 4K displays.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
     /// Color depth (8, 15, 16, 24, or 32) - overrides performance_mode if set
@@ -1819,6 +2037,7 @@ impl Default for RdpConfig {
             client_mode: RdpClientMode::default(),
             performance_mode: RdpPerformanceMode::default(),
             graphics_mode: crate::rdp_client::graphics::GraphicsMode::default(),
+            external_display_mode: RdpDisplayMode::default(),
             resolution: None,
             color_depth: None,
             audio_redirect: false,
@@ -3947,5 +4166,214 @@ mod default_consistency_tests {
         assert!(config.clipboard_enabled, "clipboard was silently off");
         assert!(config.show_local_cursor, "local cursor was silently off");
         assert!(!config.hide_floating_toolbar);
+    }
+}
+
+#[cfg(test)]
+mod external_display_tests {
+    use super::*;
+
+    /// Every mode must produce at least one argument that decides the session
+    /// size. A mode that emits nothing inherits FreeRDP's `1024x768` default,
+    /// which is the shape of the bug this enum exists to fix.
+    #[test]
+    fn every_mode_sizes_the_session() {
+        for mode in RdpDisplayMode::all() {
+            let args = mode.freerdp_args(Some(&Resolution::new(1280, 1024)));
+            assert!(
+                !args.is_empty(),
+                "{mode:?} left the session size to FreeRDP's default"
+            );
+        }
+    }
+
+    #[test]
+    fn fit_to_screen_asks_for_the_whole_monitor() {
+        // `/size:<p>%` with no `w`/`h` suffix applies to both dimensions.
+        assert_eq!(
+            RdpDisplayMode::FitScreen.freerdp_args(None),
+            vec!["/size:100%".to_string()]
+        );
+    }
+
+    #[test]
+    fn custom_mode_uses_the_stored_resolution() {
+        let args = RdpDisplayMode::Custom.freerdp_args(Some(&Resolution::new(3840, 2160)));
+        assert_eq!(args, vec!["/w:3840".to_string(), "/h:2160".to_string()]);
+    }
+
+    /// A profile can carry `Custom` with no resolution — the CLI can write one,
+    /// and so can a hand-edited `connections.toml`. Falling through to FreeRDP's
+    /// own default would reintroduce a fixed small window.
+    #[test]
+    fn custom_mode_without_a_resolution_falls_back_to_the_screen() {
+        assert_eq!(
+            RdpDisplayMode::Custom.freerdp_args(None),
+            vec!["/size:100%".to_string()]
+        );
+    }
+
+    #[test]
+    fn only_custom_mode_reads_a_stored_resolution() {
+        for mode in RdpDisplayMode::all() {
+            assert_eq!(
+                mode.uses_stored_resolution(),
+                *mode == RdpDisplayMode::Custom,
+                "{mode:?} disagrees with its own freerdp_args"
+            );
+        }
+    }
+
+    /// The dropdown wraps these in `i18n()` at the call site, so the literals
+    /// live here while the translation markers live in
+    /// `rustconn/src/i18n_markers.rs` — `po/update-pot.sh` does not scan this
+    /// crate. Renaming a label here without updating that file leaves the row
+    /// untranslated in every locale, silently. Change them here first, then
+    /// there.
+    #[test]
+    fn display_mode_labels_are_stable() {
+        assert_eq!(RdpDisplayMode::FitScreen.display_name(), "Fit to screen");
+        assert_eq!(RdpDisplayMode::Fullscreen.display_name(), "Fullscreen");
+        assert_eq!(RdpDisplayMode::Custom.display_name(), "Custom resolution");
+        assert_eq!(RdpDisplayMode::AllMonitors.display_name(), "All monitors");
+    }
+
+    #[test]
+    fn display_mode_index_round_trips() {
+        for mode in RdpDisplayMode::all() {
+            assert_eq!(RdpDisplayMode::from_index(mode.index()), *mode);
+        }
+    }
+
+    /// An out-of-range dropdown index must land on the default rather than on
+    /// whichever variant happens to be first in the match.
+    #[test]
+    fn unknown_display_mode_index_is_the_default() {
+        assert_eq!(RdpDisplayMode::from_index(99), RdpDisplayMode::default());
+        assert_eq!(RdpDisplayMode::default(), RdpDisplayMode::FitScreen);
+    }
+
+    #[test]
+    fn auto_scale_sends_no_dpi_override() {
+        assert!(ScaleOverride::Auto.freerdp_scale_args(200).is_empty());
+    }
+
+    /// `Native` on an unscaled display resolves to 100%, which is already
+    /// FreeRDP's default — saying it adds an argument that changes nothing.
+    #[test]
+    fn native_scale_on_an_unscaled_display_sends_nothing() {
+        assert!(ScaleOverride::Native.freerdp_scale_args(100).is_empty());
+    }
+
+    #[test]
+    fn native_scale_follows_the_compositor() {
+        assert_eq!(
+            ScaleOverride::Native.freerdp_scale_args(200),
+            vec![
+                "/scale-desktop:200".to_string(),
+                "/scale-device:180".to_string()
+            ]
+        );
+    }
+
+    /// MS-RDPEDISP discards the desktop scale factor unless the device scale
+    /// factor is exactly 100, 140 or 180, so the pair is always emitted together
+    /// and the device value is always one of the three.
+    #[test]
+    fn device_scale_is_always_an_accepted_step() {
+        for scale in ScaleOverride::all() {
+            let args = scale.freerdp_scale_args(250);
+            if args.is_empty() {
+                continue;
+            }
+            let device = args
+                .iter()
+                .find_map(|arg| arg.strip_prefix("/scale-device:"))
+                .expect("a desktop scale factor was sent without its device pair");
+            let device: u16 = device.parse().expect("device scale must be numeric");
+            assert!(
+                FREERDP_DEVICE_SCALE_STEPS.contains(&device),
+                "{scale:?} produced device scale {device}, which the server ignores"
+            );
+        }
+    }
+
+    /// The protocol caps the desktop scale factor at 500%; `Native` on an
+    /// extreme compositor scale must be clamped rather than rejected wholesale.
+    #[test]
+    fn desktop_scale_is_clamped_to_the_protocol_ceiling() {
+        let args = ScaleOverride::Native.freerdp_scale_args(900);
+        assert!(
+            args.contains(&format!("/scale-desktop:{FREERDP_MAX_SCALE_PERCENT}")),
+            "expected the ceiling, got {args:?}"
+        );
+    }
+
+    #[test]
+    fn fixed_scale_steps_ignore_the_compositor() {
+        // 125% is closer to the 140 step than to 100.
+        assert_eq!(
+            ScaleOverride::Scale125.freerdp_scale_args(100),
+            vec![
+                "/scale-desktop:125".to_string(),
+                "/scale-device:140".to_string()
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod resolution_parse_tests {
+    use super::*;
+
+    #[test]
+    fn parses_a_plain_resolution() {
+        assert_eq!(
+            Resolution::parse("2560x1440"),
+            Some(Resolution::new(2560, 1440))
+        );
+    }
+
+    #[test]
+    fn accepts_an_uppercase_separator_and_surrounding_space() {
+        assert_eq!(
+            Resolution::parse(" 3840X2160 "),
+            Some(Resolution::new(3840, 2160))
+        );
+    }
+
+    /// A zero dimension is not a resolution any server can allocate, and it is
+    /// what `"x1080"` and `"0x0"` would otherwise produce.
+    #[test]
+    fn rejects_values_that_are_not_two_positive_integers() {
+        for bad in [
+            "",
+            "1920",
+            "1920x",
+            "x1080",
+            "0x0",
+            "1920x0",
+            "-1x5",
+            "1920*1080",
+            "axb",
+        ] {
+            assert_eq!(Resolution::parse(bad), None, "{bad:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn cli_display_mode_names_round_trip() {
+        for mode in RdpDisplayMode::all() {
+            assert_eq!(
+                RdpDisplayMode::from_cli_name(mode.cli_name()),
+                Some(*mode),
+                "{mode:?} does not survive its own CLI name"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_cli_display_mode_is_rejected() {
+        assert_eq!(RdpDisplayMode::from_cli_name("fit-to-screen"), None);
     }
 }

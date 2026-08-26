@@ -316,54 +316,31 @@ impl RdpLauncher {
         None
     }
 
-    /// Starts an RDP session with window geometry support
+    /// Starts an RDP session in an external FreeRDP window.
     ///
-    /// # Arguments
+    /// Every connection parameter comes from `config`, and the argument list is
+    /// built by [`rustconn_core::protocol::build_freerdp_args`] — the same
+    /// builder the embedded client's FreeRDP fallback uses. This function used
+    /// to assemble its own list from fifteen loose parameters, and being the
+    /// older of the two it had drifted: it emitted no `/gateway:` at all, so a
+    /// connection behind an RD Gateway dialled the target host directly, and it
+    /// passed the user's custom arguments through unfiltered, so a stray `/p:`
+    /// aborted the launch instead of being dropped.
     ///
-    /// * `tab` - The embedded session tab
-    /// * `host` - Target hostname
-    /// * `port` - Target port
-    /// * `username` - Optional username
-    /// * `password` - Optional password
-    /// * `domain` - Optional domain
-    /// * `resolution` - Optional resolution (width, height)
-    /// * `extra_args` - Extra FreeRDP arguments
-    /// * `window_geometry` - Optional window geometry (x, y, width, height)
-    /// * `remember_window_position` - Whether to apply window geometry
-    /// * `shared_folders` - Shared folders for drive redirection (share_name, local_path)
-    /// * `printer_enabled` - Map the local default printer into the session
-    /// * `audio_mode` - Where the session audio is played
-    /// * `ignore_certificate` - Skip TLS certificate verification
-    /// * `on_early_failure` - Invoked on the main loop with a user-friendly error
-    ///   message if the client exits with a failure shortly after launch
-    ///   (certificate or authentication errors)
+    /// `on_early_failure` is invoked on the main loop with a user-friendly
+    /// message when the client exits with a failure shortly after launch
+    /// (certificate or authentication errors).
     ///
     /// # Errors
-    /// Returns error if the FreeRDP binary is missing or the process fails to
-    /// spawn. Early post-spawn failures (certificate/auth) are reported
-    /// asynchronously via `on_early_failure` instead, so the GTK main loop is
-    /// never blocked.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "function parameters mirror upstream API or struct fields 1:1; bundling into a struct only restates the field list"
-    )]
-    pub fn start_with_geometry(
+    /// Returns an error if the FreeRDP binary is missing or the process fails to
+    /// spawn. Early post-spawn failures are reported asynchronously through
+    /// `on_early_failure` instead, so the GTK main loop is never blocked.
+    pub fn start(
         tab: &EmbeddedSessionTab,
-        host: &str,
-        port: u16,
-        username: Option<&str>,
-        password: Option<&str>,
-        domain: Option<&str>,
-        resolution: Option<(u32, u32)>,
-        extra_args: &[String],
-        window_geometry: Option<(i32, i32, i32, i32)>,
-        remember_window_position: bool,
-        shared_folders: &[(String, std::path::PathBuf)],
-        printer_enabled: bool,
-        audio_mode: rustconn_core::models::RdpAudioMode,
-        ignore_certificate: bool,
+        config: &rustconn_core::protocol::FreeRdpConfig,
         on_early_failure: impl FnOnce(String) + 'static,
     ) -> Result<(), EmbeddingError> {
+        use secrecy::ExposeSecret;
         use std::process::Command;
 
         let binary = Self::find_freerdp_binary().ok_or_else(|| {
@@ -373,61 +350,24 @@ impl RdpLauncher {
             )
         })?;
 
+        let host = config.host.as_str();
+
+        // Forgetting the stored certificate is a local side effect rather than
+        // an argument, so it stays here instead of in the shared builder.
+        if config.ignore_certificate {
+            Self::remove_known_certificate(host, config.port);
+        }
+
         // Connection arguments are written to a guarded file so credentials
         // never appear in the FreeRDP process argument vector.
-        let mut plain_args = Vec::new();
+        let plain_args = rustconn_core::protocol::build_freerdp_args(config);
 
-        if let Some(dom) = domain
-            && !dom.is_empty()
-        {
-            plain_args.push(format!("/d:{dom}"));
-        }
-        if let Some(user) = username {
-            plain_args.push(format!("/u:{user}"));
-        }
-        if let Some((width, height)) = resolution {
-            plain_args.push(format!("/w:{width}"));
-            plain_args.push(format!("/h:{height}"));
-        } else {
-            plain_args.push("/w:1920".to_string());
-            plain_args.push("/h:1080".to_string());
-        }
-        if ignore_certificate {
-            Self::remove_known_certificate(host, port);
-            plain_args.push("/cert:ignore".to_string());
-        } else {
-            plain_args.push("/cert:tofu".to_string());
-        }
-        plain_args.push("/dynamic-resolution".to_string());
-        plain_args.push("/decorations".to_string());
-        if remember_window_position && let Some((x, y, _width, _height)) = window_geometry {
-            plain_args.push(format!("/x:{x}"));
-            plain_args.push(format!("/y:{y}"));
-        }
-        for (share_name, local_path) in shared_folders {
-            if local_path.exists() {
-                let safe_name = share_name.replace(',', "_");
-                plain_args.push(format!("/drive:{safe_name},{}", local_path.display()));
-            }
-        }
-        if printer_enabled {
-            plain_args.push("/printer".to_string());
-        }
-        // Explicit audio routing — FreeRDP's implicit default is no audio at
-        // all (issue #245). Before extra_args so a user override still wins.
-        plain_args.push(audio_mode.freerdp_arg().to_string());
-        plain_args.extend(extra_args.iter().cloned());
-        if port == 3389 {
-            plain_args.push(format!("/v:{host}"));
-        } else {
-            plain_args.push(format!("/v:{host}:{port}"));
-        }
-
-        let password = password
-            .filter(|value| !value.is_empty())
-            .map(|value| secrecy::SecretString::from(value.to_string()));
+        let password = config
+            .password
+            .as_ref()
+            .filter(|value| !value.expose_secret().is_empty());
         let mut secret_args = Vec::new();
-        if let Some(ref password) = password {
+        if let Some(password) = password {
             secret_args.push(("p", password));
         }
         let prepared_args = crate::embedded_rdp::SafeFreeRdpLauncher::prepare_args_file(

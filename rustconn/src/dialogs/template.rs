@@ -2447,13 +2447,24 @@ impl TemplateDialog {
             RdpClientMode::Embedded
         };
 
+        // The resolution row here is hidden unless the client mode is External,
+        // so storing it in embedded mode would record a size the template author
+        // never saw — the same trap the connection editor had, where the spin
+        // button's 1920x1080 default reached every external window. The template
+        // editor offers no display-mode picker, so External is read as "a fixed
+        // resolution was chosen" and Embedded as "let the window fill the screen".
         #[expect(
             clippy::cast_sign_loss,
             reason = "value is non-negative by construction in this code path"
         )]
-        let resolution = Resolution {
+        let resolution = (client_mode == RdpClientMode::External).then(|| Resolution {
             width: width_spin.value() as u32,
             height: height_spin.value() as u32,
+        });
+        let external_display_mode = if resolution.is_some() {
+            rustconn_core::models::RdpDisplayMode::Custom
+        } else {
+            rustconn_core::models::RdpDisplayMode::FitScreen
         };
 
         let color_depth: u8 = match color_dropdown.selected() {
@@ -2480,7 +2491,8 @@ impl TemplateDialog {
             client_mode,
             performance_mode: RdpPerformanceMode::default(),
             graphics_mode: rustconn_core::rdp_client::graphics::GraphicsMode::default(),
-            resolution: Some(resolution),
+            external_display_mode,
+            resolution,
             color_depth: Some(color_depth),
             audio_redirect: RdpAudioMode::from_index(audio_mode_dropdown.selected())
                 .is_local_playback(),

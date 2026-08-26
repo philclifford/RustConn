@@ -213,6 +213,8 @@ Options:
 | `--serial-parity` | — | Serial parity: `none` (default), `odd`, `even` |
 | `--serial-flow-control` | — | Serial flow control: `none` (default), `hardware`, `software` |
 | `--serial-custom-arg` | — | Custom serial client argument (repeatable) |
+| `--rdp-display-mode` | — | How an external RDP window is sized: `fit` (default, fills the monitor), `fullscreen`, `custom` (needs `--rdp-resolution`), `multimon` (span all monitors). Also governs the window an embedded session falls back to |
+| `--rdp-resolution` | — | Fixed RDP resolution as `WIDTHxHEIGHT`, e.g. `2560x1440`. Implies `--rdp-display-mode custom` |
 | `--browser-mode` | — | Web browser mode: `embedded` (default on Linux), `system`, `custom` |
 | `--javascript` | — | Enable/disable JavaScript: `true` (default) or `false`; bare `--javascript` = `false` |
 | `--user-agent` | — | Custom user agent string (max 512 Unicode characters) |
@@ -264,6 +266,15 @@ rustconn-cli add -n "Mobile" -H 10.0.0.1 -P mosh -u admin \
 # Serial with full configuration
 rustconn-cli add -n "Router" -H /dev/ttyUSB0 -P serial --baud-rate 9600 \
     --serial-data-bits 8 --serial-parity none --serial-flow-control hardware
+
+# RDP in a fullscreen external window (useful on a 4K display, where the
+# default fit-to-screen window is still a window)
+rustconn-cli add -n "Workstation" -H 10.0.0.5 -P rdp -u admin \
+    --rdp-display-mode fullscreen
+
+# RDP pinned to a fixed resolution
+rustconn-cli add -n "Legacy App" -H 10.0.0.6 -P rdp -u admin \
+    --rdp-resolution 1280x1024
 
 # Web (embedded browser with self-signed cert)
 rustconn-cli add -n "Proxmox" -H "https://pve.local:8006" -P web --accept-invalid-certs

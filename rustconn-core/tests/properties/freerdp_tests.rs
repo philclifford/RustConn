@@ -11,7 +11,7 @@
 //! - Requirement 6.4: Respect `remember_window_position` setting
 
 use proptest::prelude::*;
-use rustconn_core::models::WindowGeometry;
+use rustconn_core::models::{RdpDisplayMode, WindowGeometry};
 use rustconn_core::protocol::{
     FreeRdpConfig, build_freerdp_args, extract_geometry_from_args, has_decorations_flag,
 };
@@ -66,6 +66,11 @@ fn arb_optional_geometry() -> impl Strategy<Value = Option<WindowGeometry>> {
     prop_oneof![Just(None), arb_window_geometry().prop_map(Some),]
 }
 
+/// Strategy covering every way the external client can be sized
+fn arb_display_mode() -> impl Strategy<Value = RdpDisplayMode> {
+    prop::sample::select(RdpDisplayMode::all())
+}
+
 /// Strategy for generating FreeRDP configurations
 fn arb_freerdp_config() -> impl Strategy<Value = FreeRdpConfig> {
     (
@@ -78,6 +83,7 @@ fn arb_freerdp_config() -> impl Strategy<Value = FreeRdpConfig> {
         any::<bool>(),           // clipboard_enabled
         arb_optional_geometry(), // window_geometry
         any::<bool>(),           // remember_window_position
+        arb_display_mode(),
     )
         .prop_map(
             |(
@@ -90,9 +96,11 @@ fn arb_freerdp_config() -> impl Strategy<Value = FreeRdpConfig> {
                 clipboard_enabled,
                 window_geometry,
                 remember_window_position,
+                display_mode,
             )| {
                 let mut config = FreeRdpConfig::new(host)
                     .with_port(port)
+                    .with_display_mode(display_mode)
                     .with_resolution(width, height)
                     .with_clipboard(clipboard_enabled)
                     .with_remember_window_position(remember_window_position);
@@ -227,17 +235,47 @@ proptest! {
         );
     }
 
-    // Additional property: Resolution is always present
+    // Additional property: the session size is always decided by us.
+    //
+    // Previously this asserted `/w:` and `/h:` specifically, because a fixed
+    // resolution was the only thing the builder could express. Now that the
+    // display mode chooses between a fixed size, the monitor, fullscreen and a
+    // multi-monitor span, the invariant worth holding is that *something*
+    // decides — an argument list with no size directive inherits FreeRDP's
+    // 1024x768 default, which no display has.
     #[test]
-    fn prop_resolution_always_present(config in arb_freerdp_config()) {
+    fn prop_session_size_always_specified(config in arb_freerdp_config()) {
         let args = build_freerdp_args(&config);
 
-        let has_width = args.iter().any(|a| a.starts_with("/w:"));
-        let has_height = args.iter().any(|a| a.starts_with("/h:"));
+        let fixed = args.iter().any(|a| a.starts_with("/w:"))
+            && args.iter().any(|a| a.starts_with("/h:"));
+        let sized = args.iter().any(|a| a.starts_with("/size:"));
+        let fullscreen = args.iter().any(|a| a == "/f");
+        let multimon = args.iter().any(|a| a.starts_with("/multimon"));
 
         prop_assert!(
-            has_width && has_height,
-            "Resolution (/w: and /h:) should always be present. Got: {:?}",
+            fixed || sized || fullscreen || multimon,
+            "No argument decided the session size for {:?}. Got: {:?}",
+            config.display_mode,
+            args
+        );
+    }
+
+    // Additional property: a fixed resolution is only sent when it was asked for.
+    //
+    // The bug that motivated the display mode was a stored 1920x1080 reaching
+    // every external launch from a spin button the editor keeps hidden, so the
+    // interesting direction is that /w: and /h: do NOT appear otherwise.
+    #[test]
+    fn prop_fixed_resolution_only_for_custom_mode(config in arb_freerdp_config()) {
+        let args = build_freerdp_args(&config);
+        let has_fixed = args.iter().any(|a| a.starts_with("/w:"));
+
+        prop_assert_eq!(
+            has_fixed,
+            config.display_mode.uses_stored_resolution(),
+            "{:?} disagreed about sending a fixed resolution. Args: {:?}",
+            config.display_mode,
             args
         );
     }

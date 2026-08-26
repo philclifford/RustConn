@@ -32,11 +32,11 @@ pub use protocol::{
     CloudflareAccessConfig, DeleteSends, GcpIapConfig, GenericZeroTrustConfig, HoopDevConfig,
     KubernetesConfig, MoshConfig, MoshPredictMode, OciBastionConfig, PortForward,
     PortForwardDirection, ProtocolConfig, ProtocolType, RdpAudioMode, RdpClientMode, RdpConfig,
-    RdpGateway, RdpPerformanceMode, RdpSecurityLayer, Resolution, ScaleOverride, SerialBaudRate,
-    SerialConfig, SerialDataBits, SerialFlowControl, SerialParity, SerialStopBits, SharedFolder,
-    SpiceConfig, SpiceImageCompression, SshAuthMethod, SshConfig, SshKeySource, TailscaleSshConfig,
-    TeleportConfig, TelnetConfig, VncClientMode, VncConfig, VncPerformanceMode, WebBrowserMode,
-    WebConfig, ZeroTrustConfig, ZeroTrustProvider, ZeroTrustProviderConfig,
+    RdpDisplayMode, RdpGateway, RdpPerformanceMode, RdpSecurityLayer, Resolution, ScaleOverride,
+    SerialBaudRate, SerialConfig, SerialDataBits, SerialFlowControl, SerialParity, SerialStopBits,
+    SharedFolder, SpiceConfig, SpiceImageCompression, SshAuthMethod, SshConfig, SshKeySource,
+    TailscaleSshConfig, TeleportConfig, TelnetConfig, VncClientMode, VncConfig, VncPerformanceMode,
+    WebBrowserMode, WebConfig, ZeroTrustConfig, ZeroTrustProvider, ZeroTrustProviderConfig,
     build_remote_app_freerdp_args,
 };
 pub use smart_folder::SmartFolder;

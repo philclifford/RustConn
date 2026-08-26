@@ -22,14 +22,14 @@ use gtk4::{
 };
 use libadwaita as adw;
 use rustconn_core::models::{
-    RdpAudioMode, RdpClientMode, RdpPerformanceMode, ScaleOverride, SharedFolder,
+    RdpAudioMode, RdpClientMode, RdpDisplayMode, RdpPerformanceMode, ScaleOverride, SharedFolder,
 };
 
 use crate::i18n::i18n;
 
 /// Creates the RDP options panel with all protocol-specific widgets.
 ///
-/// Returns a 33-element tuple matching the fields expected by `ConnectionDialog`.
+/// Returns a 35-element tuple matching the fields expected by `ConnectionDialog`.
 pub(super) fn create_rdp_options() -> (
     GtkBox,
     DropDown,
@@ -64,6 +64,7 @@ pub(super) fn create_rdp_options() -> (
     Entry,
     Entry,
     Entry,
+    DropDown,
     DropDown,
 ) {
     let scrolled = ScrolledWindow::builder()
@@ -152,6 +153,29 @@ pub(super) fn create_rdp_options() -> (
     graphics_mode_row.add_suffix(&graphics_mode_dropdown);
     display_group.add(&graphics_mode_row);
 
+    // How an external FreeRDP window is sized. Shown for both client modes on
+    // purpose: an embedded session hands over to the external client whenever
+    // IronRDP cannot serve the server, and this is the only setting that decides
+    // what happens then.
+    let display_mode_items: Vec<String> = RdpDisplayMode::all()
+        .iter()
+        .map(|mode| i18n(mode.display_name()))
+        .collect();
+    let display_mode_strs: Vec<&str> = display_mode_items.iter().map(String::as_str).collect();
+    let display_mode_list = StringList::new(&display_mode_strs);
+    let display_mode_dropdown = DropDown::builder()
+        .model(&display_mode_list)
+        .valign(gtk4::Align::Center)
+        .build();
+    let display_mode_row = adw::ActionRow::builder()
+        .title(i18n("External Window"))
+        .subtitle(i18n(
+            "Size of the separate window, also used when embedded mode falls back",
+        ))
+        .build();
+    display_mode_row.add_suffix(&display_mode_dropdown);
+    display_group.add(&display_mode_row);
+
     // Resolution
     let res_box = GtkBox::new(Orientation::Horizontal, 4);
     res_box.set_valign(gtk4::Align::Center);
@@ -179,6 +203,18 @@ pub(super) fn create_rdp_options() -> (
     resolution_row.add_suffix(&res_box);
     display_group.add(&resolution_row);
 
+    // The resolution row follows the display mode rather than the client mode.
+    // It used to be hidden whenever the client mode was Embedded while the save
+    // path stored its value regardless, so every connection carried this spin
+    // button's 1920x1080 default whether the user had ever seen the row or not —
+    // and that value then sized every external window, 4K displays included.
+    let resolution_row_for_mode = resolution_row.clone();
+    display_mode_dropdown.connect_selected_notify(move |dropdown| {
+        resolution_row_for_mode
+            .set_visible(RdpDisplayMode::from_index(dropdown.selected()).uses_stored_resolution());
+    });
+    resolution_row.set_visible(RdpDisplayMode::default().uses_stored_resolution());
+
     // Color depth
     let color_items: Vec<String> = vec![
         i18n("32-bit (True Color)"),
@@ -200,7 +236,10 @@ pub(super) fn create_rdp_options() -> (
     color_row.add_suffix(&color_dropdown);
     display_group.add(&color_row);
 
-    // Scale override dropdown (for embedded mode)
+    // Display scale. Honoured by both clients now: the embedded viewer converts
+    // logical pixels to device pixels with it, and the external client sends it
+    // as the session's DPI. It used to be hidden in External mode and dropped on
+    // the way to FreeRDP, so a HiDPI session had no way to ask for readable text.
     let scale_items: Vec<String> = ScaleOverride::all()
         .iter()
         .map(|s| i18n(s.display_name()))
@@ -213,17 +252,11 @@ pub(super) fn create_rdp_options() -> (
         .build();
     let scale_row = adw::ActionRow::builder()
         .title(i18n("Display Scale"))
-        .subtitle(i18n("Override HiDPI scaling for embedded viewer"))
+        .subtitle(i18n("HiDPI scaling for the session"))
         .build();
     scale_row.add_suffix(&scale_override_dropdown);
     display_group.add(&scale_row);
 
-    // Connect client mode dropdown to show/hide resolution/color/scale rows
-    // Embedded (0) - hide resolution and color depth (dynamic resolution)
-    // External (1) - show resolution and color depth
-    let resolution_row_clone = resolution_row.clone();
-    let color_row_clone = color_row.clone();
-    let scale_row_clone = scale_row.clone();
     // RDP-1: Info row about embedded dynamic resolution
     let embedded_info_row = adw::ActionRow::builder()
         .title(i18n("Dynamic Resolution"))
@@ -233,21 +266,18 @@ pub(super) fn create_rdp_options() -> (
     embedded_info_row.add_prefix(&gtk4::Image::from_icon_name("dialog-information-symbolic"));
     display_group.add(&embedded_info_row);
 
+    // Only the two rows that genuinely have no meaning outside the embedded
+    // viewer follow the client mode. The resolution row follows the display mode
+    // instead (see above), and the colour depth and display scale now apply to
+    // both clients, so hiding either of them would hide a setting that is in use.
     let embedded_info_clone = embedded_info_row.clone();
     let graphics_mode_row_clone = graphics_mode_row.clone();
     client_mode_dropdown.connect_selected_notify(move |dropdown| {
-        let is_embedded = dropdown.selected() == 0;
-        resolution_row_clone.set_visible(!is_embedded);
-        color_row_clone.set_visible(!is_embedded);
-        scale_row_clone.set_visible(is_embedded);
+        let is_embedded = RdpClientMode::from_index(dropdown.selected()) == RdpClientMode::Embedded;
         embedded_info_clone.set_visible(is_embedded);
         graphics_mode_row_clone.set_visible(is_embedded);
     });
 
-    // Set initial state (Embedded - hide resolution/color, show scale)
-    resolution_row.set_visible(false);
-    color_row.set_visible(false);
-    scale_row.set_visible(true);
     embedded_info_row.set_visible(true);
 
     content.append(&display_group);
@@ -778,5 +808,6 @@ pub(super) fn create_rdp_options() -> (
         remote_app_args_entry,
         remote_app_name_entry,
         graphics_mode_dropdown,
+        display_mode_dropdown,
     )
 }

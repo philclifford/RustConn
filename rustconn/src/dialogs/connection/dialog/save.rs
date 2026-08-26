@@ -84,6 +84,7 @@ impl ConnectionDialog {
         ssh_port_forwards: &Rc<RefCell<Vec<rustconn_core::models::PortForward>>>,
         rdp_client_mode_dropdown: &DropDown,
         rdp_performance_mode_dropdown: &DropDown,
+        rdp_display_mode_dropdown: &DropDown,
         rdp_width_spin: &SpinButton,
         rdp_height_spin: &SpinButton,
         rdp_color_dropdown: &DropDown,
@@ -290,6 +291,7 @@ impl ConnectionDialog {
         let ssh_keep_alive_count_max = ssh_keep_alive_count_max.clone();
         let ssh_port_forwards = ssh_port_forwards.clone();
         let rdp_client_mode_dropdown = rdp_client_mode_dropdown.clone();
+        let rdp_display_mode_dropdown = rdp_display_mode_dropdown.clone();
         let rdp_width_spin = rdp_width_spin.clone();
         let rdp_height_spin = rdp_height_spin.clone();
         let rdp_color_dropdown = rdp_color_dropdown.clone();
@@ -511,6 +513,7 @@ impl ConnectionDialog {
                 ssh_keep_alive_count_max: &ssh_keep_alive_count_max,
                 ssh_port_forwards: &ssh_port_forwards,
                 rdp_client_mode_dropdown: &rdp_client_mode_dropdown,
+                rdp_display_mode_dropdown: &rdp_display_mode_dropdown,
                 rdp_width_spin: &rdp_width_spin,
                 rdp_height_spin: &rdp_height_spin,
                 rdp_color_dropdown: &rdp_color_dropdown,

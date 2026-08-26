@@ -545,6 +545,20 @@ fn start_embedded_rdp_session(
     // Pass scale override for HiDPI support
     embedded_config.scale_override = rdp_config.scale_override;
 
+    // How an external FreeRDP window is sized if this session ends up handed
+    // over — when IronRDP cannot serve the server, or when the connection needs
+    // a capability only FreeRDP has. Without these the fallback sized its
+    // standalone window from `width`/`height`, which by then hold the embedded
+    // viewer's own logical `DrawingArea` geometry: on a 4K display at 200% that
+    // is under 1700x1000, so the client opened at roughly a quarter of the
+    // screen. The scale percentage is read from the application window rather
+    // than the viewer widget because both sit on the same monitor and the
+    // external client is placed there too.
+    embedded_config.external_display_mode = rdp_config.external_display_mode;
+    embedded_config.external_resolution = rdp_config.resolution.clone();
+    embedded_config.color_depth = rdp_config.color_depth;
+    embedded_config.system_scale_percent = crate::utils::active_display_scale_percent();
+
     // Pass local cursor visibility preference
     embedded_config.show_local_cursor = rdp_config.show_local_cursor;
 
@@ -580,22 +594,16 @@ fn start_embedded_rdp_session(
     // Pass certificate verification setting
     embedded_config.ignore_certificate = rdp_config.ignore_certificate;
 
-    // Pass security layer and TLS level for automatic FreeRDP fallback
+    // Security settings for an automatic FreeRDP fallback. These are fields, not
+    // entries in `extra_args`: the shared argument builder turns them into
+    // `/sec:`, `/tls-seclevel:` and `/sec:nla:off` itself, so pushing them here
+    // as well would send each of them twice. It also stops `extra_args` from
+    // looking non-empty for a connection whose only unusual setting is a
+    // security layer — which made the embedded viewer warn that the user's
+    // custom FreeRDP arguments were being ignored when they had set none.
     embedded_config.security_layer = rdp_config.security_layer;
     embedded_config.tls_security_level = rdp_config.tls_security_level;
-
-    // Add security layer and TLS level to extra_args for FreeRDP fallback
-    if let Some(sec_arg) = rdp_config.security_layer.freerdp_arg() {
-        embedded_config.extra_args.push(sec_arg.to_string());
-    }
-    if let Some(level) = rdp_config.tls_security_level {
-        embedded_config
-            .extra_args
-            .push(format!("/tls-seclevel:{level}"));
-    }
-    if rdp_config.disable_nla {
-        embedded_config.extra_args.push("/sec:nla:off".to_string());
-    }
+    embedded_config.disable_nla = rdp_config.disable_nla;
 
     // Wrap in Rc to keep widget alive in notebook
     let embedded_widget = Rc::new(embedded_widget);
@@ -882,53 +890,55 @@ fn start_external_rdp_session(
     ssh_tunnel: Option<rustconn_core::ssh_tunnel::SshTunnel>,
 ) {
     // Issue #209: an external xfreerdp session gets no notebook tab. The tab is
-    // still constructed because `RdpLauncher::start_with_geometry` builds its
-    // args and spawns through it, but it is never added to the notebook; the
-    // spawned child is handed to the shared registry instead of a per-tab timer.
+    // still constructed because `RdpLauncher::start` spawns through it, but it is
+    // never added to the notebook; the spawned child is handed to the shared
+    // registry instead of a per-tab timer.
     let (tab, _is_embedded) = EmbeddedSessionTab::new(connection_id, conn_name, "rdp", true);
     let session_id = tab.id();
 
-    // Get resolution from RDP config
-    let resolution = rdp_config.resolution.as_ref().map(|r| (r.width, r.height));
-
-    // Get extra args from RDP config
-    let mut extra_args = rdp_config.custom_args.clone();
-
-    // Add security layer flag if not default (Negotiate)
-    if let Some(sec_arg) = rdp_config.security_layer.freerdp_arg() {
-        extra_args.push(sec_arg.to_string());
-    }
-
-    // Add TLS security level for legacy server compatibility
-    if let Some(level) = rdp_config.tls_security_level {
-        extra_args.push(format!("/tls-seclevel:{level}"));
-    }
-
-    // Add NLA disable flag if configured
-    // FreeRDP 3.x syntax: /sec:nla:off (disables NLA while keeping other methods)
-    if rdp_config.disable_nla {
-        extra_args.push("/sec:nla:off".to_string());
-    }
-
-    // Add RemoteApp arguments for launching individual applications
-    extra_args.extend(rdp_config.remote_app_freerdp_args());
-
-    // Prepare domain (use None if empty)
-    let domain_opt = if domain.is_empty() {
-        None
-    } else {
-        Some(domain)
+    // Everything the external client is told now travels as a field of the
+    // shared config. The security layer, TLS level and RemoteApp arguments used
+    // to be pushed into `extra_args` here; the shared builder emits them from
+    // these fields, so doing both would send each of them twice.
+    let launch_config = rustconn_core::protocol::FreeRdpConfig {
+        host: host.to_string(),
+        port,
+        username: (!username.is_empty()).then(|| username.to_string()),
+        password: (!password.is_empty()).then(|| secrecy::SecretString::from(password.to_string())),
+        domain: (!domain.is_empty()).then(|| domain.to_string()),
+        display_mode: rdp_config.external_display_mode,
+        resolution: rdp_config.resolution.clone(),
+        scale_override: rdp_config.scale_override,
+        system_scale_percent: crate::utils::active_display_scale_percent(),
+        color_depth: rdp_config.color_depth,
+        clipboard_enabled: rdp_config.clipboard_enabled,
+        shared_folders: rdp_config
+            .shared_folders
+            .iter()
+            .map(|folder| rustconn_core::protocol::freerdp::SharedFolder {
+                local_path: folder.local_path.clone(),
+                share_name: folder.share_name.clone(),
+            })
+            .collect(),
+        printer_enabled: rdp_config.printer_enabled,
+        audio_mode: rdp_config.effective_audio_mode(),
+        gateway: rdp_config.gateway.clone(),
+        remote_app_program: rdp_config.remote_app_program.clone(),
+        remote_app_args: rdp_config.remote_app_args.clone(),
+        remote_app_name: rdp_config.remote_app_name.clone(),
+        security_layer: rdp_config.security_layer,
+        tls_security_level: rdp_config.tls_security_level,
+        disable_nla: rdp_config.disable_nla,
+        extra_args: rdp_config.custom_args.clone(),
+        // Issue #209: a tabless external session has no stored geometry to
+        // restore, so the client places its own window.
+        window_geometry: None,
+        remember_window_position: false,
+        ignore_certificate: rdp_config.ignore_certificate,
     };
 
-    // Convert shared folders
-    let shared_folders: Vec<(String, std::path::PathBuf)> = rdp_config
-        .shared_folders
-        .iter()
-        .map(|f| (f.share_name.clone(), f.local_path.clone()))
-        .collect();
-
     // Early-failure callback. With no tab, this rarely fires: the spawned child
-    // is handed to the registry synchronously after `start_with_geometry`
+    // is handed to the registry synchronously after `RdpLauncher::start`
     // returns, so the tab-based watcher usually finds an empty handle on its
     // first tick. Kept for the spawn/first-tick race — it reports the error and
     // records the failure (the registry has not been given the child yet).
@@ -949,23 +959,7 @@ fn start_external_rdp_session(
     // Start RDP connection using xfreerdp. Spawn errors are returned
     // synchronously (R1.6: no tab + error toast); on success the spawned child
     // is moved into the shared registry.
-    if let Err(e) = RdpLauncher::start_with_geometry(
-        &tab,
-        host,
-        port,
-        Some(username),
-        Some(password),
-        domain_opt,
-        resolution,
-        &extra_args,
-        None,
-        false,
-        &shared_folders,
-        rdp_config.printer_enabled,
-        rdp_config.effective_audio_mode(),
-        rdp_config.ignore_certificate,
-        on_early_failure,
-    ) {
+    if let Err(e) = RdpLauncher::start(&tab, &launch_config, on_early_failure) {
         tracing::error!(%e, connection = %conn_name, "Failed to start RDP session");
         sidebar.update_connection_status(&connection_id.to_string(), "failed");
         crate::toast::show_error_toast_on_active_window(&e.to_string());
