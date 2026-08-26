@@ -40,6 +40,24 @@
 # i18n("Don't Save") in rustconn/src/alert.rs), so prefer that for apostrophes.
 # Then regenerate the template with po/update-pot.sh.
 #
+# NOT COVERED YET: the same Rust-vs-C mismatch, via line continuation
+# -------------------------------------------------------------------
+# A translatable literal split across lines with a trailing backslash hits this
+# from the other side. In C a backslash-newline splices the literal and KEEPS
+# the indentation of the next line; rustc strips leading whitespace after it.
+# So
+#
+#     i18n("A sentence that was too long \
+#           to fit on one line")
+#
+# yields a msgid carrying ten spaces the program never asks for, and the lookup
+# misses in exactly the silent way described above. Thirteen msgid in
+# po/rustconn.pot still have this — find them with `grep -n '   ' po/rustconn.pot`
+# (three consecutive spaces); rustconn/src/dialogs/flatpak_components.rs:158,
+# rustconn/src/dialogs/variables.rs:170 and rustconn/src/app.rs:1176 are
+# examples. Fixing them changes the msgid, so it touches all 17 catalogues and
+# was deferred out of 0.20.9. A guard for it belongs in this script.
+#
 # Usage: ./scripts/check-i18n-escapes.sh        (exit 0 = clean, 1 = violations)
 
 set -euo pipefail

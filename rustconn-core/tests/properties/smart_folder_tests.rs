@@ -66,6 +66,7 @@ fn make_connection(
         sort_order: 0,
         last_connected: None,
         password_source: Default::default(),
+        network_mode: rustconn_core::models::NetworkMode::default(),
         domain: None,
         custom_properties: Vec::new(),
         pre_connect_task: None,

@@ -83,7 +83,9 @@ pub use event::{
     RdpClientEvent, RdpRect, convert_to_bgra, create_frame_update,
     create_frame_update_with_conversion,
 };
-pub use failure::{RdpFailureClass, classify_rdp_failure, is_authentication_failure};
+pub use failure::{
+    RdpFailureClass, classify_rdp_failure, is_authentication_failure, is_license_exchange_failure,
+};
 pub use gateway::{
     GatewayAuthMethod, GatewayConfig, GatewayError, GatewayState, resolve_gateway_user,
 };

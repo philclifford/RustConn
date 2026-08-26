@@ -1377,6 +1377,7 @@ mod tests {
             sort_order: 0,
             last_connected: None,
             password_source: PasswordSource::None,
+            network_mode: crate::models::NetworkMode::default(),
             domain: None,
             custom_properties: Vec::new(),
             pre_connect_task: None,

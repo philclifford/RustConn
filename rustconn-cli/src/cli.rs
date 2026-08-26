@@ -276,6 +276,11 @@ pub enum Commands {
         #[arg(long, value_name = "TEXT")]
         proxy_command: Option<String>,
 
+        /// Where the bastion comes from: inherit (group chain, then the global
+        /// network settings) or direct (ignore any inherited bastion)
+        #[arg(long, value_name = "MODE", value_parser = ["inherit", "direct"])]
+        network_mode: Option<String>,
+
         /// Custom SSH option (repeatable, format: Key=Value)
         #[arg(long, value_name = "K=V", value_parser = parse_key_val)]
         ssh_option: Vec<(String, String)>,
@@ -463,6 +468,17 @@ pub enum Commands {
         /// Custom serial client argument (repeatable)
         #[arg(long, value_name = "ARG")]
         serial_custom_arg: Vec<String>,
+
+        // --- RDP-specific flags ---
+        /// How an external RDP window is sized: fit (default), fullscreen,
+        /// custom (needs --rdp-resolution), or multimon
+        #[arg(long, value_name = "MODE", value_parser = ["fit", "fullscreen", "custom", "multimon"])]
+        rdp_display_mode: Option<String>,
+
+        /// Fixed RDP resolution as WIDTHxHEIGHT, e.g. 2560x1440.
+        /// Implies --rdp-display-mode custom
+        #[arg(long, value_name = "WxH")]
+        rdp_resolution: Option<String>,
 
         // --- Web-specific flags ---
         /// Web browser mode: embedded (default on Linux), system, or custom
@@ -782,6 +798,11 @@ pub enum Commands {
         #[arg(long, value_name = "TEXT")]
         proxy_command: Option<String>,
 
+        /// Where the bastion comes from: inherit (group chain, then the global
+        /// network settings) or direct (ignore any inherited bastion)
+        #[arg(long, value_name = "MODE", value_parser = ["inherit", "direct"])]
+        network_mode: Option<String>,
+
         /// Custom SSH option (repeatable, format: Key=Value)
         #[arg(long, value_name = "K=V", value_parser = parse_key_val)]
         ssh_option: Vec<(String, String)>,
@@ -969,6 +990,17 @@ pub enum Commands {
         /// Custom serial client argument (repeatable)
         #[arg(long, value_name = "ARG")]
         serial_custom_arg: Vec<String>,
+
+        // --- RDP-specific flags ---
+        /// How an external RDP window is sized: fit (default), fullscreen,
+        /// custom (needs --rdp-resolution), or multimon
+        #[arg(long, value_name = "MODE", value_parser = ["fit", "fullscreen", "custom", "multimon"])]
+        rdp_display_mode: Option<String>,
+
+        /// Fixed RDP resolution as WIDTHxHEIGHT, e.g. 2560x1440.
+        /// Implies --rdp-display-mode custom
+        #[arg(long, value_name = "WxH")]
+        rdp_resolution: Option<String>,
 
         // --- Web-specific flags ---
         /// Web browser mode: embedded (default on Linux), system, or custom

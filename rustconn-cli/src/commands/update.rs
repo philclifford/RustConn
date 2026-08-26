@@ -67,6 +67,7 @@ pub(super) struct UpdateParams<'a> {
     pub compression: bool,
     pub startup_command: Option<&'a str>,
     pub proxy_command: Option<&'a str>,
+    pub network_mode: Option<&'a str>,
     pub ssh_option: &'a [(String, String)],
     pub local_forward: &'a [String],
     pub remote_forward: &'a [String],
@@ -117,6 +118,9 @@ pub(super) struct UpdateParams<'a> {
     pub serial_parity: Option<&'a str>,
     pub serial_flow_control: Option<&'a str>,
     pub serial_custom_arg: &'a [String],
+    // RDP
+    pub rdp_display_mode: Option<&'a str>,
+    pub rdp_resolution: Option<&'a str>,
     // Web
     pub browser_mode: Option<&'a str>,
     pub javascript: Option<bool>,
@@ -603,6 +607,13 @@ pub(super) fn cmd_update(
         }
     }
 
+    // Apply RDP-specific settings
+    crate::commands::add::apply_rdp_display_options(
+        connection,
+        params.rdp_display_mode,
+        params.rdp_resolution,
+    )?;
+
     // Apply Web-specific settings
     if params.browser_mode.is_some()
         || params.javascript.is_some()
@@ -704,6 +715,15 @@ pub(super) fn cmd_update(
             None
         } else {
             Some(domain.to_string())
+        };
+    }
+
+    if let Some(mode_str) = params.network_mode {
+        // `value_parser` restricts this to the two known values, so the wildcard
+        // is unreachable rather than a silent fallback.
+        connection.network_mode = match mode_str {
+            "direct" => rustconn_core::models::NetworkMode::Direct,
+            _ => rustconn_core::models::NetworkMode::Inherit,
         };
     }
 

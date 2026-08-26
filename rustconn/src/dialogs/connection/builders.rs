@@ -25,10 +25,11 @@ use rustconn_core::models::{
     AwsSsmConfig, AzureBastionConfig, AzureSshConfig, BackspaceSends, BoundaryConfig,
     CloudflareAccessConfig, Connection, ConnectionThemeOverride, CustomProperty, DeleteSends,
     GcpIapConfig, GenericZeroTrustConfig, HighlightRule, HoopDevConfig, OciBastionConfig,
-    PasswordSource, ProtocolConfig, RdpAudioMode, RdpClientMode, RdpConfig, RdpPerformanceMode,
-    Resolution, ScaleOverride, SharedFolder, SpiceConfig, SpiceImageCompression, SshAuthMethod,
-    SshConfig, SshKeySource, TailscaleSshConfig, TeleportConfig, VncClientMode, VncConfig,
-    VncPerformanceMode, ZeroTrustConfig, ZeroTrustProvider, ZeroTrustProviderConfig,
+    PasswordSource, ProtocolConfig, RdpAudioMode, RdpClientMode, RdpConfig, RdpDisplayMode,
+    RdpPerformanceMode, Resolution, ScaleOverride, SharedFolder, SpiceConfig,
+    SpiceImageCompression, SshAuthMethod, SshConfig, SshKeySource, TailscaleSshConfig,
+    TeleportConfig, VncClientMode, VncConfig, VncPerformanceMode, ZeroTrustConfig,
+    ZeroTrustProvider, ZeroTrustProviderConfig,
 };
 use rustconn_core::session::LogConfig;
 use rustconn_core::variables::Variable;
@@ -92,6 +93,7 @@ pub(super) struct ConnectionDialogData<'a> {
     pub ssh_port_forwards: &'a Rc<RefCell<Vec<rustconn_core::models::PortForward>>>,
     pub rdp_client_mode_dropdown: &'a DropDown,
     pub rdp_performance_mode_dropdown: &'a DropDown,
+    pub rdp_display_mode_dropdown: &'a DropDown,
     pub rdp_width_spin: &'a SpinButton,
     pub rdp_height_spin: &'a SpinButton,
     pub rdp_color_dropdown: &'a DropDown,
@@ -248,6 +250,9 @@ pub(super) struct ConnectionDialogData<'a> {
     /// Web page has no widget for. See `ConnectionDialog::web_config_seed`.
     pub web_config_seed: &'a Rc<RefCell<Option<rustconn_core::models::WebConfig>>>,
     // Jump Host fields
+    /// Connection-level, so it is on the Basic tab rather than the SSH page —
+    /// see `general_tab::BasicTabWidgets::network_mode_row` (issue #301).
+    pub network_mode_row: &'a adw::ComboRow,
     pub ssh_jump_host_dropdown: &'a DropDown,
     pub connections_data: &'a Rc<RefCell<Vec<(Option<Uuid>, String)>>>,
     // Script credential fields
@@ -554,6 +559,15 @@ impl ConnectionDialogData<'_> {
                 PasswordSource::Script(cmd)
             }
             _ => PasswordSource::Prompt, // 0 and any other value default to Prompt
+        };
+
+        // Network mode — Inherit(0) / Direct(1). Set for every protocol, not
+        // just SSH: RDP, VNC and SPICE also inherit a bastion (issue #301). The
+        // row is on the Basic tab for the same reason.
+        conn.network_mode = if self.network_mode_row.selected() == 1 {
+            rustconn_core::models::NetworkMode::Direct
+        } else {
+            rustconn_core::models::NetworkMode::Inherit
         };
 
         // Set local variables
@@ -1490,15 +1504,25 @@ impl ConnectionDialogData<'_> {
         let performance_mode =
             RdpPerformanceMode::from_index(self.rdp_performance_mode_dropdown.selected());
 
+        let external_display_mode =
+            RdpDisplayMode::from_index(self.rdp_display_mode_dropdown.selected());
+
+        // Stored only when the display mode actually reads it. This used to be
+        // written unconditionally, which is how every profile ended up carrying
+        // the spin button's 1920x1080 default — the row is hidden unless a custom
+        // resolution was asked for, so the value was never seen and never chosen,
+        // and it then sized every external window regardless of the display.
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
             reason = "value range fits the target type and is non-negative by construction in this code path"
         )]
-        let resolution = Some(Resolution::new(
-            self.rdp_width_spin.value() as u32,
-            self.rdp_height_spin.value() as u32,
-        ));
+        let resolution = external_display_mode.uses_stored_resolution().then(|| {
+            Resolution::new(
+                self.rdp_width_spin.value() as u32,
+                self.rdp_height_spin.value() as u32,
+            )
+        });
 
         // Map dropdown index to color depth: 0->32, 1->24, 2->16, 3->15, 4->8
         let color_depth = Some(match self.rdp_color_dropdown.selected() {
@@ -1551,6 +1575,7 @@ impl ConnectionDialogData<'_> {
                 2 => rustconn_core::rdp_client::graphics::GraphicsMode::RemoteFx,
                 _ => rustconn_core::rdp_client::graphics::GraphicsMode::Auto,
             },
+            external_display_mode,
             resolution,
             color_depth,
             audio_redirect: audio_mode.is_local_playback(),

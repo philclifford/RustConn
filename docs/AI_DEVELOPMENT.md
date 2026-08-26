@@ -1,6 +1,6 @@
 # AI-Assisted Development Architecture
 
-**Version 0.20.8** | Last updated: August 2026
+**Version 0.20.9** | Last updated: August 2026
 
 This document describes the Kiro AI agent infrastructure used to automate
 development workflows, enforce architectural constraints, and streamline the
@@ -54,73 +54,96 @@ RustConn uses Kiro **steering files** and **hooks** in two complementary layers:
 
 ## Steering Files
 
-`.kiro/steering/` currently holds **14** files. The agent loads them according
-to each file's `inclusion:` front-matter (`always`, `fileMatch`, or `manual`).
+`.kiro/steering/` currently holds **27** files. The agent loads each according to
+its `inclusion:` front-matter:
 
-| Group | Files | Purpose |
-|-------|-------|---------|
-| Core rules | `project-rules.md` (always), `rust-pragmatic-guidelines.md`, `error-resolution.md` | Architecture, absolute rules, lazy-senior philosophy, Microsoft pragmatic guidelines, compiler-error remedies |
-| UI / GNOME | `gnome-hig.md`, `window-guide.md`, `dialogs-guide.md` | HIG compliance, window and dialog patterns |
-| Domain guides | `protocol-guide.md`, `secrets-guide.md` | Adding protocols; credential/secret handling |
-| Process | `release-reminder.md`, `verification-checklist.md`, `bugfix-workflow.md`, `spec-templates.md`, `test-patterns.md` | Release steps, verification, bugfix flow, spec scaffolding, test conventions |
-| Tooling | `kirograph.md` | When/how to use the KiroGraph code-graph tools |
+| Mode | What it means | Roughly |
+|------|---------------|---------|
+| `always` | In every session, unconditionally | `core-rules.md`, `shell-environment.md`, `kirograph.md` |
+| `fileMatch` | Loaded when a matching file enters context | the GUI, domain and error-playbook guides |
+| `manual` | Only when named with `#` in chat, or by a hook | the process runbooks |
+| `auto` | Matched against the file's own `description` | needs both `name` and `description`, or it matches nothing |
 
-The exact inclusion mode and content of each file is in the file itself — that
-is the canonical source.
+That last row is a trap worth stating: `auto` without `name` + `description` in the
+front matter silently never loads. `shell-environment.md` sat that way and asserted
+in its own text that it was always present.
+
+Per-directory rules live outside this mechanism, in a nested `AGENTS.md` in each
+crate, `po/` and `packaging/` — Kiro loads those by directory tree, and unlike
+steering they are also read by agents that do not know about `.kiro/`.
+
+The file list is not reproduced here. `ls .kiro/steering/` is the inventory, each
+file's front matter is its mode, and `scripts/check-ai-docs.sh` gates the count
+above so this paragraph cannot quietly go stale again — it claimed 14 for long
+enough that the number was off by thirteen.
 
 ---
 
 ## Hooks
 
-`.kiro/hooks/` currently holds **20** hooks. Grouped by trigger:
+`.kiro/hooks/` currently holds **16** hooks, one JSON file each, in the v2 format
+the agent executes directly. Triggers are PascalCase.
 
-### `fileEdited` — react to saves
-| Hook | Watches | Enabled | Action |
-|------|---------|---------|--------|
-| `cargo-security-scan` | `Cargo.lock` | ✅ | `cargo deny`/`cargo audit` advisories |
-| `flatpak-manifest-check` | `Cargo.lock` | ✅ | Warn if `cargo-sources.json` is stale |
-| `translation-sync` | `rustconn/src/**/*.rs` | ✅ | Add file to `POTFILES.in` when new `i18n()` appears |
-| `uk-translation-review` | `po/uk.po` | ✅ | Invoke `uk-translation-reviewer` sub-agent |
-| `security-review` | secret/credential/password `*.rs` | ✅ | Invoke `security-reviewer` sub-agent (SecretString, zeroize, stdin pipes, no secrets in logs) |
+| Trigger | Hooks | What the group is for |
+|---------|-------|-----------------------|
+| `PreToolUse` | `crate-boundary-guard`, `bash-serialization-guard`, `release-manual-only-guard` | Refuse an action before it happens: a GUI import in a headless crate or `unsafe` outside a `-sys` crate; a cargo run that will lose its output or wedge the terminal; any route to cutting a release by hand |
+| `PostFileSave` | `translation-sync`, `cargo-security-scan`, `flatpak-manifest-check`, `security-review`, `uk-translation-review`, `unsafe-review`, `kirograph-mark-dirty-on-save` | React to a save, each with a path matcher so it fires only for the files it is about |
+| `PostFileCreate` / `PostFileDelete` | `kirograph-mark-dirty-on-create`, `kirograph-sync-on-delete` | Keep the code graph honest about files appearing and disappearing |
+| `SessionStart` | `session-baseline` | Record the working tree, so `Stop` can tell what the session changed |
+| `Stop` | `post-session-diagnostics`, `kirograph-sync-if-dirty` | Post-session work: diagnostics on what changed, deferred graph sync |
+| `PostTaskExec` | `post-task-diagnostics` | `getDiagnostics` on `.rs` files a spec task touched — terminal-free, no cargo |
 
-### KiroGraph index upkeep (`fileCreated` / `fileEdited` / `fileDeleted` / `agentStop`)
-| Hook | Trigger | Action |
-|------|---------|--------|
-| `kirograph-mark-dirty-on-create` | file created | `kirograph mark-dirty` |
-| `kirograph-mark-dirty-on-save` | file edited | `kirograph mark-dirty` |
-| `kirograph-sync-if-dirty` | (deferred sync) | `kirograph sync-if-dirty` |
-| `kirograph-sync-on-delete` | file deleted | `kirograph sync-if-dirty` |
+Each hook's own `description` field carries its rationale, including the hardening
+notes that matter (why the KiroGraph sync checks for a stale lock, why the release
+guard covers three separate routes). That is the canonical text;
+`scripts/check-ai-docs.sh` gates only the count above.
 
-### `preToolUse` — gate before an action
-| Hook | Scope | Action |
-|------|-------|--------|
-| `pre-commit-checks` | shell commands | Before `git commit`/`push`: `fmt` + `clippy` must pass |
-| `crate-boundary-guard` | write tools (`.rs`) | Deny writes that add GUI imports to `rustconn-core`/`rustconn-cli`, or `unsafe` outside a `rustconn-*-sys` crate |
+The manual runbooks that used to be listed here as hooks — the quality gate, the
+dependency audit, the ponytail ledger, the release preparation, the commit-message
+helper — are steering files under `.kiro/steering/`, invoked with `#`. They were
+never hooks, and counting them as such is where the "20" came from.
 
-### `userTriggered` — manual buttons
-| Hook | Action |
-|------|--------|
-| `rustconn-checks` | Full quality gate: `fmt` → `clippy` → `cargo test --workspace` |
-| `post-task-tests` ("Run Tests") | On-demand `cargo test --workspace` with duplicate-process guard |
-| `dependency-audit` | Read-only: crate updates, advisories, CLI version drift |
-| `commit-message-helper` | Generate a conventional-commit message from the diff |
-| `ponytail-debt` | Read-only ledger of all `// ponytail:` markers; flags any missing a ceiling + upgrade path |
-| `release-version` | **Release finalize**: bump version in all packaging files, propagate changelog, regenerate `cargo-sources.json`, verify consistency (no git) |
-
-### Session / task lifecycle
-| Hook | Trigger | Action |
-|------|---------|--------|
-| `post-session-diagnostics` | `agentStop` | Post-session diagnostics on touched files |
-| `post-task-diagnostics` | `postTaskExecution` | `getDiagnostics` on `.rs` files a spec task changed (terminal-free, no cargo) |
-
-> **Release note:** version-string propagation is done by the manual
-> `release-version` hook at finalize time, **not** automatically on every
-> `Cargo.toml` save. Changelog *content* is always written by hand;
-> `release-version` only *propagates* it to packaging formats.
+> **Release note:** version strings are written by `scripts/bump-version.sh`, run
+> deliberately at finalize time, **not** automatically on a `Cargo.toml` save.
+> Changelog *content* is always written by hand; only its propagation into the
+> packaging formats is mechanical.
 
 ---
 
 ## Design Decisions
+
+### A prompt that only runs commands should be a script
+
+The costly mistake in this setup was not a bad prompt, it was using a prompt at all
+for work with no judgement in it. Two examples, both now converted:
+
+`translation-sync` used to ask the model to run three greps after every `.rs` save.
+`post-session-diagnostics` used to ask it to run `git diff --name-only HEAD`, then
+`getDiagnostics` on up to ten files, then `git diff HEAD` and scan for debug
+macros — on every single `Stop`. Neither needed a model. The second was also
+*wrong*: `git diff HEAD` reports the whole dirty working tree, not the session, so
+on 2026-08-26 three consecutive Stop hooks spent a shell call plus up to ten tool
+calls to conclude that nothing had changed, in a session whose only edit was
+markdown.
+
+The shape that works: a `command` hook does the mechanical part and stays silent
+when there is nothing to say; the agent is invoked only for the step a script
+cannot take. For `post-session-diagnostics` that is exactly one step, calling
+`getDiagnostics`, so the hook keeps an `agent` action whose prompt is now "run this
+script and act only on its output".
+
+The same reasoning moved four runbooks out of prose and into `scripts/`:
+
+| Script | Replaced |
+|--------|----------|
+| `verify.sh` | The mechanical half of `verification-checklist.md` and `quality-gate.md`, including the check for whether clippy actually re-checked anything |
+| `bump-version.sh` | A sixteen-bullet list in `release-version.md` that mirrored `PKG_FILES` in `release.sh` and asked to be kept in sync with it by hand |
+| `ponytail-ledger.sh` | The grep-and-group half of `ponytail-debt.md` |
+| `dep-audit.sh` | Steps 1-3 of `dependency-audit.md`, the ones that are commands |
+
+What stayed in steering is what needs a decision: whether a ponytail ceiling is
+still honest, whether a major dependency bump is worth taking, whether a string
+needs `i18n()`, whether the new code is in the right crate.
 
 ### Codex target boundaries
 

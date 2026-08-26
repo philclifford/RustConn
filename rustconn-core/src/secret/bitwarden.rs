@@ -1197,11 +1197,17 @@ pub async fn store_api_credentials_in_keyring(
 /// Returns `SecretError` if retrieval fails
 pub async fn get_api_credentials_from_keyring() -> SecretResult<Option<(SecretString, SecretString)>>
 {
-    let client_id = super::keyring::lookup(KEY_BW_CLIENT_ID).await?;
-    let client_secret = super::keyring::lookup(KEY_BW_CLIENT_SECRET).await?;
+    // Wrapped on the line it is read, so the plain `String` does not stay alive
+    // across the second fallible lookup — where a failure would drop it un-wiped.
+    let client_id = super::keyring::lookup(KEY_BW_CLIENT_ID)
+        .await?
+        .map(SecretString::from);
+    let client_secret = super::keyring::lookup(KEY_BW_CLIENT_SECRET)
+        .await?
+        .map(SecretString::from);
 
     match (client_id, client_secret) {
-        (Some(id), Some(secret)) => Ok(Some((SecretString::from(id), SecretString::from(secret)))),
+        (Some(id), Some(secret)) => Ok(Some((id, secret))),
         _ => Ok(None),
     }
 }

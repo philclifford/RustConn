@@ -271,6 +271,7 @@ pub fn resolve_remote_home(
     connection: &Connection,
     connections: &[Connection],
     groups: &[ConnectionGroup],
+    network: &crate::config::NetworkSettings,
 ) -> Option<String> {
     if !matches!(
         connection.protocol_config,
@@ -308,7 +309,7 @@ pub fn resolve_remote_home(
     // be honoured here, so the probe could not reach a host behind a
     // picker-selected bastion and the browser fell back to the server root.
     if let Some(proxy_jump) =
-        crate::connection::resolve_proxy_jump_value(connection, connections, groups)
+        crate::connection::resolve_proxy_jump_value(connection, connections, groups, network)
     {
         cmd.arg("-J").arg(proxy_jump);
     }
@@ -416,6 +417,7 @@ pub fn build_sftp_browser_uri(
     connection: &Connection,
     connections: &[Connection],
     groups: &[ConnectionGroup],
+    network: &crate::config::NetworkSettings,
 ) -> Option<String> {
     if !matches!(
         connection.protocol_config,
@@ -430,7 +432,7 @@ pub fn build_sftp_browser_uri(
     {
         Some(explicit.to_string())
     } else {
-        resolve_remote_home(connection, connections, groups)
+        resolve_remote_home(connection, connections, groups, network)
     };
 
     Some(build_sftp_uri(
@@ -455,6 +457,7 @@ pub fn build_sftp_command(
     connection: &Connection,
     connections: &[Connection],
     groups: &[ConnectionGroup],
+    network: &crate::config::NetworkSettings,
 ) -> Option<Vec<String>> {
     if !matches!(
         connection.protocol_config,
@@ -468,7 +471,7 @@ pub fn build_sftp_command(
     // Full bastion chain: the free-text `proxy_jump`, a group-inherited one, and
     // a jump host picked from the connection list.
     if let Some(proxy_jump) =
-        crate::connection::resolve_proxy_jump_value(connection, connections, groups)
+        crate::connection::resolve_proxy_jump_value(connection, connections, groups, network)
     {
         cmd.push("-J".to_string());
         cmd.push(proxy_jump);
@@ -907,7 +910,8 @@ mod tests {
             Connection::new_ssh("Test".to_string(), "server.example.com".to_string(), 22);
         conn.username = Some("admin".to_string());
 
-        let cmd = build_sftp_command(&conn, &[], &[]).unwrap();
+        let cmd = build_sftp_command(&conn, &[], &[], &crate::config::NetworkSettings::default())
+            .unwrap();
         assert_eq!(cmd, vec!["sftp", "admin@server.example.com"]);
     }
 
@@ -916,14 +920,18 @@ mod tests {
         let mut conn = Connection::new_ssh("Test".to_string(), "host.local".to_string(), 2222);
         conn.username = Some("root".to_string());
 
-        let cmd = build_sftp_command(&conn, &[], &[]).unwrap();
+        let cmd = build_sftp_command(&conn, &[], &[], &crate::config::NetworkSettings::default())
+            .unwrap();
         assert_eq!(cmd, vec!["sftp", "-P", "2222", "root@host.local"]);
     }
 
     #[test]
     fn test_build_sftp_command_non_ssh() {
         let conn = Connection::new_rdp("Test".to_string(), "server.example.com".to_string(), 3389);
-        assert!(build_sftp_command(&conn, &[], &[]).is_none());
+        assert!(
+            build_sftp_command(&conn, &[], &[], &crate::config::NetworkSettings::default())
+                .is_none()
+        );
     }
 
     #[test]
@@ -941,7 +949,13 @@ mod tests {
             cfg.jump_host_id = Some(bastion.id);
         }
 
-        let cmd = build_sftp_command(&conn, std::slice::from_ref(&bastion), &[]).unwrap();
+        let cmd = build_sftp_command(
+            &conn,
+            std::slice::from_ref(&bastion),
+            &[],
+            &crate::config::NetworkSettings::default(),
+        )
+        .unwrap();
         assert_eq!(
             cmd,
             vec![

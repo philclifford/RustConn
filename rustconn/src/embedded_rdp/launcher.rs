@@ -472,140 +472,75 @@ impl SafeFreeRdpLauncher {
         super::detect::detect_best_freerdp_for_remoteapp()
     }
 
+    /// Translates the embedded widget's configuration into the shared
+    /// [`FreeRdpConfig`](rustconn_core::protocol::FreeRdpConfig).
+    ///
+    /// Note what is *not* carried over: `width`/`height`. Those are the embedded
+    /// viewer's own geometry, measured from its `DrawingArea` in logical pixels,
+    /// and a standalone FreeRDP window is not that widget. Feeding them to the
+    /// external client is what opened a FullHD-sized window on a 4K display.
+    /// The window is sized by `external_display_mode` instead, which defaults to
+    /// filling the monitor.
+    pub(crate) fn external_config(config: &RdpConfig) -> rustconn_core::protocol::FreeRdpConfig {
+        rustconn_core::protocol::FreeRdpConfig {
+            host: config.host.clone(),
+            port: config.port,
+            username: config.username.clone(),
+            // The password is passed as a secret arg via EphemeralRdpArgs, never
+            // in the plain-text argument vector, so the builder ignores it.
+            password: None,
+            domain: config.domain.clone(),
+            display_mode: config.external_display_mode,
+            resolution: config.external_resolution.clone(),
+            scale_override: config.scale_override,
+            system_scale_percent: config.system_scale_percent,
+            color_depth: config.color_depth,
+            clipboard_enabled: config.clipboard_enabled,
+            shared_folders: config
+                .shared_folders
+                .iter()
+                .map(|folder| rustconn_core::protocol::freerdp::SharedFolder {
+                    local_path: folder.local_path.clone(),
+                    share_name: folder.share_name.clone(),
+                })
+                .collect(),
+            printer_enabled: config.printer_enabled,
+            audio_mode: config.audio_mode,
+            gateway: config.gateway_hostname.as_ref().and_then(|hostname| {
+                (!hostname.is_empty()).then(|| rustconn_core::models::RdpGateway {
+                    hostname: hostname.clone(),
+                    port: config.gateway_port,
+                    username: config.gateway_username.clone(),
+                })
+            }),
+            remote_app_program: config.remote_app_program.clone(),
+            remote_app_args: config.remote_app_args.clone(),
+            remote_app_name: config.remote_app_name.clone(),
+            security_layer: config.security_layer,
+            tls_security_level: config.tls_security_level,
+            disable_nla: config.disable_nla,
+            extra_args: config.extra_args.clone(),
+            window_geometry: config.window_geometry.map(|(x, y, width, height)| {
+                rustconn_core::models::WindowGeometry::new(x, y, width, height)
+            }),
+            remember_window_position: config.remember_window_position,
+            ignore_certificate: config.ignore_certificate,
+        }
+    }
+
     /// Builds the full list of connection arguments as owned strings.
     ///
-    /// FreeRDP requires all arguments to be in the `/args-from:`
-    /// file. This method collects them into a `Vec<String>` so they can be
-    /// written to the ephemeral args file by [`EphemeralRdpArgs::write_all`].
+    /// FreeRDP requires all arguments to be in the `/args-from:` file. This
+    /// method collects them into a `Vec<String>` so they can be written to the
+    /// ephemeral args file by [`EphemeralRdpArgs::write_all`].
+    ///
+    /// The argument list itself is built by
+    /// [`rustconn_core::protocol::build_freerdp_args`], shared with the
+    /// `External` client mode. This method used to hand-write its own list; the
+    /// two drifted, and only this one emitted `/gateway:` or sanitised the
+    /// user's extra arguments.
     pub fn build_connection_args(config: &RdpConfig) -> Vec<String> {
-        let mut args: Vec<String> = Vec::new();
-
-        if let Some(ref domain) = config.domain
-            && !domain.is_empty()
-        {
-            args.push(format!("/d:{domain}"));
-        }
-
-        if let Some(ref username) = config.username {
-            args.push(format!("/u:{username}"));
-        }
-
-        // The password is passed as a secret arg via EphemeralRdpArgs — it
-        // never appears in this plain-text vector.
-
-        args.push(format!("/w:{}", config.width));
-        args.push(format!("/h:{}", config.height));
-        if config.ignore_certificate {
-            args.push("/cert:ignore".to_string());
-        } else {
-            args.push("/cert:tofu".to_string());
-        }
-        args.push("/dynamic-resolution".to_string());
-
-        // Add decorations flag for window controls
-        args.push("/decorations".to_string());
-
-        // Add window geometry if saved and remember_window_position is enabled
-        if config.remember_window_position
-            && let Some((x, y, _width, _height)) = config.window_geometry
-        {
-            args.push(format!("/x:{x}"));
-            args.push(format!("/y:{y}"));
-        }
-
-        if config.clipboard_enabled {
-            args.push("+clipboard".to_string());
-        }
-
-        // Add shared folders for drive redirection
-        for folder in &config.shared_folders {
-            let path = folder.local_path.display();
-            // FreeRDP `/drive:<name>,<path>` is comma-delimited; a comma in the
-            // share name would split the argument and corrupt the path.
-            let safe_name = folder.share_name.replace(',', "_");
-            args.push(format!("/drive:{safe_name},{path}"));
-        }
-
-        // Map the local default printer into the session via CUPS.
-        if config.printer_enabled {
-            args.push("/printer".to_string());
-        }
-
-        // Audio routing is always stated explicitly. With no audio argument
-        // FreeRDP leaves AudioPlayback and RemoteConsoleAudio both false, which
-        // Windows reads as "no audio device in this session" — the user could
-        // neither hear the session locally nor leave the sound on the remote
-        // machine (issue #245). Emitted before extra_args so that a hand-written
-        // /sound or /audio-mode there still takes precedence.
-        args.push(config.audio_mode.freerdp_arg().to_string());
-
-        let mut skip_next_value = false;
-        for arg in &config.extra_args {
-            if skip_next_value {
-                skip_next_value = false;
-                continue;
-            }
-            if rustconn_core::protocol::contains_freerdp_secret_field(arg)
-                || rustconn_core::protocol::is_freerdp_shell_or_proxy_arg(arg)
-            {
-                skip_next_value =
-                    rustconn_core::protocol::freerdp::is_standalone_freerdp_blocked_field(arg);
-                tracing::warn!("Blocked dangerous FreeRDP extra arg");
-                continue;
-            }
-            args.push(arg.clone());
-        }
-
-        // Add gateway configuration for RD Gateway connections.
-        //
-        // FreeRDP 3.x removed the short `/g:` / `/gu:` / `/gp:` aliases in
-        // favour of the unified `/gateway:` option (see xfreerdp3(1)); the old
-        // aliases are rejected as "Unexpected keyword" and the client exits
-        // before connecting (issue #187). FreeRDP reuses the session
-        // credentials (`/u:`, `/d:` and the `/p:` from the args file) for the
-        // gateway, exactly like the working manual command
-        // `xfreerdp /gateway:g:HOST /u:NAME /d:DOMAIN`. We only add an explicit
-        // gateway user when it differs from the session user; a distinct
-        // gateway account would also need its own password, which RustConn does
-        // not store yet (future work).
-        if let Some(ref gw_host) = config.gateway_hostname
-            && !gw_host.is_empty()
-        {
-            let mut gateway = format!("g:{gw_host}:{}", config.gateway_port);
-            if let Some(ref gw_user) = config.gateway_username
-                && !gw_user.is_empty()
-                && config.username.as_deref() != Some(gw_user.as_str())
-            {
-                gateway.push_str(",u:");
-                gateway.push_str(gw_user);
-            }
-            args.push(format!("/gateway:{gateway}"));
-        }
-
-        // Add RemoteApp arguments for launching individual applications
-        for arg in config.remote_app_freerdp_args() {
-            args.push(arg);
-        }
-
-        // When RemoteApp is used with xfreerdp3, force NTLM authentication.
-        // xfreerdp3 on the host often lacks Kerberos realm configuration,
-        // causing NLA to fail even with correct credentials. NTLM works
-        // reliably for standalone (non-domain) Windows servers.
-        if config
-            .remote_app_program
-            .as_ref()
-            .is_some_and(|p| !p.is_empty())
-        {
-            args.push("/auth-pkg-list:ntlm".to_string());
-        }
-
-        if config.port == 3389 {
-            args.push(format!("/v:{}", config.host));
-        } else {
-            args.push(format!("/v:{}:{}", config.host, config.port));
-        }
-
-        args
+        rustconn_core::protocol::build_freerdp_args(&Self::external_config(config))
     }
 }
 

@@ -9,7 +9,7 @@
 #     survived in the list long after the files were gone, and nothing noticed
 #     until someone tripped over it by hand.
 #   * A missing entry means the file's strings are never extracted, so they
-#     render untranslated in all 16 locales while every catalogue still reports
+#     render untranslated in every locale while every catalogue still reports
 #     100% complete — the worst kind of failure, because it looks fine.
 
 set -uo pipefail

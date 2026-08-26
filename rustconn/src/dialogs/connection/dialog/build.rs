@@ -44,6 +44,7 @@ impl ConnectionDialog {
         let host_label = basic.host_label.clone();
         let port_spin = basic.port_spin.clone();
         let port_label = basic.port_label.clone();
+        let network_mode_row = basic.network_mode_row.clone();
         let username_entry = basic.username_entry.clone();
         let username_label = basic.username_label.clone();
         let domain_entry = basic.domain_entry.clone();
@@ -106,6 +107,7 @@ impl ConnectionDialog {
         let ssh_agent_key_dropdown = ssh_widgets.agent_key_dropdown;
         let ssh_jump_host_dropdown = ssh_widgets.jump_host_dropdown;
         let ssh_proxy_entry = ssh_widgets.proxy_entry;
+        let ssh_proxy_row = ssh_widgets.proxy_row;
         let ssh_proxy_command_entry = ssh_widgets.proxy_command_entry;
         let ssh_identities_only = ssh_widgets.identities_only;
         let ssh_control_master = ssh_widgets.control_master;
@@ -182,6 +184,7 @@ impl ConnectionDialog {
             rdp_remote_app_args_entry,
             rdp_remote_app_name_entry,
             rdp_graphics_mode_dropdown,
+            rdp_display_mode_dropdown,
         ) = crate::dialogs::connection::rdp::create_rdp_options();
         protocol_stack.add_named(&rdp_box, Some("rdp"));
 
@@ -495,6 +498,7 @@ impl ConnectionDialog {
             &ssh_key_entry,
             &ssh_agent_key_dropdown,
             &ssh_agent_keys,
+            &network_mode_row,
             &ssh_jump_host_dropdown,
             &ssh_proxy_entry,
             &ssh_proxy_command_entry,
@@ -519,6 +523,7 @@ impl ConnectionDialog {
             &ssh_port_forwards,
             &rdp_client_mode_dropdown,
             &rdp_performance_mode_dropdown,
+            &rdp_display_mode_dropdown,
             &rdp_width_spin,
             &rdp_height_spin,
             &rdp_color_dropdown,
@@ -710,6 +715,14 @@ impl ConnectionDialog {
             group_dropdown,
             groups_data,
             full_groups_data: Rc::new(RefCell::new(HashMap::new())),
+            full_connections_data: Rc::new(RefCell::new(Vec::new())),
+            network_settings: Rc::new(RefCell::new(
+                rustconn_core::config::NetworkSettings::default(),
+            )),
+            // Seeded with the row's own subtitle so a *new* connection — which
+            // is never populated from a `Connection` — gets the right text back
+            // when Network Mode is switched away from Direct and on again.
+            inherited_proxy_subtitle: Rc::new(RefCell::new(i18n("Jump host for tunneling (-J)"))),
             ssh_auth_dropdown,
             ssh_key_source_dropdown,
             ssh_key_source_row,
@@ -718,8 +731,10 @@ impl ConnectionDialog {
             ssh_agent_key_dropdown,
             ssh_agent_keys,
             pending_agent_selection,
+            network_mode_row,
             ssh_jump_host_dropdown,
             ssh_proxy_entry,
+            ssh_proxy_row,
             ssh_proxy_command_entry,
             ssh_identities_only,
             ssh_control_master,
@@ -743,6 +758,7 @@ impl ConnectionDialog {
             ssh_port_forwards_list,
             rdp_client_mode_dropdown,
             rdp_performance_mode_dropdown,
+            rdp_display_mode_dropdown,
             rdp_width_spin,
             rdp_height_spin,
             rdp_color_dropdown,
@@ -924,6 +940,11 @@ impl ConnectionDialog {
 
         // Wire up inline validation for required fields
         Self::setup_inline_validation_for(&result);
+
+        // Keep the ProxyJump subtitle in step with Network Mode. The two live on
+        // different pages, so without this the subtitle only ever showed the
+        // stored mode (issue #301).
+        result.wire_network_mode_row();
 
         // Wire up Group Inheritance
         {

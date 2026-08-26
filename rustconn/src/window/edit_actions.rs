@@ -686,6 +686,8 @@ impl MainWindow {
             // jump host stored as a reference (`jump_host_id`) can be resolved.
             let groups: Vec<rustconn_core::models::ConnectionGroup> = state_ref.list_groups_owned();
             let connections: Vec<rustconn_core::Connection> = state_ref.list_connections_owned();
+            // The outermost bastion tier, for connections that inherit.
+            let network = state_ref.settings().network.clone();
 
             // Ensure SSH key is in agent before SFTP (mc and
             // file managers cannot pass identity files directly).
@@ -815,6 +817,7 @@ impl MainWindow {
                     &conn_for_ssh_env,
                     &connections,
                     &groups,
+                    &network,
                 )
                 .map(|env| env.path_env());
                 glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
@@ -845,9 +848,14 @@ impl MainWindow {
                 let conn_for_uri = conn.clone();
                 let groups_for_uri = groups.clone();
                 let connections_for_uri = connections.clone();
-                let has_jump_host =
-                    !rustconn_core::connection::resolve_jump_chain(conn, &connections, &groups)
-                        .is_empty();
+                let network_for_uri = network.clone();
+                let has_jump_host = !rustconn_core::connection::resolve_jump_chain(
+                    conn,
+                    &connections,
+                    &groups,
+                    &network,
+                )
+                .is_empty();
                 drop(state_ref);
 
                 // Warn in Flatpak: external file managers cannot access
@@ -909,6 +917,7 @@ impl MainWindow {
                         &conn_for_uri,
                         &connections_for_uri,
                         &groups_for_uri,
+                        &network_for_uri,
                     )
                     .map(|env| env.path_env());
 
@@ -990,6 +999,7 @@ impl MainWindow {
                             &conn_for_uri,
                             &connections_for_uri,
                             &groups_for_uri,
+                            &network_for_uri,
                         )
                         .unwrap_or(base_uri);
                         (uri, rustconn_core::sftp::is_ssh_agent_available())
@@ -1385,6 +1395,8 @@ impl MainWindow {
         let groups: Vec<rustconn_core::models::ConnectionGroup> = state_ref.list_groups_owned();
         // Needed to resolve a jump host stored as a connection reference.
         let connections: Vec<rustconn_core::Connection> = state_ref.list_connections_owned();
+        // The outermost bastion tier, for connections that inherit.
+        let network = state_ref.settings().network.clone();
         let key_path = rustconn_core::sftp::get_ssh_key_path(conn, &groups)
             .and_then(|p| rustconn_core::resolve_key_path(&p));
 
@@ -1466,6 +1478,7 @@ impl MainWindow {
                 &conn_for_ssh_env,
                 &connections,
                 &groups,
+                &network,
             )
             .map(|env| env.path_env());
             glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
@@ -1505,9 +1518,14 @@ impl MainWindow {
             let conn_for_uri = conn.clone();
             let groups_for_uri = groups.clone();
             let connections_for_uri = connections.clone();
-            let has_jump_host =
-                !rustconn_core::connection::resolve_jump_chain(conn, &connections, &groups)
-                    .is_empty();
+            let network_for_uri = network.clone();
+            let has_jump_host = !rustconn_core::connection::resolve_jump_chain(
+                conn,
+                &connections,
+                &groups,
+                &network,
+            )
+            .is_empty();
             drop(state_ref);
 
             // Warn in Flatpak: external file managers cannot access
@@ -1571,6 +1589,7 @@ impl MainWindow {
                     &conn_for_uri,
                     &connections_for_uri,
                     &groups_for_uri,
+                    &network,
                 )
                 .map(|env| env.path_env());
 
@@ -1642,6 +1661,7 @@ impl MainWindow {
                         &conn_for_uri,
                         &connections_for_uri,
                         &groups_for_uri,
+                        &network_for_uri,
                     )
                     .unwrap_or(base_uri)
                 },

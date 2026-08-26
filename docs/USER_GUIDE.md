@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.20.8** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.20.9** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -188,6 +188,7 @@ Click **Advanced…** at any step to open the full connection editor with all en
 The full editor provides access to all connection options:**Basic Tab:**
 - Name, Host, Port
 - Protocol selection
+- **Network Mode** — inherit a jump host from the group or the global settings, or go *Direct* (see [Network Mode and Where a Jump Host Comes From](#network-mode-and-where-a-jump-host-comes-from))
 - Parent group
 - Tags
 
@@ -224,6 +225,31 @@ For hardware tokens that expose keys through a PKCS#11 library (YubiKey PIV, Ope
 - The directive is imported automatically from `~/.ssh/config` (`PKCS11Provider …`).
 
 > **Through a jump host:** OpenSSH does **not** pass `-o PKCS11Provider` to `ProxyJump` child connections. To authenticate the bastion itself with the token, enable the **PKCS#11 Provider** field on the *jump-host connection* — RustConn injects it into the first hop's `ProxyCommand` for terminal SSH and for RDP/VNC/SPICE tunnels. With a jump host the token may prompt once per hop, because each hop is a separate SSH process.
+
+### Network Mode and Where a Jump Host Comes From
+
+A connection can reach its target through a bastion without naming one itself. Three tiers are consulted, nearest first, and the nearest one that has a value wins — separately for each of the two ways a bastion can be named, *Jump Host* and *ProxyJump*:
+
+| Tier | Where it is set | Applies to |
+|------|-----------------|------------|
+| Connection | Edit connection → protocol page → **Connection** → *Jump Host* / *ProxyJump* (SSH, SFTP and MOSH share the SSH page; RDP, VNC and SPICE each have a *Jump Host* of their own) | this connection only |
+| Group | Edit group → **SSH Settings** → *Jump Host* / *SSH Proxy Jump* | every connection in the group, and in its subgroups |
+| Global | Settings → **Connection** → *Network* → *Global Jump Host* / *Global ProxyJump* | every connection that inherits, including ungrouped ones |
+
+**Network Mode** decides whether the inherited tiers are consulted at all. It is on the connection editor's **Basic** page, beside Host and Port — not on a protocol page, because the choice belongs to the connection and applies whatever its protocol:
+
+- **Inherit from group or global** (default) — walk the group chain, then the global settings.
+- **Direct** — connect straight to the host and ignore any inherited bastion. A jump host set on the connection *itself* still applies; *Direct* refuses inherited ones, not explicit ones.
+
+The *ProxyJump* field's subtitle names the bastion a connection has inherited — a group's or the global one, whether it was typed as `user@host` or picked from the dropdown — so a connection routed through one is not silently doing so. It follows *Network Mode* as you change it, and says so when *Direct* is ignoring an inherited bastion.
+
+Three notes on scope:
+
+- The **global** tier exists because a group cannot stand in for "everything". There is no single implicit root group — a top-level group is just a group with no parent, and there can be many — and an ungrouped connection has no chain to walk, so nothing set on a group can reach it.
+- *Jump Host* and *ProxyJump* are two ways of naming a bastion, not two candidates for one slot. A *Jump Host* is a saved connection, so it also carries its port, its identity file and its own bastion chain — none of which fit in the text field. Each of the two resolves its own tier chain independently, so setting both is legitimate: they become two hops of one chain, the *Jump Host* contacted first and the *ProxyJump* value reached through it.
+- An empty *ProxyJump* means "no bastion" at every tier, and falls through to the next one. This matters if you edit `config.toml` or `connections.toml` by hand: a stored empty string is not a value, it is nothing.
+
+For RDP, VNC and SPICE a bastion means an SSH tunnel to it, set up automatically before the viewer starts. Those protocols have no SOCKS option of their own, and they inherit — and refuse, via *Direct* — exactly like SSH does.
 
 **Advanced Tabs:**
 - **Advanced** — Window mode (Embedded/External/Fullscreen), remember window position, hide local cursor (embedded RDP/VNC/SPICE), Wake-on-LAN configuration (MAC address, broadcast, port, wait time), monitoring override (enable/disable per connection, overrides global setting)
@@ -488,7 +514,7 @@ Protocol-specific options are configured in the connection dialog's protocol tab
 | Protocol | Options |
 |----------|---------|
 | SSH | Auth method (password, publickey, keyboard-interactive, agent, security-key/FIDO2), key source (default/file/agent), PKCS#11 provider (hardware token/smart card), proxy jump (Jump Host), ProxyJump, IdentitiesOnly, ControlMaster, agent forwarding, Waypipe (Wayland forwarding), X11 forwarding, compression, startup command, verbose mode, backspace/delete key behavior, custom SSH options, port forwarding (local/remote/dynamic) |
-| RDP | Client mode (embedded/external), performance mode (quality/balanced/speed), resolution, color depth, display scale override, audio redirection, RDP gateway (host, port, username), keyboard layout, disable NLA, clipboard sharing, shared folders, mouse jiggler (prevent idle disconnect, configurable interval 10–600s), autotype (send text as keystrokes, configurable inter-character and initial delay), custom FreeRDP arguments |
+| RDP | Client mode (embedded/external), external window sizing (fit to screen/fullscreen/custom resolution/all monitors), performance mode (quality/balanced/speed), resolution, color depth, display scale override, audio redirection, RDP gateway (host, port, username), keyboard layout, disable NLA, clipboard sharing, shared folders, mouse jiggler (prevent idle disconnect, configurable interval 10–600s), autotype (send text as keystrokes, configurable inter-character and initial delay), custom FreeRDP arguments |
 | VNC | Client mode (embedded/external), performance mode (quality/balanced/speed), encoding (Auto/Tight/ZRLE/Hextile/Raw/CopyRect), compression level, quality level, display scale override, view-only mode, scaling, clipboard sharing, custom arguments |
 | SPICE | TLS encryption, CA certificate (with inline validation), skip certificate verification, USB redirection, clipboard sharing, image compression (Auto/Off/GLZ/LZ/QUIC), proxy URL, shared folders |
 | MOSH | Predict mode (Adaptive/Always/Never), SSH port, UDP port range, server binary path, backspace/delete key behavior, custom arguments |
@@ -777,7 +803,7 @@ The toolbar is fully transparent and pass-through when hidden — it does not bl
 
 Know what goes with it. **Ctrl+Alt+Del has no keyboard route of its own**, and neither do Fit Resolution, Autotype, Scripts, Quick Actions or Save Files — all of those live only on the toolbar. Copy and Paste survive, because Ctrl+C / Ctrl+V reach the remote session directly, as does clipboard sync. Leave the toolbar on if you ever need to unlock a Windows login screen from inside the session.
 
-The setting is per connection and defaults to on, so existing connections are unaffected. Quick Connect, which has no saved profile, always keeps the toolbar. It can also be set from the CLI for VNC and Web connections (`--vnc-toolbar false`, `--web-toolbar false`); RDP has no CLI protocol options at all, so use the connection editor there.
+The setting is per connection and defaults to on, so existing connections are unaffected. Quick Connect, which has no saved profile, always keeps the toolbar. It can also be set from the CLI for VNC and Web connections (`--vnc-toolbar false`, `--web-toolbar false`); the RDP toolbar has no CLI flag, so use the connection editor for it. RDP's only CLI protocol options are `--rdp-display-mode` and `--rdp-resolution`.
 
 #### Mouse Jiggler
 
@@ -812,6 +838,23 @@ When the remote Windows user copies files to the clipboard (Ctrl+C in Explorer),
 
 This uses the RDP clipboard channel (`CF_HDROP` / `FILEDESCRIPTORW` format) and works without shared folders. Progress is tracked per-file. Only available in embedded mode (IronRDP), not with FreeRDP external.
 
+#### External Window Sizing
+
+*New in 0.20.9.* When an RDP session opens in a separate FreeRDP window, its size comes from **External Window** in the connection dialog's Display group:
+
+| External Window | Behaviour |
+|-----------------|-----------|
+| **Fit to screen** *(default)* | A decorated window covering the monitor (`/size:100%`). |
+| **Fullscreen** | Takes over the monitor completely (`/f`). |
+| **Custom resolution** | Uses the **Resolution** row below it (`/w:` + `/h:`). That row is only shown for this mode. |
+| **All monitors** | Spans every connected monitor (`/multimon`). |
+
+The setting is shown for both client modes, not only External, because an embedded session hands over to the external client whenever the built-in IronRDP client cannot serve the server — a legacy security layer, RemoteApp, remote audio playback, or a failed connection. In that case this is the only setting that decides how large the window opens.
+
+Before 0.20.9 there was no such setting. A separate window was sized from a fixed resolution that the editor collected in a hidden row and defaulted to 1920×1080, so on a 4K display the client opened at roughly a quarter of the screen. **A connection that genuinely needs a fixed resolution has to select *Custom resolution* once** — a stored 1920×1080 cannot be told apart from that old default, so it is not assumed.
+
+From the CLI: `--rdp-display-mode fit|fullscreen|custom|multimon` and `--rdp-resolution WIDTHxHEIGHT`.
+
 #### HiDPI Support
 
 On HiDPI/4K displays the embedded RDP/VNC session's remote resolution is governed by the **Display Scale** setting in the connection dialog:
@@ -823,6 +866,8 @@ On HiDPI/4K displays the embedded RDP/VNC session's remote resolution is governe
 | **125% – 400%** | Requests a fixed multiple of the logical resolution — a sharper image at a scale you pick by hand, regardless of the monitor. |
 
 For embedded RDP, the chosen scale is also sent to the Windows server as its desktop DPI (MS-RDPEDISP), so remote UI elements render at the correct logical size, and it is re-applied on every dynamic resize.
+
+*Changed in 0.20.9:* the external FreeRDP client receives the same scale, as `/scale-desktop:` with a matching `/scale-device:`. It used to be embedded-only, and the row was hidden whenever the client mode was External — so a session in a separate window on a 4K display had no way to ask for legible text. The row is now shown for both client modes.
 
 When the available area is smaller than the minimum remote desktop resolution (640×480) — for example a very small split panel or a narrow window — the embedded viewer requests an aspect-matched resolution scaled up to that minimum, raises the remote scale so content stays legible, and locally downscales the frame to fully fill the area. The result is that a small or oddly-shaped area is filled without letterboxing rather than clipping the remote view.
 
@@ -2545,7 +2590,7 @@ The settings dialog uses `adw::PreferencesDialog` with built-in search. Settings
 | Terminal | `utilities-terminal-symbolic` | Terminal + Logging |
 | Interface | `applications-graphics-symbolic` | Appearance, Window, Startup, System Tray, Session Restore, Keybindings + Backup & Restore |
 | Secrets | `channel-secure-symbolic` | Secret backends + SSH Agent |
-| Connection | `network-server-symbolic` | Clients |
+| Connection | `network-server-symbolic` | Network (global jump host) + Clients |
 | Monitoring | `power-profile-performance-symbolic` | Remote host metrics (General + Visible Metrics) + Terminal Activity Monitor defaults |
 | Cloud Sync | `emblem-synchronizing-symbolic` | Sync directory, synced groups, simple sync |
 
@@ -2598,6 +2643,8 @@ The settings dialog uses `adw::PreferencesDialog` with built-in search. Settings
 **SSH Agent group:** Status (running/stopped with socket path), Loaded Keys (with remove option), Available Keys (keys in `~/.ssh/` with add option).
 
 ### Connection page
+
+**Network group:** *Global Jump Host* (a saved SSH connection) and *Global ProxyJump* (free text, OpenSSH syntax). The outermost of the three bastion tiers — it applies to every connection that inherits, including ungrouped ones, which no group can reach. Set both and they chain: the Jump Host is contacted first and the ProxyJump value is reached through it. A connection set to *Direct* ignores both. See [Network Mode and Where a Jump Host Comes From](#network-mode-and-where-a-jump-host-comes-from).
 
 **Clients group:** Auto-detected CLI tools with versions — Protocol Clients (SSH, RDP, VNC, SPICE, Telnet, Serial, Kubernetes) and Zero Trust (AWS, GCP, Azure, OCI, Cloudflare, Teleport, Tailscale, Boundary, Hoop.dev). Searches PATH and user directories.
 
@@ -2980,7 +3027,7 @@ Deletions are tracked via tombstones (auto-cleaned after 30 days). The `device_i
 
 ### SSH Key Inheritance
 
-Groups can define SSH settings (auth method, key path, proxy jump, agent socket) that child connections inherit. This avoids duplicating key paths across dozens of connections and keeps `ssh_key_path` local-only per device.
+Groups can define SSH settings (auth method, key path, jump host, proxy jump, agent socket) that child connections inherit. This avoids duplicating key paths across dozens of connections and keeps `ssh_key_path` local-only per device. See [Network Mode and Where a Jump Host Comes From](#network-mode-and-where-a-jump-host-comes-from) for the bastion fields, which have their own three-tier resolution and are not gated on the key source.
 
 ### Flatpak: Granting Filesystem Access for Cloud Sync
 
@@ -3031,10 +3078,19 @@ After granting access, restart RustConn and set the sync directory in Settings �
 
 **Configure:**
 1. Edit a group → SSH Settings section
-2. Set SSH Key Path, Auth Method, Proxy Jump, or Agent Socket
-3. Child connections with Key Source = "Inherit" use the group's values
+2. Set SSH Key Path, Auth Method, Jump Host, SSH Proxy Jump, or Agent Socket
+3. What decides whether a child connection picks each one up differs by field:
+
+| Group setting | Inherited when |
+|---------------|----------------|
+| SSH Key Path | the connection's **Key Source** is *Inherit* |
+| Auth Method | the connection's **Key Source** is *Inherit* |
+| Jump Host / SSH Proxy Jump | the connection's **Network Mode** is *Inherit from group or global*, and it has no jump host of its own — whatever its protocol, and regardless of where it gets its SSH key |
+| Agent Socket | the connection has none of its own |
 
 The inheritance chain walks from the connection's immediate group up to the root, returning the first value found.
+
+> **Changed in 0.20.9:** the bastion fields used to be gated on **Key Source** as well, which made a group jump host and a connection-level key file mutually exclusive, and RDP, VNC and SPICE inherited unconditionally with no way to refuse. **Network Mode** is now the single answer for all protocols. If you worked around the old behaviour by setting Key Source to *Inherit* on a connection that has its own key, you can set the key back.
 
 ### Credential Resolution
 

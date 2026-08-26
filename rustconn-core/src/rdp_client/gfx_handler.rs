@@ -825,14 +825,34 @@ fn versioned_openh264_candidates() -> Vec<std::path::PathBuf> {
     found
 }
 
+/// Environment variable naming an OpenH264 library to try before anything else.
+///
+/// The loader only accepts Cisco's own published binaries (see
+/// [`try_load_openh264`]), and no Linux distribution ships one, so the *only*
+/// way to get H.264 on a packaged install is to point RustConn at a blob
+/// downloaded from `ciscobinary.openh264.org`. Without this there was nowhere to
+/// put it except a system directory, i.e. it needed root.
+///
+/// Read-only: nothing in RustConn ever sets it.
+const OPENH264_PATH_ENV: &str = "RUSTCONN_OPENH264";
+
 /// Returns OpenH264 candidates in priority order.
 ///
-/// The bundled copy is tried first so a self-contained macOS `.app` never
+/// An explicit [`OPENH264_PATH_ENV`] wins over everything: it is a deliberate
+/// choice, and on Linux it is usually the only candidate that can be loaded at
+/// all. The bundled copy comes next so a self-contained macOS `.app` never
 /// depends on a Homebrew installation at runtime. Unversioned names come before
 /// versioned sonames because an unversioned name is a deliberate pointer at the
 /// installation the system considers current.
 fn openh264_candidates() -> Vec<std::path::PathBuf> {
     let mut candidates = Vec::new();
+
+    if let Some(explicit) = std::env::var_os(OPENH264_PATH_ENV)
+        .map(std::path::PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        candidates.push(explicit);
+    }
 
     #[cfg(target_os = "macos")]
     if let Some(bundled) = bundled_openh264_path() {
@@ -846,12 +866,30 @@ fn openh264_candidates() -> Vec<std::path::PathBuf> {
 
 /// Attempts to load OpenH264 at runtime via dlopen.
 ///
-/// Searches well-known system paths and returns a decoder suitable for
-/// passing to [`GraphicsPipelineClient::new`](ironrdp_egfx::client::GraphicsPipelineClient::new).
+/// Searches [`OPENH264_PATH_ENV`] and the well-known system paths, returning a
+/// decoder suitable for passing to
+/// [`GraphicsPipelineClient::new`](ironrdp_egfx::client::GraphicsPipelineClient::new).
 ///
-/// Returns `None` if the library is not found or fails to initialize.
-/// The EGFX pipeline still works without H.264 — it falls back to
-/// uncompressed/progressive codecs.
+/// # Why a library that is installed still gets rejected
+///
+/// `ironrdp-egfx` loads through `openh264::OpenH264API::from_blob_path`, which
+/// compares the file's SHA-256 against a list of **Cisco's own published
+/// binaries** and refuses anything else with `Invalid hash: <sha>`. That is
+/// deliberate, not a bug: Cisco pays the H.264 patent royalties for the binaries
+/// it distributes itself, which is why the crate's own documentation says to
+/// download the library from Cisco. No distribution build can be on that list —
+/// Debian's `libopenh264-8`, Fedora's `libopenh264`, and a local build from the
+/// Cisco *source* tarball are all refused — and the unchecked loader is `unsafe`
+/// and not re-exported, so there is nothing to opt into.
+///
+/// The practical consequence is that on a packaged Linux install H.264 requires
+/// a blob from `ciscobinary.openh264.org` and [`OPENH264_PATH_ENV`] pointing at
+/// it. A rejected hash is therefore reported as the configuration problem it is,
+/// rather than as an opaque load failure.
+///
+/// Returns `None` when nothing loadable is found. The session then uses the
+/// RemoteFX path; see the EGFX registration in `client::connection` for why it
+/// does not open a GFX channel it cannot paint through (issue #262).
 ///
 /// # Errors
 ///
@@ -860,6 +898,8 @@ fn openh264_candidates() -> Vec<std::path::PathBuf> {
 #[must_use]
 pub fn try_load_openh264() -> Option<Box<dyn H264Decoder>> {
     use ironrdp_egfx::decode::OpenH264Decoder;
+
+    let mut rejected_hash = false;
 
     for path in openh264_candidates() {
         let path = path.as_path();
@@ -876,19 +916,42 @@ pub fn try_load_openh264() -> Option<Box<dyn H264Decoder>> {
                 return Some(Box::new(decoder));
             }
             Err(e) => {
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "OpenH264 found but failed to initialize"
-                );
+                // `Invalid hash` is the signature of the check described above:
+                // the file loaded fine, it is simply not one of Cisco's.
+                let message = e.to_string();
+                if message.contains("Invalid hash") {
+                    rejected_hash = true;
+                    tracing::warn!(
+                        path = %path.display(),
+                        reason = "openh264_not_cisco_build",
+                        "OpenH264 at this path is not one of Cisco's published binaries, so the \
+                         loader refuses it — this is expected for a distribution package. Point \
+                         {} at a library downloaded from ciscobinary.openh264.org to enable H.264.",
+                        OPENH264_PATH_ENV
+                    );
+                } else {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %message,
+                        "OpenH264 found but failed to initialize"
+                    );
+                }
             }
         }
     }
 
-    tracing::warn!(
-        reason = "openh264_unavailable",
-        "OpenH264 not found — GFX pipeline will use non-AVC codecs"
-    );
+    if rejected_hash {
+        tracing::warn!(
+            reason = "openh264_not_cisco_build",
+            "No usable OpenH264 — every library found was a non-Cisco build. GFX pipeline will \
+             use non-AVC codecs; see docs/INSTALL.md for how to enable H.264."
+        );
+    } else {
+        tracing::warn!(
+            reason = "openh264_unavailable",
+            "OpenH264 not found — GFX pipeline will use non-AVC codecs"
+        );
+    }
     None
 }
 

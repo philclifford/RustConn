@@ -202,7 +202,7 @@ pub type SharedAppState = Rc<RefCell<AppState>>;
 - With parameters: `i18n_f("{} connections", &[&count.to_string()])` — positional `{}`
 - In `window/mod.rs`: use `crate::i18n::i18n(...)` (full path)
 - After adding new strings: run `po/update-pot.sh`, then merge into all `.po` files
-- 16 languages: be, cs, da, de, es, fr, it, kk, nl, pl, pt, sk, sv, uk, uz, zh-cn
+- 17 languages: be, cs, da, de, es, fr, it, ka, kk, nl, pl, pt, sk, sv, uk, uz, zh_CN
 
 ## CLI Downloads (`rustconn-core/src/cli_download.rs`)
 

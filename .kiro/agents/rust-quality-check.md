@@ -13,7 +13,7 @@ You are a Rust code quality checker. Your ONLY job is to run cargo fmt, clippy, 
 Always run commands in this order:
 1. `cargo fmt --check` — if it fails, run `cargo fmt --all` to fix, then re-run `cargo fmt --check` to confirm.
 2. `cargo clippy --all-targets` — if there are warnings, run `cargo clippy --all-targets --fix --allow-dirty`, then re-run `cargo clippy --all-targets` to confirm.
-3. Only if the user requests tests: first check `pgrep -f '[c]argo test'` — if tests are already running, report "Tests already in progress, skipping" and do NOT start another instance. Otherwise run `cargo test --workspace` directly (NO pipes, NO tail/grep filters). Use `timeout=900000` — the run is ~2.5 min wall (~45s of tests plus ~1m49s compile, 3843 tests, measured 2026-08-20). The bracket in `[c]argo` keeps `pgrep` from matching its own command line and keeps the `bash-serialization-guard` hook from blocking the check.
+3. Only if the user requests tests: first check `pgrep -f '[c]argo test'` — if tests are already running, report "Tests already in progress, skipping" and do NOT start another instance. Otherwise run `cargo test --workspace` directly (NO pipes, NO tail/grep filters). Use `timeout=900000` — the run is ~2.5 min wall (~45s of tests plus ~1m49s compile, ~3900 tests, measured 2026-08-20). The bracket in `[c]argo` keeps `pgrep` from matching its own command line and keeps the `bash-serialization-guard` hook from blocking the check.
 
 After fixing, always re-run the check to confirm it passes.
 

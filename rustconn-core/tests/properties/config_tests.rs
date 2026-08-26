@@ -174,6 +174,13 @@ fn arb_rdp_config() -> impl Strategy<Value = RdpConfig> {
     )
         .prop_map(
             |(resolution, color_depth, audio_redirect, gateway, custom_args)| RdpConfig {
+                // Tied to the generated resolution so the round-trip sees a
+                // non-default value whenever there is a resolution to carry.
+                external_display_mode: if resolution.is_some() {
+                    rustconn_core::models::RdpDisplayMode::Custom
+                } else {
+                    rustconn_core::models::RdpDisplayMode::FitScreen
+                },
                 resolution,
                 color_depth,
                 audio_redirect,
@@ -552,6 +559,7 @@ fn arb_full_settings() -> impl Strategy<Value = AppSettings> {
                         keyboard_passthrough: false,
                     },
                     connection: rustconn_core::ConnectionSettings::default(),
+                    network: rustconn_core::NetworkSettings::default(),
                     global_variables: Vec::new(),
                     history: HistorySettings::default(),
                     keybindings: rustconn_core::config::keybindings::KeybindingSettings::default(),

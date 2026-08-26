@@ -59,6 +59,7 @@ impl ConnectionDialog {
         ssh_key_entry: &Entry,
         ssh_agent_key_dropdown: &DropDown,
         ssh_agent_keys: &Rc<RefCell<Vec<rustconn_core::ssh_agent::AgentKey>>>,
+        network_mode_row: &adw::ComboRow,
         ssh_jump_host_dropdown: &DropDown,
         ssh_proxy_entry: &Entry,
         ssh_proxy_command_entry: &Entry,
@@ -83,6 +84,7 @@ impl ConnectionDialog {
         ssh_port_forwards: &Rc<RefCell<Vec<rustconn_core::models::PortForward>>>,
         rdp_client_mode_dropdown: &DropDown,
         rdp_performance_mode_dropdown: &DropDown,
+        rdp_display_mode_dropdown: &DropDown,
         rdp_width_spin: &SpinButton,
         rdp_height_spin: &SpinButton,
         rdp_color_dropdown: &DropDown,
@@ -265,6 +267,7 @@ impl ConnectionDialog {
         let ssh_key_entry = ssh_key_entry.clone();
         let ssh_agent_key_dropdown = ssh_agent_key_dropdown.clone();
         let ssh_agent_keys = ssh_agent_keys.clone();
+        let network_mode_row = network_mode_row.clone();
         let ssh_jump_host_dropdown = ssh_jump_host_dropdown.clone();
         let ssh_proxy_entry = ssh_proxy_entry.clone();
         let ssh_proxy_command_entry = ssh_proxy_command_entry.clone();
@@ -288,6 +291,7 @@ impl ConnectionDialog {
         let ssh_keep_alive_count_max = ssh_keep_alive_count_max.clone();
         let ssh_port_forwards = ssh_port_forwards.clone();
         let rdp_client_mode_dropdown = rdp_client_mode_dropdown.clone();
+        let rdp_display_mode_dropdown = rdp_display_mode_dropdown.clone();
         let rdp_width_spin = rdp_width_spin.clone();
         let rdp_height_spin = rdp_height_spin.clone();
         let rdp_color_dropdown = rdp_color_dropdown.clone();
@@ -485,6 +489,7 @@ impl ConnectionDialog {
                 ssh_key_entry: &ssh_key_entry,
                 ssh_agent_key_dropdown: &ssh_agent_key_dropdown,
                 ssh_agent_keys: &ssh_agent_keys,
+                network_mode_row: &network_mode_row,
                 ssh_jump_host_dropdown: &ssh_jump_host_dropdown,
                 ssh_proxy_entry: &ssh_proxy_entry,
                 ssh_proxy_command_entry: &ssh_proxy_command_entry,
@@ -508,6 +513,7 @@ impl ConnectionDialog {
                 ssh_keep_alive_count_max: &ssh_keep_alive_count_max,
                 ssh_port_forwards: &ssh_port_forwards,
                 rdp_client_mode_dropdown: &rdp_client_mode_dropdown,
+                rdp_display_mode_dropdown: &rdp_display_mode_dropdown,
                 rdp_width_spin: &rdp_width_spin,
                 rdp_height_spin: &rdp_height_spin,
                 rdp_color_dropdown: &rdp_color_dropdown,

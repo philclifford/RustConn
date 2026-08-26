@@ -8,7 +8,10 @@ use std::path::PathBuf;
 
 use secrecy::SecretString;
 
-use crate::models::WindowGeometry;
+use crate::models::{
+    RdpAudioMode, RdpDisplayMode, RdpGateway, RdpSecurityLayer, Resolution, ScaleOverride,
+    WindowGeometry, build_remote_app_freerdp_args,
+};
 
 /// A shared folder for RDP drive redirection
 #[derive(Debug, Clone)]
@@ -20,7 +23,20 @@ pub struct SharedFolder {
 }
 
 /// Configuration for `FreeRDP` external mode
-#[derive(Debug, Clone, Default)]
+///
+/// This is the single input to [`build_freerdp_args`], which is the only place
+/// in the workspace that decides what an external FreeRDP client is told. Both
+/// GUI launch paths — the `External` client mode and the fallback taken when the
+/// embedded IronRDP client cannot serve a connection — build one of these.
+/// They used to own a hand-written argument list each, and the two lists drifted:
+/// only one of them emitted `/gateway:`, only one sanitised the user's extra
+/// arguments, and neither passed on the display scale or the colour depth the
+/// connection editor collects.
+#[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "settings/flags struct mirrors persisted config 1:1; bools represent independent toggles, not a state machine"
+)]
 pub struct FreeRdpConfig {
     /// Target hostname or IP address
     pub host: String,
@@ -32,14 +48,45 @@ pub struct FreeRdpConfig {
     pub password: Option<SecretString>,
     /// Domain for authentication
     pub domain: Option<String>,
-    /// Desired width in pixels
-    pub width: u32,
-    /// Desired height in pixels
-    pub height: u32,
+    /// How the client window is sized.
+    ///
+    /// Only [`RdpDisplayMode::Custom`] reads `resolution`.
+    pub display_mode: RdpDisplayMode,
+    /// Fixed resolution for [`RdpDisplayMode::Custom`].
+    ///
+    /// `None` is honoured rather than substituted: a `Custom` mode with no
+    /// resolution falls back to filling the screen, because FreeRDP's own
+    /// default of `1024x768` is not a size any display has.
+    pub resolution: Option<Resolution>,
+    /// Remote DPI override. [`ScaleOverride::Auto`] sends none.
+    pub scale_override: ScaleOverride,
+    /// Live compositor scale as a percentage, read only for
+    /// [`ScaleOverride::Native`]
+    pub system_scale_percent: u16,
+    /// Session colour depth (`/bpp:`). `None` leaves it to the server.
+    pub color_depth: Option<u8>,
     /// Enable clipboard sharing
     pub clipboard_enabled: bool,
     /// Shared folders for drive redirection
     pub shared_folders: Vec<SharedFolder>,
+    /// Map the local default printer into the session
+    pub printer_enabled: bool,
+    /// Where the session audio is played
+    pub audio_mode: RdpAudioMode,
+    /// RD Gateway to tunnel through, reusing the session credentials
+    pub gateway: Option<RdpGateway>,
+    /// `RemoteApp` program path or alias
+    pub remote_app_program: Option<String>,
+    /// `RemoteApp` command-line arguments
+    pub remote_app_args: Option<String>,
+    /// `RemoteApp` display name
+    pub remote_app_name: Option<String>,
+    /// Security layer selection
+    pub security_layer: RdpSecurityLayer,
+    /// TLS security level (0–5). `None` leaves FreeRDP's default.
+    pub tls_security_level: Option<u8>,
+    /// Disable Network Level Authentication while keeping other methods
+    pub disable_nla: bool,
     /// Additional `FreeRDP` arguments
     pub extra_args: Vec<String>,
     /// Window geometry for external mode
@@ -48,6 +95,19 @@ pub struct FreeRdpConfig {
     pub remember_window_position: bool,
     /// Whether to ignore certificate errors (skip verification)
     pub ignore_certificate: bool,
+}
+
+/// Written by hand so that it agrees with [`FreeRdpConfig::new`].
+///
+/// `#[derive(Default)]` gave `port: 0`, `width: 0` and `clipboard_enabled:
+/// false` — a configuration that cannot connect — while `new()` gives a working
+/// one. The same divergence is documented for `RdpConfig` and `SpiceConfig` in
+/// `models::protocol`; callers reach for `..Default::default()` and are entitled
+/// to get the same baseline either way.
+impl Default for FreeRdpConfig {
+    fn default() -> Self {
+        Self::new(String::new())
+    }
 }
 
 impl FreeRdpConfig {
@@ -60,15 +120,42 @@ impl FreeRdpConfig {
             username: None,
             password: None,
             domain: None,
-            width: 1280,
-            height: 720,
+            display_mode: RdpDisplayMode::default(),
+            resolution: None,
+            scale_override: ScaleOverride::default(),
+            system_scale_percent: 100,
+            color_depth: None,
             clipboard_enabled: true,
             shared_folders: Vec::new(),
+            printer_enabled: false,
+            audio_mode: RdpAudioMode::default(),
+            gateway: None,
+            remote_app_program: None,
+            remote_app_args: None,
+            remote_app_name: None,
+            security_layer: RdpSecurityLayer::default(),
+            tls_security_level: None,
+            disable_nla: false,
             extra_args: Vec::new(),
             window_geometry: None,
             remember_window_position: true,
             ignore_certificate: false,
         }
+    }
+
+    /// Sets how the client window is sized
+    #[must_use]
+    pub const fn with_display_mode(mut self, mode: RdpDisplayMode) -> Self {
+        self.display_mode = mode;
+        self
+    }
+
+    /// Returns whether this configuration launches a `RemoteApp` (RAIL) session
+    #[must_use]
+    pub fn is_remote_app(&self) -> bool {
+        self.remote_app_program
+            .as_ref()
+            .is_some_and(|program| !program.is_empty())
     }
 
     /// Sets the port
@@ -99,11 +186,10 @@ impl FreeRdpConfig {
         self
     }
 
-    /// Sets the resolution
+    /// Sets a fixed resolution, only honoured by [`RdpDisplayMode::Custom`]
     #[must_use]
     pub const fn with_resolution(mut self, width: u32, height: u32) -> Self {
-        self.width = width;
-        self.height = height;
+        self.resolution = Some(Resolution::new(width, height));
         self
     }
 
@@ -256,9 +342,7 @@ pub fn build_freerdp_args(config: &FreeRdpConfig) -> Vec<String> {
     // never appears on argv or stdin. The caller is responsible for writing
     // the args file and passing the /args-from: switch separately.
 
-    // Resolution
-    args.push(format!("/w:{}", config.width));
-    args.push(format!("/h:{}", config.height));
+    push_display_args(&mut args, config);
 
     // Certificate handling — conditional based on connection settings.
     // Default is TOFU (trust-on-first-use), matching SSH known_hosts behavior.
@@ -271,7 +355,10 @@ pub fn build_freerdp_args(config: &FreeRdpConfig) -> Vec<String> {
     // Dynamic resolution
     args.push("/dynamic-resolution".to_string());
 
-    // Decorations flag for window controls
+    // Decorations flag for window controls. Kept for every display mode: the
+    // fullscreen and multi-monitor modes drop decorations themselves, and a
+    // caller reading the argument list can still tell a windowed session was
+    // asked for.
     args.push("/decorations".to_string());
 
     // Window geometry
@@ -287,19 +374,93 @@ pub fn build_freerdp_args(config: &FreeRdpConfig) -> Vec<String> {
         args.push("+clipboard".to_string());
     }
 
-    // Shared folders (drive redirection)
-    for folder in &config.shared_folders {
-        if folder.local_path.exists() {
-            // FreeRDP format: /drive:share_name,/path/to/folder
-            args.push(format!(
-                "/drive:{},{}",
-                folder.share_name,
-                folder.local_path.display()
-            ));
-        }
+    push_redirection_args(&mut args, config);
+    push_security_args(&mut args, config);
+
+    // Audio routing is always stated explicitly. With no audio argument FreeRDP
+    // leaves AudioPlayback and RemoteConsoleAudio both false, which Windows
+    // reads as "no audio device in this session" — the user could neither hear
+    // the session locally nor leave the sound on the remote machine (issue
+    // #245). Emitted before extra_args so a hand-written /sound or /audio-mode
+    // there still takes precedence.
+    args.push(config.audio_mode.freerdp_arg().to_string());
+
+    push_extra_args(&mut args, config);
+    push_gateway_args(&mut args, config);
+    push_remote_app_args(&mut args, config);
+
+    // Server address (must be last)
+    if config.port == 3389 {
+        args.push(format!("/v:{}", config.host));
+    } else {
+        args.push(format!("/v:{}:{}", config.host, config.port));
     }
 
-    // Extra arguments — reject secret-bearing fields and execution-changing options.
+    args
+}
+
+/// Pushes the arguments that decide the session's size, DPI and colour depth.
+fn push_display_args(args: &mut Vec<String>, config: &FreeRdpConfig) {
+    args.extend(config.display_mode.freerdp_args(config.resolution.as_ref()));
+
+    if let Some(depth) = config.color_depth {
+        args.push(format!("/bpp:{depth}"));
+    }
+
+    args.extend(
+        config
+            .scale_override
+            .freerdp_scale_args(config.system_scale_percent),
+    );
+}
+
+/// Pushes drive and printer redirection arguments.
+fn push_redirection_args(args: &mut Vec<String>, config: &FreeRdpConfig) {
+    for folder in &config.shared_folders {
+        // A share pointing at a path that no longer exists makes FreeRDP fail
+        // the whole RDPDR channel, so it is skipped rather than passed on.
+        if !folder.local_path.exists() {
+            continue;
+        }
+        // FreeRDP `/drive:<name>,<path>` is comma-delimited; a comma in the
+        // share name would split the argument and corrupt the path.
+        let safe_name = folder.share_name.replace(',', "_");
+        args.push(format!(
+            "/drive:{safe_name},{}",
+            folder.local_path.display()
+        ));
+    }
+
+    // Map the local default printer into the session via CUPS.
+    if config.printer_enabled {
+        args.push("/printer".to_string());
+    }
+}
+
+/// Pushes the security layer, TLS level and NLA arguments.
+fn push_security_args(args: &mut Vec<String>, config: &FreeRdpConfig) {
+    if let Some(security) = config.security_layer.freerdp_arg() {
+        args.push(security.to_string());
+    }
+
+    // Level 0 enables TLS 1.0 for legacy servers; FreeRDP's own default is 1.
+    if let Some(level) = config.tls_security_level {
+        args.push(format!("/tls-seclevel:{level}"));
+    }
+
+    // FreeRDP 3.x syntax: disable NLA while leaving the other methods available.
+    if config.disable_nla {
+        args.push("/sec:nla:off".to_string());
+    }
+}
+
+/// Pushes the user's extra arguments, dropping the ones that are unsafe.
+///
+/// Secret-bearing fields would put a credential on the FreeRDP argument vector,
+/// and `/shell:`/`/proxy:` change what actually gets executed. Both are dropped
+/// with a warning rather than failing the launch, so a stale custom argument
+/// cannot lock a user out of a working connection.
+fn push_extra_args(args: &mut Vec<String>, config: &FreeRdpConfig) {
     let mut skip_next_value = false;
     for arg in &config.extra_args {
         if skip_next_value {
@@ -313,15 +474,52 @@ pub fn build_freerdp_args(config: &FreeRdpConfig) -> Vec<String> {
         }
         args.push(arg.clone());
     }
+}
 
-    // Server address (must be last)
-    if config.port == 3389 {
-        args.push(format!("/v:{}", config.host));
-    } else {
-        args.push(format!("/v:{}:{}", config.host, config.port));
+/// Pushes the RD Gateway argument.
+///
+/// FreeRDP 3.x removed the short `/g:` / `/gu:` / `/gp:` aliases in favour of
+/// the unified `/gateway:` option (see xfreerdp3(1)); the old aliases are
+/// rejected as "Unexpected keyword" and the client exits before connecting
+/// (issue #187). FreeRDP reuses the session credentials (`/u:`, `/d:` and the
+/// `/p:` from the args file) for the gateway, matching the working manual
+/// command `xfreerdp /gateway:g:HOST /u:NAME /d:DOMAIN`. An explicit gateway
+/// user is only added when it differs from the session user; a distinct gateway
+/// account would also need its own password, which RustConn does not store yet.
+fn push_gateway_args(args: &mut Vec<String>, config: &FreeRdpConfig) {
+    let Some(ref gateway) = config.gateway else {
+        return;
+    };
+    if gateway.hostname.is_empty() {
+        return;
     }
 
-    args
+    let mut value = format!("g:{}:{}", gateway.hostname, gateway.port);
+    if let Some(ref gateway_user) = gateway.username
+        && !gateway_user.is_empty()
+        && config.username.as_deref() != Some(gateway_user.as_str())
+    {
+        value.push_str(",u:");
+        value.push_str(gateway_user);
+    }
+    args.push(format!("/gateway:{value}"));
+}
+
+/// Pushes the `RemoteApp` (RAIL) arguments.
+fn push_remote_app_args(args: &mut Vec<String>, config: &FreeRdpConfig) {
+    args.extend(build_remote_app_freerdp_args(
+        config.remote_app_program.as_deref(),
+        config.remote_app_args.as_deref(),
+        config.remote_app_name.as_deref(),
+    ));
+
+    // With RemoteApp on xfreerdp3, force NTLM authentication. xfreerdp3 on the
+    // host often lacks Kerberos realm configuration, causing NLA to fail even
+    // with correct credentials. NTLM works reliably for standalone (non-domain)
+    // Windows servers.
+    if config.is_remote_app() {
+        args.push("/auth-pkg-list:ntlm".to_string());
+    }
 }
 
 /// Checks if the `FreeRDP` arguments contain the decorations flag
@@ -375,10 +573,146 @@ mod tests {
         let config = FreeRdpConfig::new("server.example.com");
         let args = build_freerdp_args(&config);
 
-        assert!(args.contains(&"/w:1280".to_string()));
-        assert!(args.contains(&"/h:720".to_string()));
+        // The default display mode fills the monitor; `width`/`height` are only
+        // read by `RdpDisplayMode::Custom`.
+        assert!(args.contains(&"/size:100%".to_string()));
+        assert!(!args.iter().any(|arg| arg.starts_with("/w:")));
         assert!(args.contains(&"/decorations".to_string()));
         assert!(args.contains(&"/v:server.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_build_freerdp_args_custom_resolution() {
+        let config = FreeRdpConfig::new("server.example.com")
+            .with_display_mode(RdpDisplayMode::Custom)
+            .with_resolution(2560, 1440);
+        let args = build_freerdp_args(&config);
+
+        assert!(args.contains(&"/w:2560".to_string()));
+        assert!(args.contains(&"/h:1440".to_string()));
+        assert!(!args.iter().any(|arg| arg.starts_with("/size:")));
+    }
+
+    #[test]
+    fn test_build_freerdp_args_fullscreen() {
+        let config =
+            FreeRdpConfig::new("server.example.com").with_display_mode(RdpDisplayMode::Fullscreen);
+        let args = build_freerdp_args(&config);
+
+        assert!(args.contains(&"/f".to_string()));
+        assert!(!args.iter().any(|arg| arg.starts_with("/w:")));
+    }
+
+    #[test]
+    fn test_build_freerdp_args_all_monitors() {
+        let config =
+            FreeRdpConfig::new("server.example.com").with_display_mode(RdpDisplayMode::AllMonitors);
+        let args = build_freerdp_args(&config);
+
+        assert!(args.contains(&"/multimon".to_string()));
+    }
+
+    /// The colour depth and the display scale the connection editor collects
+    /// used to reach the embedded viewer only; every external launch ignored
+    /// them.
+    #[test]
+    fn test_build_freerdp_args_forwards_depth_and_scale() {
+        let config = FreeRdpConfig {
+            color_depth: Some(16),
+            scale_override: ScaleOverride::Scale200,
+            ..FreeRdpConfig::new("server.example.com")
+        };
+        let args = build_freerdp_args(&config);
+
+        assert!(args.contains(&"/bpp:16".to_string()));
+        assert!(args.contains(&"/scale-desktop:200".to_string()));
+        assert!(args.contains(&"/scale-device:180".to_string()));
+    }
+
+    /// The `External` client mode never emitted a gateway argument, so a
+    /// gateway-backed connection dialled the target host directly.
+    #[test]
+    fn test_build_freerdp_args_emits_gateway() {
+        let config = FreeRdpConfig {
+            gateway: Some(RdpGateway {
+                hostname: "gw.example.com".to_string(),
+                port: 443,
+                username: Some("gwuser".to_string()),
+            }),
+            ..FreeRdpConfig::new("server.example.com").with_username("admin")
+        };
+        let args = build_freerdp_args(&config);
+
+        assert!(args.contains(&"/gateway:g:gw.example.com:443,u:gwuser".to_string()));
+    }
+
+    /// A gateway user identical to the session user is redundant: FreeRDP
+    /// already reuses the session credentials for the gateway.
+    #[test]
+    fn test_build_freerdp_args_omits_redundant_gateway_user() {
+        let config = FreeRdpConfig {
+            gateway: Some(RdpGateway {
+                hostname: "gw.example.com".to_string(),
+                port: 443,
+                username: Some("admin".to_string()),
+            }),
+            ..FreeRdpConfig::new("server.example.com").with_username("admin")
+        };
+        let args = build_freerdp_args(&config);
+
+        assert!(args.contains(&"/gateway:g:gw.example.com:443".to_string()));
+    }
+
+    #[test]
+    fn test_build_freerdp_args_security_layer_and_tls_level() {
+        let config = FreeRdpConfig {
+            security_layer: RdpSecurityLayer::Tls,
+            tls_security_level: Some(0),
+            disable_nla: true,
+            ..FreeRdpConfig::new("server.example.com")
+        };
+        let args = build_freerdp_args(&config);
+
+        assert!(args.contains(&"/sec:tls".to_string()));
+        assert!(args.contains(&"/tls-seclevel:0".to_string()));
+        assert!(args.contains(&"/sec:nla:off".to_string()));
+    }
+
+    #[test]
+    fn test_build_freerdp_args_remote_app_forces_ntlm() {
+        let config = FreeRdpConfig {
+            remote_app_program: Some("notepad.exe".to_string()),
+            ..FreeRdpConfig::new("server.example.com")
+        };
+        let args = build_freerdp_args(&config);
+
+        assert!(args.contains(&"/auth-pkg-list:ntlm".to_string()));
+        assert!(args.iter().any(|arg| arg.starts_with("/app:")));
+    }
+
+    /// Audio is always stated: FreeRDP's implicit default is no audio device in
+    /// the session at all (issue #245).
+    #[test]
+    fn test_build_freerdp_args_always_states_audio() {
+        let args = build_freerdp_args(&FreeRdpConfig::new("server.example.com"));
+        let audio = RdpAudioMode::default().freerdp_arg();
+
+        assert!(args.contains(&audio.to_string()));
+    }
+
+    /// A share whose comma would split the `/drive:` argument must be
+    /// neutralised, not passed on.
+    #[test]
+    fn test_build_freerdp_args_sanitises_share_name_commas() {
+        let temp_dir = std::env::temp_dir();
+        let config =
+            FreeRdpConfig::new("server.example.com").with_shared_folders(vec![SharedFolder {
+                share_name: "Home,Docs".to_string(),
+                local_path: temp_dir.clone(),
+            }]);
+        let args = build_freerdp_args(&config);
+
+        assert!(args.contains(&format!("/drive:Home_Docs,{}", temp_dir.display())));
     }
 
     #[test]

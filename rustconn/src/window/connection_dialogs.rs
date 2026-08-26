@@ -93,6 +93,9 @@ pub fn show_new_connection_dialog_internal(
         dialog.set_groups(&groups);
         let connections: Vec<_> = state_ref.list_connections_owned();
         dialog.set_connections(&connections);
+        // The outermost bastion tier, so the ProxyJump row can name a globally
+        // configured jump host instead of leaving it invisible (issue #301).
+        dialog.set_network_settings(state_ref.settings().network.clone());
     }
 
     // Set preferred backend based on settings (filters password source dropdown)
@@ -246,6 +249,9 @@ fn show_new_connection_dialog_internal_prefilled(
         dialog.set_groups(&groups);
         let connections: Vec<_> = state_ref.list_connections_owned();
         dialog.set_connections(&connections);
+        // The outermost bastion tier, so the ProxyJump row can name a globally
+        // configured jump host instead of leaving it invisible (issue #301).
+        dialog.set_network_settings(state_ref.settings().network.clone());
     }
 
     // Set preferred backend based on settings

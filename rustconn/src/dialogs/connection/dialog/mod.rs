@@ -137,8 +137,16 @@ pub struct ConnectionDialog {
     ssh_agent_keys: Rc<RefCell<Vec<rustconn_core::ssh_agent::AgentKey>>>,
     /// Pending agent key selection (fingerprint, comment) to restore after refresh
     pending_agent_selection: Rc<RefCell<Option<(String, String)>>>,
+    /// Where the bastion comes from: Inherit or Direct (issue #301).
+    ///
+    /// Built on the Basic tab, not on the SSH page: the choice is
+    /// connection-level and applies to RDP, VNC and SPICE as well, and the
+    /// protocol stack only ever shows one page.
+    network_mode_row: adw::ComboRow,
     ssh_jump_host_dropdown: DropDown,
     ssh_proxy_entry: Entry,
+    /// Row around `ssh_proxy_entry`, so its subtitle can name an inherited bastion.
+    ssh_proxy_row: adw::ActionRow,
     ssh_proxy_command_entry: Entry,
     ssh_identities_only: CheckButton,
     ssh_control_master: CheckButton,
@@ -171,6 +179,7 @@ pub struct ConnectionDialog {
     // RDP fields
     rdp_client_mode_dropdown: DropDown,
     rdp_performance_mode_dropdown: DropDown,
+    rdp_display_mode_dropdown: DropDown,
     rdp_width_spin: SpinButton,
     rdp_height_spin: SpinButton,
     rdp_color_dropdown: DropDown,
@@ -404,6 +413,23 @@ pub struct ConnectionDialog {
     on_save: super::ConnectionCallback,
     connections_data: Rc<RefCell<Vec<(Option<Uuid>, String)>>>,
     full_groups_data: Rc<RefCell<HashMap<Uuid, rustconn_core::models::ConnectionGroup>>>,
+    /// Every connection, not just the `(id, label)` pairs the jump-host pickers
+    /// need.
+    ///
+    /// A bastion chosen with a picker is stored as a `jump_host_id`, so naming
+    /// an inherited one takes the whole connection list — see
+    /// [`Self::update_inherited_proxy_subtitle`].
+    full_connections_data: Rc<RefCell<Vec<rustconn_core::models::Connection>>>,
+    /// The application-wide bastion tier, below the group chain.
+    ///
+    /// Handed in by [`Self::set_network_settings`] and used only to resolve what
+    /// a connection inherits. Empty until then, which is what a caller that does
+    /// not set it gets: the group chain, and nothing global.
+    network_settings: Rc<RefCell<rustconn_core::config::NetworkSettings>>,
+    /// The ProxyJump subtitle computed for `Inherit`, kept so switching Network
+    /// Mode back and forth does not have to resolve the chain again — and so the
+    /// row can say something truthful without a `Connection` to resolve from.
+    inherited_proxy_subtitle: Rc<RefCell<String>>,
 }
 
 /// Represents a local variable row in the connection dialog

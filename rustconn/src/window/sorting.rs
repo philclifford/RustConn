@@ -15,6 +15,52 @@ use crate::state::SharedAppState;
 /// Type alias for shared sidebar reference
 pub type SharedSidebar = Rc<ConnectionSidebar>;
 
+/// The virtual group that holds pinned connections at the top of the tree.
+///
+/// Not a real group: it has no `ConnectionGroup` behind it and its ID is this
+/// literal rather than a UUID, which is why anything that resolves a group by
+/// parsing the ID has to account for it.
+const PINNED_GROUP_ID: &str = "__pinned__";
+
+/// Builds a sidebar row for `conn`, carrying over the live state the sidebar holds.
+///
+/// A rebuild throws every `ConnectionItem` away and makes new ones, so state that
+/// only ever arrived through a property setter is lost with the old objects. The
+/// status was already read back from the sidebar's own map; the recording dot,
+/// the external-viewer emblem and the split marker were not restored at all, so
+/// any reload — a rename, a duplicate, a pin toggle, a re-sort, a drag-drop —
+/// silently cleared all three for every connection.
+///
+/// `pinned` is passed in rather than taken from `conn.is_pinned` because the
+/// Favorites copy of a row is always drawn as pinned regardless.
+fn build_connection_item(
+    sidebar: &SharedSidebar,
+    conn: &rustconn_core::models::Connection,
+    pinned: bool,
+) -> ConnectionItem {
+    let id = conn.id.to_string();
+    let protocol = get_protocol_string(&conn.protocol_config);
+    let status = sidebar
+        .get_connection_status(&id)
+        .unwrap_or_else(|| "disconnected".to_string());
+    let item = ConnectionItem::new_connection_full_with_icon(
+        &id,
+        &conn.name,
+        &protocol,
+        &conn.host,
+        &status,
+        pinned,
+        conn.icon.as_deref().unwrap_or(""),
+    );
+    item.set_description(conn.description.as_deref().unwrap_or(""));
+    if let Some(indicators) = sidebar.row_indicators(&id) {
+        item.set_is_recording(indicators.recording);
+        item.set_external_session(indicators.external_session);
+        item.set_split_color(indicators.split_color);
+    }
+    item
+}
+
 /// Toggles group operations mode for multi-select
 pub fn toggle_group_operations_mode(sidebar: &SharedSidebar, enabled: bool) {
     sidebar.set_group_operations_mode(enabled);
@@ -138,26 +184,13 @@ pub fn rebuild_sidebar_sorted(state: &SharedAppState, sidebar: &SharedSidebar) {
         other => other,
     });
 
-    // Add pinned connections as a virtual "Favorites" group at the top
+    // Add pinned connections as a virtual "Favorites" group at the top.
+    // The same connection is also added below at its real place, so a pinned row
+    // exists twice in the store — see `ConnectionSidebar::update_items_with_id`.
     if !pinned.is_empty() {
-        let favorites_item = ConnectionItem::new_group("__pinned__", &i18n("Favorites"));
+        let favorites_item = ConnectionItem::new_group(PINNED_GROUP_ID, &i18n("Favorites"));
         for conn in &pinned {
-            let protocol = get_protocol_string(&conn.protocol_config);
-            let status = sidebar
-                .get_connection_status(&conn.id.to_string())
-                .unwrap_or_else(|| "disconnected".to_string());
-            let icon = conn.icon.as_deref().unwrap_or("");
-            let item = ConnectionItem::new_connection_full_with_icon(
-                &conn.id.to_string(),
-                &conn.name,
-                &protocol,
-                &conn.host,
-                &status,
-                true,
-                icon,
-            );
-            item.set_description(conn.description.as_deref().unwrap_or(""));
-            favorites_item.add_child(&item);
+            favorites_item.add_child(&build_connection_item(sidebar, conn, true));
         }
         store.append(&favorites_item);
     }
@@ -192,22 +225,7 @@ pub fn rebuild_sidebar_sorted(state: &SharedAppState, sidebar: &SharedSidebar) {
 
     // Add sorted ungrouped connections
     for conn in &ungrouped {
-        let protocol = get_protocol_string(&conn.protocol_config);
-        let status = sidebar
-            .get_connection_status(&conn.id.to_string())
-            .unwrap_or_else(|| "disconnected".to_string());
-        let icon = conn.icon.as_deref().unwrap_or("");
-        let item = ConnectionItem::new_connection_full_with_icon(
-            &conn.id.to_string(),
-            &conn.name,
-            &protocol,
-            &conn.host,
-            &status,
-            conn.is_pinned,
-            icon,
-        );
-        item.set_description(conn.description.as_deref().unwrap_or(""));
-        store.append(&item);
+        store.append(&build_connection_item(sidebar, conn, conn.is_pinned));
     }
 
     // Refresh Smart Folders section with current filter evaluation
@@ -262,22 +280,7 @@ pub fn add_sorted_group_children(
     });
 
     for conn in &connections {
-        let protocol = get_protocol_string(&conn.protocol_config);
-        let status = sidebar
-            .get_connection_status(&conn.id.to_string())
-            .unwrap_or_else(|| "disconnected".to_string());
-        let icon = conn.icon.as_deref().unwrap_or("");
-        let item = ConnectionItem::new_connection_full_with_icon(
-            &conn.id.to_string(),
-            &conn.name,
-            &protocol,
-            &conn.host,
-            &status,
-            conn.is_pinned,
-            icon,
-        );
-        item.set_description(conn.description.as_deref().unwrap_or(""));
-        parent_item.add_child(&item);
+        parent_item.add_child(&build_connection_item(sidebar, conn, conn.is_pinned));
     }
 }
 
@@ -299,9 +302,21 @@ pub fn handle_drag_drop(state: &SharedAppState, sidebar: &SharedSidebar, data: &
 
     // Parse UUIDs
     let Ok(item_uuid) = Uuid::parse_str(item_id) else {
+        tracing::debug!(item_id, "Drag-drop ignored: source ID is not a UUID");
         return;
     };
     let Ok(target_uuid) = Uuid::parse_str(target_id) else {
+        // Favorites is a virtual group with no UUID and nothing to move into:
+        // pinning is what puts a connection there. Said out loud because the
+        // drop otherwise looked accepted and did nothing.
+        if target_id == PINNED_GROUP_ID {
+            tracing::debug!(
+                "Drag-drop into Favorites ignored: it is a virtual group — pin the \
+                 connection instead"
+            );
+        } else {
+            tracing::debug!(target_id, "Drag-drop ignored: target ID is not a UUID");
+        }
         return;
     };
 

@@ -18,8 +18,8 @@
 
 // Re-export types for external use
 pub use crate::sidebar_types::{
-    DropIndicator, DropPosition, MAX_SEARCH_HISTORY, SelectionModelWrapper, SessionStatusInfo,
-    TreeState,
+    DropIndicator, DropPosition, MAX_SEARCH_HISTORY, RowIndicators, SelectionModelWrapper,
+    SessionStatusInfo, TreeState,
 };
 
 // Submodules
@@ -78,6 +78,12 @@ pub struct ConnectionSidebar {
     /// Map of connection IDs to their session status info
     /// Tracks status and active session count for proper multi-session handling
     connection_statuses: Rc<RefCell<std::collections::HashMap<String, SessionStatusInfo>>>,
+    /// Row decorations kept across tree rebuilds, keyed by connection ID.
+    ///
+    /// The counterpart of [`Self::connection_statuses`] for the recording dot,
+    /// the external-viewer emblem and the split marker — see [`RowIndicators`]
+    /// for why they need to be readable back.
+    row_indicators: Rc<RefCell<std::collections::HashMap<String, RowIndicators>>>,
     /// Lazy group loader for on-demand loading of connection groups
     lazy_loader: Rc<RefCell<LazyGroupLoader>>,
     selection_state: Rc<RefCell<CoreSelectionState>>,
@@ -1002,6 +1008,7 @@ impl ConnectionSidebar {
             drop_indicator,
             scrolled_window,
             connection_statuses: Rc::new(RefCell::new(std::collections::HashMap::new())),
+            row_indicators: Rc::new(RefCell::new(std::collections::HashMap::new())),
             lazy_loader: Rc::new(RefCell::new(LazyGroupLoader::new())),
             selection_state: Rc::new(RefCell::new(CoreSelectionState::new())),
             search_debouncer,
@@ -1141,12 +1148,12 @@ impl ConnectionSidebar {
             info.status.clone()
         };
 
-        let found = Self::update_item_status_recursive(
+        let updated = Self::update_item_status_recursive(
             self.store.upcast_ref::<gio::ListModel>(),
             id,
             &status,
         );
-        if !found {
+        if updated == 0 {
             tracing::warn!(
                 "[Sidebar] increment_session_count: item not found in tree for id={}",
                 id
@@ -1205,43 +1212,66 @@ impl ConnectionSidebar {
             id,
             status
         );
-        let found = Self::update_item_status_recursive(
+        let updated = Self::update_item_status_recursive(
             self.store.upcast_ref::<gio::ListModel>(),
             id,
             &status,
         );
         tracing::debug!(
-            "[Sidebar] decrement_session_count: update_item_status_recursive returned found={}",
-            found
+            "[Sidebar] decrement_session_count: updated {} row(s) for id={}",
+            updated,
+            id
         );
         status
     }
 
-    /// Helper to recursively find and update item status in the tree
-    fn update_item_status_recursive(model: &gio::ListModel, id: &str, status: &str) -> bool {
-        let n_items = model.n_items();
-        for i in 0..n_items {
-            if let Some(item) = model.item(i).and_downcast::<ConnectionItem>() {
-                if item.id() == id {
-                    tracing::debug!(
-                        "[Sidebar] update_item_status_recursive: found id={}, setting status={}",
-                        id,
-                        status
-                    );
-                    item.set_status(status);
-                    return true;
-                }
-
-                // Check children if it's a group
-                if item.is_group()
-                    && let Some(children) = item.children()
-                    && Self::update_item_status_recursive(&children, id, status)
-                {
-                    return true;
-                }
+    /// Applies `update` to **every** row in the tree whose connection ID matches.
+    ///
+    /// Deliberately does not stop at the first match. A pinned connection is in
+    /// the store twice — once under the virtual "Favorites" group, once in its
+    /// real place — as two distinct `ConnectionItem`s that happen to share an ID,
+    /// and each row binds to the `notify::` signals of *its own* object
+    /// (`view.rs`), so setting a property on one cannot reach the other.
+    /// Favorites is store index 0, so a walker that returned on the first hit
+    /// only ever updated that copy: the row in the group or at the root kept no
+    /// status icon, no recording dot, no external emblem and no split marker.
+    ///
+    /// The visible damage went past the icons. `view.rs` reads `item.status()`
+    /// and `item.external_session()` from the row that was actually clicked, so
+    /// right-clicking a pinned connection at its real place offered *Connect* for
+    /// a session that was already open and hid *Stop Recording* while it was
+    /// recording.
+    ///
+    /// Returns how many rows were updated; `0` means the ID is not in the tree.
+    fn update_items_with_id(
+        model: &gio::ListModel,
+        id: &str,
+        update: &impl Fn(&ConnectionItem),
+    ) -> usize {
+        let mut updated = 0;
+        for i in 0..model.n_items() {
+            let Some(item) = model.item(i).and_downcast::<ConnectionItem>() else {
+                continue;
+            };
+            if item.id() == id {
+                update(&item);
+                updated += 1;
+            }
+            // Descend unconditionally: a group's ID is a group UUID and can
+            // never equal a connection's, so there is nothing to skip, and the
+            // second copy of a pinned row lives under a *different* parent.
+            if item.is_group()
+                && let Some(children) = item.children()
+            {
+                updated += Self::update_items_with_id(&children, id, update);
             }
         }
-        false
+        updated
+    }
+
+    /// Sets the visual status on every row of a connection.
+    fn update_item_status_recursive(model: &gio::ListModel, id: &str, status: &str) -> usize {
+        Self::update_items_with_id(model, id, &|item| item.set_status(status))
     }
 
     /// Updates the recording indicator of a connection row.
@@ -1251,32 +1281,14 @@ impl ConnectionSidebar {
     /// red record icon (active session recording must be visible at a
     /// glance — it is privacy-sensitive).
     pub fn update_connection_recording(&self, id: &str, recording: bool) {
-        Self::update_item_recording_recursive(
-            self.store.upcast_ref::<gio::ListModel>(),
-            id,
-            recording,
-        );
-    }
-
-    /// Recursively finds a connection item by ID and sets its recording flag
-    fn update_item_recording_recursive(model: &gio::ListModel, id: &str, recording: bool) -> bool {
-        let n_items = model.n_items();
-        for i in 0..n_items {
-            if let Some(item) = model.item(i).and_downcast::<ConnectionItem>() {
-                if item.id() == id {
-                    item.set_is_recording(recording);
-                    return true;
-                }
-
-                if item.is_group()
-                    && let Some(children) = item.children()
-                    && Self::update_item_recording_recursive(&children, id, recording)
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.row_indicators
+            .borrow_mut()
+            .entry(id.to_string())
+            .or_default()
+            .recording = recording;
+        Self::update_items_with_id(self.store.upcast_ref::<gio::ListModel>(), id, &|item| {
+            item.set_is_recording(recording);
+        });
     }
 
     /// Shows or hides the external-viewer emblem of a connection row (issue #209).
@@ -1287,36 +1299,14 @@ impl ConnectionSidebar {
     /// from the `ExternalSessionRegistry` callbacks: `true` on registration,
     /// `false` once the connection's external session count reaches zero.
     pub fn set_external_session(&self, id: &str, external: bool) {
-        Self::update_item_external_session_recursive(
-            self.store.upcast_ref::<gio::ListModel>(),
-            id,
-            external,
-        );
-    }
-
-    /// Recursively finds a connection item by ID and sets its external-session flag
-    fn update_item_external_session_recursive(
-        model: &gio::ListModel,
-        id: &str,
-        external: bool,
-    ) -> bool {
-        let n_items = model.n_items();
-        for i in 0..n_items {
-            if let Some(item) = model.item(i).and_downcast::<ConnectionItem>() {
-                if item.id() == id {
-                    item.set_external_session(external);
-                    return true;
-                }
-
-                if item.is_group()
-                    && let Some(children) = item.children()
-                    && Self::update_item_external_session_recursive(&children, id, external)
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.row_indicators
+            .borrow_mut()
+            .entry(id.to_string())
+            .or_default()
+            .external_session = external;
+        Self::update_items_with_id(self.store.upcast_ref::<gio::ListModel>(), id, &|item| {
+            item.set_external_session(external);
+        });
     }
 
     /// Shows, recolors, or hides the split-membership marker of a row (R6.2).
@@ -1333,32 +1323,14 @@ impl ConnectionSidebar {
             None => -1,
             Some(index) => i32::try_from(index).unwrap_or(i32::MAX),
         };
-        Self::update_item_split_color_recursive(
-            self.store.upcast_ref::<gio::ListModel>(),
-            id,
-            value,
-        );
-    }
-
-    /// Recursively finds a connection item by ID and sets its split-color index
-    fn update_item_split_color_recursive(model: &gio::ListModel, id: &str, color: i32) -> bool {
-        let n_items = model.n_items();
-        for i in 0..n_items {
-            if let Some(item) = model.item(i).and_downcast::<ConnectionItem>() {
-                if item.id() == id {
-                    item.set_split_color(color);
-                    return true;
-                }
-
-                if item.is_group()
-                    && let Some(children) = item.children()
-                    && Self::update_item_split_color_recursive(&children, id, color)
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.row_indicators
+            .borrow_mut()
+            .entry(id.to_string())
+            .or_default()
+            .split_color = value;
+        Self::update_items_with_id(self.store.upcast_ref::<gio::ListModel>(), id, &|item| {
+            item.set_split_color(value);
+        });
     }
 
     /// Gets the status of a connection item
@@ -1367,6 +1339,16 @@ impl ConnectionSidebar {
             .borrow()
             .get(id)
             .map(|info| info.status.clone())
+    }
+
+    /// Returns the row decorations recorded for a connection, if any.
+    ///
+    /// Read by `rebuild_sidebar_sorted` so a freshly built row starts with the
+    /// recording dot, external-viewer emblem and split marker it had before the
+    /// rebuild — the counterpart of [`Self::get_connection_status`].
+    #[must_use]
+    pub fn row_indicators(&self, id: &str) -> Option<RowIndicators> {
+        self.row_indicators.borrow().get(id).copied()
     }
 
     /// Returns whether group operations mode is active

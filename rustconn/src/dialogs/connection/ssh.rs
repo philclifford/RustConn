@@ -38,6 +38,9 @@ pub struct SshOptionsWidgets {
     pub agent_key_dropdown: DropDown,
     pub jump_host_dropdown: DropDown,
     pub proxy_entry: Entry,
+    /// The row wrapping [`Self::proxy_entry`], so its subtitle can name an
+    /// inherited bastion instead of leaving one invisible.
+    pub proxy_row: adw::ActionRow,
     pub proxy_command_entry: Entry,
     pub identities_only: CheckButton,
     pub control_master: CheckButton,
@@ -93,16 +96,17 @@ pub fn create_ssh_options() -> SshOptionsWidgets {
     content.append(&auth_group);
 
     // === Connection Options Group ===
-    let (
-        connection_group,
+    let ConnectionGroupWidgets {
+        group: connection_group,
         jump_host_dropdown,
         proxy_entry,
+        proxy_row,
         proxy_command_entry,
         identities_only,
         control_master,
         keep_alive_interval,
         keep_alive_count_max,
-    ) = create_connection_group();
+    } = create_connection_group();
     content.append(&connection_group);
 
     // === Session Group ===
@@ -175,6 +179,7 @@ pub fn create_ssh_options() -> SshOptionsWidgets {
         agent_key_dropdown,
         jump_host_dropdown,
         proxy_entry,
+        proxy_row,
         proxy_command_entry,
         identities_only,
         control_master,
@@ -455,20 +460,29 @@ fn connect_auth_method_visibility(
     });
 }
 
+/// Widgets of the Connection preferences group.
+struct ConnectionGroupWidgets {
+    group: adw::PreferencesGroup,
+    jump_host_dropdown: DropDown,
+    proxy_entry: Entry,
+    proxy_row: adw::ActionRow,
+    proxy_command_entry: Entry,
+    identities_only: CheckButton,
+    control_master: CheckButton,
+    keep_alive_interval: adw::SpinRow,
+    keep_alive_count_max: adw::SpinRow,
+}
+
 /// Creates the Connection preferences group
-fn create_connection_group() -> (
-    adw::PreferencesGroup,
-    DropDown,
-    Entry,
-    Entry,
-    CheckButton,
-    CheckButton,
-    adw::SpinRow,
-    adw::SpinRow,
-) {
+fn create_connection_group() -> ConnectionGroupWidgets {
     let connection_group = adw::PreferencesGroup::builder()
         .title(i18n("Connection"))
         .build();
+
+    // The Network Mode row that decides whether the two bastion rows below are
+    // consulted at all is on the Basic tab, not here: it is a connection-level
+    // choice and this page is only shown for SSH, SFTP and MOSH. See
+    // `general_tab::BasicTabWidgets::network_mode_row`.
 
     // Jump Host dropdown
     let none_items: Vec<String> = vec![i18n("(None)")];
@@ -532,16 +546,17 @@ fn create_connection_group() -> (
     keep_alive_count_max.set_subtitle(&i18n("Disconnect after this many unanswered packets"));
     connection_group.add(&keep_alive_count_max);
 
-    (
-        connection_group,
+    ConnectionGroupWidgets {
+        group: connection_group,
         jump_host_dropdown,
         proxy_entry,
+        proxy_row,
         proxy_command_entry,
         identities_only,
         control_master,
         keep_alive_interval,
         keep_alive_count_max,
-    )
+    }
 }
 
 /// Creates the Session preferences group

@@ -6,9 +6,12 @@
 #
 
 Name:           rustconn
-Version:        0.20.8
+Version:        0.20.9
 Release:        0
-Summary:        Modern connection manager for Linux (SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, Zero Trust)
+# rpmlint caps Summary at 79 characters (summary-too-long, badness 200); the
+# protocol list belongs in %description, which has room for all of it. Kept in
+# step with debian.control's short description.
+Summary:        Modern connection manager for SSH, RDP, VNC, SPICE and more
 License:        GPL-3.0-or-later
 URL:            https://github.com/totoshko88/RustConn
 Source0:        %{name}-%{version}.tar.xz
@@ -63,20 +66,22 @@ BuildRequires:  gettext-devel
 %endif
 
 # Runtime dependencies
+#
+# libadwaita and the ALSA library are deliberately absent: rpm derives
+# `libadwaita-1.so.0()(64bit)` and `libasound.so.2()(64bit)` from the linked ELF
+# by itself, so naming them by hand only adds a second, weaker claim — rpmlint
+# flags it as explicit-lib-dependency, and on openSUSE `libadwaita` is not even a
+# package name (the shared library lives in `libadwaita-1-0`).
 %if 0%{?suse_version}
 Requires:       gtk4 >= 4.14
-Requires:       libadwaita
 Requires:       vte >= 0.74
 Requires:       openssh-clients
-Requires:       libasound2
 %endif
 
 %if 0%{?fedora} || 0%{?rhel}
 Requires:       gtk4 >= 4.14
-Requires:       libadwaita
 Requires:       vte291-gtk4
 Requires:       openssh-clients
-Requires:       alsa-lib
 %endif
 
 # Optional runtime dependencies
@@ -85,8 +90,12 @@ Recommends:     tigervnc
 Recommends:     virt-viewer
 Recommends:     picocom
 Recommends:     kubectl
-# Without an H.264 decoder the embedded RDP client cannot use the EGFX pipeline
-# and falls back to RemoteFX, which costs noticeably more bandwidth and CPU.
+# Used by the external FreeRDP fallback client for /gfx:AVC420, which accepts a
+# distribution build. The *embedded* client cannot: it loads through
+# openh264-sys2, which validates the library's SHA-256 against Cisco's own
+# published binaries and refuses everything else, so H.264 in embedded mode needs
+# a blob from ciscobinary.openh264.org and RUSTCONN_OPENH264 pointing at it.
+# See docs/INSTALL.md.
 Recommends:     libopenh264
 
 %description
@@ -260,7 +269,10 @@ if [ -f "rustconn/assets/icons/hicolor/scalable/apps/io.github.totoshko88.RustCo
         "%{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.totoshko88.RustConn.svg"
 fi
 
-# Locale files (compile .po to .mo)
+# Locale files (compile .po to .mo). The .po basename *is* the locale directory
+# name, which is why the catalogue is `zh_CN.po` and not `zh-cn.po`: gettext looks
+# up `zh_CN`, so the hyphenated directory this used to create was never found and
+# the Chinese translation never loaded.
 for po_file in po/*.po; do
     [ -f "$po_file" ] || continue
     lang=$(basename "$po_file" .po)
@@ -268,7 +280,23 @@ for po_file in po/*.po; do
     msgfmt -o "%{buildroot}%{_datadir}/locale/$lang/LC_MESSAGES/rustconn.mo" "$po_file"
 done
 
-%files
+# Generates rustconn.lang with a %%lang() marker per catalogue, so locale
+# filtering works and rpm owns the directories. Replaces the hand-maintained
+# %%dir entries that were needed for locales the base system does not create.
+%find_lang %{name}
+
+%check
+# Domain logic only: the GUI crate's tests want a display, and rustconn-core is
+# where the property and unit suites live. --offline because OBS has no network
+# and everything is vendored.
+%if 0%{?suse_version}
+%{cargo_test} -p rustconn-core
+%else
+export PATH="$PWD/rust-toolchain/bin:$PATH"
+cargo test --release --offline -p rustconn-core
+%endif
+
+%files -f %{name}.lang
 %license LICENSE
 %doc README.md CHANGELOG.md docs/
 %{_bindir}/rustconn
@@ -278,13 +306,62 @@ done
 %{_datadir}/mime/packages/io.github.totoshko88.RustConn-vv.xml
 %{_datadir}/metainfo/io.github.totoshko88.RustConn.metainfo.xml
 %{_datadir}/icons/hicolor/*/apps/io.github.totoshko88.RustConn.*
-%dir %{_datadir}/locale/uz
-%dir %{_datadir}/locale/uz/LC_MESSAGES
-%dir %{_datadir}/locale/zh-cn
-%dir %{_datadir}/locale/zh-cn/LC_MESSAGES
-%{_datadir}/locale/*/LC_MESSAGES/rustconn.mo
 
 %changelog
+* Wed Aug 26 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.9-0
+- Version bump to 0.20.9
+- Added: a connection can take its jump host from its group or from the
+  application — the connection's own Jump Host, then the group chain, then a
+  new global tier in Settings → Connection → Network. A Network Mode row on the
+  editor's Basic page chooses between inheriting and Direct — on Basic because
+  the choice applies to every protocol, and the protocol pages show only one at
+  a time; rustconn-cli gained --network-mode (issue #301)
+- Added: the external RDP client can be told how to size its window — a new
+  External Window row in the editor's Display group offers Fit to screen (the
+  default), Fullscreen, Custom resolution and All monitors. It governs the
+  External client mode and the window an embedded session hands over to;
+  rustconn-cli gained --rdp-display-mode and --rdp-resolution
+- Fixed: an external RDP window opened at about a quarter of a 4K screen — the
+  size handed to FreeRDP came from the embedded viewer's own widget geometry in
+  logical pixels. Every RDP profile also stored a 1920x1080 resolution nobody
+  chose, which that path then applied; a connection that deliberately used a
+  fixed size needs Custom resolution selected once
+- Fixed: External client mode ignored an RD Gateway completely and never
+  filtered custom FreeRDP arguments, while Display Scale and Color Depth were
+  collected from every connection and emitted by nobody. The three argument
+  builders are now the single one in rustconn-core
+- Fixed: a group's Jump Host was never used — the picker stored the choice but
+  nothing read it at connect time, a group with only a jump host lost it on the
+  next save, and the bastion rows were hidden until an authentication method
+  was chosen (issue #301)
+- Fixed: whether a connection inherited its proxy depended on where it got its
+  SSH key, and RDP, VNC and SPICE inherited unconditionally with no way to
+  refuse; inheritance now keys off Network Mode
+- Fixed: rustconn-cli group set --ssh-proxy-jump "" produced ssh -J "" — a
+  blank now counts as unset at all three tiers, the global one included
+- Fixed: a pinned connection's real row never updated — no status icon,
+  recording dot, external-viewer emblem or split marker, and a context menu
+  that offered Connect for an open session (issue #302)
+- Fixed: the recording dot, external-viewer emblem and split marker vanished on
+  any sidebar reload
+- Fixed: the Simplified Chinese translation has never loaded in any package —
+  zh-cn.po was installed to share/locale/zh-cn/ while gettext looks up zh_CN;
+  the catalogue is now po/zh_CN.po
+- Fixed: Settings populated its connection dropdowns before it had the list
+- Changed: the sidebar's "Open new session" is offered whenever there is a
+  session to duplicate, not only for external viewers (issue #302)
+- Changed: a server that runs RDS licensing is named as such instead of
+  "incompatible"; the external FreeRDP fallback is unchanged
+- Changed: an OpenH264 library that is installed but refused now says why, and
+  RUSTCONN_OPENH264 names a library to try first
+- Improved: every Secret Service call has a deadline, not just the GUI's whole
+  credential resolution
+- Packaging: rpmlint errors cleared — Summary within 79 characters, %find_lang
+  for the locale files, no Requires that rpm already derives, and a %check
+  section running the rustconn-core suites
+- Localisation: Simplified Chinese now loads; 13 new strings translated in all
+  17 locales
+- Dependencies: combine 4.6.7→4.6.8
 * Mon Aug 24 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.8-0
 - Version bump to 0.20.8
 - Fixed: the sidebar context menu did not open when there was no room for it

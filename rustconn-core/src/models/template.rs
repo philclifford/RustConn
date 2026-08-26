@@ -258,6 +258,10 @@ impl ConnectionTemplate {
             sort_order: 0,
             last_connected: None,
             password_source: self.password_source.clone(),
+            // Templates do not carry a network mode: a new connection starts as
+            // `Inherit`, i.e. it picks up whatever its group and the global
+            // settings provide.
+            network_mode: super::NetworkMode::default(),
             domain: self.domain.clone(),
             custom_properties: self.custom_properties.clone(),
             pre_connect_task: self.pre_connect_task.clone(),

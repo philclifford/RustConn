@@ -131,6 +131,13 @@ jobs:
           done
           exit $rc
 
+      # Same genre as the check above: docs/AI_DEVELOPMENT.md declares the files
+      # in .kiro/ to be the authoritative inventory and then states how many
+      # there are. Both numbers went stale anyway — 14 steering files against an
+      # actual 27, 20 hooks against 16. Needs no toolchain, so it runs here.
+      - name: AI development doc counts match .kiro/
+        run: ./scripts/check-ai-docs.sh
+
       # typos.toml has been in the repo, fully configured, since before this
       # job existed — with extend-ignore-re for UUIDs, hex salts and commit
       # hashes — but nothing ever ran it. A config without a runner is decoration.

@@ -23,6 +23,7 @@ use std::collections::HashSet;
 
 use uuid::Uuid;
 
+use crate::config::NetworkSettings;
 use crate::models::{Connection, ConnectionGroup, ProtocolConfig};
 
 /// Maximum number of hops followed before giving up.
@@ -121,9 +122,19 @@ fn proxy_jump_of(conn: &Connection) -> Option<&str> {
 /// equivalent SSH connection does:
 ///
 /// 1. the connection's own `proxy_jump`, including a value inherited from a
-///    group ([`crate::connection::ssh_inheritance::resolve_ssh_proxy_jump`]);
+///    group or from [`NetworkSettings`]
+///    ([`crate::connection::ssh_inheritance::resolve_ssh_proxy_jump`]);
 /// 2. then the `jump_host_id` reference chain, following each hop's own
 ///    `jump_host_id` outward, and splicing in any `proxy_jump` a hop carries.
+///
+/// The first `jump_host_id` is resolved through
+/// [`crate::connection::ssh_inheritance::resolve_ssh_jump_host_id`], so a
+/// bastion set on a *group* or globally is honoured. It previously read the
+/// connection's own field directly, which left the group-level "Jump Host"
+/// picker in the group editor storing, displaying and syncing a value that
+/// nothing ever consulted at connect time. Hops further out keep reading their
+/// own field: a bastion's bastion is a property of that bastion, not something
+/// the group of the *target* should redirect.
 ///
 /// Returns an empty chain when nothing is configured. Terminates on a
 /// self-reference or cycle, and after [`MAX_HOPS`] hops.
@@ -137,19 +148,20 @@ pub fn resolve_jump_chain(
     connection: &Connection,
     connections: &[Connection],
     groups: &[ConnectionGroup],
+    network: &NetworkSettings,
 ) -> JumpChain {
+    use crate::connection::ssh_inheritance::{resolve_ssh_jump_host_id, resolve_ssh_proxy_jump};
+
     let mut chain = JumpChain::default();
 
-    if let Some(proxy) =
-        crate::connection::ssh_inheritance::resolve_ssh_proxy_jump(connection, groups)
-    {
+    if let Some(proxy) = resolve_ssh_proxy_jump(connection, groups, network) {
         chain.hops.push(proxy);
         chain.hop_ids.push(None);
     }
 
     let mut visited = HashSet::new();
     visited.insert(connection.id);
-    let mut current = jump_host_id_of(connection);
+    let mut current = resolve_ssh_jump_host_id(connection, groups, network);
 
     for _ in 0..MAX_HOPS {
         let Some(id) = current else { break };
@@ -187,8 +199,9 @@ pub fn resolve_proxy_jump_value(
     connection: &Connection,
     connections: &[Connection],
     groups: &[ConnectionGroup],
+    network: &NetworkSettings,
 ) -> Option<String> {
-    resolve_jump_chain(connection, connections, groups).proxy_jump_value()
+    resolve_jump_chain(connection, connections, groups, network).proxy_jump_value()
 }
 
 #[cfg(test)]
@@ -222,7 +235,7 @@ mod tests {
     #[test]
     fn no_jump_host_yields_empty_chain() {
         let conn = ssh("target", "target.example.com", 22, Some("me"));
-        let chain = resolve_jump_chain(&conn, &[], &[]);
+        let chain = resolve_jump_chain(&conn, &[], &[], &NetworkSettings::default());
         assert!(chain.is_empty());
         assert_eq!(chain.proxy_jump_value(), None);
     }
@@ -233,7 +246,12 @@ mod tests {
         let mut conn = ssh("target", "target.example.com", 22, Some("me"));
         set_jump_host_id(&mut conn, Some(bastion.id));
 
-        let chain = resolve_jump_chain(&conn, std::slice::from_ref(&bastion), &[]);
+        let chain = resolve_jump_chain(
+            &conn,
+            std::slice::from_ref(&bastion),
+            &[],
+            &NetworkSettings::default(),
+        );
         assert_eq!(chain.hops, vec!["ops@jump.example.com".to_string()]);
         assert_eq!(
             chain.proxy_jump_value(),
@@ -248,7 +266,12 @@ mod tests {
         let mut conn = ssh("target", "target.example.com", 22, None);
         set_jump_host_id(&mut conn, Some(bastion.id));
 
-        let chain = resolve_jump_chain(&conn, std::slice::from_ref(&bastion), &[]);
+        let chain = resolve_jump_chain(
+            &conn,
+            std::slice::from_ref(&bastion),
+            &[],
+            &NetworkSettings::default(),
+        );
         assert_eq!(
             chain.proxy_jump_value(),
             Some("ops@jump.example.com:2222".to_string())
@@ -261,7 +284,12 @@ mod tests {
         let mut conn = ssh("target", "target.example.com", 22, None);
         set_jump_host_id(&mut conn, Some(bastion.id));
 
-        let chain = resolve_jump_chain(&conn, std::slice::from_ref(&bastion), &[]);
+        let chain = resolve_jump_chain(
+            &conn,
+            std::slice::from_ref(&bastion),
+            &[],
+            &NetworkSettings::default(),
+        );
         assert_eq!(
             chain.proxy_jump_value(),
             Some("jump.example.com".to_string())
@@ -278,7 +306,7 @@ mod tests {
         set_jump_host_id(&mut conn, Some(near.id));
 
         let connections = vec![far, near];
-        let chain = resolve_jump_chain(&conn, &connections, &[]);
+        let chain = resolve_jump_chain(&conn, &connections, &[], &NetworkSettings::default());
 
         // Resolved target-first…
         assert_eq!(
@@ -301,7 +329,7 @@ mod tests {
         let mut conn = ssh("target", "target.example.com", 22, Some("me"));
         set_proxy_jump(&mut conn, Some("ops@gw.example.com"));
 
-        let chain = resolve_jump_chain(&conn, &[], &[]);
+        let chain = resolve_jump_chain(&conn, &[], &[], &NetworkSettings::default());
         assert_eq!(
             chain.proxy_jump_value(),
             Some("ops@gw.example.com".to_string())
@@ -320,7 +348,12 @@ mod tests {
             cfg.key_source = SshKeySource::Inherit;
         }
 
-        let chain = resolve_jump_chain(&conn, &[], std::slice::from_ref(&group));
+        let chain = resolve_jump_chain(
+            &conn,
+            &[],
+            std::slice::from_ref(&group),
+            &NetworkSettings::default(),
+        );
         assert_eq!(
             chain.proxy_jump_value(),
             Some("ops@bastion.example.com".to_string())
@@ -333,7 +366,12 @@ mod tests {
         let id = conn.id;
         set_jump_host_id(&mut conn, Some(id));
 
-        let chain = resolve_jump_chain(&conn, std::slice::from_ref(&conn), &[]);
+        let chain = resolve_jump_chain(
+            &conn,
+            std::slice::from_ref(&conn),
+            &[],
+            &NetworkSettings::default(),
+        );
         assert!(chain.is_empty());
     }
 
@@ -348,7 +386,7 @@ mod tests {
         set_jump_host_id(&mut conn, Some(a.id));
 
         let connections = vec![a.clone(), b.clone()];
-        let chain = resolve_jump_chain(&conn, &connections, &[]);
+        let chain = resolve_jump_chain(&conn, &connections, &[], &NetworkSettings::default());
         // Both hops are reported once; the walk stops when it revisits `a`.
         assert_eq!(chain.hops.len(), 2);
     }
@@ -358,7 +396,7 @@ mod tests {
         let mut conn = ssh("target", "target.example.com", 22, None);
         set_jump_host_id(&mut conn, Some(Uuid::new_v4()));
 
-        let chain = resolve_jump_chain(&conn, &[], &[]);
+        let chain = resolve_jump_chain(&conn, &[], &[], &NetworkSettings::default());
         assert!(chain.is_empty());
     }
 
@@ -372,7 +410,12 @@ mod tests {
         }
         set_jump_host_id(&mut conn, Some(bastion.id));
 
-        let chain = resolve_jump_chain(&conn, std::slice::from_ref(&bastion), &[]);
+        let chain = resolve_jump_chain(
+            &conn,
+            std::slice::from_ref(&bastion),
+            &[],
+            &NetworkSettings::default(),
+        );
         assert_eq!(
             chain.proxy_jump_value(),
             Some("ops@jump.example.com".to_string())
@@ -386,7 +429,12 @@ mod tests {
         let mut conn = ssh("target", "target.example.com", 22, Some("me"));
         set_jump_host_id(&mut conn, Some(near.id));
 
-        let chain = resolve_jump_chain(&conn, std::slice::from_ref(&near), &[]);
+        let chain = resolve_jump_chain(
+            &conn,
+            std::slice::from_ref(&near),
+            &[],
+            &NetworkSettings::default(),
+        );
         assert_eq!(
             chain.hops,
             vec![
@@ -413,7 +461,7 @@ mod tests {
         let mut conn = ssh("target", "target.example.com", 22, None);
         set_jump_host_id(&mut conn, Some(hops[0].id));
 
-        let chain = resolve_jump_chain(&conn, &hops, &[]);
+        let chain = resolve_jump_chain(&conn, &hops, &[], &NetworkSettings::default());
         assert_eq!(chain.hops.len(), MAX_HOPS);
     }
 }

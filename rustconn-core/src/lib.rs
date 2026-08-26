@@ -132,7 +132,7 @@ pub use cluster::{
 };
 pub use config::{
     AppSettings, ConfigManager, ConnectionSettings, KeybindingCategory, KeybindingDef,
-    KeybindingSettings, SecretBackendType, StartupAction, default_keybindings,
+    KeybindingSettings, NetworkSettings, SecretBackendType, StartupAction, default_keybindings,
     default_passthrough_exceptions, is_valid_accelerator,
 };
 pub use connection::{
@@ -177,13 +177,13 @@ pub use models::{
     BackspaceSends, Connection, ConnectionGroup, ConnectionHistoryEntry, ConnectionStatistics,
     ConnectionTemplate, Credentials, CustomProperty, DeleteSends, DynamicConnectionEntry,
     DynamicFolderConfig, DynamicFolderResult, HighlightRule, HistorySettings, KubernetesConfig,
-    MoshConfig, MoshPredictMode, PasswordSource, PortForward, PortForwardDirection, PropertyType,
-    ProtocolConfig, ProtocolType, RdpAudioMode, RdpConfig, RdpGateway, Resolution, ScaleOverride,
-    SerialBaudRate, SerialConfig, SerialDataBits, SerialFlowControl, SerialParity, SerialStopBits,
-    Snippet, SnippetTarget, SnippetVariable, SpiceConfig, SpiceImageCompression, SshAuthMethod,
-    SshConfig, SshKeySource, StandaloneTunnel, TelnetConfig, TemplateError, TunnelStatus,
-    VncConfig, WindowGeometry, WindowMode, WorkspaceEntry, WorkspaceProfile, WorkspaceSplitLayout,
-    collect_descendant_group_ids, group_templates_by_protocol,
+    MoshConfig, MoshPredictMode, NetworkMode, PasswordSource, PortForward, PortForwardDirection,
+    PropertyType, ProtocolConfig, ProtocolType, RdpAudioMode, RdpConfig, RdpGateway, Resolution,
+    ScaleOverride, SerialBaudRate, SerialConfig, SerialDataBits, SerialFlowControl, SerialParity,
+    SerialStopBits, Snippet, SnippetTarget, SnippetVariable, SpiceConfig, SpiceImageCompression,
+    SshAuthMethod, SshConfig, SshKeySource, StandaloneTunnel, TelnetConfig, TemplateError,
+    TunnelStatus, VncConfig, WindowGeometry, WindowMode, WorkspaceEntry, WorkspaceProfile,
+    WorkspaceSplitLayout, collect_descendant_group_ids, group_templates_by_protocol,
 };
 pub use monitoring::{
     CollectorHandle, CpuSnapshot, DiskMetrics, LoadAverage, METRICS_COMMAND, MemoryMetrics,

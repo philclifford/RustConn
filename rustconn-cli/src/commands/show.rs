@@ -140,6 +140,10 @@ fn print_json(
             }
         }
         ProtocolConfig::Rdp(config) => {
+            map.insert(
+                "external_display_mode".to_string(),
+                serde_json::Value::String(config.external_display_mode.cli_name().to_string()),
+            );
             if let Some(ref res) = config.resolution {
                 map.insert(
                     "resolution".to_string(),
@@ -417,6 +421,10 @@ fn print_table(connection: &Connection, connections: &[Connection]) -> Result<()
             if let Some(ref domain) = connection.domain {
                 println!("  Domain:   {domain}");
             }
+            println!(
+                "  External Window: {}",
+                config.external_display_mode.display_name()
+            );
             if let Some(ref res) = config.resolution {
                 println!("  Resolution: {}x{}", res.width, res.height);
             }

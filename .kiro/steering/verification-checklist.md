@@ -6,17 +6,28 @@ inclusion: manual
 
 Use after completing a feature or before merge. Adapted from AI-DLC methodology.
 
-## 1. Compilation & Quality
+## 1. Compilation & Quality — one command
 
-- [ ] `cargo fmt --check` — no errors
-- [ ] `cargo clippy --all-targets` — 0 warnings, **and the run actually re-checked**
-      (a cache hit prints `Finished ... in 0.2s` and reports zero warnings without
-      looking at anything — see steering `quality-gate.md`)
-- [ ] `cargo test --workspace` — all tests pass
-- [ ] `typos` — exit 0 (CI `hygiene` job)
-- [ ] `cargo machete` — exit 0 (CI `hygiene` job). A new hit is either a real dead
-      dependency or an import-path/package-name mismatch that belongs in
-      `[package.metadata.cargo-machete] ignored`
+```bash
+scripts/verify.sh --tests     # or without --tests for fmt + machete + clippy only
+scripts/verify.sh --quick     # .md / .po-only work: skips every cargo gate
+scripts/verify.sh --fresh     # force clippy to really re-check
+```
+
+That covers `typos`, the three po gates, a GUI-imports-in-core/cli grep,
+`cargo fmt --check`, `cargo machete`, `cargo clippy --all-targets` and optionally
+`cargo test --workspace`. One log at `target/verify.log`, one exit code. It also
+refuses to start while another cargo holds the target-dir lock, and it **warns when
+clippy reported zero warnings without compiling anything** — the cache hit that
+prints `Finished ... in 0.2s` and verifies nothing. Treat that warning as a failed
+verification, not a pass.
+
+A new `cargo machete` hit is either a real dead dependency or an
+import-path/package-name mismatch that belongs in
+`[package.metadata.cargo-machete] ignored`.
+
+What the script cannot do, and you still must:
+
 - [ ] `getDiagnostics` on modified files — no errors. Note that `git diff` does not
       list **untracked** new files; check those separately.
 - [ ] `git status` before claiming anything is verified. A cargo run only proves
@@ -78,8 +89,12 @@ Use after completing a feature or before merge. Adapted from AI-DLC methodology.
 ## Quick check (delegate)
 
 ```
-Delegate to rust-quality-check: "Run checks with tests"
+Delegate to rust-quality-check: "Run scripts/verify.sh --tests"
 ```
+
+Delegating keeps the ~2.5 min run out of the main context and gives the sub-agent
+its own terminal. Either route is fine; do not run both at once, since they would
+fight over the same target-dir lock.
 
 ## When the full checklist is NOT needed
 

@@ -662,6 +662,7 @@ pub fn resolve_jump_chain_for_tunnel(
     jump_conn: &rustconn_core::Connection,
 ) -> Vec<String> {
     let groups: Vec<rustconn_core::ConnectionGroup> = state_ref.list_groups_owned();
+    let network = state_ref.settings().network.clone();
 
     // Check if the jump host itself has a jump host (recursive chain)
     let ssh_config = match &jump_conn.protocol_config {
@@ -673,9 +674,9 @@ pub fn resolve_jump_chain_for_tunnel(
     let mut chain: Vec<String> = Vec::new();
 
     // First check for string-based proxy_jump on the jump host
-    if let Some(proxy) =
-        rustconn_core::connection::ssh_inheritance::resolve_ssh_proxy_jump(jump_conn, &groups)
-    {
+    if let Some(proxy) = rustconn_core::connection::ssh_inheritance::resolve_ssh_proxy_jump(
+        jump_conn, &groups, &network,
+    ) {
         chain.push(proxy);
     }
 

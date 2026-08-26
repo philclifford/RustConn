@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.20.8"
+version = "0.20.9"
 edition = "2024"
 authors = ["Anton Isaiev <totoshko88@gmail.com>"]
 license = "GPL-3.0-or-later"
@@ -245,3 +245,13 @@ opt-level = 3
 # The actual hot spot: argon2's KDF rounds in the credential round-trip tests.
 [profile.test.package.argon2]
 opt-level = 3
+
+# There is deliberately no `[profile.release]` with `strip`.
+#
+# rpmlint reports `unstripped-binary-or-object` for /usr/bin/rustconn on openSUSE
+# because a default Rust release build keeps its symbol table. Silencing it needs
+# `strip = "symbols"` — `strip = "debuginfo"` leaves `.symtab` in place and the
+# warning with it — and that would take the function names out of every panic
+# backtrace. This project is debugged almost entirely from logs users attach to
+# issue reports, so a readable backtrace is worth more than a lint warning whose
+# badness is zero. Do not "fix" this by adding strip.

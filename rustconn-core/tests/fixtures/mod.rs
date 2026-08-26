@@ -150,6 +150,7 @@ pub fn sample_ssh_connection_with_proxy() -> Connection {
 #[must_use]
 pub fn sample_rdp_connection_with_domain() -> Connection {
     let rdp_config = RdpConfig {
+        external_display_mode: rustconn_core::models::RdpDisplayMode::Custom,
         resolution: Some(Resolution::new(1920, 1080)),
         color_depth: Some(32),
         audio_redirect: true,

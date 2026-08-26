@@ -102,6 +102,13 @@ extend-ignore-re = [
     "\\b[0-9a-fA-F]{32,}\\b",
     # Commit hashes in CHANGELOG.md
     "\\b[0-9a-f]{7,40}\\b",
+    # Uzbek `qat'iy` ("fixed", as in `qat'iy o'lchamlar` — "fixed resolution"),
+    # quoted in the 0.20.9 CHANGELOG entry about the uz catalogue's Resolution
+    # labels. `typos` splits the word at the apostrophe and reads the `iy` tail
+    # as a misspelling of "it". Scoped to this one word rather than allowing the
+    # `iy` fragment everywhere, which would mask the real typo it stands for.
+    # po/*.po is already excluded above, so the catalogue itself is unaffected.
+    "qat'iy",
     # Base64 payload lines — PEM certificate fixtures in the .vv importer tests
     # are dense enough to contain accidental words ("UE", "Fo").
     # Note this is broader than its motivating case: it exempts ANY run of 40+

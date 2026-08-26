@@ -89,7 +89,10 @@ non-negotiable parts live here where they are always loaded.
   delegate the run to the `rust-quality-check` sub-agent, or write to a log file
   and read it with the file-reading tool.
 - A full `cargo test --workspace` is **~2.5 min wall** — measured 2026-08-20:
-  1m 49s compile plus ~45 s of test time, 3843 tests. That is normal, not a hang.
+  1m 49s compile plus ~45 s of test time, ~3900 tests. That is normal, not a hang.
+  The exact count grows with every test added — it was 3843 on 2026-08-20 and 3874
+  six days later — so treat the figure as an order of magnitude and read the run's
+  own `test result:` lines for the real number.
   The single slowest test is the argon2 credential round-trip at ~38 s; it used to
   be ~193 s until `[profile.test.package.argon2] opt-level = 3` was added.
 - **Never wait with `sleep`.** See the next section. A sleep cannot observe

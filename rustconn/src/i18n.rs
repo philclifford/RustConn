@@ -355,7 +355,7 @@ pub fn available_languages() -> Vec<(&'static str, &'static str)> {
         ("sk", "Slovenčina"),
         ("sv", "Svenska"),
         ("uk", "Українська"),
-        ("zh-cn", "简体中文"),
+        ("zh_CN", "简体中文"),
     ]
 }
 
@@ -363,6 +363,14 @@ pub fn available_languages() -> Vec<(&'static str, &'static str)> {
 ///
 /// Linux `setlocale` requires the full `ll_CC.UTF-8` form (e.g. `uk_UA.UTF-8`),
 /// not just the language code (`uk`). This function provides the mapping.
+///
+/// `zh-cn` is accepted alongside `zh_CN` because that is what the catalogue —
+/// and therefore this list, and therefore a stored `ui.language` — used to be
+/// called. The hyphenated form was never a valid locale directory name, so
+/// gettext looked for `zh_CN/LC_MESSAGES/rustconn.mo` while every packaging
+/// script installed `zh-cn/LC_MESSAGES/rustconn.mo` and the Chinese translation
+/// never loaded anywhere. The file is now `po/zh_CN.po`; the alias only keeps an
+/// existing configuration working.
 fn lang_to_locale(lang: &str) -> String {
     let full = match lang {
         "be" => "be_BY",
@@ -380,7 +388,7 @@ fn lang_to_locale(lang: &str) -> String {
         "sk" => "sk_SK",
         "sv" => "sv_SE",
         "uk" => "uk_UA",
-        "zh-cn" => "zh_CN",
+        "zh-cn" | "zh_CN" => "zh_CN",
         other => other,
     };
     format!("{full}.UTF-8")

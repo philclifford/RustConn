@@ -110,10 +110,25 @@ pub struct RdpConfig {
     pub password: Option<SecretString>,
     /// Domain for authentication
     pub domain: Option<String>,
-    /// Desired width in pixels
+    /// Desired width in pixels, negotiated by the embedded viewer
     pub width: u32,
-    /// Desired height in pixels
+    /// Desired height in pixels, negotiated by the embedded viewer
     pub height: u32,
+    /// How an external FreeRDP window is sized.
+    ///
+    /// Separate from `width`/`height` on purpose: those are the embedded
+    /// viewer's own geometry, measured from the `DrawingArea` in *logical*
+    /// pixels. Handing them to a standalone FreeRDP window is what opened a
+    /// ~1670x990 client on a 4K display — the widget size, unscaled, in a window
+    /// that has nothing to do with the widget.
+    pub external_display_mode: rustconn_core::models::RdpDisplayMode,
+    /// Fixed resolution for [`rustconn_core::models::RdpDisplayMode::Custom`]
+    pub external_resolution: Option<rustconn_core::models::Resolution>,
+    /// Session colour depth for the external client (`/bpp:`)
+    pub color_depth: Option<u8>,
+    /// Live compositor scale as a percentage, read for
+    /// [`rustconn_core::models::ScaleOverride::Native`] on the external path
+    pub system_scale_percent: u16,
     /// Enable clipboard sharing
     pub clipboard_enabled: bool,
     /// Performance mode (Quality/Balanced/Speed)
@@ -155,6 +170,12 @@ pub struct RdpConfig {
     /// Security layer selection (Negotiate/RDP/TLS/NLA).
     /// `Rdp` and `Tls` force FreeRDP fallback (incompatible with IronRDP).
     pub security_layer: rustconn_core::models::RdpSecurityLayer,
+    /// Disable Network Level Authentication while leaving other methods.
+    ///
+    /// FreeRDP-only (`/sec:nla:off`), so it takes effect on an external launch
+    /// or on the fallback. IronRDP decides NLA from whether the credentials are
+    /// complete and does not read this.
+    pub disable_nla: bool,
     /// TLS security level for FreeRDP (0–5). Level 0 = legacy TLS 1.0 compat.
     /// Only effective with FreeRDP; IronRDP uses rustls (TLS 1.2+ only).
     pub tls_security_level: Option<u8>,
@@ -207,6 +228,10 @@ impl Default for RdpConfig {
             domain: None,
             width: 1920,
             height: 1080,
+            external_display_mode: rustconn_core::models::RdpDisplayMode::default(),
+            external_resolution: None,
+            color_depth: None,
+            system_scale_percent: 100,
             clipboard_enabled: true,
             performance_mode: RdpPerformanceMode::default(),
             shared_folders: Vec::new(),
@@ -225,6 +250,7 @@ impl Default for RdpConfig {
             ignore_certificate: false,
             security_layer: rustconn_core::models::RdpSecurityLayer::default(),
             tls_security_level: None,
+            disable_nla: false,
             jiggler_enabled: false,
             jiggler_interval_secs: 60,
             autotype_delay_ms: 20,
@@ -375,20 +401,6 @@ impl RdpConfig {
     pub const fn with_polling_interval(mut self, interval_ms: u32) -> Self {
         self.polling_interval_ms = interval_ms;
         self
-    }
-
-    /// Builds FreeRDP command-line arguments for RemoteApp (RAIL) mode.
-    ///
-    /// Returns an empty `Vec` if no RemoteApp program is configured.
-    /// The returned args use FreeRDP 3.x syntax: `/app:`, `/app-cmd:`, `/app-name:`.
-    /// Values containing spaces are quoted for correct FreeRDP parsing.
-    #[must_use]
-    pub fn remote_app_freerdp_args(&self) -> Vec<String> {
-        rustconn_core::models::build_remote_app_freerdp_args(
-            self.remote_app_program.as_deref(),
-            self.remote_app_args.as_deref(),
-            self.remote_app_name.as_deref(),
-        )
     }
 }
 

@@ -36,6 +36,57 @@ fn build_attributes(key: &str) -> HashMap<String, String> {
 }
 
 // ---------------------------------------------------------------------------
+// Call budget — shared by this module and `libsecret.rs`.
+// ---------------------------------------------------------------------------
+
+/// Ceiling on a single Secret Service round-trip.
+///
+/// oo7 builds its zbus connection with a 30 s method timeout, so an ordinary
+/// method call was already bounded — but the one that matters is not an ordinary
+/// method call. Reading a secret from a locked collection makes the Secret
+/// Service raise its own unlock prompt and answer only once the prompt is
+/// dismissed, which means waiting on a `Completed` signal with no deadline at
+/// all. `rustconn-cli` and any other consumer of this crate could sit there
+/// forever; the GUI's one 30 s wrapper around the whole of
+/// `resolve_with_hierarchy` is a single budget shared by five lookup keys and
+/// every round-trip they make, and it cannot say which step stalled.
+///
+/// Ten seconds is the project's standard vault budget (`secrets-guide.md`, and
+/// `VAULT_RETRIEVE_TIMEOUT` in the GUI's connection dialogs): far longer than a
+/// healthy round-trip (~12 ms for the DH handshake), short enough to fail while
+/// the user is still watching.
+#[cfg(all(feature = "system-keyring", not(target_os = "macos")))]
+pub(super) const DBUS_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Bounds one Secret Service call, reporting `what` if it runs out of time.
+///
+/// Returns the future's own output on success, so the caller still maps oo7's
+/// error itself; the outer `Err` is only ever the timeout.
+///
+/// `what` is `&'static str` on purpose. It goes into a log line and into a user-
+/// visible error, and a `&str` would let a caller interpolate a lookup key — or
+/// worse — into either; a literal cannot.
+#[cfg(all(feature = "system-keyring", not(target_os = "macos")))]
+pub(super) async fn with_dbus_timeout<T>(
+    what: &'static str,
+    call: impl std::future::Future<Output = T>,
+) -> SecretResult<T> {
+    if let Ok(value) = tokio::time::timeout(DBUS_CALL_TIMEOUT, call).await {
+        return Ok(value);
+    }
+
+    tracing::warn!(
+        operation = what,
+        timeout_secs = DBUS_CALL_TIMEOUT.as_secs(),
+        "Secret Service call timed out — is the keyring locked and waiting on a prompt?"
+    );
+    Err(SecretError::ConnectionFailed(format!(
+        "the Secret Service did not answer within {}s while trying to {what}",
+        DBUS_CALL_TIMEOUT.as_secs()
+    )))
+}
+
+// ---------------------------------------------------------------------------
 // oo7 error mapping (R9.3) — shared by this module and `libsecret.rs`.
 // ---------------------------------------------------------------------------
 
@@ -132,7 +183,10 @@ pub(crate) fn map_oo7_delete_error(e: oo7::dbus::Error) -> SecretError {
 /// "a Secret Service responded over D-Bus".
 #[cfg(all(feature = "system-keyring", not(target_os = "macos")))]
 pub async fn is_secret_tool_available() -> bool {
-    oo7::dbus::Service::new().await.is_ok()
+    matches!(
+        with_dbus_timeout("probe the Secret Service", oo7::dbus::Service::new()).await,
+        Ok(Ok(_))
+    )
 }
 
 /// Stores a value in the system keyring via oo7.
@@ -147,20 +201,21 @@ pub async fn is_secret_tool_available() -> bool {
 pub async fn store(key: &str, value: &str, label: &str) -> SecretResult<()> {
     let attrs = build_attributes(key);
 
-    let service = oo7::dbus::Service::new()
-        .await
+    let service = with_dbus_timeout("connect to the Secret Service", oo7::dbus::Service::new())
+        .await?
         .map_err(map_oo7_service_error)?;
-    let collection = service
-        .default_collection()
-        .await
+    let collection = with_dbus_timeout("open the default collection", service.default_collection())
+        .await?
         .map_err(map_oo7_service_error)?;
 
     // `Secret::text` stores the raw UTF-8 string with a `text/plain` content
     // type so values round-trip byte-for-byte like the old secret-tool path.
-    collection
-        .create_item(label, &attrs, oo7::Secret::text(value), true, None)
-        .await
-        .map_err(map_oo7_store_error)?;
+    with_dbus_timeout(
+        "store a keyring value",
+        collection.create_item(label, &attrs, oo7::Secret::text(value), true, None),
+    )
+    .await?
+    .map_err(map_oo7_store_error)?;
 
     Ok(())
 }
@@ -177,17 +232,15 @@ pub async fn store(key: &str, value: &str, label: &str) -> SecretResult<()> {
 pub async fn lookup(key: &str) -> SecretResult<Option<String>> {
     let attrs = build_attributes(key);
 
-    let service = oo7::dbus::Service::new()
-        .await
+    let service = with_dbus_timeout("connect to the Secret Service", oo7::dbus::Service::new())
+        .await?
         .map_err(map_oo7_service_error)?;
-    let collection = service
-        .default_collection()
-        .await
+    let collection = with_dbus_timeout("open the default collection", service.default_collection())
+        .await?
         .map_err(map_oo7_service_error)?;
 
-    let items = collection
-        .search_items(&attrs)
-        .await
+    let items = with_dbus_timeout("search the keyring", collection.search_items(&attrs))
+        .await?
         .map_err(map_oo7_retrieve_error)?;
 
     let Some(item) = items.into_iter().next() else {
@@ -195,7 +248,11 @@ pub async fn lookup(key: &str) -> SecretResult<Option<String>> {
         return Ok(None);
     };
 
-    let secret = item.secret().await.map_err(map_oo7_retrieve_error)?;
+    // The call that can wait on a human: a locked collection makes the Secret
+    // Service prompt for the keyring password before it answers.
+    let secret = with_dbus_timeout("read a keyring value", item.secret())
+        .await?
+        .map_err(map_oo7_retrieve_error)?;
 
     // Values were written as UTF-8 text; decode them back the same way. The
     // intermediate copy holds secret material, so it is wiped on drop and the
@@ -228,21 +285,21 @@ pub async fn lookup(key: &str) -> SecretResult<Option<String>> {
 pub async fn clear(key: &str) -> SecretResult<()> {
     let attrs = build_attributes(key);
 
-    let service = oo7::dbus::Service::new()
-        .await
+    let service = with_dbus_timeout("connect to the Secret Service", oo7::dbus::Service::new())
+        .await?
         .map_err(map_oo7_service_error)?;
-    let collection = service
-        .default_collection()
-        .await
+    let collection = with_dbus_timeout("open the default collection", service.default_collection())
+        .await?
         .map_err(map_oo7_service_error)?;
 
-    let items = collection
-        .search_items(&attrs)
-        .await
+    let items = with_dbus_timeout("search the keyring", collection.search_items(&attrs))
+        .await?
         .map_err(map_oo7_retrieve_error)?;
 
     for item in items {
-        item.delete(None).await.map_err(map_oo7_delete_error)?;
+        with_dbus_timeout("delete a keyring value", item.delete(None))
+            .await?
+            .map_err(map_oo7_delete_error)?;
     }
 
     Ok(())
