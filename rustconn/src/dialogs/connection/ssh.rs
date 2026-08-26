@@ -493,7 +493,9 @@ fn create_connection_group() -> ConnectionGroupWidgets {
     ]);
     let network_mode_row = adw::ComboRow::builder()
         .title(i18n("Network Mode"))
-        .subtitle(i18n("Direct ignores a jump host inherited from a group or globally"))
+        .subtitle(i18n(
+            "Direct ignores a jump host inherited from a group or globally",
+        ))
         .model(&network_mode_list)
         .build();
     connection_group.add(&network_mode_row);
