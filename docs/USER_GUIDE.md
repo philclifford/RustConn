@@ -188,6 +188,7 @@ Click **Advanced…** at any step to open the full connection editor with all en
 The full editor provides access to all connection options:**Basic Tab:**
 - Name, Host, Port
 - Protocol selection
+- **Network Mode** — inherit a jump host from the group or the global settings, or go *Direct* (see [Network Mode and Where a Jump Host Comes From](#network-mode-and-where-a-jump-host-comes-from))
 - Parent group
 - Tags
 
@@ -227,27 +228,28 @@ For hardware tokens that expose keys through a PKCS#11 library (YubiKey PIV, Ope
 
 ### Network Mode and Where a Jump Host Comes From
 
-A connection can reach its target through a bastion without naming one itself. Three tiers are consulted, nearest first, and the first one that has a value wins:
+A connection can reach its target through a bastion without naming one itself. Three tiers are consulted, nearest first, and the nearest one that has a value wins — separately for each of the two ways a bastion can be named, *Jump Host* and *ProxyJump*:
 
 | Tier | Where it is set | Applies to |
 |------|-----------------|------------|
-| Connection | Edit connection → **SSH options → Connection** → *Jump Host* / *ProxyJump* | this connection only |
+| Connection | Edit connection → protocol page → **Connection** → *Jump Host* / *ProxyJump* (SSH, SFTP and MOSH share the SSH page; RDP, VNC and SPICE each have a *Jump Host* of their own) | this connection only |
 | Group | Edit group → **SSH Settings** → *Jump Host* / *SSH Proxy Jump* | every connection in the group, and in its subgroups |
 | Global | Settings → **Connection** → *Network* → *Global Jump Host* / *Global ProxyJump* | every connection that inherits, including ungrouped ones |
 
-**Network Mode** (same group in the connection editor) decides whether the inherited tiers are consulted at all:
+**Network Mode** decides whether the inherited tiers are consulted at all. It is on the connection editor's **Basic** page, beside Host and Port — not on a protocol page, because the choice belongs to the connection and applies whatever its protocol:
 
 - **Inherit from group or global** (default) — walk the group chain, then the global settings.
 - **Direct** — connect straight to the host and ignore any inherited bastion. A jump host set on the connection *itself* still applies; *Direct* refuses inherited ones, not explicit ones.
 
-The *ProxyJump* field's subtitle names the bastion a connection has inherited, so a connection routed through one is not silently doing so.
+The *ProxyJump* field's subtitle names the bastion a connection has inherited — a group's or the global one, whether it was typed as `user@host` or picked from the dropdown — so a connection routed through one is not silently doing so. It follows *Network Mode* as you change it, and says so when *Direct* is ignoring an inherited bastion.
 
-Two notes on scope:
+Three notes on scope:
 
 - The **global** tier exists because a group cannot stand in for "everything". There is no single implicit root group — a top-level group is just a group with no parent, and there can be many — and an ungrouped connection has no chain to walk, so nothing set on a group can reach it.
-- *Jump Host* outranks *ProxyJump* at every tier: a saved connection also carries its port, its identity file and its own bastion chain, none of which fit in the text field.
+- *Jump Host* and *ProxyJump* are two ways of naming a bastion, not two candidates for one slot. A *Jump Host* is a saved connection, so it also carries its port, its identity file and its own bastion chain — none of which fit in the text field. Each of the two resolves its own tier chain independently, so setting both is legitimate: they become two hops of one chain, the *Jump Host* contacted first and the *ProxyJump* value reached through it.
+- An empty *ProxyJump* means "no bastion" at every tier, and falls through to the next one. This matters if you edit `config.toml` or `connections.toml` by hand: a stored empty string is not a value, it is nothing.
 
-For RDP, VNC and SPICE a bastion means an SSH tunnel to it, set up automatically before the viewer starts. Those protocols have no SOCKS option of their own.
+For RDP, VNC and SPICE a bastion means an SSH tunnel to it, set up automatically before the viewer starts. Those protocols have no SOCKS option of their own, and they inherit — and refuse, via *Direct* — exactly like SSH does.
 
 **Advanced Tabs:**
 - **Advanced** — Window mode (Embedded/External/Fullscreen), remember window position, hide local cursor (embedded RDP/VNC/SPICE), Wake-on-LAN configuration (MAC address, broadcast, port, wait time), monitoring override (enable/disable per connection, overrides global setting)
@@ -2569,7 +2571,7 @@ The settings dialog uses `adw::PreferencesDialog` with built-in search. Settings
 | Terminal | `utilities-terminal-symbolic` | Terminal + Logging |
 | Interface | `applications-graphics-symbolic` | Appearance, Window, Startup, System Tray, Session Restore, Keybindings + Backup & Restore |
 | Secrets | `channel-secure-symbolic` | Secret backends + SSH Agent |
-| Connection | `network-server-symbolic` | Clients |
+| Connection | `network-server-symbolic` | Network (global jump host) + Clients |
 | Monitoring | `power-profile-performance-symbolic` | Remote host metrics (General + Visible Metrics) + Terminal Activity Monitor defaults |
 | Cloud Sync | `emblem-synchronizing-symbolic` | Sync directory, synced groups, simple sync |
 
@@ -2622,6 +2624,8 @@ The settings dialog uses `adw::PreferencesDialog` with built-in search. Settings
 **SSH Agent group:** Status (running/stopped with socket path), Loaded Keys (with remove option), Available Keys (keys in `~/.ssh/` with add option).
 
 ### Connection page
+
+**Network group:** *Global Jump Host* (a saved SSH connection) and *Global ProxyJump* (free text, OpenSSH syntax). The outermost of the three bastion tiers — it applies to every connection that inherits, including ungrouped ones, which no group can reach. Set both and they chain: the Jump Host is contacted first and the ProxyJump value is reached through it. A connection set to *Direct* ignores both. See [Network Mode and Where a Jump Host Comes From](#network-mode-and-where-a-jump-host-comes-from).
 
 **Clients group:** Auto-detected CLI tools with versions — Protocol Clients (SSH, RDP, VNC, SPICE, Telnet, Serial, Kubernetes) and Zero Trust (AWS, GCP, Azure, OCI, Cloudflare, Teleport, Tailscale, Boundary, Hoop.dev). Searches PATH and user directories.
 
@@ -3004,7 +3008,7 @@ Deletions are tracked via tombstones (auto-cleaned after 30 days). The `device_i
 
 ### SSH Key Inheritance
 
-Groups can define SSH settings (auth method, key path, proxy jump, agent socket) that child connections inherit. This avoids duplicating key paths across dozens of connections and keeps `ssh_key_path` local-only per device.
+Groups can define SSH settings (auth method, key path, jump host, proxy jump, agent socket) that child connections inherit. This avoids duplicating key paths across dozens of connections and keeps `ssh_key_path` local-only per device. See [Network Mode and Where a Jump Host Comes From](#network-mode-and-where-a-jump-host-comes-from) for the bastion fields, which have their own three-tier resolution and are not gated on the key source.
 
 ### Flatpak: Granting Filesystem Access for Cloud Sync
 
@@ -3055,10 +3059,19 @@ After granting access, restart RustConn and set the sync directory in Settings �
 
 **Configure:**
 1. Edit a group → SSH Settings section
-2. Set SSH Key Path, Auth Method, Proxy Jump, or Agent Socket
-3. Child connections with Key Source = "Inherit" use the group's values
+2. Set SSH Key Path, Auth Method, Jump Host, SSH Proxy Jump, or Agent Socket
+3. What decides whether a child connection picks each one up differs by field:
+
+| Group setting | Inherited when |
+|---------------|----------------|
+| SSH Key Path | the connection's **Key Source** is *Inherit* |
+| Auth Method | the connection's **Key Source** is *Inherit* |
+| Jump Host / SSH Proxy Jump | the connection's **Network Mode** is *Inherit from group or global*, and it has no jump host of its own — whatever its protocol, and regardless of where it gets its SSH key |
+| Agent Socket | the connection has none of its own |
 
 The inheritance chain walks from the connection's immediate group up to the root, returning the first value found.
+
+> **Changed in 0.20.9:** the bastion fields used to be gated on **Key Source** as well, which made a group jump host and a connection-level key file mutually exclusive, and RDP, VNC and SPICE inherited unconditionally with no way to refuse. **Network Mode** is now the single answer for all protocols. If you worked around the old behaviour by setting Key Source to *Inherit* on a connection that has its own key, you can set the key back.
 
 ### Credential Resolution
 

@@ -169,7 +169,7 @@ impl ConnectionDialog {
 
         // Network mode — connection-level, so it is set for every protocol
         // rather than inside the SSH branch below (issue #301).
-        self.ssh_network_mode_row.set_selected(u32::from(
+        self.network_mode_row.set_selected(u32::from(
             conn.network_mode == rustconn_core::models::NetworkMode::Direct,
         ));
         self.update_inherited_proxy_subtitle(conn);
@@ -450,9 +450,24 @@ impl ConnectionDialog {
         self.set_groups_list(&groups_data);
     }
 
+    /// Sets the application-wide bastion tier, the outermost one a connection
+    /// can inherit from.
+    ///
+    /// Used only to work out what the edited connection inherits, for the
+    /// ProxyJump row's subtitle. A caller that does not set it gets the group
+    /// chain and nothing global — which is what every caller got before this
+    /// existed, and why a globally configured bastion stayed invisible here.
+    pub fn set_network_settings(&self, network: rustconn_core::config::NetworkSettings) {
+        *self.network_settings.borrow_mut() = network;
+    }
+
     /// Sets the available connections for the jump host dropdown
     pub fn set_connections(&self, connections: &[Connection]) {
         use rustconn_core::models::ProtocolType;
+
+        // Kept whole as well as as `(id, label)` pairs: resolving an inherited
+        // bastion follows `jump_host_id` references through the list.
+        *self.full_connections_data.borrow_mut() = connections.to_vec();
 
         let mut connections_data: Vec<(Option<Uuid>, String)> = vec![(None, "(None)".to_string())];
 
@@ -1074,47 +1089,81 @@ impl ConnectionDialog {
     /// That matters more now that inheritance no longer depends on the SSH key
     /// source and therefore applies to far more connections (issue #301).
     ///
-    /// Only the group tier is resolved: the global tier lives in `AppSettings`,
-    /// which this dialog is not given, and saying "from a group" wrongly would be
-    /// worse than saying nothing. `Direct` reports that it is ignoring one.
+    /// Resolves the whole chain rather than just the free-text field, and both
+    /// inherited tiers rather than just the group chain — a bastion picked from
+    /// the dropdown is a `jump_host_id`, and the global tier is where issue #301
+    /// asked for the bastion to be set in the first place, so resolving neither
+    /// left the two most likely cases silent. The chain comes back in the order
+    /// `ssh -J` takes it, which is the order the field itself is written in.
+    ///
+    /// The computed text is cached in [`Self::inherited_proxy_subtitle`] so
+    /// [`Self::wire_network_mode_row`] can restore it without a `Connection`.
     pub(super) fn update_inherited_proxy_subtitle(&self, conn: &rustconn_core::models::Connection) {
-        use rustconn_core::config::NetworkSettings;
-        use rustconn_core::connection::ssh_inheritance::resolve_ssh_proxy_jump;
+        use rustconn_core::connection::resolve_jump_chain;
         use rustconn_core::models::NetworkMode;
 
         let default_subtitle = i18n("Jump host for tunneling (-J)");
 
+        // A connection with a bastion of its own is not inheriting one, in
+        // either form. `resolve_jump_chain` would report those too, and calling
+        // them "inherited" would be wrong. Every protocol that carries a
+        // `jump_host_id` is checked, matching what the resolver reads, even
+        // though only SSH and SFTP ever show this row.
+        let own = match &conn.protocol_config {
+            ProtocolConfig::Ssh(cfg) | ProtocolConfig::Sftp(cfg) => {
+                cfg.jump_host_id.is_some()
+                    || cfg
+                        .proxy_jump
+                        .as_deref()
+                        .map(str::trim)
+                        .is_some_and(|value| !value.is_empty())
+            }
+            ProtocolConfig::Rdp(cfg) => cfg.jump_host_id.is_some(),
+            ProtocolConfig::Vnc(cfg) => cfg.jump_host_id.is_some(),
+            ProtocolConfig::Spice(cfg) => cfg.jump_host_id.is_some(),
+            _ => false,
+        };
+
+        let inherited = if own {
+            default_subtitle.clone()
+        } else {
+            let groups: Vec<rustconn_core::models::ConnectionGroup> =
+                self.full_groups_data.borrow().values().cloned().collect();
+            let connections = self.full_connections_data.borrow();
+            let network = self.network_settings.borrow();
+            // `conn` carries no bastion of its own here, so everything the chain
+            // reports came from the group chain or from the global tier.
+            match resolve_jump_chain(conn, &connections, &groups, &network).proxy_jump_value() {
+                Some(chain) => i18n_f("Inherited: {}", &[&chain]),
+                None => default_subtitle.clone(),
+            }
+        };
+        *self.inherited_proxy_subtitle.borrow_mut() = inherited.clone();
+
         if conn.network_mode == NetworkMode::Direct {
             self.ssh_proxy_row
                 .set_subtitle(&i18n("Direct — an inherited jump host is ignored"));
-            return;
+        } else {
+            self.ssh_proxy_row.set_subtitle(&inherited);
         }
+    }
 
-        // A connection with its own value is not inheriting anything.
-        let own = match &conn.protocol_config {
-            ProtocolConfig::Ssh(cfg) | ProtocolConfig::Sftp(cfg) => cfg
-                .proxy_jump
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty()),
-            _ => false,
-        };
-        if own {
-            self.ssh_proxy_row.set_subtitle(&default_subtitle);
-            return;
-        }
-
-        let full_groups = self.full_groups_data.borrow();
-        let groups: Vec<rustconn_core::models::ConnectionGroup> =
-            full_groups.values().cloned().collect();
-        drop(full_groups);
-
-        match resolve_ssh_proxy_jump(conn, &groups, &NetworkSettings::default()) {
-            Some(inherited) => self
-                .ssh_proxy_row
-                .set_subtitle(&i18n_f("Inherited: {}", &[&inherited])),
-            None => self.ssh_proxy_row.set_subtitle(&default_subtitle),
-        }
+    /// Keeps the ProxyJump subtitle honest while Network Mode is being changed.
+    ///
+    /// The row and the subtitle it governs are on different pages of the dialog,
+    /// and until this existed the subtitle only ever reflected the *stored* mode:
+    /// choosing `Direct` and saving produced a connection whose editor still
+    /// claimed to inherit a bastion until the dialog was reopened.
+    pub(super) fn wire_network_mode_row(&self) {
+        let proxy_row = self.ssh_proxy_row.clone();
+        let cached = Rc::clone(&self.inherited_proxy_subtitle);
+        self.network_mode_row.connect_selected_notify(move |row| {
+            if row.selected() == 1 {
+                proxy_row.set_subtitle(&i18n("Direct — an inherited jump host is ignored"));
+            } else {
+                proxy_row.set_subtitle(&cached.borrow());
+            }
+        });
     }
 
     /// Refreshes the port forwarding list UI from the stored rules

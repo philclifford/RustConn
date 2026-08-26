@@ -248,7 +248,9 @@ pub(super) struct ConnectionDialogData<'a> {
     /// Web page has no widget for. See `ConnectionDialog::web_config_seed`.
     pub web_config_seed: &'a Rc<RefCell<Option<rustconn_core::models::WebConfig>>>,
     // Jump Host fields
-    pub ssh_network_mode_row: &'a adw::ComboRow,
+    /// Connection-level, so it is on the Basic tab rather than the SSH page —
+    /// see `general_tab::BasicTabWidgets::network_mode_row` (issue #301).
+    pub network_mode_row: &'a adw::ComboRow,
     pub ssh_jump_host_dropdown: &'a DropDown,
     pub connections_data: &'a Rc<RefCell<Vec<(Option<Uuid>, String)>>>,
     // Script credential fields
@@ -558,8 +560,9 @@ impl ConnectionDialogData<'_> {
         };
 
         // Network mode — Inherit(0) / Direct(1). Set for every protocol, not
-        // just SSH: RDP, VNC and SPICE also inherit a bastion (issue #301).
-        conn.network_mode = if self.ssh_network_mode_row.selected() == 1 {
+        // just SSH: RDP, VNC and SPICE also inherit a bastion (issue #301). The
+        // row is on the Basic tab for the same reason.
+        conn.network_mode = if self.network_mode_row.selected() == 1 {
             rustconn_core::models::NetworkMode::Direct
         } else {
             rustconn_core::models::NetworkMode::Inherit

@@ -141,19 +141,28 @@ pub fn resolve_ssh_auth_method(
     walk_group_chain(connection.group_id, groups, |g| g.ssh_auth_method.clone()).unwrap_or_default()
 }
 
-/// Returns the connection's own free-text `ProxyJump`, treating blank as unset.
+/// Trims a stored `ProxyJump` and treats a blank one as unset.
 ///
 /// A stored empty string is not "no bastion", it is a value that reached
-/// `ssh -J ""`; only the CLI could produce one (the dialogs normalise blanks
-/// away), and it broke the command rather than disabling the proxy.
+/// `ssh -J ""`, breaking the command rather than disabling the proxy. Applied at
+/// every tier — the connection, the group chain and
+/// [`NetworkSettings::proxy_jump`] — because each of the three can hold one: the
+/// dialogs normalise blanks away, but `config.toml` and `connections.toml` are
+/// editable by hand, and `rustconn-cli group set --ssh-proxy-jump ""` used to
+/// store one on purpose.
+fn non_blank_proxy_jump(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// Returns the connection's own free-text `ProxyJump`, treating blank as unset.
 fn own_proxy_jump(connection: &Connection) -> Option<String> {
     match &connection.protocol_config {
-        ProtocolConfig::Ssh(cfg) | ProtocolConfig::Sftp(cfg) => cfg
-            .proxy_jump
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
+        ProtocolConfig::Ssh(cfg) | ProtocolConfig::Sftp(cfg) => {
+            non_blank_proxy_jump(cfg.proxy_jump.as_deref())
+        }
         _ => None,
     }
 }
@@ -188,13 +197,9 @@ pub fn resolve_ssh_proxy_jump(
         return None;
     }
     walk_group_chain(connection.group_id, groups, |g| {
-        g.ssh_proxy_jump
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
+        non_blank_proxy_jump(g.ssh_proxy_jump.as_deref())
     })
-    .or_else(|| network.proxy_jump.clone())
+    .or_else(|| non_blank_proxy_jump(network.proxy_jump.as_deref()))
 }
 
 /// Resolves the jump-host connection ID for a connection.
@@ -441,6 +446,34 @@ mod tests {
         assert_eq!(
             resolve_ssh_proxy_jump(&conn, &[group], &NetworkSettings::default()),
             Some("group-bastion".into())
+        );
+    }
+
+    #[test]
+    fn blank_global_proxy_jump_is_not_a_bastion() {
+        // The global tier is the one a user reaches by editing `config.toml`, so
+        // it needs the same blank check as the other two rather than passing
+        // `Some("")` straight through to `ssh -J ""`.
+        let conn = ssh_conn_own_key(None);
+        let network = NetworkSettings {
+            proxy_jump: Some("  ".into()),
+            jump_host_id: None,
+        };
+
+        assert_eq!(resolve_ssh_proxy_jump(&conn, &[], &network), None);
+    }
+
+    #[test]
+    fn global_proxy_jump_is_trimmed() {
+        let conn = ssh_conn_own_key(None);
+        let network = NetworkSettings {
+            proxy_jump: Some("  global-bastion \n".into()),
+            jump_host_id: None,
+        };
+
+        assert_eq!(
+            resolve_ssh_proxy_jump(&conn, &[], &network),
+            Some("global-bastion".into())
         );
     }
 

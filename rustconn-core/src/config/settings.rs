@@ -926,9 +926,18 @@ pub struct NetworkSettings {
     /// ID of a saved SSH connection to use as the bastion for every connection
     /// that inherits.
     ///
-    /// Preferred over [`Self::proxy_jump`] when both are set, matching the group
-    /// level, because a saved connection also carries its port, its identity
-    /// file and its own bastion chain — none of which fit in the text field.
+    /// Offered alongside [`Self::proxy_jump`] rather than instead of it because a
+    /// saved connection also carries its port, its identity file and its own
+    /// bastion chain — none of which fit in the text field.
+    ///
+    /// Setting both is not a conflict: the two are resolved independently and end
+    /// up as two hops of one chain, exactly as they do at the connection and
+    /// group levels. This one is the hop nearer the *client* — the free-text
+    /// [`Self::proxy_jump`] is pushed first and
+    /// [`JumpChain::hops`](crate::connection::JumpChain::hops) is ordered
+    /// target-first — so `ssh -J` contacts this bastion first and reaches the
+    /// free-text one through it. See
+    /// [`resolve_jump_chain`](crate::connection::resolve_jump_chain).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jump_host_id: Option<Uuid>,
 }

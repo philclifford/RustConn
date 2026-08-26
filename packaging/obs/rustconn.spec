@@ -312,9 +312,10 @@ cargo test --release --offline -p rustconn-core
 - Version bump to 0.20.9
 - Added: a connection can take its jump host from its group or from the
   application — the connection's own Jump Host, then the group chain, then a
-  new global tier in Settings → Connection → Network. A Network Mode row
-  chooses between inheriting and Direct; rustconn-cli gained --network-mode
-  (issue #301)
+  new global tier in Settings → Connection → Network. A Network Mode row on the
+  editor's Basic page chooses between inheriting and Direct — on Basic because
+  the choice applies to every protocol, and the protocol pages show only one at
+  a time; rustconn-cli gained --network-mode (issue #301)
 - Fixed: a group's Jump Host was never used — the picker stored the choice but
   nothing read it at connect time, a group with only a jump host lost it on the
   next save, and the bastion rows were hidden until an authentication method
@@ -322,7 +323,8 @@ cargo test --release --offline -p rustconn-core
 - Fixed: whether a connection inherited its proxy depended on where it got its
   SSH key, and RDP, VNC and SPICE inherited unconditionally with no way to
   refuse; inheritance now keys off Network Mode
-- Fixed: rustconn-cli group set --ssh-proxy-jump "" produced ssh -J ""
+- Fixed: rustconn-cli group set --ssh-proxy-jump "" produced ssh -J "" — a
+  blank now counts as unset at all three tiers, the global one included
 - Fixed: a pinned connection's real row never updated — no status icon,
   recording dot, external-viewer emblem or split marker, and a context menu
   that offered Connect for an open session (issue #302)

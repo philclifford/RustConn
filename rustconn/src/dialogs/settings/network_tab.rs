@@ -82,10 +82,18 @@ pub fn create_network_group() -> NetworkPageWidgets {
     let proxy_jump_row = adw::EntryRow::builder()
         .title(i18n("Global ProxyJump"))
         .build();
+    // Says "chained", not "used when no Global Jump Host is selected", which is
+    // what this said until the two were traced through `resolve_jump_chain`: the
+    // free-text value and the picker are resolved independently and both end up
+    // in the chain. This one is the hop nearer the target — it is pushed first
+    // and `JumpChain::hops` is ordered target-first — so `ssh -J` reaches it
+    // *through* the Global Jump Host, which is what "after" means here. Setting
+    // both is legitimate, and the old wording made a working configuration look
+    // like a mistake.
     // Does not quote the "(None)" label: that label is itself translated, so
     // naming it here would leave the two to drift apart per locale.
     proxy_jump_row.set_tooltip_text(Some(&i18n(
-        "OpenSSH syntax, for example user@bastion. Used when no Global Jump Host is selected",
+        "OpenSSH syntax, for example user@bastion. Chained after the Global Jump Host when both are set",
     )));
     group.add(&proxy_jump_row);
 

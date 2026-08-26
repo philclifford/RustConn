@@ -144,7 +144,7 @@
       <description>
         <p>Version 0.20.9 - a jump host you set once, pinned connections in the sidebar, and Chinese:</p>
         <ul>
-          <li>Added: a connection can now take its jump host from its group or from a new application-wide setting, instead of repeating the same bastion on every connection. Settings → Connection → Network holds the global one, and each connection has a Network Mode row to inherit it or go direct</li>
+          <li>Added: a connection can now take its jump host from its group or from a new application-wide setting, instead of repeating the same bastion on every connection. Settings → Connection → Network holds the global one, and every connection has a Network Mode row on its Basic page to inherit it or go direct, whatever its protocol. The ProxyJump field says which jump host is in force when one is inherited</li>
           <li>Fixed: a jump host set on a group was stored and shown but never actually used to reach its connections. A group configured with only a jump host also lost it on the next save, and the bastion fields were hidden until an authentication method was picked</li>
           <li>Fixed: whether a connection inherited its group's bastion depended on an unrelated setting — where it got its SSH key — and remote desktop connections inherited it with no way to refuse</li>
           <li>Fixed: a pinned connection's entry in its own group never showed anything — no connected indicator, no recording dot, no external-viewer marker — and right-clicking it offered Connect for a session that was already open</li>

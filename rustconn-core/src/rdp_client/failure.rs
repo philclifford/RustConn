@@ -148,15 +148,27 @@ const PROTOCOL_MARKERS: &[&str] = &[
     "unsupported pdu",
     "decode error",
     "unsupported fast-path update code",
+    // A rejected `BasicSecurityHeader`. Kept here rather than in
+    // [`LICENSE_MARKERS`] because the header is common to every Standard RDP
+    // Security PDU, so it identifies the fallback but not the phase.
+    "securityheaderflags",
 ];
 
-/// Markers of a failure inside the RDP licensing exchange.
+/// Markers naming the RDP licensing exchange as the phase that failed.
 ///
 /// A subset of [`PROTOCOL_MARKERS`] rather than a class of its own: handing the
 /// session to the external client is still the right response, so the *decision*
 /// does not change. What changes is what the user is told — `"decode error"` is
 /// broad enough to swallow this case, and "server incompatible" says nothing
 /// about a server that is merely running RDS licensing.
+///
+/// Both entries name the phase itself. `securityHeaderFlags` — the field the
+/// decoder actually rejects — is deliberately **not** here: it is a field of
+/// `BasicSecurityHeader`, which every Standard RDP Security PDU carries, so a
+/// decode failure mentioning it says nothing about *where* in the connection it
+/// happened. Matching on it would report an unrelated header failure as "the
+/// server requires RDS licensing". It stays in [`PROTOCOL_MARKERS`] instead,
+/// where it only affects the fallback decision, which is the same either way.
 ///
 /// The cause is upstream and open:
 /// [IronRDP #1629](https://github.com/Devolutions/IronRDP/issues/1629). A
@@ -169,11 +181,7 @@ const PROTOCOL_MARKERS: &[&str] = &[
 /// [#1458](https://github.com/Devolutions/IronRDP/pull/1458), which relaxed
 /// `BasicSecurityHeader` and does not touch this check — and is in any case not
 /// yet published (`ironrdp-pdu` on crates.io is still 0.9.0).
-const LICENSE_MARKERS: &[&str] = &[
-    "server_new_license",
-    "licenseexchangestate",
-    "securityheaderflags",
-];
+const LICENSE_MARKERS: &[&str] = &["server_new_license", "licenseexchangestate"];
 
 /// Returns `true` when the failure happened in the RDP licensing exchange.
 ///
@@ -460,5 +468,24 @@ mod tests {
                 "wrongly reported as a licensing failure: {msg}"
             );
         }
+    }
+
+    #[test]
+    fn a_security_header_failure_outside_licensing_is_not_a_license_failure() {
+        // `BasicSecurityHeader` is common to every Standard RDP Security PDU, so
+        // its field name alone cannot say the licensing exchange was the phase
+        // that failed — but it must still reach the external client.
+        let msg = "decode error [kind: Decode(Error { context: \
+                   \"<ironrdp_pdu::rdp::BasicSecurityHeader as \
+                   ironrdp_core::decode::Decode<'_>>::decode\", kind: InvalidField { field: \
+                   \"securityHeaderFlags\", reason: \"invalid security header flags\" } })]";
+
+        assert!(
+            !is_license_exchange_failure(msg),
+            "a BasicSecurityHeader failure must not be reported as RDS licensing"
+        );
+        let class = classify_rdp_failure(msg);
+        assert_eq!(class, RdpFailureClass::ProtocolIncompatible);
+        assert!(class.warrants_freerdp_fallback());
     }
 }

@@ -82,6 +82,10 @@ pub fn edit_selected_connection(
                 .cloned()
                 .collect();
             dialog.set_connections(&connections);
+            // The outermost bastion tier, so the ProxyJump row can name a
+            // globally configured jump host rather than leaving it invisible
+            // (issue #301).
+            dialog.set_network_settings(state_ref.settings().network.clone());
         }
 
         // Populate variable dropdown with secret global variables

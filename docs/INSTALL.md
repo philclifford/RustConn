@@ -473,9 +473,10 @@ mkdir -p ~/.local/lib
 export RUSTCONN_OPENH264=~/.local/lib/libopenh264-2.6.0-linux64.8.so
 ```
 
-`RUSTCONN_OPENH264` is read at startup and tried before every other path, so no
-root and no system directory is needed. Set it in your session's environment (or
-in the `.desktop` file's `Exec=` line) to make it stick.
+`RUSTCONN_OPENH264` is read when a session first sets up its GFX pipeline, and
+the path is tried before every other candidate, so no root and no system
+directory is needed. Set it in your session's environment (or in the `.desktop`
+file's `Exec=` line) to make it stick.
 
 Without it the session simply uses RemoteFX and works. Note this affects the
 **embedded** client only — the external FreeRDP fallback has no such check and

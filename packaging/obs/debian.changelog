@@ -1,11 +1,15 @@
 rustconn (0.20.9-1) unstable; urgency=medium
+
   * Version bump to 0.20.9
   * Added: a connection can take its jump host from its group or from the
     application — three tiers are consulted, nearest first: the connection's
     own Jump Host, then the group chain, then a new Settings → Connection →
     Network group holding a Global Jump Host and a Global ProxyJump. A new
-    Network Mode row chooses between "Inherit from group or global" and
-    "Direct"; rustconn-cli gained --network-mode inherit|direct (issue #301)
+    Network Mode row on the editor's Basic page chooses between "Inherit from
+    group or global" and "Direct" — on Basic rather than on the SSH page
+    because the choice applies to every protocol and the protocol pages show
+    only one at a time; rustconn-cli gained --network-mode inherit|direct
+    (issue #301)
   * Fixed: a group's Jump Host was never used — the picker stored the choice
     and showed it again when reopened, but nothing read it at connect time.
     Two further defects in the same dialog: a group configured with only a
@@ -19,7 +23,9 @@ rustconn (0.20.9-1) unstable; urgency=medium
     unconditionally with no way to refuse. Inheritance now keys off Network
     Mode and reads the same for every protocol
   * Fixed: rustconn-cli group set --ssh-proxy-jump "" produced ssh -J "" — an
-    empty value now clears the setting, for --ssh-agent-socket too
+    empty value now clears the setting, for --ssh-agent-socket too, and a
+    blank counts as unset at all three tiers, the hand-editable global one
+    included
   * Fixed: a pinned connection's real row never updated — a pinned connection
     is in the sidebar twice and the four update walkers stopped at the first
     match, so the row in its group or at the root had no status icon,
@@ -52,7 +58,9 @@ rustconn (0.20.9-1) unstable; urgency=medium
   * Localisation: Simplified Chinese now loads; 13 new strings translated in
     all 17 locales
   * Dependencies: combine 4.6.7→4.6.8
+
  -- Anton Isaiev <totoshko88@gmail.com>  Wed, 26 Aug 2026 12:00:00 +0000
+
 rustconn (0.20.8-1) unstable; urgency=medium
 
   * Version bump to 0.20.8

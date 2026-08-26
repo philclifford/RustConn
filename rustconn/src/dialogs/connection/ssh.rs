@@ -36,8 +36,6 @@ pub struct SshOptionsWidgets {
     pub key_entry: Entry,
     pub key_button: Button,
     pub agent_key_dropdown: DropDown,
-    /// Where the bastion comes from: Inherit or Direct (issue #301).
-    pub network_mode_row: adw::ComboRow,
     pub jump_host_dropdown: DropDown,
     pub proxy_entry: Entry,
     /// The row wrapping [`Self::proxy_entry`], so its subtitle can name an
@@ -100,7 +98,6 @@ pub fn create_ssh_options() -> SshOptionsWidgets {
     // === Connection Options Group ===
     let ConnectionGroupWidgets {
         group: connection_group,
-        network_mode_row,
         jump_host_dropdown,
         proxy_entry,
         proxy_row,
@@ -180,7 +177,6 @@ pub fn create_ssh_options() -> SshOptionsWidgets {
         key_entry,
         key_button,
         agent_key_dropdown,
-        network_mode_row,
         jump_host_dropdown,
         proxy_entry,
         proxy_row,
@@ -467,7 +463,6 @@ fn connect_auth_method_visibility(
 /// Widgets of the Connection preferences group.
 struct ConnectionGroupWidgets {
     group: adw::PreferencesGroup,
-    network_mode_row: adw::ComboRow,
     jump_host_dropdown: DropDown,
     proxy_entry: Entry,
     proxy_row: adw::ActionRow,
@@ -484,21 +479,10 @@ fn create_connection_group() -> ConnectionGroupWidgets {
         .title(i18n("Connection"))
         .build();
 
-    // Network mode — the only way to refuse a bastion inherited from the group
-    // chain or the global network settings (issue #301). Placed above the two
-    // bastion fields because it decides whether they are consulted at all.
-    let network_mode_list = StringList::new(&[
-        i18n("Inherit from group or global").as_str(),
-        i18n("Direct").as_str(),
-    ]);
-    let network_mode_row = adw::ComboRow::builder()
-        .title(i18n("Network Mode"))
-        .subtitle(i18n(
-            "Direct ignores a jump host inherited from a group or globally",
-        ))
-        .model(&network_mode_list)
-        .build();
-    connection_group.add(&network_mode_row);
+    // The Network Mode row that decides whether the two bastion rows below are
+    // consulted at all is on the Basic tab, not here: it is a connection-level
+    // choice and this page is only shown for SSH, SFTP and MOSH. See
+    // `general_tab::BasicTabWidgets::network_mode_row`.
 
     // Jump Host dropdown
     let none_items: Vec<String> = vec![i18n("(None)")];
@@ -564,7 +548,6 @@ fn create_connection_group() -> ConnectionGroupWidgets {
 
     ConnectionGroupWidgets {
         group: connection_group,
-        network_mode_row,
         jump_host_dropdown,
         proxy_entry,
         proxy_row,

@@ -30,6 +30,16 @@ pub(super) struct BasicTabWidgets {
     pub host_label: Label,
     pub port_spin: SpinButton,
     pub port_label: Label,
+    /// Where the bastion comes from: Inherit or Direct (issue #301).
+    ///
+    /// Lives on this tab rather than on the SSH page of the protocol stack
+    /// because [`rustconn_core::models::NetworkMode`] is a property of the
+    /// connection, not of its protocol: RDP, VNC and SPICE carry a
+    /// `jump_host_id` too and inherit a bastion the same way. The protocol stack
+    /// shows one page at a time, so a row on the SSH page is unreachable for
+    /// every other protocol — which left those three with the inheritance the
+    /// row is meant to refuse and no way to refuse it.
+    pub network_mode_row: adw::ComboRow,
     pub username_entry: Entry,
     pub username_label: Label,
     pub domain_entry: Entry,
@@ -161,6 +171,24 @@ pub(super) fn create_basic_tab() -> BasicTabWidgets {
     let port_row = adw::ActionRow::builder().title(i18n("Port")).build();
     port_row.add_suffix(&port_suffix);
     connection_group.add(&port_row);
+
+    // Network mode — the only way to refuse a bastion inherited from the group
+    // chain or from the global network settings (issue #301). It belongs next to
+    // Host and Port because it decides how this host is reached, and it belongs
+    // on *this* tab because the choice applies to every protocol: see
+    // `BasicTabWidgets::network_mode_row` for why the SSH page could not hold it.
+    let network_mode_list = StringList::new(&[
+        i18n("Inherit from group or global").as_str(),
+        i18n("Direct").as_str(),
+    ]);
+    let network_mode_row = adw::ComboRow::builder()
+        .title(i18n("Network Mode"))
+        .subtitle(i18n(
+            "Direct ignores a jump host inherited from a group or globally",
+        ))
+        .model(&network_mode_list)
+        .build();
+    connection_group.add(&network_mode_row);
 
     // Update port description when port changes
     let port_desc_clone = port_desc.clone();
@@ -451,6 +479,7 @@ pub(super) fn create_basic_tab() -> BasicTabWidgets {
         host_label,
         port_spin,
         port_label,
+        network_mode_row,
         username_entry,
         username_label,
         domain_entry,
