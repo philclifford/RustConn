@@ -1,5 +1,5 @@
 -------------------------------------------------------------------
-Tue Aug 25 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.9
+Wed Aug 26 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.9
 - Version bump to 0.20.9
 - Added: a connection can take its jump host from its group or from the
   application — three tiers are consulted, nearest first: the connection's own

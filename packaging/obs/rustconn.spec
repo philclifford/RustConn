@@ -308,7 +308,7 @@ cargo test --release --offline -p rustconn-core
 %{_datadir}/icons/hicolor/*/apps/io.github.totoshko88.RustConn.*
 
 %changelog
-* Tue Aug 25 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.9-0
+* Wed Aug 26 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.9-0
 - Version bump to 0.20.9
 - Added: a connection can take its jump host from its group or from the
   application — the connection's own Jump Host, then the group chain, then a
