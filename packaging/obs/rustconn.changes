@@ -1,4 +1,21 @@
 -------------------------------------------------------------------
+Wed Aug 26 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.10
+- Version bump to 0.20.10
+- Note: no 0.20.9 package was ever built. Every 0.20.9 build job failed on the
+  compile error below, so everything listed under 0.20.9 reaches users with this
+  release. The 0.20.9 tag was left in place rather than moved, which would be
+  destructive for anyone who already fetched it
+- Fixed: rustconn-cli did not compile with --features full, the set every
+  package enables — 0.20.9 gave build_sftp_browser_uri a fourth argument for the
+  new global jump-host tier and one call site, the file-manager branch of the
+  sftp command, still passed three. That branch sits behind
+  #[cfg(feature = "client-launch")] and the crate defaults to no features, so no
+  local gate and no CI clippy run compiled it at all
+- Improved: scripts/verify.sh now runs clippy over rustconn-cli with
+  --features full, and passes -D warnings on the existing clippy gate, so the
+  local gate no longer approves a tree the packaging jobs reject
+
+-------------------------------------------------------------------
 Wed Aug 26 2026 Anton Isaiev <totoshko88@gmail.com> - 0.20.9
 - Version bump to 0.20.9
 - Added: a connection can take its jump host from its group or from the

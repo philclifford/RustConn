@@ -5,7 +5,25 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.10] - 2026-08-26
+
+**0.20.9 shipped no packages.** Its tag exists, but every build job failed and no
+GitHub release, no artifact and no channel update was ever produced — so
+everything listed under 0.20.9 below reaches users with this release. The tag was
+left in place rather than moved: rewriting a published tag is destructive for
+anyone who already fetched it, and a patch release costs nothing by comparison.
+
+### Fixed
+
+- **`rustconn-cli` did not compile with the features every package builds it with** — 0.20.9 gave `build_sftp_browser_uri` a fourth parameter, the `NetworkSettings` carrying the new global jump-host tier, and one of its two call sites was not updated: `cmd_sftp`'s file-manager branch still passed three arguments. Nothing local caught it, because `rustconn-cli` declares `default = []` and that branch sits behind `#[cfg(feature = "client-launch")]` — `cargo clippy --all-targets`, `cargo test --workspace` and the CI clippy job all compile the crate with no features, where the code does not exist. Every package builds it as `--features full`, so all four release jobs — deb, RPM, AppImage and Flatpak — failed on the same `E0061`, and the jobs that publish (GitHub release, OBS, Homebrew, snap) were skipped behind them. CI does cover this, in `cargo test -p rustconn-cli --features full`, but that job runs on the push that carries the tag rather than before it, and on release day GitHub Actions was in a [major outage](https://www.githubstatus.com/incidents/y1t7p9fzrlj2) — a database primary failing over — so of the three workflows the tag should have started, one was created and stalled in `queued` with zero jobs and two were never created at all. The fix went in with the file-manager branch extracted into its own function: adding the missing argument pushed `cmd_sftp` past `clippy::too_many_lines`, which CI treats as an error.
+
+### Improved
+
+- **`verify.sh` now compiles the CLI the way the packages do** — the gate that was supposed to be the mechanical half of the Definition of Done ran `cargo clippy --all-targets` and nothing else, so it agreed with a tree four packaging jobs would reject. It gained a `-p rustconn-cli --features full` clippy gate, the matching test run under `--tests`, and `-- -D warnings` on the existing clippy gate — without it clippy exits 0 on a pedantic warning and the gate reported `ok` for a tree the CI clippy job, which does pass `-D warnings`, would fail.
+
 ## [0.20.9] - 2026-08-26
+
+*Tagged but never published — see 0.20.10.*
 
 ### Added
 
