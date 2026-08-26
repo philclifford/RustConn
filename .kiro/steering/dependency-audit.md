@@ -3,27 +3,50 @@ inclusion: manual
 description: "On-demand audit of ALL dependency types: Cargo crates, security advisories, bundled CLI tools, Flatpak runtime/SDK/bundled libs, and Snap base/extension. Checks for available updates and version drift. Reports only — never auto-applies."
 ---
 
-Run a comprehensive dependency audit across EVERY dependency type. Report findings only — do NOT apply updates.
+Run the mechanical half, then do the half that needs a web lookup and a decision.
+Report findings only — do **not** apply updates.
 
-1. **Cargo crates** — `cargo update --dry-run 2>&1`; summarize updates grouped as patch (safe) / minor (review) / major (breaking). Use the web_search tool for any major bump to note breaking changes.
+```bash
+scripts/dep-audit.sh --quiet     # writes target/dep-audit.txt
+```
 
-2. **Security advisories** — `cargo deny check advisories` (reads deny.toml, the single source of truth for the RustSec ignore list). Fall back to `cargo audit` only if cargo-deny is unavailable; if neither is installed, skip and note it.
+That covers, and you should not re-derive any of it by hand:
 
-3. **Bundled CLI tools** — run `scripts/check-cli-versions.sh` if present; otherwise read `rustconn-core/src/cli_download.rs` and list pinned versions (TigerVNC, Teleport, Tailscale, Boundary, Bitwarden CLI, 1Password CLI, kubectl). Note which resolve 'latest' at runtime (AWS CLI, SSM, gcloud, Azure, OCI, cloudflared) and need no pin update. A weekly GitHub Action (`check-cli-versions.yml`) also monitors these.
+- **Cargo crates** — `cargo update --dry-run --verbose`, classified. In-range
+  updates are counted; everything held back is grouped as MAJOR (breaking), minor
+  (requirement needs widening), patch-held (something pins it explicitly — the
+  interesting case, since a patch bump needs no requirement change) and
+  pre-release pin (almost always a transitive dependency, not our choice).
+- **Security advisories** — `cargo deny check advisories`, which reads `deny.toml`,
+  the single source of truth for the RustSec ignore list. Falls back to
+  `cargo audit` and says so, because the fallback does not honour those ignores.
+- **Bundled CLI tools** — `scripts/check-cli-versions.sh`. Most tools auto-resolve
+  their latest version at install time; TigerVNC is the one static pin. A weekly
+  GitHub Action (`check-cli-versions.yml`) watches these too.
 
-4. **Flatpak dependencies** — read `packaging/flatpak/io.github.totoshko88.RustConn.yml` and check:
-   - `runtime-version` of `org.gnome.Platform` / `org.gnome.Sdk` (currently '50') against the latest stable GNOME runtime on Flathub (web_search 'latest GNOME Platform flatpak runtime version').
-   - `org.freedesktop.Sdk.Extension.rust-stable` — usually tracks the freedesktop runtime; note if the freedesktop base moved.
-   - Bundled source modules with a pinned version + `x-checker-data` (FreeRDP `freerdp-X.Y.Z.tar.xz`, cJSON, and any others): compare the pinned version against upstream latest (FreeRDP → pub.freerdp.com/releases or its x-checker-data project-id). Report drift and the matching `sha256` that would need updating.
-   - Confirm `packaging/flathub/*.yml` runtime/tag stays in sync with the flatpak manifest.
+## Then do these, which the script cannot
 
-5. **Snap dependencies** — read `snap/snapcraft.yaml` and check:
-   - `base` (currently core24) and the `gnome` extension platform (gnome-46-2404). Note that the gnome extension is only available for core22/core24; flag if a core26 gnome extension has shipped (it would let the snap match the Flatpak's GNOME 50 / libadwaita 1.8 — see issue #174 context).
-   - Any `stage-packages` / `build-packages` pinned versions (e.g. VTE, waypipe) that have known newer releases in the core24 (noble) archive.
+1. **Flatpak** — read `packaging/flatpak/io.github.totoshko88.RustConn.yml`:
+   - `runtime-version` of `org.gnome.Platform` / `org.gnome.Sdk` (currently '50')
+     against the latest stable GNOME runtime on Flathub.
+   - `org.freedesktop.Sdk.Extension.rust-stable` — usually tracks the freedesktop
+     runtime; note if the base moved.
+   - Bundled pinned sources with `x-checker-data` (FreeRDP `freerdp-X.Y.Z.tar.xz`,
+     cJSON): compare against upstream latest and report the drift **with the new
+     `sha256`**, because a version bump without it fails the build.
+   - Confirm `packaging/flathub/*.yml` is in sync with the local manifest. They
+     drift independently.
+2. **Snap** — read `snap/snapcraft.yaml`: `base` (core24) and the `gnome` extension
+   (gnome-46-2404). The extension exists only for core22/core24, which is why the
+   snap trails the Flatpak's GNOME 50; a core26 gnome extension shipping is the
+   trigger to revisit (issue #174). Also check pinned `stage-packages` /
+   `build-packages`.
+3. **Judgement on the cargo findings.** A MAJOR bump needs its upstream changelog
+   read before it is recommended. A patch-level hold needs the pin found and
+   explained. Neither is something the classification alone answers.
 
-6. **Summary** — concise report with counts and recommended actions per category:
-   - Cargo: N patch / N minor / N major outdated; any advisories
-   - CLI: tools with newer upstream versions (pinned only)
-   - Flatpak: GNOME runtime drift, rust extension, bundled-lib drift (FreeRDP/cJSON) with new sha256
-   - Snap: base/extension status, staged-package drift
-   - Recommended actions, ordered by risk. The developer decides what to update.
+## Summary to produce
+
+Counts per category, then recommended actions ordered by risk, then stop. The
+developer decides what to update. Any update that does land is recorded in
+`CHANGELOG.md` under `### Dependencies`.

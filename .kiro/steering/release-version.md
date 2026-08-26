@@ -19,7 +19,28 @@ Then perform ALL of the following steps:
    - **Snap** (`snap/snapcraft.yaml`): check `base` (core24) and the `gnome` extension (gnome-46-2404) — flag if a core26 gnome extension now exists (issue #174 context) — plus pinned `stage-packages`/`build-packages` drift.
    - If everything is current, note 'dependencies up to date' and proceed.
 
-3. **Cargo.toml** — set `[workspace.package] version` to the new version.
+3. **Version strings — one command, not a walk through a list.**
+
+   ```bash
+   scripts/bump-version.sh X.Y.Z            # dry run: shows the diff
+   scripts/bump-version.sh X.Y.Z --write    # apply
+   ```
+
+   It takes the file list from `PKG_FILES` in `scripts/release.sh` at runtime, so
+   the two cannot drift, and it writes the workspace `Cargo.toml` plus all 16
+   version-only files — including **every** sibling path dependency in
+   `rustconn/Cargo.toml`, which is five of them and the thing release.sh's own gate
+   cannot catch. Every rule is line-anchored: a global replace would corrupt
+   `rustconn.spec` (it records a dependency bump `cfg-expr 0.20.8→0.20.9`) and
+   `docs/USER_GUIDE.md` (it says "Changed in 0.20.9" in prose about behaviour).
+
+   After `--write` it re-checks its work with release.sh's own patterns and exits
+   non-zero while anything is still out of sync. Expect exactly three failures at
+   that point — the changelog-style files from step 5, which need content, not a
+   substitution. Report them; do not hand-edit around the script.
+
+   If it says a file has no rule, add a `case` to `rules_for()`. Do not bump that
+   file by hand: the by-hand list is what this replaced.
 
 4. **CHANGELOG.md** — verify a `## [X.Y.Z] - YYYY-MM-DD` section exists. If not, ask user to write it first. Ensure any dependency updates from step 2 are recorded in `### Dependencies` / `### Changed`.
 
@@ -30,23 +51,15 @@ Then perform ALL of the following steps:
    - `packaging/obs/rustconn.spec` (update `Version:` field + add `%changelog` entry)
    - `rustconn/assets/io.github.totoshko88.RustConn.metainfo.xml` (add `<release>` entry)
 
-6. **Update version strings** in (CANONICAL list = `PKG_FILES` in `scripts/release.sh`; keep in sync with that array):
-   - `snap/snapcraft.yaml` → `version: 'X.Y.Z'`
-   - `packaging/obs/AppImageBuilder.yml` → `version: X.Y.Z`
-   - `packaging/flatpak/io.github.totoshko88.RustConn.yml` → `tag: vX.Y.Z`
-   - `packaging/flathub/io.github.totoshko88.RustConn.yml` → `tag: vX.Y.Z`
-   - `packaging/obs/rustconn.dsc` → `Version: X.Y.Z-1` + tar filenames
-   - `packaging/obs/debian.dsc` → `Version: X.Y.Z-1` + `DEBTRANSFORM-TAR`
-   - `packaging/obs/_service` → `<param name="revision">vX.Y.Z</param>`
-   - `flake.nix` → `version = "X.Y.Z";`
-   - `rustconn/Cargo.toml` → **every** sibling path dependency: `rustconn-core = { ..., version = "X.Y.Z", ... }` *and* `rustconn-pty-sys = { ..., version = "X.Y.Z", ... }`. The `release.sh` gate only greps for one `version = "X.Y.Z"` line per file, so a stale sibling passes the check unnoticed.
-   - `rustconn-cli/Cargo.toml` → `rustconn-core = { ..., version = "X.Y.Z", ... }`
-   - `po/rustconn.pot` → `Project-Id-Version: rustconn X.Y.Z`
-   - `packaging/macos/rustconn.rb` → `url "https://...archive/refs/tags/vX.Y.Z.tar.gz"`
-   - `docs/USER_GUIDE.md` → `**Version X.Y.Z**`
-   - `docs/ARCHITECTURE.md` → `**Version X.Y.Z**`
-   - `docs/AI_DEVELOPMENT.md` → version in the first line after heading
-   - `docs/CI_BUILD_FLOW.md` → update example version strings in mermaid diagrams
+6. **Version strings** — already done in step 3 by `scripts/bump-version.sh`. This
+   list used to live here in prose, sixteen bullets long, mirroring `PKG_FILES` in
+   `scripts/release.sh` and asking to be kept in sync with it by hand. It is gone
+   on purpose: the release had a gate whose input was produced by copying the
+   gate's own configuration.
+
+   One file the script does not touch, because the change is not a version line:
+   `docs/CI_BUILD_FLOW.md` uses example version strings inside mermaid diagrams.
+   Check whether any of them still reads as the current release and update it if so.
 
 7. **Regenerate Cargo.lock** — run `cargo generate-lockfile`
 

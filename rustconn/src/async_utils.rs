@@ -129,12 +129,6 @@ where
 /// * `Ok(T)` - The result of the async operation
 /// * `Err(String)` - If the runtime couldn't be created
 ///
-/// # Panics
-///
-/// The internal `expect()` is safe because we check `is_none()` and initialize
-/// the runtime immediately before accessing it. This is a provably impossible
-/// panic state.
-///
 /// # Example
 /// ```ignore
 /// let password = block_on_async(async {
@@ -173,12 +167,6 @@ where
 /// * `Ok(R)` - The result of the closure
 /// * `Err(String)` - If the runtime couldn't be created
 ///
-/// # Panics
-///
-/// The internal `expect()` is safe because we check `is_none()` and initialize
-/// the runtime immediately before accessing it. This is a provably impossible
-/// panic state.
-///
 /// # Example
 /// ```ignore
 /// let result = with_runtime(|rt| {
@@ -199,8 +187,10 @@ where
                     .map_err(|e| format!("Failed to create runtime: {e}"))?,
             );
         }
-        // SAFETY: We just ensured rt_ref is Some above
-        Ok(f(rt_ref.as_ref().expect("runtime initialized above")))
+        rt_ref
+            .as_ref()
+            .map(f)
+            .ok_or_else(|| "thread-local Tokio runtime unavailable".to_string())
     })
 }
 

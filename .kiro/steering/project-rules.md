@@ -136,7 +136,7 @@ sanctioned workarounds. Each requires a tracking comment and must be reported to
   tool return nothing at all. (Same rule, stated once more in
   `shell-environment.md`, which unlike this file is always loaded.)
 - **NEVER** start `cargo test` if another instance is already running (`pgrep -f 'cargo test'`).
-- A full `cargo test --workspace` is ~2.5 min wall (~45s of test time + ~1m49s compile, 3843 tests, measured 2026-08-20). This is normal — wait for completion, do NOT assume timeout.
+- A full `cargo test --workspace` is ~2.5 min wall (~45s of test time + ~1m49s compile, ~3900 tests, measured 2026-08-20). This is normal — wait for completion, do NOT assume timeout.
 - If a hook or sub-agent already ran tests in this turn, do NOT re-run them.
 - Use `timeout=900000` for test commands. This said 180s until 2026-08-20, which is *below* the measured wall time and therefore fails the same way the tool default does.
 

@@ -32,6 +32,13 @@ step with `ls po/*.po`.
 | CHANGELOG entries | `.kiro/steering/changelog-format.md` |
 | Architecture overview | `docs/ARCHITECTURE.md` |
 
+Rules that apply to one tree live in that tree's own `AGENTS.md`, which Kiro loads
+when you work there. There are nine: one per crate, plus `po/` and `packaging/`.
+They hold the things that are wrong to state globally — `rustconn-cli` inverts the
+"never `println!`" rule because printing is its interface, and the four `-sys`
+crates are the only places `unsafe` is legal. Read the local file before editing a
+tree; it is shorter than this one and it is more specific.
+
 ## Commands
 
 ```bash
@@ -73,23 +80,16 @@ in `Cargo.toml` (`rust-version`).
 
 ## Crate boundaries — the rule most often broken
 
-| Crate | May import GTK? | Notes |
-|-------|-----------------|-------|
-| `rustconn-core` | **No** | Domain logic. `gtk4`, `adw`, `vte4` are forbidden. Runtime integrations stay behind features. |
-| `rustconn-cli` | **No** | Depends only on `rustconn-core`. |
-| `rustconn` | Yes | All GUI, dialogs, session presentation. |
-| `rustconn-pty-sys` | No | Isolated FFI: macOS PTY controlling terminal. |
-| `rustconn-locale-sys` | No | Isolated FFI: startup `setlocale`. |
-| `rustconn-env-sys` | No | Isolated FFI: startup `GSK_RENDERER` and `LANGUAGE` writes. |
-| `rustconn-dock-sys` | No | Isolated FFI: the macOS Dock tile image, for launches with no `.app` behind them. |
+Seven crates. `rustconn` alone may import `gtk4`/`adw`/`vte4`. `rustconn-core` is
+the domain logic, `rustconn-cli` sits on it, and neither may touch a GUI crate. The
+four `rustconn-*-sys` crates are isolated FFI and the only legal home for `unsafe`,
+which `unsafe_code = "deny"` enforces and each helper re-opens for itself. New FFI
+gets a new `-sys` crate — never an exception where the caller lives, and never a
+macOS-only crate, because no CI job builds macOS and that `unsafe` would never
+compile. A pre-write hook blocks both violations; do not rely on it.
 
-No `unsafe` outside the `*-sys` crates, enforced by `unsafe_code = "deny"` in
-`[workspace.lints.rust]` and re-opened per helper crate. New FFI gets its own
-`rustconn-*-sys` crate — never an exception where the caller lives, and never a
-macOS-only crate: no CI job builds macOS, so that would hold `unsafe` nothing
-compiles. Why `deny` rather than `forbid`, and why `rustconn-dock-sys` gates its
-dependencies instead of itself: `core-rules.md`. A pre-write hook blocks both
-violations, but do not rely on it.
+Per-crate contracts are in each crate's `AGENTS.md`; the full table is in
+`core-rules.md`.
 
 ## Non-negotiable
 
@@ -102,12 +102,12 @@ violations, but do not rely on it.
 - Every user-facing string → `i18n()` / `i18n_f()` with `{}` placeholders, then
   `bash po/update-pot.sh`. `ls po/*.po` is the authoritative locale count — do not
   trust a number written in prose, including one written here
-- Icon-only buttons need both a tooltip and an accessible label
-- Prefer `adw::` widgets; `adw::AlertDialog`, not the deprecated `gtk::MessageDialog`
 - Never `std::env::set_var`/`remove_var` (unsafe in Rust 2024). The sole exception
-  is `rustconn-env-sys::set_startup_var`, callable only from `main()` before this
-  program starts a thread, and its two existing callers already seal that window —
-  a third will panic rather than quietly work
+  is `rustconn-env-sys::set_startup_var`, and its window is already sealed by two
+  existing callers — see `rustconn-env-sys/AGENTS.md` before considering a third
+
+Widget choice, accessible labels and dialog patterns are in `rustconn/AGENTS.md`;
+catalogue mechanics are in `po/AGENTS.md`. Both load when you work there.
 
 ## Definition of done
 
@@ -149,8 +149,7 @@ build. Scopes: rustconn-core, rustconn-cli, rustconn (gui), i18n, packaging, ci.
 **An agent prepares a release; it never cuts one.** `./scripts/release.sh
 --dry-run` is the agent action and is expected: it runs every gate and stops before
 the plan executes. Running the script for real, passing `--yes`, or tagging and
-pushing by hand is the maintainer's call — v0.20.1 was cut by an agent and reached
-a pushed tag and a published release carrying a red CI job and code deletions
-nobody had read. Report the dry-run gate list and the diff, then hand over. Full
-account in `core-rules.md`. The `release-manual-only-guard` hook enforces all three
-routes, but do not rely on it.
+pushing by hand is the maintainer's call. Report the dry-run gate list and the
+diff, then hand over. What goes wrong otherwise, and the mechanics of each channel:
+`packaging/AGENTS.md` and `core-rules.md`. The `release-manual-only-guard` hook
+enforces all three routes, but do not rely on it.

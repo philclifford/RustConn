@@ -20,12 +20,22 @@ Report the result. If all pass — remind to commit.
 
 Use when finishing a feature, before release, or when explicitly asked for "full checks".
 
-Run sequentially in workspace root:
+One command does all four steps, in order, with the guards already applied:
+
+```bash
+scripts/verify.sh --tests     # timeout=900000, output already goes to target/verify.log
+```
+
+It refuses to start while another cargo holds the target-dir lock, never pipes
+cargo output, and flags the cached-clippy false green described below. Report its
+summary block and, on a failure, the relevant part of `target/verify.log`.
+
+The four steps it runs, for when you need to do one of them alone:
 
 1. `cargo fmt --check` — if formatting errors, run `cargo fmt --all`, report changes.
 2. `cargo clippy --all-targets -- -D warnings` — must produce 0 warnings. Fix and re-run if any.
 3. Before tests: `pgrep -f 'cargo test'` — if running, report "Tests already in progress, skipping" and stop.
-4. `cargo test --workspace` — run directly, NO pipes (no tail/grep). Use `timeout=900000`; the run is ~2.5 min wall (~45s tests + ~1m49s compile, 3843 tests).
+4. `cargo test --workspace` — run directly, NO pipes (no tail/grep). Use `timeout=900000`; the run is ~2.5 min wall (~45s tests + ~1m49s compile, ~3900 tests).
 
 ### A cached clippy run reports zero warnings even when warnings exist
 
@@ -33,9 +43,20 @@ This is the single easiest way to report a false green. When nothing has changed
 clippy prints `Finished \`dev\` profile ... in 0.2s` and emits no diagnostics at
 all — not because the code is clean, but because it never re-checked it.
 
-Before claiming clippy passed, confirm from the output that compilation actually
-happened (`Checking rustconn-core`, `Compiling rustconn`, a runtime of seconds
-rather than milliseconds). If it was a cache hit, force a real re-check:
+`scripts/verify.sh` checks this for you: it looks for `Checking`/`Compiling` lines
+in clippy's own output and prints
+
+```
+WARN  clippy did not compile anything — that run verified nothing.
+```
+
+when there are none. That warning is a failed verification, not a pass. Re-run with
+`scripts/verify.sh --fresh`, which cleans the workspace crates — not their
+dependencies, so it costs seconds rather than minutes.
+
+Doing it by hand, confirm from the output that compilation actually happened
+(`Checking rustconn-core`, `Compiling rustconn`, a runtime of seconds rather than
+milliseconds), and force a re-check with:
 
 ```bash
 find rustconn rustconn-core rustconn-cli -name '*.rs' -exec touch {} +

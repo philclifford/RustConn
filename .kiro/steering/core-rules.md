@@ -117,7 +117,7 @@ maintainer had never read. Undoing it meant deleting a published release. The
 ```
 cargo fmt --all                    # Format
 cargo clippy --all-targets         # Lint (0 warnings; never --all-features)
-cargo test --workspace             # 3843 tests, ~45s of test time (~2.5 min with compile)
+cargo test --workspace             # ~3900 tests, ~45s of test time (~2.5 min with compile)
 typos                              # Spell check (config: typos.toml)
 bash po/update-pot.sh              # Regenerate POT after new i18n strings
 ```
