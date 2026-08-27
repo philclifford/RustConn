@@ -39,6 +39,35 @@ mod controlling_terminal {
     use std::os::unix::process::CommandExt;
     use std::process::Command;
 
+    /// `TIOCSCTTY`, typed as `ioctl`'s request parameter.
+    ///
+    /// Split by platform because the two need different expressions, not merely
+    /// different spellings of one. macOS declares the constant as `c_uint` and
+    /// glibc as `c_ulong`, while `ioctl` takes `c_ulong` on both — so macOS needs
+    /// a widening conversion and glibc needs none, and a conversion that is a
+    /// no-op is itself a lint.
+    ///
+    /// Verified on `aarch64-apple-darwin`: at the call site the widening form
+    /// tripped `clippy::cast_lossless` whichever way the target type was written,
+    /// which is what ruled out collapsing the two arms. The glibc arm is not
+    /// checkable here — no CI job and no local target builds it — so it is left
+    /// as the expression that needs no conversion at all.
+    ///
+    /// Not `unsafe`, and not a precondition guard: it only names the integer
+    /// handed to `ioctl`. A type mismatch is a compile error, so there is nothing
+    /// for a test to assert.
+    ///
+    /// `musl` types the constant, and `ioctl`'s parameter, as `c_int`, so neither
+    /// arm would compile there. No target of this project is musl, and the
+    /// `TIOCSWINSZ` call has always had the same property.
+    #[cfg(target_os = "macos")]
+    const TIOCSCTTY_REQUEST: libc::c_ulong = libc::TIOCSCTTY as libc::c_ulong;
+
+    /// `TIOCSCTTY`, typed as `ioctl`'s request parameter — already `c_ulong` with
+    /// glibc, so no conversion. See the macOS arm above for why this is split.
+    #[cfg(not(target_os = "macos"))]
+    const TIOCSCTTY_REQUEST: libc::c_ulong = libc::TIOCSCTTY;
+
     /// Arranges for `cmd`'s child to acquire its standard input terminal as a
     /// controlling terminal.
     ///
@@ -86,17 +115,21 @@ mod controlling_terminal {
             // holds is the weaker property `pre_exec` actually needs — both
             // glibc and Apple's libc implement it as a thin syscall wrapper that
             // neither allocates nor takes a lock.
-            if unsafe { libc::ioctl(0, libc::TIOCSCTTY as _, 0) } == -1 {
+            if unsafe { libc::ioctl(0, TIOCSCTTY_REQUEST, 0) } == -1 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
         };
 
-        // SAFETY: the registered hook runs in the forked child, after `std`
-        // has wired up the stdio descriptors and before `execvp`. It calls
-        // only async-signal-safe libc functions (`setsid`, `ioctl`) and does
-        // not allocate, lock, or touch shared state, satisfying the contract
-        // of `CommandExt::pre_exec`.
+        // SAFETY: the registered hook runs in the forked child, after `std` has
+        // wired up the stdio descriptors and before `execvp`. Nothing it does
+        // allocates, takes a lock or touches shared state, which is the contract
+        // of `CommandExt::pre_exec`. Of the three things it calls, `setsid` is
+        // async-signal-safe outright; `ioctl` is not on POSIX's AS-safe list but
+        // holds the weaker property that matters here, argued at its own call
+        // site above; and `io::Error::last_os_error()` only reads `errno` and
+        // wraps the integer, with no allocation and no lock on any supported
+        // platform. Nothing on the path can panic, so nothing can unwind into C.
         unsafe {
             cmd.pre_exec(hook);
         }
@@ -277,9 +310,9 @@ mod tests {
     /// registered and runs in the forked child.
     ///
     /// With stdin redirected to `/dev/null` (never a terminal), the hook's
-    /// `setsid()` succeeds but `ioctl(0, TIOCSCTTY)` fails with `ENOTTY`,
-    /// returning `Err` from the closure — which makes `spawn()` fail. If the
-    /// hook were not wired, `true` would spawn fine.
+    /// `setsid()` succeeds but `ioctl(0, TIOCSCTTY)` fails — `ENOTTY` on Linux,
+    /// `ENODEV` on macOS — returning `Err` from the closure, which makes
+    /// `spawn()` fail. If the hook were not wired, `true` would spawn fine.
     #[test]
     fn pre_exec_hook_runs_and_fails_without_a_tty() {
         let mut cmd = Command::new("true");
@@ -295,16 +328,25 @@ mod tests {
         // Pin the errno to one the hook itself can produce. `is_err()` alone was
         // satisfied by *any* spawn failure — including `ENOENT` if `true` were
         // missing from the image — so the test could pass without the hook ever
-        // running. Both values are accepted rather than just `ENOTTY` because
-        // which call fails first depends on the harness: normally `setsid`
-        // succeeds and `TIOCSCTTY` returns `ENOTTY`, but if the test process is
-        // already a process-group leader `setsid` fails first with `EPERM`.
-        // Asserting one of the two keeps this robust across CI runners while
-        // still ruling out an unrelated failure.
+        // running. Three values are accepted rather than one because which call
+        // fails first, and with what, depends on the platform and the harness:
+        //
+        // * normally `setsid` succeeds and `TIOCSCTTY` rejects the non-terminal
+        //   stdin — as `ENOTTY` on Linux, and as `ENODEV` on macOS, whose
+        //   `/dev/null` reports "operation not supported by device" instead;
+        // * if the test process is already a process-group leader, `setsid`
+        //   fails first with `EPERM`.
+        //
+        // The `ENODEV` arm was missing, which made this the one test in the
+        // workspace that failed on macOS — invisibly, because no CI job builds
+        // it. Accepting the three keeps the assertion narrow enough to still rule
+        // out an unrelated spawn failure.
         let errno = err.raw_os_error();
         assert!(
-            errno == Some(libc::ENOTTY) || errno == Some(libc::EPERM),
-            "expected ENOTTY (TIOCSCTTY path) or EPERM (setsid path), got {errno:?}: {err}",
+            errno == Some(libc::ENOTTY)
+                || errno == Some(libc::ENODEV)
+                || errno == Some(libc::EPERM),
+            "expected ENOTTY/ENODEV (TIOCSCTTY path) or EPERM (setsid path), got {errno:?}: {err}",
         );
     }
 

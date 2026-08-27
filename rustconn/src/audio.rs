@@ -83,7 +83,7 @@ impl AudioBuffer {
                 self.samples.push_back(sample);
             }
         } else {
-            for chunk in data.chunks_exact(2) {
+            for chunk in data.as_chunks::<2>().0 {
                 let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
                 self.samples.push_back(sample);
             }

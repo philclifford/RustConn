@@ -523,7 +523,7 @@ fn decode_jpeg_to_bgra(jpeg: &[u8]) -> Option<Vec<u8>> {
 
     match usize::from(info.components) {
         3 => {
-            for px in pixels.chunks_exact(3) {
+            for px in pixels.as_chunks::<3>().0 {
                 bgra.extend_from_slice(&[px[2], px[1], px[0], 0xFF]);
             }
         }

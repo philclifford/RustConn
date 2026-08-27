@@ -236,7 +236,7 @@ impl CairoBackedBuffer {
         if let Some(ref mut surface) = self.surface {
             {
                 if let Ok(mut data) = surface.data() {
-                    for chunk in data.chunks_exact_mut(4) {
+                    for chunk in data.as_chunks_mut::<4>().0 {
                         chunk[0] = b;
                         chunk[1] = g;
                         chunk[2] = r;

@@ -79,7 +79,7 @@ impl SurfaceBuffer {
     /// than as black.
     fn new(width: u16, height: u16) -> Self {
         let mut data = vec![0u8; Self::byte_size(width, height)];
-        for pixel in data.chunks_exact_mut(4) {
+        for pixel in data.as_chunks_mut::<4>().0 {
             pixel[3] = 255;
         }
         Self {
@@ -153,7 +153,7 @@ impl SurfaceBuffer {
             let dst_off = (y as usize + row) * dst_stride + x as usize * 4;
             let row_end = dst_off + width as usize * 4;
             if row_end <= self.data.len() {
-                for target in self.data[dst_off..row_end].chunks_exact_mut(4) {
+                for target in self.data[dst_off..row_end].as_chunks_mut::<4>().0 {
                     target.copy_from_slice(&pixel);
                 }
             }

@@ -332,7 +332,7 @@ pub fn convert_to_bgra(
         PixelFormat::Rgba => {
             // Convert RGBA to BGRA (swap R and B)
             let mut result = Vec::with_capacity(pixel_count * 4);
-            for chunk in data[..expected_size].chunks_exact(4) {
+            for chunk in data[..expected_size].as_chunks::<4>().0 {
                 result.push(chunk[2]); // B
                 result.push(chunk[1]); // G
                 result.push(chunk[0]); // R
@@ -343,7 +343,7 @@ pub fn convert_to_bgra(
         PixelFormat::Rgb => {
             // Convert RGB to BGRA (swap R and B, add alpha)
             let mut result = Vec::with_capacity(pixel_count * 4);
-            for chunk in data[..expected_size].chunks_exact(3) {
+            for chunk in data[..expected_size].as_chunks::<3>().0 {
                 result.push(chunk[2]); // B
                 result.push(chunk[1]); // G
                 result.push(chunk[0]); // R
@@ -354,7 +354,7 @@ pub fn convert_to_bgra(
         PixelFormat::Bgr => {
             // Convert BGR to BGRA (add alpha)
             let mut result = Vec::with_capacity(pixel_count * 4);
-            for chunk in data[..expected_size].chunks_exact(3) {
+            for chunk in data[..expected_size].as_chunks::<3>().0 {
                 result.push(chunk[0]); // B
                 result.push(chunk[1]); // G
                 result.push(chunk[2]); // R
@@ -365,7 +365,7 @@ pub fn convert_to_bgra(
         PixelFormat::Rgb565 => {
             // Convert RGB565 to BGRA
             let mut result = Vec::with_capacity(pixel_count * 4);
-            for chunk in data[..expected_size].chunks_exact(2) {
+            for chunk in data[..expected_size].as_chunks::<2>().0 {
                 let pixel = u16::from_le_bytes([chunk[0], chunk[1]]);
                 // RGB565: RRRRRGGGGGGBBBBB
                 let r = ((pixel >> 11) & 0x1F) as u8;
