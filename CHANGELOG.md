@@ -5,6 +5,12 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A Flatpak build could be stopped by any one of seven download hosts having a bad day** — and one did: the 0.20.11 release job failed twice with `Failed to download sources: module inetutils: Connection timed out after 60002 milliseconds`, because `ftp.gnu.org` was in the middle of an outage. inetutils is the third of twelve modules, so nothing was compiled; the deb, RPM and AppImage jobs all succeeded, and the Flatpak job alone held back the GitHub release, OBS, Snap and Homebrew, since they depend on it. Not one source in the three manifests used `mirror-urls`, which is the flatpak-builder feature for exactly this. inetutils now leads with `ftpmirror.gnu.org` — GNU's own redirector, and the primary rather than a fallback because while `ftp.gnu.org` is down a primary pointing at it costs every build the full 60-second timeout first — with `ftp.gnu.org` and `mirrors.kernel.org` behind it. `mc` keeps its canonical URL and gains `ftp.osuosl.org`, the host actually behind the Midnight Commander FTP, which is also HTTPS where the primary is plain HTTP. Both mirrors were verified to serve a byte-identical tarball before being trusted; `slang` deliberately gets none, because jedsoft.org has no alternative that could be verified and an unverified mirror trades a download failure for a checksum failure. The `x-checker-data` URL template follows the new primary so the update bot keeps generating a URL that matches what is fetched.
+
 ## [0.20.11] - 2026-08-27
 
 ### Fixed
