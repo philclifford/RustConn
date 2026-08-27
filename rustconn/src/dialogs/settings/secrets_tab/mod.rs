@@ -1345,10 +1345,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
 
             let mut launched = false;
             for (term, args) in &terminal_cmds {
-                if std::process::Command::new("which")
-                    .arg(term)
-                    .output()
-                    .is_ok_and(|o| o.status.success())
+                if rustconn_core::which::is_available(term)
                     && std::process::Command::new(term)
                         .args(args.iter().copied())
                         .spawn()

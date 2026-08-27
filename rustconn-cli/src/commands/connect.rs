@@ -98,12 +98,7 @@ fn build_connection_command(connection: &Connection) -> ConnectionCommand {
 fn execute_connection_command(command: &ConnectionCommand) -> Result<(), CliError> {
     use std::process::Command;
 
-    let program_check = Command::new("which")
-        .arg(&command.program)
-        .output()
-        .map_err(|e| CliError::Config(format!("Failed to check for {}: {e}", command.program)))?;
-
-    if !program_check.status.success() {
+    if !rustconn_core::which::is_available(&command.program) {
         return Err(CliError::Config(format!(
             "Required program '{}' not found. \
              Please install it to use this connection type.",

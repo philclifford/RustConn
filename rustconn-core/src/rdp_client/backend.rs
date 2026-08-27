@@ -268,12 +268,7 @@ impl RdpBackendSelector {
 
     /// Checks if a command is available in PATH
     fn check_command(cmd: &str) -> bool {
-        Command::new("which")
-            .arg(cmd)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        crate::which::is_available(cmd)
     }
 
     /// Gets FreeRDP version string

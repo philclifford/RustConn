@@ -371,17 +371,10 @@ impl FreeRdpThread {
         shared: &Arc<Mutex<FreeRdpSharedState>>,
     ) -> Result<(), EmbeddedRdpError> {
         // Try wlfreerdp first for embedded mode
-        let binary = if Command::new("which")
-            .arg("wlfreerdp")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-        {
-            "wlfreerdp"
-        } else {
+        let binary = "wlfreerdp";
+        if !rustconn_core::which::is_available(binary) {
             return Err(EmbeddedRdpError::WlFreeRdpNotAvailable);
-        };
+        }
 
         let mut cmd = Command::new(binary);
 

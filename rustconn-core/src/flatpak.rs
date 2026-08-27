@@ -92,27 +92,13 @@ pub fn is_flatpak() -> bool {
 
 /// Checks whether a CLI tool is available in PATH.
 ///
-/// Runs `which <cli>` to check if the binary exists.
-/// In Flatpak, CLI tools are installed to the sandbox via Flatpak Components,
-/// so the extended PATH (including CLI directories) is used for the lookup.
+/// Thin alias for [`crate::which::is_available`], which searches the extended
+/// PATH (sandbox CLI directories included) in process. It used to spawn `which`
+/// with `PATH` overridden, which reported every tool as missing on a system
+/// without that binary — see the docs on `crate::which` and issue #303.
 #[must_use]
 pub fn is_host_command_available(cli: &str) -> bool {
-    use std::process::Command;
-
-    let mut cmd = Command::new("which");
-    cmd.arg(cli)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    // In a sandbox (snap or Flatpak), CLI tools are installed outside the
-    // default PATH. Use the extended PATH that includes the sandbox CLI dirs.
-    if crate::is_sandboxed() {
-        let extended_path = crate::cli_download::get_extended_path();
-        cmd.env("PATH", &extended_path);
-        tracing::trace!(cli, path = %extended_path, "Checking CLI availability with extended PATH");
-    }
-
-    cmd.status().is_ok_and(|s| s.success())
+    crate::which::is_available(cli)
 }
 
 /// Returns a writable CLI configuration directory inside the Flatpak sandbox.

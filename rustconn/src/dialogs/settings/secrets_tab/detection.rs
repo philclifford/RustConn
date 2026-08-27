@@ -153,12 +153,9 @@ fn detect_bitwarden() -> (bool, String, Option<String>, Option<(String, &'static
             break;
         }
     }
-    if !bitwarden_installed
-        && let Ok(output) = std::process::Command::new("which").arg("bw").output()
-        && output.status.success()
-    {
+    if !bitwarden_installed && let Some(path) = rustconn_core::which::find_in_path("bw") {
         bitwarden_installed = true;
-        bitwarden_cmd = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        bitwarden_cmd = path.display().to_string();
     }
     let bitwarden_version = if bitwarden_installed {
         get_cli_version(&bitwarden_cmd, &["--version"])
@@ -204,12 +201,9 @@ fn detect_onepassword() -> (bool, String, Option<String>, Option<(String, &'stat
             break;
         }
     }
-    if !onepassword_installed
-        && let Ok(output) = std::process::Command::new("which").arg("op").output()
-        && output.status.success()
-    {
+    if !onepassword_installed && let Some(path) = rustconn_core::which::find_in_path("op") {
         onepassword_installed = true;
-        onepassword_cmd = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        onepassword_cmd = path.display().to_string();
     }
     let onepassword_version = if onepassword_installed {
         get_cli_version(&onepassword_cmd, &["--version"])
@@ -258,10 +252,7 @@ fn detect_passbolt() -> (
             break;
         }
     }
-    if !passbolt_installed
-        && let Ok(output) = std::process::Command::new("which").arg("passbolt").output()
-        && output.status.success()
-    {
+    if !passbolt_installed && rustconn_core::which::is_available("passbolt") {
         passbolt_installed = true;
     }
     let passbolt_version = if passbolt_installed {
@@ -346,12 +337,7 @@ fn detect_pass() -> (Option<String>, Option<(String, &'static str)>) {
 
 /// Checks `secret-tool` availability (for system keyring operations)
 fn detect_secret_tool() -> bool {
-    std::process::Command::new("which")
-        .arg("secret-tool")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+    rustconn_core::which::is_available("secret-tool")
 }
 
 /// Probes the platform system-keyring backend for fine-grained availability.
