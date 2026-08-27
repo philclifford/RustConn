@@ -140,6 +140,17 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.20.11" date="2026-08-27">
+      <description>
+        <p>Version 0.20.11 - two processes that outlived their welcome, and a viewer that was there all along:</p>
+        <ul>
+          <li>Fixed: closing RustConn, pressing Ctrl+Q or quitting from the tray with session tabs still open left every telnet, ssh and serial process running, so a device that allows only one connection at a time stayed occupied. Closing an individual tab always ended its process; quitting never closes the tabs, so that step was skipped</li>
+          <li>Fixed: quitting from the tray icon skipped the shutdown entirely — no close confirmation, and external viewers and detached session windows were left running too. It now behaves like Ctrl+Q</li>
+          <li>Fixed: a SPICE connection refused to open with "Install virt-viewer" on machines that had virt-viewer installed, and Settings then listed it as missing. Client detection relied on the external "which" program, which some systems no longer ship; it is now resolved without one, for every client RustConn looks for. Inside Flatpak, a viewer installed on the host is used</li>
+          <li>Security: the FreeRDP bundled in the Flatpak is updated from 3.30.0 to 3.31.0, which upstream describes as a security release with 22 advisories and asks distributors to install without delay. It is used by external RDP sessions and by every fallback from the embedded client</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.10" date="2026-08-26">
       <description>
         <p>Version 0.20.10 - the release 0.20.9 could not become. No 0.20.9 package was ever built, so everything listed under it arrives here:</p>

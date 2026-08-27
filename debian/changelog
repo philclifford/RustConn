@@ -1,3 +1,51 @@
+rustconn (0.20.11-1) unstable; urgency=medium
+
+  * Version bump to 0.20.11
+  * Fixed: a telnet session left its process running after RustConn was closed
+    (#304). Closing the window, pressing Ctrl+Q or quitting from the tray with
+    session tabs open ended the application and left every telnet, ssh, picocom
+    and shell child alive, so a device that allows one connection at a time
+    stayed occupied. The per-tab kill added for #172 works; quitting never
+    closes the pages, so it never ran
+  * Fixed: quitting from the tray tore nothing down at all (#304, and #209/#236
+    with it) — it called app.quit() directly, reaching neither the window's
+    close handler nor the quit action, so it skipped the close confirmation,
+    the external-viewer shutdown and the detached-window close as well. That is
+    the exit path a tray user actually takes
+  * Fixed: a pre_exec contract test in rustconn-pty-sys had never passed on
+    macOS — it accepted ENOTTY and EPERM, and macOS answers ENODEV for
+    /dev/null. CI has no macOS runner, so the one test guarding the unsafe
+    block behind SSH password prompts failed only on the maintainer's platform
+  * Fixed: SPICE refused to launch with "Install virt-viewer" on a machine that
+    had virt-viewer, and Settings -> Clients called it not installed. Client
+    detection spawned /usr/bin/which, so every probe reported "missing" on a
+    system without that binary. Lookup is now resolved in process, for every
+    client probe in the application, and SPICE additionally gained the Flatpak
+    and snap search paths plus a flatpak-spawn --host fallback
+  * Improved: binary lookup now searches /app/bin under Flatpak,
+    $SNAP/{usr/bin,bin,usr/local/bin} under snap, the writable per-application
+    CLI directories of either, and the Homebrew prefixes a macOS bundle launched
+    from Finder does not inherit. The host probe is bounded at two seconds
+  * Improved: one session teardown for every way the application can exit. The
+    close handler, the quit action and the tray's Quit item each carried their
+    own list and none was complete; three divergent copies is what #304 was
+  * Improved: the CI clippy gate was passing on a cache hit rather than on a
+    check — it caches target/ keyed on Cargo.lock, so an unchanged lock
+    restored an already-linted tree and reported zero warnings without looking.
+    Nineteen warnings had accumulated behind it; all are fixed, because this
+    release changes both Cargo.lock and rustconn-core/src/lib.rs and so forces
+    a real re-lint
+  * FreeRDP (Flatpak) updated 3.30.0 -> 3.31.0. Upstream calls it a security
+    release, lists 22 advisories and asks distributors to update immediately.
+    Only Flatpak/Flathub bundle FreeRDP; the deb only recommends the
+    distribution's own package, which its own security updates cover
+  * waypipe (Flatpak) updated 0.11.0 -> 0.11.2
+  * Dependency updates: chacha20 0.10.2, libredox 0.1.21, rtoolbox 0.0.6,
+    uuid 1.26.0, wide 1.7.0. cargo audit and cargo deny report no
+    vulnerabilities across 733 dependencies
+
+ -- Anton Isaiev <totoshko88@gmail.com>  Thu, 27 Aug 2026 12:00:00 +0000
+
 rustconn (0.20.10-1) unstable; urgency=medium
 
   * Version bump to 0.20.10
