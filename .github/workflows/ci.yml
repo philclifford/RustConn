@@ -243,8 +243,52 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      # This gate used to be able to pass without looking at anything. The cache
+      # above is keyed on Cargo.lock, so any change that leaves the lock alone —
+      # which is most changes — restores a target/ that clippy has already
+      # linted, and cargo then reports the units as fresh: `Finished ... in 0.2s`,
+      # zero warnings, exit 0. Nineteen warnings accumulated behind that and were
+      # only found in 0.20.11, when a lock change forced a real run. Same shape as
+      # the 0.20.9 failure, where a gate agreed with a tree the packaging jobs
+      # rejected.
+      #
+      # Dropping target/ from the cache would fix it and make every push rebuild
+      # the whole dependency graph. Cleaning only the workspace crates costs
+      # seconds instead, and is all the coverage there is to gain: a dependency
+      # cannot acquire a new warning without a lock change, and a lock change
+      # already misses the cache. The member list is read from Cargo.toml rather
+      # than written out here, so a new crate is covered by existing.
+      #
+      # The other cargo jobs need no equivalent. `cargo check` is a subset of what
+      # clippy compiles, so a cached pass there cannot hide anything clippy will
+      # not see; the test jobs re-run their binaries regardless of cache state.
       - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
+        shell: bash
+        run: |
+          set -eo pipefail
+          members=$(awk '/^members = \[/,/^\]/' Cargo.toml |
+              sed -n 's/^[[:space:]]*"\([^"]*\)".*/\1/p')
+          if [ -z "$members" ]; then
+            echo "::error::could not read [workspace] members from Cargo.toml"
+            exit 1
+          fi
+          clean_args=""
+          for m in $members; do clean_args="$clean_args -p $m"; done
+          echo "Cleaning workspace crates so clippy re-checks:$clean_args"
+          # shellcheck disable=SC2086
+          cargo clean $clean_args
+          # `shell: bash` plus `set -o pipefail` and not the default shell: the
+          # default is `bash -e`, where the exit status of `cargo clippy | tee` is
+          # tee's, so a clippy failure would be reported as a pass. A gate piped
+          # through tee without pipefail is the same bug in a new place.
+          mkdir -p target
+          cargo clippy --all-targets -- -D warnings 2>&1 | tee target/ci-clippy.log
+          # And prove it happened. If the clean above ever stops working, this
+          # turns a silent false green back into a red job.
+          if ! grep -qE '^[[:space:]]*(Checking|Compiling) ' target/ci-clippy.log; then
+            echo "::error::clippy compiled nothing — this run verified nothing"
+            exit 1
+          fi
 
   test:
     name: Test
