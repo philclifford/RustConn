@@ -285,16 +285,29 @@ done
 # %%dir entries that were needed for locales the base system does not create.
 %find_lang %{name}
 
-%check
-# Domain logic only: the GUI crate's tests want a display, and rustconn-core is
-# where the property and unit suites live. --offline because OBS has no network
-# and everything is vendored.
-%if 0%{?suse_version}
-%{cargo_test} -p rustconn-core
-%else
-export PATH="$PWD/rust-toolchain/bin:$PATH"
-cargo test --release --offline -p rustconn-core
-%endif
+# No %%check section, on purpose.
+#
+# It existed from 0.20.9 (added with the rpmlint cleanup) until 0.20.10, but it
+# never actually ran: the spec was not synced to OBS until then, so the first
+# build that executed it was also the first to fail on it. GitHub CI runs the
+# very same suites on the very same commit before a tag exists — 3900-odd tests
+# across the workspace, plus property tests — so OBS would be re-running work
+# that is already green, five times over, once per RPM repository.
+#
+# What it did catch was its own environment. `cargo test -p rustconn-core` fails
+# in an OBS worker on
+#
+#     mc_ssh::tests::wrapper_hands_ssh_the_jump_host_end_to_end
+#     wrapper failed: .../ssh: line 4: /usr/bin/ssh: No such file or directory
+#
+# because that test executes the generated wrapper, which `exec`s the real ssh.
+# openssh-clients is a runtime Requires here, not a BuildRequires, so a build VM
+# has no ssh at all and `find_real_ssh` falls back to a path that does not exist.
+# Adding openssh-clients to BuildRequires would buy a passing test at the cost of
+# a build dependency that exists only to satisfy a test, on every repository.
+#
+# If a package-time check is ever wanted, scope it to suites that touch no
+# external binary — and expect to keep that list honest by hand.
 
 %files -f %{name}.lang
 %license LICENSE
