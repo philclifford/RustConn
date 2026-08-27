@@ -138,6 +138,43 @@ pub const fn open_session_count(tabbed: usize, detached: usize, external: usize)
     tabbed + detached + external
 }
 
+/// Ends every live session so none of them outlives the process.
+///
+/// The single teardown for every way RustConn can exit, and it is one function
+/// because being three copies is what caused issue
+/// [#304](https://github.com/totoshko88/RustConn/issues/304): the window's
+/// `close_request`, the `app.quit` action and the tray's Quit item each grew
+/// their own list, and no list was complete. External viewers were in two of
+/// them, detached windows in two, and the children of the sessions actually in
+/// tabs in none. Add a new exit path and it calls this; add a new kind of session
+/// and it goes here.
+///
+/// Order matters. Owned external viewers go first because nothing else refers to
+/// them. Session children come next and are signalled *synchronously* — every
+/// pid, tabbed or detached, lives in the one map, so this is what makes the
+/// escalation reliable on the way out, where a deferred one would never run.
+/// Detached windows close last, by which point their teardown finds nothing left
+/// to kill and only has widgets to drop.
+///
+/// Idempotent in every part, so two exit paths firing for one quit is harmless.
+/// Must be called *after* `flush_active_recordings` — see
+/// [`crate::terminal::TerminalNotebook::shutdown_sessions`].
+pub fn shutdown_sessions_for_exit(notebook: &SharedNotebook) {
+    // Issue #209: kill owned viewer children so they do not become orphans, and
+    // close their open history entries. Detaching viewers keep running.
+    if let Some(registry) = external_session_registry() {
+        registry.shutdown();
+    }
+
+    // Issue #304.
+    notebook.shutdown_sessions();
+
+    // Issue #236: no detached window outlives the main window.
+    if let Some(registry) = detached_window_registry() {
+        registry.close_all();
+    }
+}
+
 /// Main application window wrapper
 ///
 /// Provides access to the main window and its components.
@@ -1705,25 +1742,18 @@ impl MainWindow {
                 state_mut.lock_portable_store();
             }
 
-            // Flush all active session recordings before shutdown
+            // Flush all active session recordings before shutdown. Ahead of the
+            // teardown below, which drops the PTY relays a recorder writes through.
             notebook_for_close.flush_active_recordings();
 
-            // Terminate tracked external viewers (issue #209): kill owned
-            // children so they do not outlive RustConn as orphans, and close
-            // their open history entries. Detaching viewers keep running.
-            if let Some(registry) = external_session_registry() {
-                registry.shutdown();
-            }
-
-            // Stop all standalone SSH tunnels
+            // Stop all standalone SSH tunnels. Separate from the session teardown
+            // because a standalone forward belongs to the window, not to a session.
             tunnel_manager_for_close.borrow_mut().stop_all();
 
-            // No detached window outlives the main window (issue #236). Each
-            // close runs the standard session teardown, so their child
-            // processes and tunnels go down with the tabbed ones.
-            if let Some(registry) = detached_window_registry() {
-                registry.close_all();
-            }
+            // End every live session: external viewers, session children, detached
+            // windows (issues #209, #304, #236). One call, so this path cannot
+            // drift from the other two the way it did before.
+            shutdown_sessions_for_exit(&notebook_for_close);
 
             glib::Propagation::Proceed
         });
