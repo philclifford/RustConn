@@ -185,13 +185,25 @@ jobs:
 
       # Both directions of POTFILES.in rot silently. A stale entry breaks
       # po/update-pot.sh; a missing one means the file's strings are never
-      # extracted, so they render untranslated in all 16 locales while every
+      # extracted, so they render untranslated in every locale while every
       # catalogue still reports 100% complete.
       - name: Check POTFILES.in consistency
         run: ./scripts/check-potfiles.sh
 
       - name: Install gettext
         run: sudo apt-get update && sudo apt-get install -y gettext
+
+      # The gate the two above cannot be. They check that the manifest lists the
+      # right files and that the literals are extractable, then trust the
+      # committed template; nothing regenerated it to compare against. So a
+      # translatable string absent from po/rustconn.pot passed every i18n gate
+      # there was, while rendering in English in every locale — the catalogues
+      # were complete with respect to a template that was itself incomplete.
+      # 0.20.0 found thirteen strings like that, 0.20.1 three more, 0.20.2 two.
+      # Both 0.20.0 and 0.20.1 recorded the gap in the changelog and shipped
+      # without closing it.
+      - name: Check the POT template matches the sources
+        run: ./scripts/check-pot-current.sh
 
       # Also catches malformed catalogues and format-placeholder mismatches
       # between msgid and msgstr (e.g. a translation that drops a {} argument).

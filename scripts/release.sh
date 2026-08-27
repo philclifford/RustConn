@@ -627,6 +627,22 @@ if command -v msgfmt >/dev/null; then
             fail "check-po-complete.sh failed — CI enforces this"
         fi
     fi
+
+    # And the one no gate covered until 0.21.0: whether the template describes
+    # the strings the sources actually contain. Everything above reads the
+    # committed catalogues, so a string missing from the template is invisible to
+    # all of it — the catalogues are complete with respect to a template that is
+    # itself incomplete. Three releases in a row shipped English strings that
+    # way. Needs xgettext, from the same gettext package as msgfmt, which is why
+    # it sits inside this branch rather than with the tool-free gates below.
+    if [[ -x scripts/check-pot-current.sh ]]; then
+        if POT_OUTPUT="$(./scripts/check-pot-current.sh 2>&1)"; then
+            ok "check-pot-current.sh passed"
+        else
+            printf '%s\n' "$POT_OUTPUT" >&2
+            fail "check-pot-current.sh failed — the template is out of step with the sources"
+        fi
+    fi
 else
     warn "msgfmt not installed — skipping po validation"
 fi
