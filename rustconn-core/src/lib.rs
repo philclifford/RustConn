@@ -90,6 +90,7 @@ pub mod tracing;
 pub mod tunnel_manager;
 pub mod tunnel_preview;
 pub mod variables;
+pub mod which;
 pub mod wol;
 
 pub mod workspace;

@@ -357,36 +357,47 @@ fn detect_core_clients() -> Vec<ClientInfo> {
         embedded_name: Some("vnc-rs".to_string()),
     });
 
-    // SPICE - external only via remote-viewer
-    let spice_installed = std::process::Command::new("which")
-        .arg("remote-viewer")
-        .output()
-        .is_ok_and(|output| output.status.success());
-
-    let spice_path = if spice_installed {
-        std::process::Command::new("which")
-            .arg("remote-viewer")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
-    } else {
-        None
+    // SPICE — external viewer only; the embedded spice-gtk client was removed in
+    // 0.18.0. This used to run its own `which remote-viewer`, a third copy of the
+    // probe that disagreed with the launcher's whenever `which` was missing and
+    // said "not installed" for a viewer the session would have found (#303). It
+    // now asks the same detector the launch does, host fallback included.
+    let spice_viewer = rustconn_core::spice_client::detect_spice_viewer();
+    // A host viewer carries a marker the user has no reason to read; show the
+    // binary name and resolve its path on the host so the row is not blank.
+    let spice_on_host = spice_viewer
+        .as_deref()
+        .and_then(|v| v.strip_prefix(rustconn_core::spice_client::HOST_VIEWER_PREFIX));
+    let spice_name = spice_on_host
+        .map(str::to_owned)
+        .or_else(|| spice_viewer.clone())
+        .unwrap_or_else(|| "remote-viewer".to_string());
+    let spice_path = match spice_on_host {
+        Some(binary) => rustconn_core::which::find_on_host(binary),
+        None => spice_viewer
+            .as_deref()
+            .and_then(rustconn_core::which::find_in_path),
     };
-
-    let spice_version = spice_path
-        .as_ref()
-        .and_then(|p| get_version(std::path::Path::new(p), "--version"));
+    // Not probed for a host viewer: every `--version` run would be a
+    // `flatpak-spawn` round trip, and the Settings tab opens this on the main
+    // thread.
+    let spice_version = if spice_on_host.is_some() {
+        None
+    } else {
+        spice_path
+            .as_deref()
+            .and_then(|p| get_version(p, "--version"))
+    };
 
     core_clients.push(ClientInfo {
         title: "SPICE Client".to_string(),
-        name: "remote-viewer".to_string(),
-        installed: spice_installed,
+        name: spice_name,
+        installed: spice_viewer.is_some(),
         version: spice_version,
-        path: spice_path,
+        path: spice_path.map(|p| p.display().to_string()),
         install_hint: "Optional: Install virt-viewer package".to_string(),
-        has_embedded: true,
-        embedded_name: Some("spice-gtk".to_string()),
+        has_embedded: false,
+        embedded_name: None,
     });
 
     // Waypipe - Wayland application forwarding for SSH
@@ -537,15 +548,10 @@ fn find_command(command: &str) -> Option<PathBuf> {
         return Some(path);
     }
 
-    // Try standard which
-    if let Ok(output) = std::process::Command::new("which").arg(command).output()
-        && output.status.success()
-        && let Ok(path_str) = String::from_utf8(output.stdout)
-    {
-        let path = path_str.trim();
-        if !path.is_empty() {
-            return Some(PathBuf::from(path));
-        }
+    // PATH, plus the sandbox and Homebrew directories the shared resolver knows
+    // about. Resolved in process rather than by spawning `which` (#303).
+    if let Some(path) = rustconn_core::which::find_in_path(command) {
+        return Some(path);
     }
 
     // Check common user directories

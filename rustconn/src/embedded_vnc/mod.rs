@@ -27,7 +27,7 @@ pub use crate::embedded_vnc_types::{
 
 mod ui;
 use std::cell::RefCell;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::rc::Rc;
 #[cfg(feature = "vnc-embedded")]
 use std::sync::{Arc, Mutex as StdMutex};
@@ -314,18 +314,10 @@ impl EmbeddedVncWidget {
             "krdc",        // KDE Remote Desktop Client
         ];
 
-        for candidate in candidates {
-            if Command::new("which")
-                .arg(candidate)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success())
-            {
-                return Some(candidate.to_string());
-            }
-        }
-        None
+        candidates
+            .into_iter()
+            .find(|candidate| rustconn_core::which::is_available(candidate))
+            .map(str::to_owned)
     }
 
     /// Connects to a VNC server
@@ -687,7 +679,7 @@ impl EmbeddedVncWidget {
                             // in-place.
                             let mut out = data;
                             out.truncate(expected);
-                            for pixel in out.chunks_exact_mut(4) {
+                            for pixel in out.as_chunks_mut::<4>().0 {
                                 let a = u16::from(pixel[3]);
                                 if a == 0 {
                                     pixel[0] = 0;

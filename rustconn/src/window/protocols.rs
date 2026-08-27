@@ -488,11 +488,45 @@ const DETACHING_VIEWERS: &[&str] = &["remmina", "krdc", "vinagre"];
 /// their `Child` and are watched normally. The `program` may be a bare name or a
 /// full path, so it is matched on its file name.
 fn external_viewer_detaches(program: &str) -> bool {
-    let name = std::path::Path::new(program)
+    DETACHING_VIEWERS.contains(&external_viewer_name(program))
+}
+
+/// Reduces a viewer reference to the bare binary name it will run as.
+///
+/// Strips both a leading directory and the `host:` marker, so `remote-viewer`,
+/// `/usr/bin/remote-viewer` and `host:remote-viewer` all classify alike. Used for
+/// the detaching-viewer verdict and for anything the user reads: `host:` is an
+/// internal encoding and has no business appearing in an error message.
+fn external_viewer_name(program: &str) -> &str {
+    let bare = program
+        .strip_prefix(rustconn_core::spice_client::HOST_VIEWER_PREFIX)
+        .unwrap_or(program);
+    std::path::Path::new(bare)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or(program);
-    DETACHING_VIEWERS.contains(&name)
+        .unwrap_or(bare)
+}
+
+/// Resolves a viewer reference into the command line that actually starts it.
+///
+/// A plain name or path is spawned directly. A `host:`-prefixed one comes from
+/// [`rustconn_core::spice_client::detect_spice_viewer`] and exists only outside
+/// the Flatpak sandbox, so it is run through `flatpak-spawn --host` — the same
+/// encoding and the same treatment the RDP launcher gives a host FreeRDP.
+/// `--watch-bus` ties the host process to this one, so quitting RustConn does not
+/// leave an orphaned viewer behind.
+fn external_viewer_command(program: &str) -> (String, Vec<String>) {
+    match program.strip_prefix(rustconn_core::spice_client::HOST_VIEWER_PREFIX) {
+        Some(host_binary) => (
+            "flatpak-spawn".to_owned(),
+            vec![
+                "--host".to_owned(),
+                "--watch-bus".to_owned(),
+                host_binary.to_owned(),
+            ],
+        ),
+        None => (program.to_owned(), Vec::new()),
+    }
 }
 
 /// Spawns an external viewer process and registers it in the external-session
@@ -518,19 +552,24 @@ pub(super) fn spawn_and_register_external_viewer(
     args: &[String],
     ssh_tunnel: Option<rustconn_core::ssh_tunnel::SshTunnel>,
 ) -> bool {
+    // A `host:` viewer runs through flatpak-spawn; everything else runs directly.
+    let (launcher, mut launch_args) = external_viewer_command(program);
+    launch_args.extend(args.iter().cloned());
+    let viewer_name = external_viewer_name(program);
+
     // Run the viewer independently: don't capture stdout/stderr.
-    let child = match std::process::Command::new(program)
-        .args(args)
+    let child = match std::process::Command::new(&launcher)
+        .args(&launch_args)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
     {
         Ok(child) => child,
         Err(e) => {
-            tracing::error!(%e, program, connection = %conn.name, "Failed to launch external viewer");
+            tracing::error!(%e, program, launcher, connection = %conn.name, "Failed to launch external viewer");
             crate::toast::show_error_toast_on_active_window(&i18n_f(
                 "Could not launch external viewer ‘{}’: {}",
-                &[program, &e.to_string()],
+                &[viewer_name, &e.to_string()],
             ));
             sidebar.update_connection_status(&connection_id.to_string(), "failed");
             return false;

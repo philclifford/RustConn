@@ -490,7 +490,9 @@ impl CliprdrBackend for RustConnClipboardBackend {
 /// Converts UTF-16LE bytes to a Rust String
 fn string_from_utf16(data: &[u8]) -> Result<String, std::string::FromUtf16Error> {
     let u16_data: Vec<u16> = data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
         .take_while(|&c| c != 0)
         .collect();

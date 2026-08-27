@@ -500,7 +500,12 @@ fn convert_gfx_rgba_to_bgra(update: &GfxFrameUpdate, clipped_w: u16, clipped_h: 
         if src_row_end <= update.data.len() {
             let src_row = &update.data[src_row_start..src_row_end];
             let dst_row = &mut result[dst_row_start..dst_row_start + clip_w * 4];
-            for (src, dst) in src_row.chunks_exact(4).zip(dst_row.chunks_exact_mut(4)) {
+            for (src, dst) in src_row
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(dst_row.as_chunks_mut::<4>().0.iter_mut())
+            {
                 // RGBA → BGRA: swap R and B channels
                 dst[0] = src[2]; // B
                 dst[1] = src[1]; // G
@@ -514,7 +519,12 @@ fn convert_gfx_rgba_to_bgra(update: &GfxFrameUpdate, clipped_w: u16, clipped_h: 
             if full_pixels > 0 {
                 let src_row = &update.data[src_row_start..src_row_start + full_pixels * 4];
                 let dst_row = &mut result[dst_row_start..dst_row_start + full_pixels * 4];
-                for (src, dst) in src_row.chunks_exact(4).zip(dst_row.chunks_exact_mut(4)) {
+                for (src, dst) in src_row
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(dst_row.as_chunks_mut::<4>().0.iter_mut())
+                {
                     dst[0] = src[2];
                     dst[1] = src[1];
                     dst[2] = src[0];

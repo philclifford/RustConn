@@ -131,25 +131,18 @@ impl KeePassStatus {
     /// sandbox, KeePassXC cannot be bundled (it is the user's host GUI app),
     /// so the host binary is located via `flatpak-spawn --host`.
     fn find_keepassxc_cli() -> Option<std::path::PathBuf> {
-        // In Flatpak, resolve and run keepassxc-cli on the host (see #182).
+        // In Flatpak, resolve and run keepassxc-cli on the host (see #182). The
+        // probe used to live here; it is now `which::find_on_host`, which does the
+        // same `sh -lc 'command -v …'` for every host binary and bounds the wait.
         if crate::flatpak::is_flatpak() {
-            return Self::find_host_keepassxc_cli();
+            return crate::which::find_on_host("keepassxc-cli");
         }
 
-        let extended_path = crate::cli_download::get_extended_path();
-
-        // Try to find in PATH using `which` (with extended PATH for macOS .app bundles)
-        if let Ok(output) = Command::new("which")
-            .env("PATH", &extended_path)
-            .arg("keepassxc-cli")
-            .output()
-            && output.status.success()
-        {
-            let path_str = String::from_utf8_lossy(&output.stdout);
-            let path = std::path::PathBuf::from(path_str.trim());
-            if path.exists() {
-                return Some(path);
-            }
+        // PATH, extended with the Homebrew and KeePassXC.app directories a macOS
+        // `.app` does not inherit. Resolved in process — spawning `which` made
+        // the answer depend on a binary that need not be installed (#303).
+        if let Some(path) = crate::which::find_in_path("keepassxc-cli") {
+            return Some(path);
         }
 
         // Check common installation paths
@@ -172,44 +165,6 @@ impl KeePassStatus {
         }
 
         None
-    }
-
-    /// Resolves the host `keepassxc-cli` path from inside a Flatpak sandbox.
-    ///
-    /// Runs `flatpak-spawn --host sh -lc 'command -v keepassxc-cli'` so the
-    /// user's login `PATH` (e.g. `/usr/bin`) is honored. Returns the absolute
-    /// host path, or `None` when the host has no KeePassXC installed or the
-    /// Flatpak session helper is unreachable (missing
-    /// `--talk-name=org.freedesktop.Flatpak`).
-    fn find_host_keepassxc_cli() -> Option<std::path::PathBuf> {
-        let output = match Command::new("flatpak-spawn")
-            .args(["--host", "sh", "-lc", "command -v keepassxc-cli"])
-            .output()
-        {
-            Ok(o) => o,
-            Err(e) => {
-                tracing::warn!(
-                    ?e,
-                    "flatpak-spawn --host failed; cannot detect host keepassxc-cli"
-                );
-                return None;
-            }
-        };
-        if !output.status.success() {
-            tracing::debug!(
-                exit_code = ?output.status.code(),
-                stderr = %String::from_utf8_lossy(&output.stderr).trim(),
-                "host keepassxc-cli not found via flatpak-spawn"
-            );
-            return None;
-        }
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if path.is_empty() {
-            tracing::debug!("flatpak-spawn returned empty path for keepassxc-cli");
-            return None;
-        }
-        tracing::debug!(path = %path, "detected host keepassxc-cli via flatpak-spawn");
-        Some(std::path::PathBuf::from(path))
     }
 
     /// Builds a [`Command`] for running `keepassxc-cli`.

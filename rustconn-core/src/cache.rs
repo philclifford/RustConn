@@ -215,14 +215,17 @@ mod tests {
         type Params = Arc<AtomicU32>;
         type Error = std::convert::Infallible;
 
-        async fn construct(
+        // Spelled as a plain fn returning a ready future rather than `async fn`:
+        // neither test double awaits anything, and an `async fn` body with no
+        // `.await` is what `clippy::unused_async_trait_impl` objects to.
+        fn construct(
             previous: Option<Self>,
             params: &Self::Params,
-        ) -> Result<Self, Self::Error> {
+        ) -> impl Future<Output = Result<Self, Self::Error>> {
             let call_count = params.fetch_add(1, Ordering::SeqCst);
-            Ok(Self {
+            std::future::ready(Ok(Self {
                 value: previous.map_or(0, |p| p.value) + call_count + 1,
-            })
+            }))
         }
     }
 
@@ -233,11 +236,11 @@ mod tests {
         type Params = ();
         type Error = String;
 
-        async fn construct(
+        fn construct(
             _previous: Option<Self>,
             _params: &Self::Params,
-        ) -> Result<Self, Self::Error> {
-            Err("construction failed".to_string())
+        ) -> impl Future<Output = Result<Self, Self::Error>> {
+            std::future::ready(Err("construction failed".to_string()))
         }
     }
 

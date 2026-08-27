@@ -52,25 +52,51 @@ pub fn build_spice_uri(
     }
 }
 
-/// Detects available SPICE viewer applications for fallback mode
+/// SPICE viewer binaries, in order of preference.
 ///
-/// Returns the path to the first available SPICE viewer, or None if none found.
-/// Checks for: remote-viewer, virt-viewer, spicy
+/// `remote-viewer` and `virt-viewer` both ship in the `virt-viewer` package;
+/// `remote-viewer` is the one that takes a connection URI, which is why it comes
+/// first. `spicy` is spice-gtk's own test client and a last resort.
+pub const SPICE_VIEWERS: &[&str] = &["remote-viewer", "virt-viewer", "spicy"];
+
+/// Marker prefix for a viewer that only exists outside the Flatpak sandbox.
+///
+/// The launcher decodes it into `flatpak-spawn --host`, mirroring the convention
+/// the RDP client detection already uses.
+pub const HOST_VIEWER_PREFIX: &str = "host:";
+
+/// Finds an installed SPICE viewer, or `None` when the user has none.
+///
+/// Returns the binary name for a viewer RustConn can run directly, or
+/// `host:<name>` for one found on the host from inside a Flatpak sandbox — see
+/// [`HOST_VIEWER_PREFIX`]. Inside Flatpak the host fallback is the case that
+/// matters: virt-viewer is a desktop application in its own right and is not
+/// bundled in the manifest, so the in-sandbox lookup can only ever fail.
+///
+/// Until 0.20.11 this spawned `which` and reported "not installed" whenever that
+/// binary was missing, which is what issue
+/// [#303](https://github.com/totoshko88/RustConn/issues/303) was: *"Install
+/// virt-viewer"* on a machine that had it.
 #[must_use]
 pub fn detect_spice_viewer() -> Option<String> {
-    let candidates = ["remote-viewer", "virt-viewer", "spicy"];
+    if let Some(viewer) = SPICE_VIEWERS
+        .iter()
+        .find(|candidate| crate::which::is_available(candidate))
+    {
+        return Some((*viewer).to_string());
+    }
 
-    for candidate in &candidates {
-        if std::process::Command::new("which")
-            .arg(candidate)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return Some((*candidate).to_string());
+    for candidate in SPICE_VIEWERS {
+        if crate::which::find_on_host(candidate).is_some() {
+            tracing::info!(viewer = candidate, "using the host SPICE viewer");
+            return Some(format!("{HOST_VIEWER_PREFIX}{candidate}"));
         }
     }
 
+    tracing::warn!(
+        candidates = ?SPICE_VIEWERS,
+        "no SPICE viewer found in PATH, in the sandbox, or on the host"
+    );
     None
 }
 

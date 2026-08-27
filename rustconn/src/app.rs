@@ -894,6 +894,9 @@ fn setup_tray_handling(
     let tray_for_msgs = tray_manager.clone();
     let app_for_msgs = app_weak;
     let window_for_msgs = window_weak;
+    // Needed by the Quit message to decide whether the confirmation dialog will
+    // appear, which decides whether the tray-hidden window has to be presented.
+    let notebook_for_tray = window.notebook_rc();
     glib::spawn_future_local(async move {
         // Tray init normally completes within ~5s (macOS retries take up
         // to ~16s). Give up after 30s (120 × 250ms) — creation failed.
@@ -989,7 +992,35 @@ fn setup_tray_handling(
                     gio::prelude::ActionGroupExt::activate_action(&app, "about", None);
                 }
                 TrayMessage::Quit => {
-                    app.quit();
+                    // Route through the `quit` action rather than calling
+                    // `app.quit()`, which skipped the session teardown entirely:
+                    // quitting from the tray left external viewers (#209),
+                    // detached windows (#236) and every session child (#304)
+                    // behind. This is the exit path a tray user actually takes,
+                    // so fixing #304 only in the window handler would have missed
+                    // exactly the people who hit it.
+                    //
+                    // The action may raise the close-confirmation dialog, and an
+                    // AdwDialog parented to a tray-hidden window is never drawn —
+                    // the quit would look like it did nothing. So the window is
+                    // presented first, but only when there is something to
+                    // confirm: presenting unconditionally would flash the window
+                    // open on every quit.
+                    let external =
+                        crate::window::external_session_registry().map_or(0, |r| r.active_count());
+                    let open = crate::window::open_session_count(
+                        notebook_for_tray.session_count(),
+                        notebook_for_tray.detached_count(),
+                        external,
+                    );
+                    if open > 0
+                        && let Some(win) = window_for_msgs.upgrade()
+                        && !win.is_visible()
+                    {
+                        win.present();
+                        tray.set_window_visible(true);
+                    }
+                    gio::prelude::ActionGroupExt::activate_action(&app, "quit", None);
                 }
             }
         }
@@ -1227,6 +1258,7 @@ fn setup_app_actions(
         let app_weak = app_weak.clone();
         let state_clone = state_clone.clone();
         let sidebar_rc = sidebar_rc.clone();
+        let notebook_for_do_quit = std::rc::Rc::clone(&notebook_for_quit);
 
         let do_quit = move || {
             // Save expanded groups state
@@ -1234,18 +1266,11 @@ fn setup_app_actions(
             if let Ok(mut state_ref) = state_clone.try_borrow_mut() {
                 let _ = state_ref.update_expanded_groups(expanded);
             }
-            // Terminate tracked external viewers (issue #209): Ctrl+Q bypasses
-            // close_request, so kill owned children and close their history
-            // entries here too. Idempotent if close_request also runs.
-            if let Some(registry) = crate::window::external_session_registry() {
-                registry.shutdown();
-            }
-            // Same reasoning for detached session windows (issue #236): Ctrl+Q
-            // never reaches the main window's close handler, so their sessions
-            // are torn down here instead of being dropped with the process.
-            if let Some(registry) = crate::window::detached_window_registry() {
-                registry.close_all();
-            }
+            // Ctrl+Q bypasses the window's close_request entirely, so the whole
+            // session teardown has to run here too: external viewers (#209),
+            // session children (#304) and detached windows (#236). Shared with
+            // close_request and idempotent, so both firing for one quit is fine.
+            crate::window::shutdown_sessions_for_exit(&notebook_for_do_quit);
             if let Some(app) = app_weak.upgrade() {
                 app.quit();
             }

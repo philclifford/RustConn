@@ -521,57 +521,14 @@ fn detect_client(
     ClientInfo::not_installed(name, install_hint)
 }
 
-/// Finds a binary in PATH
+/// Finds a binary in PATH.
+///
+/// Thin alias for [`crate::which::find_in_path`], which owns the sandbox and
+/// bundle search order for the whole application. This used to carry its own copy
+/// of that order and finish by spawning `which`, a binary distributions no longer
+/// guarantee — see the module docs on `crate::which` and issue #303.
 fn which_binary(binary: &str) -> Option<PathBuf> {
-    // In Flatpak environment, check /app/bin first for bundled clients
-    if crate::flatpak::is_flatpak() {
-        let app_path = PathBuf::from(format!("/app/bin/{binary}"));
-        if app_path.exists() && app_path.is_file() {
-            return Some(app_path);
-        }
-    }
-
-    // In snap environment, check SNAP directory first for bundled clients
-    if let Ok(snap_dir) = std::env::var("SNAP") {
-        // Check common snap binary locations
-        let snap_paths = [
-            format!("{snap_dir}/usr/bin/{binary}"),
-            format!("{snap_dir}/bin/{binary}"),
-            format!("{snap_dir}/usr/local/bin/{binary}"),
-        ];
-
-        for snap_path in &snap_paths {
-            let path = PathBuf::from(snap_path);
-            if path.exists() && path.is_file() {
-                return Some(path);
-            }
-        }
-    }
-
-    // In any sandbox, check the writable CLI install directories
-    // (e.g. ~/.var/app/<id>/cli/hoop/hoop in Flatpak, $SNAP_USER_DATA/cli/...
-    // in snap) for tools downloaded on demand.
-    if crate::is_sandboxed() {
-        for dir in crate::cli_download::get_cli_path_dirs() {
-            let cli_path = dir.join(binary);
-            if cli_path.exists() && cli_path.is_file() {
-                return Some(cli_path);
-            }
-        }
-    }
-
-    // Use `which` command to find the binary in PATH
-    let output = Command::new("which").arg(binary).output().ok()?;
-
-    if output.status.success() {
-        let path_str = String::from_utf8_lossy(&output.stdout);
-        let path = path_str.trim();
-        if !path.is_empty() {
-            return Some(PathBuf::from(path));
-        }
-    }
-
-    None
+    crate::which::find_in_path(binary)
 }
 
 /// CLI version check timeout (6 seconds)

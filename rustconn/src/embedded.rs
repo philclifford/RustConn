@@ -304,16 +304,10 @@ impl RdpLauncher {
             "xfreerdp",     // FreeRDP 2.x X11
             "freerdp",      // Generic
         ];
-        for candidate in candidates {
-            if std::process::Command::new("which")
-                .arg(candidate)
-                .output()
-                .is_ok_and(|o| o.status.success())
-            {
-                return Some(candidate.to_string());
-            }
-        }
-        None
+        candidates
+            .into_iter()
+            .find(|candidate| rustconn_core::which::is_available(candidate))
+            .map(str::to_owned)
     }
 
     /// Starts an RDP session in an external FreeRDP window.

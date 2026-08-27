@@ -316,14 +316,14 @@ fn command_succeeds_with_timeout(
     }
 }
 
-fn binary_exists(name: &str, cancellation: Option<&AtomicBool>) -> bool {
-    command_succeeds_with_timeout(
-        "which",
-        &[name],
-        name,
-        BINARY_DETECTION_TIMEOUT,
-        cancellation,
-    )
+/// Whether a FreeRDP binary is installed in the sandbox or on `PATH`.
+///
+/// Resolved in process by the shared lookup, so there is no child to time out or
+/// cancel — hence no `cancellation` parameter, unlike the host probe below, which
+/// really does spawn `flatpak-spawn`. Spawning `which` here meant a missing
+/// `which` reported every FreeRDP client as absent (#303).
+fn binary_exists(name: &str) -> bool {
+    rustconn_core::which::is_available(name)
 }
 
 pub(crate) fn detect_best_freerdp_with_cancel(cancellation: Option<&AtomicBool>) -> Option<String> {
@@ -337,7 +337,7 @@ pub(crate) fn detect_best_freerdp_with_cancel(cancellation: Option<&AtomicBool>)
         if is_cancelled(cancellation) {
             return None;
         }
-        if binary_exists(candidate, cancellation) {
+        if binary_exists(candidate) {
             return Some((*candidate).to_string());
         }
     }
@@ -356,7 +356,7 @@ pub fn detect_best_freerdp() -> Option<String> {
 /// Detects if a Wayland-native FreeRDP variant is available for embedded mode.
 #[must_use]
 pub fn detect_wlfreerdp() -> bool {
-    is_wayland_session() && (binary_exists("wlfreerdp3", None) || binary_exists("wlfreerdp", None))
+    is_wayland_session() && (binary_exists("wlfreerdp3") || binary_exists("wlfreerdp"))
 }
 
 pub(crate) fn detect_best_freerdp_for_remoteapp_with_cancel(
@@ -367,7 +367,7 @@ pub(crate) fn detect_best_freerdp_for_remoteapp_with_cancel(
         if is_cancelled(cancellation) {
             return None;
         }
-        if binary_exists(candidate, cancellation) {
+        if binary_exists(candidate) {
             return Some((*candidate).to_string());
         }
     }
@@ -390,10 +390,25 @@ pub fn detect_best_freerdp_for_remoteapp() -> Option<String> {
     detect_best_freerdp_for_remoteapp_with_cancel(None)
 }
 
+/// Whether the *host* has `name`, asked from inside a Flatpak sandbox.
+///
+/// `sh -lc 'command -v …'` rather than `which`: a login shell honours the user's
+/// own `PATH`, and `command -v` is a shell builtin, so the answer no longer
+/// depends on the host having a `which` binary installed (#303). Deliberately not
+/// delegated to `rustconn_core::which::find_on_host`, which is otherwise the same
+/// probe — this one keeps the cancellation token that lets an abandoned session
+/// stop the detection thread. `name` is always one of the hardcoded FreeRDP
+/// candidates, so nothing user-supplied reaches the shell.
 fn host_binary_exists(name: &str, cancellation: Option<&AtomicBool>) -> bool {
     command_succeeds_with_timeout(
         "flatpak-spawn",
-        &["--host", "--watch-bus", "which", name],
+        &[
+            "--host",
+            "--watch-bus",
+            "sh",
+            "-lc",
+            &format!("command -v {name}"),
+        ],
         name,
         BINARY_DETECTION_TIMEOUT,
         cancellation,

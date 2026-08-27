@@ -22,6 +22,7 @@
 // these methods become methods on the tab and the notebook keeps only the ones
 // that are genuinely about the collection. Do that before splitting another file
 // off; a fourth module would move lines without moving the problem.
+mod child_teardown;
 mod config;
 mod detach;
 pub use detach::{DetachMonitor, DetachPresentation};
@@ -704,48 +705,7 @@ impl TerminalNotebook {
                 // when the PTY master fd is closed. Sending SIGTERM to the
                 // process group ensures all children terminate.
                 if let Some(pid) = vte_child_pids.borrow_mut().remove(&session_id) {
-                    // kill(-pid) sends the signal to the entire process group
-                    let pgid = nix::unistd::Pid::from_raw(-pid);
-                    if nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGTERM).is_err() {
-                        // Process (group) may have already exited — try direct PID
-                        let direct = nix::unistd::Pid::from_raw(pid);
-                        let _ = nix::sys::signal::kill(direct, nix::sys::signal::Signal::SIGKILL);
-                    } else {
-                        // SIGTERM delivered successfully, but the process may
-                        // ignore it. Schedule a SIGKILL fallback after 500ms.
-                        let pgid_raw = pid;
-                        glib::timeout_add_local_once(
-                            std::time::Duration::from_millis(500),
-                            move || {
-                                // Check if process still exists AND belongs to our
-                                // process group (guards against PID reuse by verifying
-                                // the process group leader is still `pid`).
-                                let probe = nix::unistd::Pid::from_raw(pid);
-                                if nix::sys::signal::kill(probe, None).is_ok() {
-                                    // Verify process group hasn't changed (PID reuse guard):
-                                    // if the PID was recycled, getpgid will return a different
-                                    // group or fail.
-                                    let still_ours = nix::unistd::getpgid(Some(probe))
-                                        .is_ok_and(|pgid| pgid.as_raw() == pgid_raw);
-                                    if still_ours {
-                                        let _ = nix::sys::signal::kill(
-                                            probe,
-                                            nix::sys::signal::Signal::SIGKILL,
-                                        );
-                                        tracing::debug!(
-                                            %pid,
-                                            "VTE child ignored SIGTERM, sent SIGKILL"
-                                        );
-                                    } else {
-                                        tracing::debug!(
-                                            %pid,
-                                            "PID recycled (pgid mismatch), skipping SIGKILL"
-                                        );
-                                    }
-                                }
-                            },
-                        );
-                    }
+                    child_teardown::terminate_child_group(pid);
                     tracing::debug!(
                         session = %session_id,
                         %pid,
@@ -1107,6 +1067,84 @@ impl TerminalNotebook {
             timer.remove();
         }
         drop(self.pty_relays.borrow_mut().remove(&session_id));
+    }
+
+    /// Ends every live session's child process, for the application-exit paths.
+    ///
+    /// The `close-page` handler already does this per tab (issue #172), but
+    /// quitting never closes the pages: the window's `close_request` and the
+    /// `app.quit` action both went straight to `Proceed`, so an open `telnet`
+    /// tab left its process running after RustConn was gone
+    /// (issue [#304](https://github.com/totoshko88/RustConn/issues/304)). The
+    /// leak was not visible for VTE-spawned children, but RustConn owns the PTY
+    /// itself now: dropping the notebook closes the master and nothing else, and
+    /// `telnet` is precisely the client that ignores the resulting `SIGHUP`.
+    ///
+    /// Deliberately does not go through `close_page`. That path fires the
+    /// session-ended callbacks, rebuilds the Welcome tab and touches the sidebar,
+    /// all pointless on the way out and all of it re-entering state the caller is
+    /// in the middle of persisting. This only releases what would outlive the
+    /// process.
+    ///
+    /// Idempotent, so it is safe for more than one exit path to run — and they
+    /// do: the three of them funnel through
+    /// [`crate::window::shutdown_sessions_for_exit`], and the window button and
+    /// Ctrl+Q can both fire for one quit.
+    ///
+    /// Must run *after* `flush_active_recordings`, which is why the caller owns
+    /// the ordering: this clears the PTY relays, and a recorder still being
+    /// flushed through one would lose its tail.
+    pub fn shutdown_sessions(&self) {
+        // External viewers hosted in a tab (`xfreerdp`, `vncviewer`): the same
+        // omission, and the same fix as the registry's tabless ones (issue #209).
+        //
+        // Only their `Child` is taken, and the widget map is left alone. An
+        // embedded RDP/VNC/Web widget needs `disconnect()`, not a kill, and that
+        // is what the `close-page` path does — which still runs, for every
+        // detached session, immediately after this. Draining the map here would
+        // silently take that away. Taking the child leaves `None` behind, so the
+        // `take()` in `close-page` is a no-op rather than a double kill.
+        let external: Vec<_> = self
+            .session_widgets
+            .borrow()
+            .values()
+            .filter_map(|storage| match storage {
+                SessionWidgetStorage::ExternalProcess(process) => Some(Rc::clone(process)),
+                _ => None,
+            })
+            .collect();
+        for process in external {
+            if let Some(mut child) = process.borrow_mut().take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+
+        // Stop reading before signalling, so a relay thread does not sit in a
+        // read on a PTY whose child is going away.
+        for (_, timer) in self.pty_size_timers.borrow_mut().drain() {
+            timer.remove();
+        }
+        self.pty_relays.borrow_mut().clear();
+
+        let pids: Vec<i32> = self
+            .vte_child_pids
+            .borrow_mut()
+            .drain()
+            .map(|(_, pid)| pid)
+            .collect();
+        if !pids.is_empty() {
+            tracing::info!(
+                count = pids.len(),
+                "terminating session children on shutdown"
+            );
+        }
+        child_teardown::terminate_child_groups_blocking(&pids);
+
+        // `SshTunnel::drop` kills its ssh process. Tabless external sessions park
+        // their tunnel here too (see `spawn_and_register_external_viewer`), which
+        // is the only thing that ever collected them.
+        self.ssh_tunnels.borrow_mut().clear();
     }
 
     /// Marks a session's tab as failed and explains why.

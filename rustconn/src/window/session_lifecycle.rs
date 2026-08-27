@@ -526,8 +526,7 @@ impl MainWindow {
         let close_on_clean_exit = is_custom_command
             || state
                 .try_borrow()
-                .ok()
-                .is_some_and(|s| s.settings().terminal.close_on_clean_exit);
+                .is_ok_and(|s| s.settings().terminal.close_on_clean_exit);
 
         notebook.connect_child_exited(session_id, ChildExitHook::Disconnect, move |exit_status| {
             // The child can linger on a reconnect overlay, but its expect rules

@@ -53,21 +53,13 @@ pub fn cmd_secret(config_path: Option<&Path>, subcmd: SecretCommands) -> Result<
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "status command renders every supported secret backend in turn; \
-              extracting per-backend helpers would only fragment the report"
-)]
 fn cmd_secret_status(config_path: Option<&Path>) -> Result<(), CliError> {
     use rustconn_core::secret::KeePassStatus;
 
     println!("Secret Backend Status");
     println!("=====================\n");
 
-    let libsecret_available = std::process::Command::new("which")
-        .arg("secret-tool")
-        .output()
-        .is_ok_and(|o| o.status.success());
+    let libsecret_available = rustconn_core::which::is_available("secret-tool");
     println!(
         "Keyring (libsecret):  {}",
         if libsecret_available {

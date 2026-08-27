@@ -775,13 +775,7 @@ impl MainWindow {
                 }
 
                 // Check mc availability
-                if std::process::Command::new("which")
-                    .arg("mc")
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .map_or(true, |s| !s.success())
-                {
+                if !rustconn_core::which::is_available("mc") {
                     toast_clone.show_error(&crate::i18n::i18n(
                         "Midnight Commander (mc) is not installed.",
                     ));
