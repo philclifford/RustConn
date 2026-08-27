@@ -1,4 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# `env bash` rather than `/bin/bash`, matching every other script here: this one
+# uses `mapfile`, a bash 4 builtin, and `/bin/bash` on macOS is 3.2.57. The
+# mismatch was invisible for as long as nobody ran it through its own shebang —
+# `bash scripts/check-i18n-escapes.sh` picks up whichever bash is on PATH and
+# works, while `./scripts/check-i18n-escapes.sh` did not. `release.sh` runs it
+# the second way, so the release gate failed on the maintainer's own platform
+# with `mapfile: command not found`.
 # Reject Rust-only string escapes inside translatable literals.
 #
 # WHY THIS EXISTS
