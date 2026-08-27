@@ -151,18 +151,53 @@ EOF
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 7. Sync version fields in OBS packaging files
-# ──────────────────────────────────────────────────────────────────────────────
+# 7. Overwrite the OBS packaging files from this repo
+#
+# The OBS package is a *copy*, not a checkout: anything not written here keeps
+# whatever it had when someone last uploaded it by hand. This step used to patch
+# version strings only, so every other edit to packaging/obs/ stayed in git and
+# never reached the builds.
+#
+# That is not theoretical. 0.20.10's five RPM builds all failed on
+#
+#     error: Directory not found: .../usr/share/locale/zh-cn
+#
+# because the 0.20.9 spec work — %find_lang, the %check section, the Summary
+# length fix, the dropped explicit Requires — was never copied over, and the
+# stale %files still listed `%dir %{_datadir}/locale/zh-cn` by hand. Renaming the
+# catalogue to zh_CN.po (the fix that made Chinese load at all) stopped that
+# directory from being created, and the old file list demanded it. The Debian
+# builds passed only because debian.rules happened not to have changed.
+# debian.dsc had been carrying `Files: rustconn-0.1.0.tar.xz` since 0.1.0 for the
+# same reason: the sed covered `DEBTRANSFORM-TAR:` and not that line.
+#
+# Overwriting is safe because the repo is the source of truth — release.sh gates
+# every one of these files before a tag exists. Nothing is edited OBS-side.
+# `rustconn.changes` and `debian.changelog` are deliberately excluded: the
+# prepend steps above and below own those, and OBS holds accumulated history.
+echo "=== Syncing OBS packaging files from the repo ==="
+for pkg_file in rustconn.spec debian.control debian.rules debian.copyright \
+    debian.dsc AppImageBuilder.yml _service; do
+    if [[ -f "packaging/obs/$pkg_file" ]]; then
+        cp "packaging/obs/$pkg_file" "$OBS_DIR/$pkg_file"
+        echo "  copied packaging/obs/$pkg_file"
+    else
+        echo "::warning::packaging/obs/$pkg_file not found in the repo — leaving the OBS copy alone"
+    fi
+done
+cp cargo_config "$OBS_DIR/cargo_config"
+echo "  copied cargo_config"
+
+# The version is already correct in the copies above — bump-version.sh writes it
+# and release.sh verifies it. These seds stay as a safety net for a manual
+# obs-update.yml run against a ref whose packaging files carry a different
+# version than the one being published.
 echo "=== Updating OBS version fields ==="
 sed -i "s|<param name=\"revision\">v[^<]*</param>|<param name=\"revision\">v${VERSION}</param>|" "$OBS_DIR/_service"
 sed -i "s/^Version:.*$/Version:        ${VERSION}/" "$OBS_DIR/rustconn.spec"
 sed -i "s/^Version:.*$/Version: ${VERSION}-1/" "$OBS_DIR/debian.dsc"
 sed -i "s/^DEBTRANSFORM-TAR:.*$/DEBTRANSFORM-TAR: rustconn-${VERSION}.tar.xz/" "$OBS_DIR/debian.dsc"
-
-# AppImageBuilder.yml is the only packaging file not covered by the seds above
-if [[ ! -f "$OBS_DIR/AppImageBuilder.yml" ]]; then
-    cp packaging/obs/AppImageBuilder.yml "$OBS_DIR/AppImageBuilder.yml"
-fi
+sed -i "s|^ 00000000000000000000000000000000 0 rustconn-.*\.tar\.xz$| 00000000000000000000000000000000 0 rustconn-${VERSION}.tar.xz|" "$OBS_DIR/debian.dsc"
 sed -i "s/^    version: .*$/    version: ${VERSION}/" "$OBS_DIR/AppImageBuilder.yml"
 
 # ──────────────────────────────────────────────────────────────────────────────
