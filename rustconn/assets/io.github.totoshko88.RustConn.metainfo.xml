@@ -140,6 +140,17 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.21.1" date="2026-08-28">
+      <description>
+        <p>Version 0.21.1 - a lookup that was repeated for nothing, and two things that were only broken in a package:</p>
+        <ul>
+          <li>Fixed: connections that authenticate with a key waited on a password manager lookup before every connect, then warned about the password they never wanted. Someone whose hosts are all key-authenticated, with no stored passwords at all, paid a full round trip each time; against the Bitwarden CLI that is several seconds, because it decrypts on every read, and the answer was the same every time. The empty answer is now remembered for five minutes, and the notice is only shown when the connection is actually set up to want a password. Which credential a connection uses is untouched: the cache sits after that decision, so a stale record can cost a lookup, never hand a connection the wrong password</li>
+          <li>Fixed: Local Shell failed to open on a host without script. The host shell is wrapped in script (util-linux) because that is what gives the shell job control, and it was called unconditionally; Fedora moved the binary into a package of its own in F42, so a minimal install does not have it. The host is now probed and the shell is run directly when script is missing, which loses job control and is still better than a button that does nothing</li>
+          <li>Fixed: quitting from the tray put the confirmation dialog on a window the user was not looking at. The tray route presented the window first only when it was hidden, but a window can be visible and still be behind others, on another workspace, or simply unfocused. It is now presented whenever there is something to confirm</li>
+          <li>Fixed: the embedded browser was missing from every .deb built on OBS, so Web connections there offered only System and Custom. The build never had the WebKitGTK development package it probes for. Flatpak, the RPMs and the .deb attached to the GitHub release were not affected</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.21.0" date="2026-08-28">
       <description>
         <p>Version 0.21.0 - a bastion that was stored and then ignored, and things that waited for ever now give up:</p>

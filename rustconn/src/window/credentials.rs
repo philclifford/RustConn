@@ -143,6 +143,7 @@ impl MainWindow {
                 drop(busy_guard);
                 return;
             };
+            let preferred_backend = state_ref.settings().secrets.preferred_backend;
             state_ref
                 .get_connection(connection_id)
                 .map(|c| {
@@ -152,6 +153,35 @@ impl MainWindow {
                         rustconn_core::models::PasswordSource::None
                             | rustconn_core::models::PasswordSource::Prompt
                     ) {
+                        return false;
+                    }
+                    // Already asked this backend and it had nothing. Repeating
+                    // the question is what made issue #307's reporter wait
+                    // several seconds before every connection, and the answer
+                    // cannot have changed without passing through one of the
+                    // invalidation hooks — or through the TTL.
+                    //
+                    // Restricted to `Vault` because that is the only source a
+                    // record can be made for: `VaultEntryMissing` is produced by
+                    // the vault branch alone. Consulting it for `Variable`,
+                    // `Inherit` or `Script` would let a record made while the
+                    // connection was on `Vault` suppress a resolution that reads
+                    // somewhere else entirely, and switching the source writes no
+                    // credential and moves no key, so nothing would invalidate it.
+                    //
+                    // Note also where this sits: after the source checks and
+                    // before anything expensive. It caches the lookup, not the
+                    // decision of whether a password is needed, so a stale record
+                    // can only cost a connection the password it would have
+                    // found, never hand it the wrong one.
+                    if c.password_source == rustconn_core::models::PasswordSource::Vault
+                        && crate::vault_miss_cache::known_missing(connection_id, preferred_backend)
+                    {
+                        tracing::debug!(
+                            %connection_id,
+                            ?preferred_backend,
+                            "Vault already known to have no entry for this connection — skipping lookup"
+                        );
                         return false;
                     }
                     // Zero Trust providers other than Custom Command authenticate
@@ -223,6 +253,14 @@ impl MainWindow {
                 tracing::warn!("Could not borrow state for async credential resolution");
                 return;
             };
+
+            // Captured here, not read again in the callback. The resolver works
+            // from a settings snapshot taken at this point, so a backend read
+            // later would name the wrong vault if the user changed it while the
+            // lookup was in flight — and could attribute a miss to a KeePass
+            // backend, which never produces one, leaving a record the gate would
+            // then honour (#307).
+            let resolved_against = state_ref.settings().secrets.preferred_backend;
 
             // Handle CredentialResolutionResult variants with appropriate dialogs
             state_ref.resolve_credentials_gtk(connection_id, move |result| {
@@ -472,14 +510,33 @@ impl MainWindow {
                         }
                     }
                     CredentialResolutionResult::VaultEntryMissing { connection_name, lookup_key } => {
-                        // Vault entry not found — show informational toast and proceed
-                        // without credentials; protocol handler will prompt for password
+                        // Vault entry not found — proceed without credentials; the
+                        // protocol handler prompts for a password if it needs one.
                         tracing::info!(
                             %connection_name,
                             %lookup_key,
                             "Vault entry not found — user will be prompted for password"
                         );
-                        if let Some(root) = notebook_clone.widget().root()
+
+                        // Remember the answer so the next connection to this host
+                        // does not pay for it again, and decide whether the notice
+                        // is worth showing at all (#307).
+                        crate::vault_miss_cache::note_missing(connection_id, resolved_against);
+                        let announce = match state_clone.try_borrow() {
+                            Ok(state_ref) => state_ref
+                                .get_connection(connection_id)
+                                .is_none_or(rustconn_core::Connection::expects_password_prompt),
+                            // Cannot read the connection, so cannot judge. Show it.
+                            Err(_) => true,
+                        };
+
+                        // The toast said "You will be prompted for a password",
+                        // which is untrue for a key-authenticated connection: it
+                        // has no password to be missing and nothing will prompt
+                        // for one. Issue #307's reporter saw that warning before
+                        // every connection and reasonably read it as a fault.
+                        if announce
+                            && let Some(root) = notebook_clone.widget().root()
                             && let Some(window) = root.downcast_ref::<gtk4::Window>()
                         {
                             crate::toast::show_toast_on_window(

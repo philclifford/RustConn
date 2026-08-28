@@ -96,6 +96,7 @@ pub mod toast;
 pub mod tray;
 pub mod utils;
 pub mod validation;
+mod vault_miss_cache;
 mod vault_ops;
 mod window;
 

@@ -8,7 +8,9 @@ use uuid::Uuid;
 
 use super::custom_property::CustomProperty;
 use super::highlight::HighlightRule;
-use super::protocol::{ProtocolConfig, ProtocolType, RdpClientMode, VncClientMode};
+use super::protocol::{
+    ProtocolConfig, ProtocolType, RdpClientMode, SshAuthMethod, SshKeySource, VncClientMode,
+};
 use crate::activity_monitor::ActivityMonitorConfig;
 use crate::automation::{ConnectionTask, ExpectRule, KeySequence};
 use crate::error::ConfigError;
@@ -411,6 +413,50 @@ pub struct Connection {
 }
 
 impl Connection {
+    /// Whether the user should be told that no stored password was found.
+    ///
+    /// Answers a presentation question, not an authentication one: nothing reads
+    /// this to decide whether to look a credential up or which one to use. It
+    /// exists because "no vault entry, you will be prompted for a password" is
+    /// false and alarming for a connection that authenticates with a key — `ssh`
+    /// prompts for a key passphrase there, if anything, never for the account
+    /// password — and the reporter of issue
+    /// [#307](https://github.com/totoshko88/RustConn/issues/307) saw that notice
+    /// before every single connection.
+    ///
+    /// Deliberately keyed on the *key* configuration rather than on
+    /// `auth_method` alone. [`SshAuthMethod`] defaults to `Password`, so a
+    /// connection imported from an `ssh_config` or created without touching that
+    /// dropdown reads as password auth however it actually connects; a check on
+    /// `auth_method` by itself would therefore keep showing the notice to
+    /// precisely the users who complained about it. A key path or an agent key
+    /// source is the stronger signal, so any of the three is enough.
+    ///
+    /// Errs towards showing the notice: an unknown or half-configured protocol
+    /// returns `true`, because a missing password the user does need to know
+    /// about costs a failed connection, while one they do not costs a toast.
+    ///
+    /// [`SshAuthMethod`]: crate::models::SshAuthMethod
+    #[must_use]
+    pub fn expects_password_prompt(&self) -> bool {
+        let ssh = match &self.protocol_config {
+            ProtocolConfig::Ssh(cfg) | ProtocolConfig::Sftp(cfg) => cfg,
+            _ => return true,
+        };
+
+        let key_configured = ssh.key_path.is_some()
+            || matches!(
+                ssh.key_source,
+                SshKeySource::File { .. } | SshKeySource::Agent { .. }
+            )
+            || matches!(
+                ssh.auth_method,
+                SshAuthMethod::PublicKey | SshAuthMethod::Agent | SshAuthMethod::SecurityKey
+            );
+
+        !key_configured
+    }
+
     /// Creates a new connection with the given parameters
     #[must_use]
     pub fn new(name: String, host: String, port: u16, protocol_config: ProtocolConfig) -> Self {
@@ -1031,6 +1077,101 @@ mod tests {
 
     fn create_test_connection() -> Connection {
         Connection::new_ssh("Test Server".to_string(), "example.com".to_string(), 22)
+    }
+
+    /// Returns the SSH config of a test connection for mutation.
+    fn ssh_of(conn: &mut Connection) -> &mut super::super::protocol::SshConfig {
+        match &mut conn.protocol_config {
+            ProtocolConfig::Ssh(cfg) => cfg,
+            _ => unreachable!("create_test_connection builds an SSH connection"),
+        }
+    }
+
+    #[test]
+    fn a_plain_ssh_connection_expects_a_password_prompt() {
+        // Nothing configured: SshAuthMethod defaults to Password, and there is
+        // no key. The notice is correct here.
+        let conn = create_test_connection();
+        assert!(conn.expects_password_prompt());
+    }
+
+    #[test]
+    fn a_key_path_alone_suppresses_the_prompt_notice() {
+        // The case the issue reporter is in: a key is configured but the auth
+        // method was never touched, so it still reads as Password. Keying the
+        // check on auth_method alone would keep showing the notice.
+        let mut conn = create_test_connection();
+        ssh_of(&mut conn).key_path = Some(std::path::PathBuf::from("/home/u/.ssh/id_ed25519"));
+        assert_eq!(ssh_of(&mut conn).auth_method, SshAuthMethod::Password);
+        assert!(!conn.expects_password_prompt());
+    }
+
+    #[test]
+    fn an_agent_key_source_alone_suppresses_the_prompt_notice() {
+        let mut conn = create_test_connection();
+        ssh_of(&mut conn).key_source = SshKeySource::Agent {
+            fingerprint: "SHA256:abc".to_string(),
+            comment: "u@host".to_string(),
+        };
+        assert!(!conn.expects_password_prompt());
+    }
+
+    #[test]
+    fn a_file_key_source_alone_suppresses_the_prompt_notice() {
+        let mut conn = create_test_connection();
+        ssh_of(&mut conn).key_source = SshKeySource::File {
+            path: std::path::PathBuf::from("/home/u/.ssh/id_rsa"),
+        };
+        assert!(!conn.expects_password_prompt());
+    }
+
+    #[test]
+    fn every_key_auth_method_suppresses_the_prompt_notice() {
+        for method in [
+            SshAuthMethod::PublicKey,
+            SshAuthMethod::Agent,
+            SshAuthMethod::SecurityKey,
+        ] {
+            let mut conn = create_test_connection();
+            ssh_of(&mut conn).auth_method = method.clone();
+            assert!(
+                !conn.expects_password_prompt(),
+                "{method:?} should not expect a password prompt"
+            );
+        }
+    }
+
+    #[test]
+    fn password_and_keyboard_interactive_still_expect_the_prompt() {
+        for method in [SshAuthMethod::Password, SshAuthMethod::KeyboardInteractive] {
+            let mut conn = create_test_connection();
+            ssh_of(&mut conn).auth_method = method.clone();
+            assert!(
+                conn.expects_password_prompt(),
+                "{method:?} should expect a password prompt"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_ssh_connection_always_expects_the_prompt() {
+        // RDP, VNC and the rest have no key configuration to reason about, so
+        // the notice stays. Erring towards showing it is deliberate.
+        let conn = Connection::new_rdp("Win".to_string(), "example.com".to_string(), 3389);
+        assert!(conn.expects_password_prompt());
+    }
+
+    #[test]
+    fn sftp_is_treated_like_ssh() {
+        // SFTP shares SshConfig, so the same reasoning has to reach it.
+        let mut conn = create_test_connection();
+        let mut cfg = match &conn.protocol_config {
+            ProtocolConfig::Ssh(cfg) => cfg.clone(),
+            _ => unreachable!(),
+        };
+        cfg.key_path = Some(std::path::PathBuf::from("/home/u/.ssh/id_ed25519"));
+        conn.protocol_config = ProtocolConfig::Sftp(cfg);
+        assert!(!conn.expects_password_prompt());
     }
 
     #[test]

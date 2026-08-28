@@ -175,6 +175,9 @@ pub struct AppState {
     /// Application settings
     settings: AppSettings,
     /// Session-level password cache (cleared on app exit)
+    ///
+    /// The negative counterpart — which connections the vault had *nothing* for —
+    /// deliberately does not live here; see [`crate::vault_miss_cache`] for why.
     password_cache: HashMap<Uuid, CachedCredentials>,
     /// Connection clipboard for copy/paste operations
     clipboard: ConnectionClipboard,

@@ -7,19 +7,32 @@ Source: rustconn
 Section: net
 Priority: optional
 Maintainer: Anton Isaiev <totoshko88@gmail.com>
-# libwebkitgtk-6.0-dev is deliberately absent from Build-Depends. One control
-# file serves three OBS repositories — xUbuntu_24.04, xUbuntu_26.04 and
-# Debian_13 — and Debian's control format has no conditionals, so naming a
+# libwebkitgtk-6.0-dev is requested as an alternative, not a plain dependency.
+# One control file serves three OBS repositories — xUbuntu_24.04, xUbuntu_26.04
+# and Debian_13 — and Debian's control format has no conditionals, so naming a
 # package that only some of them ship makes the build unsatisfiable on the rest.
-# This file listed it until 0.20.10 with no consequence only because it was
-# never copied to OBS; the first sync that carried it over failed all three deb
-# builds with `dpkg-checkbuilddeps: unmet build dependencies:
-# libwebkitgtk-6.0-dev`. debian.rules decides the feature for itself with
-# `pkg-config --exists webkitgtk-6.0`, so OBS deb packages simply have no
-# embedded browser — as has always been the case. To change that, use an
-# alternative whose second branch is always installed (e.g.
-# `libwebkitgtk-6.0-dev | libglib2.0-dev`) so newer repositories opt in and
-# older ones resolve to a package they already have.
+# This file listed it plainly until 0.20.10 with no consequence only because it
+# was never copied to OBS; the first sync that carried it over failed all three
+# deb builds with `dpkg-checkbuilddeps: unmet build dependencies:
+# libwebkitgtk-6.0-dev`.
+#
+# It was then dropped altogether, which traded a failing build for a silent
+# one: debian.rules decides the feature for itself with
+# `pkg-config --exists webkitgtk-6.0`, that probe can only succeed if the dev
+# package is installed in the chroot, and nothing installed it — so every OBS
+# deb shipped without an embedded browser while the build reported success. The
+# UI is honest about it (a build without the feature offers only System and
+# Custom), so the symptom was the option quietly not existing rather than an
+# error, which is why it took until 0.21.0 for anyone to say so.
+#
+# The alternative is the shape this needs: apt installs the first branch it can
+# satisfy, so a repository that ships WebKitGTK 6.0 opts in and one that does
+# not resolves to libglib2.0-dev, which is already pulled in by libgtk-4-dev and
+# is therefore free. All three current deb targets do ship it, so all three get
+# the embedded browser; the second branch exists so adding an older repository
+# later degrades instead of breaking. Runtime linkage needs no entry of its own —
+# `${shlibs:Depends}` derives libwebkitgtk-6.0-4 from the binary when, and only
+# when, the feature was compiled in.
 #
 # Comments belong between fields, never inside one: a line starting with '#' in
 # the middle of a continuation block ends the field, and everything indented
@@ -28,6 +41,7 @@ Build-Depends: debhelper-compat (= 13),
                libgtk-4-dev (>= 4.14),
                libvte-2.91-gtk4-dev (>= 0.76),
                libadwaita-1-dev (>= 1.5),
+               libwebkitgtk-6.0-dev | libglib2.0-dev,
                libdbus-1-dev,
                libssl-dev,
                libasound2-dev,

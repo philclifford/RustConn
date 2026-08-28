@@ -531,6 +531,16 @@ fn confirm_and_run(anchor: &gtk4::Button, dialog: &adw::Dialog, status_label: &L
             })
             .await;
 
+            // Passwords may now exist where the connect path recorded that none
+            // did, so drop every one of those records (#307). Unconditionally,
+            // including on error and on panic: a run that failed part way through
+            // still copied the entries it got to, which is what the panic message
+            // below tells the user, and clearing too much only costs a lookup.
+            // `forget_all` rather than per connection because the transfer works
+            // on vault keys, and mapping those back to connection ids would be a
+            // second derivation of something the plan already discarded.
+            crate::vault_miss_cache::forget_all();
+
             anchor.set_sensitive(true);
             for widget in &run.lock {
                 widget.set_sensitive(true);

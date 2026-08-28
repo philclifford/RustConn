@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.21.0
+Version:        0.21.1
 Release:        0
 # rpmlint caps Summary at 79 characters (summary-too-long, badness 200); the
 # protocol list belongs in %description, which has room for all of it. Kept in
@@ -321,6 +321,38 @@ done
 %{_datadir}/icons/hicolor/*/apps/io.github.totoshko88.RustConn.*
 
 %changelog
+* Fri Aug 28 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.1-0
+- Version bump to 0.21.1
+- Fixed: connections that authenticate with a key waited on a password manager
+  lookup before every connect, then warned about the password they never wanted
+  (#307). A user whose hosts are all key-authenticated, with no stored
+  passwords at all, paid a full round trip each time; against the Bitwarden CLI
+  that is several seconds, because it decrypts on every read, and the answer was
+  the same every time. The empty answer is now remembered for five minutes, and
+  the notice is only shown when the connection is actually set up to want a
+  password. Which credential a connection uses is untouched: the cache sits
+  after that decision, so a stale record can cost a lookup, never hand a
+  connection the wrong password
+- Fixed: Local Shell failed to open on a host without script (#306). The button
+  reported "Failed to start command: script" and nothing opened. The host shell
+  is wrapped in script (util-linux) because that is what gives the shell job
+  control — Ctrl-Z, fg, bg — and it was called unconditionally. Fedora moved
+  the binary into a package of its own, util-linux-script, in F42, so a minimal
+  install does not have it. The host is now probed and the shell is run directly
+  when script is missing. Job control is lost in that fallback, which is a real
+  downgrade and still better than a button that does nothing
+- Fixed: quitting from the tray put the confirmation dialog on a window the user
+  was not looking at. Quitting with sessions open asks for confirmation, which
+  is correct, and the tray route presented the window first only when it was
+  hidden — but a window can be visible and still be behind others, on another
+  workspace, or simply unfocused, and in each of those cases the dialog was
+  drawn on a surface nobody was watching. The window is now presented whenever
+  there is something to confirm
+- Fixed: the embedded browser was missing from every OBS .deb, so Web
+  connections there offered only System and Custom. That did not affect this
+  spec, whose WebKit BuildRequires is guarded by the same condition that selects
+  the feature, so the RPMs always had the embedded browser
+
 * Fri Aug 28 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.0-0
 - Version bump to 0.21.0
 - Fixed: a Jump Host set on a group or in Preferences was ignored when the
