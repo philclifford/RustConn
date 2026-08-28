@@ -67,6 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   One detail is recorded at the call sites because it is easy to undo by accident: the `String` handed to `SecretString::from` must come from `to_string()` on a `&str`, which allocates with capacity equal to length, so the `into_boxed_str()` inside cannot reallocate. Built any other way — `format!`, or pushing onto a `String` — the shrink-to-fit realloc goes live, frees the original buffer *unzeroed*, and the wrapper becomes weaker than the `Zeroizing<String>` it replaced.
 
+### Dependencies
+
+- **quick-xml 0.41 → 0.42** — deferred from 0.20.11 because it needed a requirement widened, which a patch release would not take. The break is that decoding moved from the caller to the parser: `QName` and the three text event types now dereference to `str`, and `Attribute::value` is a `Cow<str>` rather than `Cow<[u8]>`. Every `String::from_utf8_lossy` and every `.decode()` on the reader path in the libvirt and RoyalTS importers was therefore redundant rather than merely renamed, so the twelve call sites got shorter: seven lossy conversions and three fallible decodes are gone, along with the `unwrap_or_default()` that followed a `xml10_content()` which no longer returns a `Result`. Semantics were preserved deliberately at the one place they could have drifted — the text event still yields the event's own content rather than the newline-normalised form, which is what the byte-level code did. All 31 importer tests pass unchanged.
+
 ## [0.20.11] - 2026-08-27
 
 ### Fixed
