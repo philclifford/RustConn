@@ -271,6 +271,15 @@ pub fn save_password_to_vault(
     use secrecy::ExposeSecret;
     let protocol_str = protocol.as_str().to_lowercase();
 
+    // A password is about to exist where the connect path may have recorded that
+    // none did, so drop that record before the write is even attempted (#307).
+    // Here rather than at the seven call sites: this function is the choke point,
+    // so a new caller cannot forget it. In the prologue rather than after the
+    // store because the write happens on a worker whose completion this function
+    // does not observe, and because a forget that turns out to have been
+    // unnecessary costs one vault lookup.
+    crate::vault_miss_cache::forget(conn_id);
+
     if settings.secrets.kdbx_enabled
         && matches!(
             settings.secrets.preferred_backend,
@@ -647,6 +656,10 @@ pub fn migrate_vault_credential_for_edit(
         return Ok(());
     };
 
+    // The credential is moving to a new key, so any recorded "no entry here" for
+    // this connection was about the old one and must not be trusted (#307).
+    crate::vault_miss_cache::forget(new_conn.id);
+
     if plan.is_keepass {
         let Some(kdbx_path) = settings.secrets.kdbx_path.as_ref() else {
             return Ok(());
@@ -783,6 +796,7 @@ fn migrate_keyring_entries_on_group_change(
         rustconn_core::models::collect_descendant_group_ids(changed_group_id, new_groups);
 
     let mut moves: Vec<(Vec<String>, String)> = Vec::new();
+    let mut moved_ids: Vec<uuid::Uuid> = Vec::new();
     for conn in connections {
         if conn.password_source != rustconn_core::models::PasswordSource::Vault {
             continue;
@@ -804,10 +818,20 @@ fn migrate_keyring_entries_on_group_change(
             continue;
         }
         moves.push((old_keys, new_key));
+        moved_ids.push(conn.id);
     }
 
     if moves.is_empty() {
         return;
+    }
+
+    // Each of these credentials is about to live under a different key, so a
+    // recorded "no entry" was about the old one (#307). Done before the spawn
+    // rather than inside it because the ids are already gathered here and the
+    // closure would have to carry them for no reason; the cache itself is
+    // thread-safe either way.
+    for id in moved_ids {
+        crate::vault_miss_cache::forget(id);
     }
 
     let secret_settings = settings.secrets.clone();
