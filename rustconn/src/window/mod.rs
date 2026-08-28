@@ -4029,16 +4029,41 @@ impl MainWindow {
 
             // If a custom command is set, run it via the host shell.
             // Otherwise use the default login shell behavior.
-            let spawn_cmd = if let Some(ref cmd) = custom_command {
+            let inner = if let Some(ref cmd) = custom_command {
                 let escaped_cmd = cmd.replace('\'', "'\\''");
-                format!(
-                    "flatpak-spawn --host --env=TERM=xterm-256color -- script -qfc '{host_shell} -c '\"'\"'{escaped_cmd}'\"'\"'' /dev/null"
-                )
+                format!("{host_shell} -c '{escaped_cmd}'")
             } else {
-                format!(
-                    "flatpak-spawn --host --env=TERM=xterm-256color -- script -qfc '{host_shell} --login' /dev/null"
-                )
+                format!("{host_shell} --login")
             };
+
+            // `script` (util-linux) allocates a real PTY on the host, which is
+            // what gives the shell job control — Ctrl-Z, fg, bg. It is not
+            // present on every host, and calling it unconditionally is issue
+            // [#306]: the Local Shell button failed outright with `Failed to
+            // start command: script` on a Fedora 44 host. Fedora moved the
+            // binary out of `util-linux` into its own `util-linux-script`
+            // package in F42, so a host with `util-linux-core` installed — which
+            // is what a minimal install has — does not have it, and the advice
+            // to install `util-linux-core` does not help.
+            //
+            // So probe the host and fall back to running the shell directly. Job
+            // control is lost in the fallback, which is worth saying out loud
+            // because it is a real downgrade; a shell that opens without Ctrl-Z
+            // still beats a button that does nothing.
+            //
+            // The same probe already existed one module away, in
+            // `protocols.rs`'s Generic-command path, and was not applied here —
+            // the two copies had drifted, which is why the Generic path survived
+            // a missing `script` and this one did not. The command travels as a
+            // positional parameter (`$1`) rather than being interpolated into
+            // the runner, so the nested quoting stays in one place.
+            //
+            // [#306]: https://github.com/totoshko88/RustConn/issues/306
+            let inner_escaped = inner.replace('\'', "'\\''");
+            let host_runner = "if command -v script >/dev/null 2>&1; then exec script -qfc \"$1\" /dev/null; else exec sh -c \"$1\"; fi";
+            let spawn_cmd = format!(
+                "flatpak-spawn --host --env=TERM=xterm-256color -- sh -c '{host_runner}' rustconn '{inner_escaped}'"
+            );
             Self::spawn_host_shell_when_allocated(notebook, session_id, spawn_cmd);
         } else if let Some(ref cmd) = custom_command {
             // Custom command: run via user's shell with -c
