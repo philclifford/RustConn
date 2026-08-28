@@ -96,6 +96,29 @@ modules:
       - type: archive
         url: https://download.gnome.org/sources/vte/0.80/vte-0.80.5.tar.xz
         sha256: 58a4e00ab5d4a95b4be4dc57b48308deafd72d6839dbbd076648fa353321cc41
+        # The ceiling, and what is actually known about it.
+        #
+        # Three release notes in the 0.20 series stated that VTE "stays pinned
+        # below 0.81 by design" and not one of them, nor any comment, nor any
+        # commit message, said what the design was. An assertion repeated until it
+        # looks settled is not a reason, so here is the evidence instead:
+        #
+        #   * `vte4` is at 0.10 and RustConn selects its `v0_76` feature, so the
+        #     API surface in use is VTE 0.76's. VTE keeps that ABI within the
+        #     2.91 series, and 0.84 still provides it.
+        #   * The maintainer's macOS build runs against Homebrew's VTE 0.84.1
+        #     daily, which is the only empirical datum either way and points at
+        #     the ceiling being unnecessary.
+        #   * What is *not* known: whether a bundled 0.81+ built inside the
+        #     GNOME 50 runtime behaves, and whether anything in the `mc` SGR mouse
+        #     workaround below is sensitive to it. Those two are the reason this is
+        #     still pinned rather than lifted here.
+        #
+        # To lift it: raise this to the current stable, rebuild the Flatpak on
+        # Linux, and exercise a Local Shell, an SSH session, `mc` inside both, and
+        # a window resize mid-session. If that passes, delete the `versions` block
+        # and say so in the changelog. If it fails, write down which of the four
+        # broke — that is the reason nobody recorded the first time.
         x-checker-data:
           type: gnome
           name: vte
@@ -119,13 +142,21 @@ modules:
       - --disable-rexec
     sources:
       - type: archive
-        url: https://ftp.gnu.org/gnu/inetutils/inetutils-2.8.tar.gz
+        # `ftpmirror.gnu.org` is GNU's own redirector and is the primary because
+        # `ftp.gnu.org` went unreachable during the 0.20.11 release and failed the
+        # build twice; when it is down, a primary pointing at it costs every build
+        # a 60 s timeout first. Both mirrors below were verified to serve a
+        # byte-identical tarball. The sha256 is what actually protects us.
+        url: https://ftpmirror.gnu.org/inetutils/inetutils-2.8.tar.gz
+        mirror-urls:
+          - https://ftp.gnu.org/gnu/inetutils/inetutils-2.8.tar.gz
+          - https://mirrors.kernel.org/gnu/inetutils/inetutils-2.8.tar.gz
         sha256: 57b3cf4f77555992881e5ba2a09a63b05aa2c56342a60ed4305b5f45938390b5
         x-checker-data:
           type: anitya
           project-id: 1579
           stable-only: true
-          url-template: https://ftp.gnu.org/gnu/inetutils/inetutils-$version.tar.gz
+          url-template: https://ftpmirror.gnu.org/inetutils/inetutils-$version.tar.gz
 
   - name: picocom
     buildsystem: simple
@@ -176,6 +207,9 @@ modules:
     sources:
       - type: archive
         url: http://ftp.midnight-commander.org/mc-4.8.33.tar.xz
+        # Verified byte-identical, and https where the primary is plain http.
+        mirror-urls:
+          - https://ftp.osuosl.org/pub/midnightcommander/mc-4.8.33.tar.xz
         sha256: cae149d42f844e5185d8c81d7db3913a8fa214c65f852200a9d896b468af164c
         x-checker-data:
           type: anitya
@@ -345,5 +379,5 @@ modules:
     sources:
       - type: git
         url: https://github.com/totoshko88/RustConn.git
-        tag: v0.20.11
+        tag: v0.21.0
       - cargo-sources.json

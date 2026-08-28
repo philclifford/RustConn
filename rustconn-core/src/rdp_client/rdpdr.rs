@@ -1545,6 +1545,19 @@ fn get_file_attributes(meta: &std::fs::Metadata, file_name: &str) -> FileAttribu
 // ponytail: shells out to CUPS `lp`; fine for the common Linux desktop. A
 // native IPP client would drop the runtime dependency on cups-client but pulls
 // in another crate — not worth it until users ask.
+/// How long any single CUPS helper is given before it is killed.
+///
+/// All three of these run on the RDP connection's own thread — `lpstat` twice
+/// while the channel is announced, `lp` whenever the guest prints — and all three
+/// waited indefinitely. A CUPS daemon that is stuck, or a queue on an
+/// unreachable print server, therefore stalled the session rather than costing it
+/// a printer.
+///
+/// Two seconds because these are local IPC calls that normally answer in tens of
+/// milliseconds. Losing the answer means "no printers to forward", which the
+/// callers already treat as an ordinary outcome rather than an error.
+const CUPS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 fn spool_to_cups(document: &[u8], queue: Option<&str>) {
     let mut cmd = Command::new("lp");
     cmd.args(["-t", "RustConn RDP"]);
@@ -1567,21 +1580,41 @@ fn spool_to_cups(document: &[u8], queue: Option<&str>) {
     };
 
     // Write the document, then drop stdin to close the pipe so `lp` proceeds.
+    //
+    // This write is the one part of the path [`CUPS_TIMEOUT`] cannot bound, and it
+    // is the more likely place to block of the two: a document larger than the
+    // pipe buffer — 64 KiB on Linux, and a PostScript page easily exceeds it —
+    // blocks in `write_all` until `lp` drains it, so a stuck `lp` stalls here and
+    // the budget below never starts counting. Handing the write to a thread and
+    // bounding it would mean holding the document across a thread boundary for a
+    // best-effort print job; instead the write is what it always was, and the
+    // limitation is written down rather than implied by the budget on the next
+    // line.
+    //
+    // ponytail: unbounded write to `lp`'s stdin ahead of a bounded wait. Fine
+    // while the local CUPS scheduler drains its pipe, which is its normal
+    // behaviour; move the write onto a thread with its own deadline if a stuck
+    // spooler is ever reported to hang a session.
     if let Some(mut stdin) = child.stdin.take()
         && let Err(e) = stdin.write_all(document)
     {
         warn!("Failed to write print job to `lp`: {e}");
     }
 
-    match child.wait() {
-        Ok(status) if status.success() => {
+    match crate::proc::wait_bounded(child, CUPS_TIMEOUT, "lp (RDP print job)") {
+        Ok(waited) if waited.succeeded() => {
             debug!(
                 "RDP print job sent to CUPS queue {:?} ({} bytes)",
                 queue.unwrap_or("<default>"),
                 document.len()
             );
         }
-        Ok(status) => warn!("`lp` exited with {status} for RDP print job"),
+        Ok(crate::proc::Waited::TimedOut) => {
+            warn!("`lp` did not finish the RDP print job in time and was stopped");
+        }
+        Ok(crate::proc::Waited::Exited(output)) => {
+            warn!("`lp` exited with {} for RDP print job", output.status);
+        }
         Err(e) => warn!("Failed to wait for `lp`: {e}"),
     }
 }
@@ -1590,13 +1623,32 @@ fn spool_to_cups(document: &[u8], queue: Option<&str>) {
 ///
 /// Returns an empty vector if `lpstat` is unavailable or fails; callers should
 /// treat that as "no printers to forward" rather than an error.
-// ponytail: synchronous Command::output() — called from an async context on a
-// single-threaded runtime. Fine while lpstat responds in <100 ms (local IPC);
-// if CUPS hangs it will block the connection. Move to spawn_blocking if that
-// becomes a real issue.
+// Called from an async context on a single-threaded runtime, so this still parks
+// the runtime — but for at most [`CUPS_TIMEOUT`] rather than for as long as CUPS
+// feels like taking. The note here used to say "fine while lpstat responds in
+// <100 ms; move to spawn_blocking if that becomes a real issue", which named the
+// right hazard and the wrong remedy: `spawn_blocking` moves an unbounded wait off
+// the runtime thread, it does not bound it, and the connection would still stall
+// waiting for the answer.
 pub(crate) fn list_cups_printers() -> Vec<String> {
-    let output = match Command::new("lpstat").arg("-e").output() {
-        Ok(o) => o,
+    let child = Command::new("lpstat")
+        .arg("-e")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+    let output = match child {
+        Ok(child) => match crate::proc::wait_bounded(child, CUPS_TIMEOUT, "lpstat -e") {
+            Ok(crate::proc::Waited::Exited(output)) => output,
+            Ok(crate::proc::Waited::TimedOut) => {
+                warn!("`lpstat -e` did not answer in time; no printers will be forwarded");
+                return Vec::new();
+            }
+            Err(e) => {
+                warn!("Failed to wait for `lpstat -e` ({e}); no printers will be forwarded");
+                return Vec::new();
+            }
+        },
         Err(e) => {
             warn!("`lpstat -e` failed ({e}); no printers will be forwarded");
             return Vec::new();
@@ -1619,10 +1671,18 @@ fn parse_cups_printers(stdout: &str) -> Vec<String> {
 ///
 /// Used only to decide announce ordering (default announced last so it wins the
 /// IronRDP `DEFAULTPRINTER` flag race).
-// ponytail: same blocking caveat as list_cups_printers(); acceptable for a
-// single lpstat -d invocation at connection start.
+// Same bounded-blocking caveat as `list_cups_printers`.
 pub(crate) fn cups_default_printer() -> Option<String> {
-    let output = Command::new("lpstat").arg("-d").output().ok()?;
+    let child = Command::new("lpstat")
+        .arg("-d")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let output = crate::proc::wait_bounded(child, CUPS_TIMEOUT, "lpstat -d")
+        .ok()?
+        .output()?;
     parse_cups_default(&String::from_utf8_lossy(&output.stdout))
 }
 

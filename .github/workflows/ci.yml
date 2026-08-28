@@ -185,13 +185,35 @@ jobs:
 
       # Both directions of POTFILES.in rot silently. A stale entry breaks
       # po/update-pot.sh; a missing one means the file's strings are never
-      # extracted, so they render untranslated in all 16 locales while every
+      # extracted, so they render untranslated in every locale while every
       # catalogue still reports 100% complete.
       - name: Check POTFILES.in consistency
         run: ./scripts/check-potfiles.sh
 
+      # Not an i18n check, but the same shape and the same reason it is a gate
+      # rather than a test: the thing that rots is a connection between a resolver
+      # and its callers, which grep can see and a unit test cannot without a GTK
+      # window and a real bastion. 0.20.9 shipped the three-tier jump-host
+      # resolver, wired the free-text field to it, left all four launchers reading
+      # the picker's field directly, and said in its release notes that
+      # inheritance "reads the same for every protocol".
+      - name: Check the launch paths resolve their bastion
+        run: ./scripts/check-jump-host-wiring.sh
+
       - name: Install gettext
         run: sudo apt-get update && sudo apt-get install -y gettext
+
+      # The gate the two above cannot be. They check that the manifest lists the
+      # right files and that the literals are extractable, then trust the
+      # committed template; nothing regenerated it to compare against. So a
+      # translatable string absent from po/rustconn.pot passed every i18n gate
+      # there was, while rendering in English in every locale — the catalogues
+      # were complete with respect to a template that was itself incomplete.
+      # 0.20.0 found thirteen strings like that, 0.20.1 three more, 0.20.2 two.
+      # Both 0.20.0 and 0.20.1 recorded the gap in the changelog and shipped
+      # without closing it.
+      - name: Check the POT template matches the sources
+        run: ./scripts/check-pot-current.sh
 
       # Also catches malformed catalogues and format-placeholder mismatches
       # between msgid and msgstr (e.g. a translation that drops a {} argument).
@@ -231,8 +253,52 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      # This gate used to be able to pass without looking at anything. The cache
+      # above is keyed on Cargo.lock, so any change that leaves the lock alone —
+      # which is most changes — restores a target/ that clippy has already
+      # linted, and cargo then reports the units as fresh: `Finished ... in 0.2s`,
+      # zero warnings, exit 0. Nineteen warnings accumulated behind that and were
+      # only found in 0.20.11, when a lock change forced a real run. Same shape as
+      # the 0.20.9 failure, where a gate agreed with a tree the packaging jobs
+      # rejected.
+      #
+      # Dropping target/ from the cache would fix it and make every push rebuild
+      # the whole dependency graph. Cleaning only the workspace crates costs
+      # seconds instead, and is all the coverage there is to gain: a dependency
+      # cannot acquire a new warning without a lock change, and a lock change
+      # already misses the cache. The member list is read from Cargo.toml rather
+      # than written out here, so a new crate is covered by existing.
+      #
+      # The other cargo jobs need no equivalent. `cargo check` is a subset of what
+      # clippy compiles, so a cached pass there cannot hide anything clippy will
+      # not see; the test jobs re-run their binaries regardless of cache state.
       - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
+        shell: bash
+        run: |
+          set -eo pipefail
+          members=$(awk '/^members = \[/,/^\]/' Cargo.toml |
+              sed -n 's/^[[:space:]]*"\([^"]*\)".*/\1/p')
+          if [ -z "$members" ]; then
+            echo "::error::could not read [workspace] members from Cargo.toml"
+            exit 1
+          fi
+          clean_args=""
+          for m in $members; do clean_args="$clean_args -p $m"; done
+          echo "Cleaning workspace crates so clippy re-checks:$clean_args"
+          # shellcheck disable=SC2086
+          cargo clean $clean_args
+          # `shell: bash` plus `set -o pipefail` and not the default shell: the
+          # default is `bash -e`, where the exit status of `cargo clippy | tee` is
+          # tee's, so a clippy failure would be reported as a pass. A gate piped
+          # through tee without pipefail is the same bug in a new place.
+          mkdir -p target
+          cargo clippy --all-targets -- -D warnings 2>&1 | tee target/ci-clippy.log
+          # And prove it happened. If the clean above ever stops working, this
+          # turns a silent false green back into a red job.
+          if ! grep -qE '^[[:space:]]*(Checking|Compiling) ' target/ci-clippy.log; then
+            echo "::error::clippy compiled nothing — this run verified nothing"
+            exit 1
+          fi
 
   test:
     name: Test
@@ -375,3 +441,69 @@ jobs:
       # advisory ignore list lives in deny.toml [advisories]. (Replaces the
       # separate cargo-audit job, which duplicated that ignore list.)
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+
+  macos-sys:
+    name: macOS (-sys crates)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+
+      # The only system library any of the four needs: rustconn-locale-sys binds
+      # gettext. The other three are libc, nix and objc2, all pure Rust.
+      - name: Install gettext
+        run: brew install gettext
+
+      - name: Cache cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-macos-sys-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-macos-sys-
+
+      # Why this job exists, and why it is this small.
+      #
+      # No job built macOS at all until 0.21.0, and that had already cost
+      # something: the rustconn-pty-sys contract test proving the `pre_exec` hook
+      # runs in the forked child — the thing that makes SSH password prompts work
+      # (#175) — had never passed on macOS. It accepted ENOTTY and EPERM, macOS
+      # answers ENODEV for /dev/null, and it went unnoticed until 0.20.11 because
+      # the only machine that ran it was the maintainer's. A test guarding
+      # `unsafe` that no CI job executes is a test nobody knows the state of.
+      #
+      # Scoped to the four -sys crates rather than the whole workspace on
+      # purpose. They hold every `unsafe` block in the repository, they are where
+      # the platform differences actually live, and between them they need one
+      # Homebrew package. Building the GUI here would mean gtk4, libadwaita, vte3
+      # and WebKitGTK from Homebrew for a twenty-minute job, and `web-embedded` is
+      # a default feature that cannot build on macOS at all — which is a separate
+      # thing worth fixing before this scope grows.
+      #
+      # rustconn-dock-sys is the reason `--all-targets` matters here: off macOS
+      # its AppKit call is `cfg`-ed out and it contains no `unsafe`, so this is
+      # the only place its `unsafe` block and its main-thread guard are compiled
+      # and its contract test is run.
+      - name: Clippy the -sys crates
+        run: |
+          cargo clippy --all-targets \
+            -p rustconn-pty-sys \
+            -p rustconn-locale-sys \
+            -p rustconn-env-sys \
+            -p rustconn-dock-sys \
+            -- -D warnings
+
+      - name: Test the -sys crates
+        run: |
+          cargo test \
+            -p rustconn-pty-sys \
+            -p rustconn-locale-sys \
+            -p rustconn-env-sys \
+            -p rustconn-dock-sys

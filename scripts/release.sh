@@ -50,6 +50,25 @@ fail()  { printf '%s[fail]%s %s\n'    "$C_RED"    "$C_RESET" "$*" >&2; exit 1; }
 plan()  { printf '%s[plan]%s %s\n'    "$C_YELLOW" "$C_RESET" "$*"; }
 run()   { printf '%s[run]%s  %s\n'    "$C_BOLD"   "$C_RESET" "$*"; "$@"; }
 
+# Every gate this run did not actually execute, so the end of the run can say so
+# in one place.
+#
+# The problem this solves: a dry run that skipped three gates ended with exactly
+# the same "validation passed" as one that skipped none. The skips were there, as
+# individual [warn] lines on stderr, interleaved with a few hundred lines of
+# other output — which is to say they were reported and not read. On macOS, the
+# platform releases are prepared on, three gates silently stood down: `typos`
+# (whose absence is what let v0.20.1 reach a published release with a red CI over
+# one word), the release-date check, and the cargo-sources.json check. Recording
+# them is not a substitute for making them runnable — the date check has been
+# fixed rather than reported, see 4c — but for the ones that genuinely cannot run
+# here, the operator has to leave the run knowing which they are.
+SKIPPED_GATES=()
+skipped() {
+    warn "skipping $1 — $2"
+    SKIPPED_GATES+=("$1 — $2")
+}
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Args
 # ──────────────────────────────────────────────────────────────────────────────
@@ -223,7 +242,7 @@ if command -v xmllint >/dev/null; then
     xmllint --noout "$METAINFO" 2>&1 || fail "$METAINFO is not well-formed XML"
     ok "metainfo.xml is well-formed XML"
 else
-    warn "xmllint not installed — skipping metainfo XML well-formedness check"
+    skipped "metainfo XML well-formedness" "xmllint is not installed"
 fi
 
 if command -v appstreamcli >/dev/null; then
@@ -235,7 +254,7 @@ if command -v appstreamcli >/dev/null; then
     fi
     ok "metainfo.xml passes appstreamcli validate"
 else
-    warn "appstreamcli not installed — skipping AppStream validation"
+    skipped "AppStream validation" "appstreamcli is not installed"
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -244,10 +263,55 @@ fi
 #     too, but only metainfo.xml was ever verified. update_release_dates already
 #     rewrites the Debian/OBS/spec dates, so verify them and close the loop —
 #     a hand-written entry otherwise ships a date CHANGELOG.md disagrees with.
-#     Needs GNU `date -d`; BSD date parses neither format, so macOS skips this.
+#     Two formats have to be normalised: the Debian trailer is RFC 2822
+#     ("Sat, 01 Aug 2026 12:00:00 +0300") and the OBS/spec header is
+#     "Sat Aug 01 2026". GNU `date -d` parses both and BSD `date` parses neither,
+#     so this check used to skip on macOS — which is where releases are prepared,
+#     making it a gate that ran nowhere it was needed and reported success. It now
+#     falls back to python3, which is available on both platforms and parses both
+#     formats from its standard library, so there is nothing left to skip.
 # ──────────────────────────────────────────────────────────────────────────────
 if date -d 2026-01-01 +%Y-%m-%d >/dev/null 2>&1; then
+    DATE_TO_ISO=gnu
+elif command -v python3 >/dev/null 2>&1; then
+    DATE_TO_ISO=python
+else
+    DATE_TO_ISO=none
+fi
+
+if [[ "$DATE_TO_ISO" != none ]]; then
     DATE_FAILED=0
+
+    # Normalise one date string to YYYY-MM-DD, or print nothing.
+    to_iso_date() {
+        if [[ "$DATE_TO_ISO" == gnu ]]; then
+            LC_ALL=C date -d "$1" +%Y-%m-%d 2>/dev/null || true
+            return
+        fi
+        python3 - "$1" 2>/dev/null <<'PY' || true
+import sys
+from datetime import datetime
+from email.utils import parsedate_to_datetime
+
+raw = sys.argv[1].strip()
+# The Debian changelog trailer is RFC 2822, which the stdlib parses including
+# the offset. Tried first because it is the only one of the three with a comma
+# and would otherwise fall through to strptime and fail on the timezone.
+try:
+    print(parsedate_to_datetime(raw).date().isoformat())
+    sys.exit(0)
+except (TypeError, ValueError):
+    pass
+# The OBS .changes and spec %changelog headers, and a bare ISO date.
+for fmt in ("%a %b %d %Y", "%Y-%m-%d"):
+    try:
+        print(datetime.strptime(raw, fmt).date().isoformat())
+        sys.exit(0)
+    except ValueError:
+        continue
+sys.exit(1)
+PY
+    }
 
     # <label> <raw date string> — empty or unparsable counts as a failure.
     check_release_date() {
@@ -257,7 +321,7 @@ if date -d 2026-01-01 +%Y-%m-%d >/dev/null 2>&1; then
             ((DATE_FAILED += 1))
             return
         fi
-        iso="$(LC_ALL=C date -d "$raw" +%Y-%m-%d 2>/dev/null || true)"
+        iso="$(to_iso_date "$raw")"
         if [[ -z "$iso" ]]; then
             warn "$label: cannot parse date '$raw'"
             ((DATE_FAILED += 1))
@@ -290,7 +354,7 @@ if date -d 2026-01-01 +%Y-%m-%d >/dev/null 2>&1; then
     fi
     ok "Release date $CHANGELOG_DATE consistent across CHANGELOG, Debian, OBS and spec"
 else
-    warn "GNU 'date -d' unavailable — skipping cross-format date check"
+    skipped "cross-format release-date check" "neither GNU 'date -d' nor python3 is available"
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -447,6 +511,14 @@ ok "debian, OBS, spec and metainfo changelogs all lead with $VERSION"
 # `Version: 0.19.9-1` with `Files: rustconn-0.19.8.tar.xz` for a whole release
 # because only the Version: line was ever checked. Restricted to files that
 # hold nothing but the current version — changelogs legitimately keep history.
+#
+# Comment lines are skipped, for exactly the reason changelogs are excluded
+# altogether: a comment can legitimately name an old version because it is
+# describing something that happened then. 0.21.0 added one — the note beside the
+# Flatpak mirror list saying that `ftp.gnu.org` went unreachable during the
+# 0.20.11 release — and the gate failed the release over a sentence that has to
+# keep saying 0.20.11 to remain true. Commented-out YAML or TOML is inert, so
+# nothing that matters can hide behind this.
 # ──────────────────────────────────────────────────────────────────────────────
 VERSION_ONLY_FILES=(
     "Cargo.toml"
@@ -476,7 +548,7 @@ else
     STALE_FAILED=0
     for file in "${VERSION_ONLY_FILES[@]}"; do
         [[ -f "$file" ]] || continue
-        if hits="$(grep -nE -- "$PREV_RE" "$file")"; then
+        if hits="$(grep -nE -- "$PREV_RE" "$file" | grep -vE '^[0-9]+:[[:space:]]*#')"; then
             warn "$file still references the previous version $PREV_VERSION:"
             printf '%s\n' "$hits" >&2
             ((STALE_FAILED += 1))
@@ -532,7 +604,7 @@ if [[ -f "$BREW_FORMULA" ]]; then
     fi
     ok "$BREW_FORMULA template is CI-ready (archive URL v$VERSION + sha256)"
 else
-    warn "$BREW_FORMULA not found — skipping Homebrew formula check"
+    skipped "Homebrew formula check" "$BREW_FORMULA not found"
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -627,19 +699,41 @@ if command -v msgfmt >/dev/null; then
             fail "check-po-complete.sh failed — CI enforces this"
         fi
     fi
+
+    # And the one no gate covered until 0.21.0: whether the template describes
+    # the strings the sources actually contain. Everything above reads the
+    # committed catalogues, so a string missing from the template is invisible to
+    # all of it — the catalogues are complete with respect to a template that is
+    # itself incomplete. Three releases in a row shipped English strings that
+    # way. Needs xgettext, from the same gettext package as msgfmt, which is why
+    # it sits inside this branch rather than with the tool-free gates below.
+    if [[ -x scripts/check-pot-current.sh ]]; then
+        if POT_OUTPUT="$(./scripts/check-pot-current.sh 2>&1)"; then
+            ok "check-pot-current.sh passed"
+        else
+            printf '%s\n' "$POT_OUTPUT" >&2
+            fail "check-pot-current.sh failed — the template is out of step with the sources"
+        fi
+    fi
 else
-    warn "msgfmt not installed — skipping po validation"
+    skipped "po validation, check-po-complete and check-pot-current" "msgfmt is not installed"
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 9b. The two i18n gates that need no gettext tooling
+# 9b. The gates that need no tooling at all
 # ──────────────────────────────────────────────────────────────────────────────
 # The checks above validate the catalogues; they say nothing about whether the
-# manifest still matches the sources. The CI `i18n` job runs both of these and
-# fails the build on either, so a release prepared without them gets a red CI on
-# the release commit — which is how the 0.20.0 terminal split reached a tag with
-# two new modules missing from POTFILES.in.
-for i18n_check in check-potfiles.sh check-i18n-escapes.sh; do
+# manifest still matches the sources. The CI `i18n` job runs these and fails the
+# build on any of them, so a release prepared without them gets a red CI on the
+# release commit — which is how the 0.20.0 terminal split reached a tag with two
+# new modules missing from POTFILES.in.
+#
+# `check-jump-host-wiring.sh` is not i18n. It is here because it is the same kind
+# of check — a grep over a connection between a resolver and its callers, which no
+# unit test can cover without a GTK window and a real bastion — and because the
+# defect it guards reached a release *with a changelog entry saying it was fixed*
+# (#301, 0.20.9).
+for i18n_check in check-potfiles.sh check-i18n-escapes.sh check-jump-host-wiring.sh; do
     if [[ -x "scripts/$i18n_check" ]]; then
         if I18N_OUTPUT="$(./scripts/"$i18n_check" 2>&1)"; then
             ok "$i18n_check passed"
@@ -648,7 +742,7 @@ for i18n_check in check-potfiles.sh check-i18n-escapes.sh; do
             fail "$i18n_check failed — CI enforces this and will fail the release commit"
         fi
     else
-        warn "scripts/$i18n_check not found or not executable — skipping"
+        skipped "$i18n_check" "not found or not executable"
     fi
 done
 
@@ -680,14 +774,14 @@ if [[ -n "$TYPOS_BIN" ]]; then
         fail "typos failed — the CI Hygiene job enforces this and will fail the release commit"
     fi
 else
-    warn "typos not installed — skipping spell check (CI still enforces it)"
+    skipped "spell check (typos)" "not installed — the CI Hygiene job still enforces it, and a red CI is found after the tag rather than before it"
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 10. cargo fmt + clippy + tests
 # ──────────────────────────────────────────────────────────────────────────────
 if $SKIP_CHECKS; then
-    warn "Skipping cargo fmt/clippy/tests (--skip-checks)"
+    skipped "cargo fmt, clippy and tests" "--skip-checks was passed"
 else
     info "Running: cargo fmt --all -- --check"
     # imports_granularity and group_imports are nightly-only options defined in
@@ -720,7 +814,7 @@ else
     ok "cargo clippy: 0 warnings"
 
     if $SKIP_TESTS; then
-        warn "Skipping tests (--skip-tests)"
+        skipped "cargo test" "--skip-tests was passed"
     else
         info "Running: cargo test --workspace (this takes ~120s)"
         # On macOS, gdk4-wayland cannot build (no Wayland). Run tests per-crate
@@ -755,11 +849,11 @@ ok "Cargo.lock is up-to-date"
 FCG="packaging/flatpak/flatpak-cargo-generator.py"
 SOURCES="packaging/flatpak/cargo-sources.json"
 if $SKIP_CHECKS; then
-    warn "Skipping cargo-sources.json check (--skip-checks)"
+    skipped "cargo-sources.json check" "--skip-checks was passed"
 elif [[ ! -f "$FCG" || ! -f "$SOURCES" ]]; then
-    warn "Flatpak generator or sources missing — skipping cargo-sources.json check"
+    skipped "cargo-sources.json check" "flatpak-cargo-generator or the sources file is missing"
 elif ! command -v python3 >/dev/null; then
-    warn "python3 not installed — skipping cargo-sources.json check"
+    skipped "cargo-sources.json check" "python3 is not installed"
 else
     info "Verifying $SOURCES matches Cargo.lock..."
     TMP_SOURCES="$(mktemp)"
@@ -779,9 +873,32 @@ else
     cp $SOURCES packaging/flathub/cargo-sources.json"
         fi
     else
-        warn "flatpak-cargo-generator failed (network?) — skipping sources check"
+        skipped "cargo-sources.json check" "flatpak-cargo-generator failed, most likely no network"
     fi
     rm -f "$TMP_SOURCES"
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 11c. What this run did not check
+#
+# Printed here, once, immediately before the plan, because that is where the
+# operator is reading. Individual [warn] lines go to stderr among several hundred
+# other lines and are reported without being read — which is how a dry run that
+# stood three gates down came to end with the same "validation passed" as one
+# that ran everything.
+# ──────────────────────────────────────────────────────────────────────────────
+if (( ${#SKIPPED_GATES[@]} > 0 )); then
+    echo
+    printf '%s%s═══ %d gate(s) did NOT run ═══%s\n' \
+        "$C_BOLD" "$C_YELLOW" "${#SKIPPED_GATES[@]}" "$C_RESET"
+    for gate in "${SKIPPED_GATES[@]}"; do
+        warn "$gate"
+    done
+    warn "A gate that did not run has told you nothing. Decide per line above"
+    warn "whether something else covers it before you tag."
+else
+    echo
+    ok "Every gate ran — none was skipped for a missing tool or a flag."
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────

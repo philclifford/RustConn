@@ -85,8 +85,9 @@ the domain logic, `rustconn-cli` sits on it, and neither may touch a GUI crate. 
 four `rustconn-*-sys` crates are isolated FFI and the only legal home for `unsafe`,
 which `unsafe_code = "deny"` enforces and each helper re-opens for itself. New FFI
 gets a new `-sys` crate — never an exception where the caller lives, and never a
-macOS-only crate, because no CI job builds macOS and that `unsafe` would never
-compile. A pre-write hook blocks both violations; do not rely on it.
+macOS-only crate: the `macos-sys` job covers the four helpers that exist, and
+every other job is Linux, so a gated crate's guard and contract tests would be
+checked by one job instead of ten. A pre-write hook blocks both violations; do not rely on it.
 
 Per-crate contracts are in each crate's `AGENTS.md`; the full table is in
 `core-rules.md`.

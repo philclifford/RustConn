@@ -11,7 +11,7 @@ Use after completing a feature or before merge. Adapted from AI-DLC methodology.
 ```bash
 scripts/verify.sh --tests     # or without --tests for fmt + machete + clippy only
 scripts/verify.sh --quick     # .md / .po-only work: skips every cargo gate
-scripts/verify.sh --fresh     # force clippy to really re-check
+scripts/verify.sh --cached    # skip the pre-clippy clean; a cache hit then only warns
 ```
 
 That covers `typos`, the three po gates, a GUI-imports-in-core/cli grep,

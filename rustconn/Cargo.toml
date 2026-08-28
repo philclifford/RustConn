@@ -17,7 +17,7 @@ name = "rustconn"
 path = "src/main.rs"
 
 [dependencies]
-rustconn-core = { path = "../rustconn-core", version = "0.20.11", default-features = false }
+rustconn-core = { path = "../rustconn-core", version = "0.21.0", default-features = false }
 tokio = { workspace = true }
 # Event-driven tray message delivery to the GTK main loop (no polling)
 async-channel = { workspace = true }
@@ -40,9 +40,26 @@ ksni = { version = "0.3", features = ["blocking"], optional = true }
 # SVG rendering for tray icon (renders SVG to ARGB32 pixmap)
 resvg = { version = "0.48", optional = true }
 # macOS tray icon via NSStatusItem (cross-platform crate, used only on macOS)
-tray-icon = { version = "0.24", optional = true }
+#
+# `default-features = false` on both, and it is not a micro-optimisation. The
+# default feature of each is `["libxdo", "gtk"]`, and `tray-icon`'s `gtk` feature
+# is `["muda/gtk", "dep:libappindicator"]` — so accepting the defaults put
+# libappindicator, gtk 0.18 and with it atk, gdk, gtk-sys, gtk3-macros, glib 0.18
+# and libxdo into `Cargo.lock`. Those are the gtk3 bindings, and they account for
+# several of the allow-listed advisories in `.cargo/audit.toml` and `deny.toml`,
+# RUSTSEC-2024-0429 (glib unsoundness) and RUSTSEC-2024-0419 (gtk3 bindings
+# unmaintained) among them.
+#
+# The dependencies themselves are already `[target.'cfg(linux/BSD)']` inside those
+# crates, so none of it was ever *compiled* — but `cargo audit` and `cargo deny`
+# read `Cargo.lock`, which is target-agnostic, so the advisories were reported for
+# every platform regardless. Target-gating these two deps here would therefore
+# have changed nothing; turning the feature off is what removes them from the
+# graph. On macOS, where these crates are actually used, the disabled features
+# contribute nothing: the tray goes through objc2 and AppKit.
+tray-icon = { version = "0.24", optional = true, default-features = false }
 # Menu builder for macOS tray (companion to tray-icon)
-muda = { version = "0.19", optional = true }
+muda = { version = "0.19", optional = true, default-features = false }
 # Internationalization (gettext). Only the safe part of the API is used here —
 # `bindtextdomain`, `textdomain`, `gettext`, `ngettext`. `setlocale` is `unsafe`
 # as of 0.8 (RUSTSEC-2026-0244) and `unsafe_code` is forbidden in this crate, so
@@ -58,27 +75,27 @@ shell-words = "1"
 nix = { version = "0.31", features = ["signal", "process"] }
 # PTY creation, sizing and controlling-terminal setup for every session's
 # child. Lives in its own crate because `unsafe` is forbidden here.
-rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.20.11" }
+rustconn-pty-sys = { path = "../rustconn-pty-sys", version = "0.21.0" }
 # The startup `setlocale` call, guarded so it can only run from the startup
 # thread, before this program has spawned any thread of its own, and before the
 # window is sealed. Same reason for the separate crate: `setlocale` is `unsafe`
 # in gettext-rs 0.8 and `unsafe` is forbidden here.
-rustconn-locale-sys = { path = "../rustconn-locale-sys", version = "0.20.11" }
+rustconn-locale-sys = { path = "../rustconn-locale-sys", version = "0.21.0" }
 # The startup `GSK_RENDERER` and `LANGUAGE` writes, guarded the same way.
 # Neither GTK nor gettext offers an API for these, so the environment is the only
 # interface, and `std::env::set_var` is `unsafe` in edition 2024 while `unsafe`
 # is forbidden here. Not gated to one platform on purpose: the X11 (#85), macOS
 # guest-VM (#274) and Flatpak language (#158) paths all go through it, and an
 # unconditional dependency is what gets the guard compiled and its contract
-# tests run — no CI job builds macOS.
-rustconn-env-sys = { path = "../rustconn-env-sys", version = "0.20.11" }
+# tests run on every job rather than on the one macOS job alone.
+rustconn-env-sys = { path = "../rustconn-env-sys", version = "0.21.0" }
 # The macOS Dock tile image, for launches LaunchServices cannot find an icon for
 # (a bare binary from a shell, or an .app whose CFBundleExecutable execs a binary
 # outside the bundle). `-[NSApplication setApplicationIconImage:]` is the only
 # interface that works there, GDK exposes no Dock API, and `unsafe` is forbidden
 # here. Unconditional for the same reason as the three above; the AppKit bindings
 # it needs are target-gated inside that crate, since they build nowhere else.
-rustconn-dock-sys = { path = "../rustconn-dock-sys", version = "0.20.11" }
+rustconn-dock-sys = { path = "../rustconn-dock-sys", version = "0.21.0" }
 # WebKitGTK 6.0 bindings for embedded web browser (Linux only)
 webkit6 = { version = "0.6", optional = true }
 
@@ -111,6 +128,14 @@ wayland-native = ["dep:gdk4-wayland"]
 web-embedded = ["dep:webkit6", "rustconn-core/web-embedded"]
 # Enable libadwaita 1.6+ widgets (AdwSpinner, CSS variables, accent colors)
 # Requires libadwaita >= 1.6 at build time (GNOME 50 Flatpak runtime or Fedora 44+).
+# NOT in `default`, and NOT retirable in 0.21.0 — checked, because the
+# "retire it once no supported target is below 1.6" note below invites the
+# question every release. The binding constraint is **Ubuntu 24.04 LTS**, which
+# ships libadwaita 1.5.0 and is listed as the baseline tier in
+# packaging/obs/README.md. Its standard support runs to 2029. The snap's core24
+# gnome platform is the same story and is often cited as the only reason, which
+# makes a core26 GNOME extension look like the thing to wait for; it is not, and
+# checking it answers nothing while 24.04 is still a target.
 # NOT in `default`: Ubuntu 24.04 ships libadwaita 1.5.0 and the snap's core24
 # gnome-46-2404 platform ships 1.5, so the default build must stay on the v1_5
 # baseline. `crate::spinner` holds the single cfg that picks AdwSpinner over

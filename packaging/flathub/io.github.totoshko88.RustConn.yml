@@ -98,6 +98,10 @@ modules:
       - type: archive
         url: https://download.gnome.org/sources/vte/0.80/vte-0.80.5.tar.xz
         sha256: 58a4e00ab5d4a95b4be4dc57b48308deafd72d6839dbbd076648fa353321cc41
+        # Ceiling deliberate but unexplained until 0.21.0; the evidence, and the
+        # steps to lift it, are recorded once in
+        # packaging/flatpak/io.github.totoshko88.RustConn.yml rather than three
+        # times here.
         x-checker-data:
           type: gnome
           name: vte
@@ -121,13 +125,21 @@ modules:
       - --disable-rexec
     sources:
       - type: archive
-        url: https://ftp.gnu.org/gnu/inetutils/inetutils-2.8.tar.gz
+        # `ftpmirror.gnu.org` is GNU's own redirector and is the primary because
+        # `ftp.gnu.org` went unreachable during the 0.20.11 release and failed the
+        # build twice; when it is down, a primary pointing at it costs every build
+        # a 60 s timeout first. Both mirrors below were verified to serve a
+        # byte-identical tarball. The sha256 is what actually protects us.
+        url: https://ftpmirror.gnu.org/inetutils/inetutils-2.8.tar.gz
+        mirror-urls:
+          - https://ftp.gnu.org/gnu/inetutils/inetutils-2.8.tar.gz
+          - https://mirrors.kernel.org/gnu/inetutils/inetutils-2.8.tar.gz
         sha256: 57b3cf4f77555992881e5ba2a09a63b05aa2c56342a60ed4305b5f45938390b5
         x-checker-data:
           type: anitya
           project-id: 1579
           stable-only: true
-          url-template: https://ftp.gnu.org/gnu/inetutils/inetutils-$version.tar.gz
+          url-template: https://ftpmirror.gnu.org/inetutils/inetutils-$version.tar.gz
 
   - name: picocom
     buildsystem: simple
@@ -178,6 +190,9 @@ modules:
     sources:
       - type: archive
         url: http://ftp.midnight-commander.org/mc-4.8.33.tar.xz
+        # Verified byte-identical, and https where the primary is plain http.
+        mirror-urls:
+          - https://ftp.osuosl.org/pub/midnightcommander/mc-4.8.33.tar.xz
         sha256: cae149d42f844e5185d8c81d7db3913a8fa214c65f852200a9d896b468af164c
         x-checker-data:
           type: anitya
@@ -338,7 +353,7 @@ modules:
         # chicken-and-egg problem and any placeholder would be a fake pin.
         # The immutable commit is added once the tag exists — by hand or by the
         # Flathub bot — in the Flathub repository, not here.
-        tag: v0.20.11
+        tag: v0.21.0
         x-checker-data:
           type: git
           tag-pattern: ^v([\d.]+)$

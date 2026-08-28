@@ -14,8 +14,18 @@
 #   scripts/verify.sh            fast gates + fmt + machete + clippy
 #   scripts/verify.sh --quick    fast gates only (right for .md / .po-only work)
 #   scripts/verify.sh --tests    also cargo test --workspace  (~2.5 min wall)
-#   scripts/verify.sh --fresh    clean workspace crates first, so clippy really
-#                                re-checks instead of reporting a cache hit
+#   scripts/verify.sh --cached   do NOT clean the workspace crates first, so
+#                                clippy may report a cache hit as a pass
+#
+# Cleaning the workspace crates before clippy is the default, and `--cached` is
+# the escape hatch rather than `--fresh` being the opt-in it used to be. The
+# Definition of Done requires a clippy run that actually re-checked; this script
+# used to note a cache hit as a WARN and then exit 0, so the tool that exists to
+# decide whether the work is done reported success for a run that verified
+# nothing. Only workspace crates are cleaned, which is seconds — cleaning
+# dependencies too would turn a 40-second re-check into a five-minute one for no
+# extra coverage, since a dependency cannot acquire a warning without a lock
+# change.
 #
 # Everything goes to target/verify.log. Cargo output is redirected, never piped:
 # a pipe through tail/grep is the main way the output ends up lost entirely.
@@ -45,14 +55,17 @@ cd "$(dirname "$0")/.." || exit 1
 
 quick=0
 tests=0
-fresh=0
+fresh=1
 for arg in "$@"; do
     case "$arg" in
     --quick) quick=1 ;;
     --tests) tests=1 ;;
+    --cached) fresh=0 ;;
+    # Accepted so an existing habit or script does not break; it is now the
+    # default, so there is nothing to turn on.
     --fresh) fresh=1 ;;
     -h | --help)
-        sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     *)
@@ -120,7 +133,11 @@ else
     skip_gate 'typos' 'not installed'
 fi
 
-for s in check-potfiles check-i18n-escapes check-po-complete check-ai-docs; do
+# `check-jump-host-wiring` is not an i18n check but belongs with these: it is a
+# grep over a connection between two files, which is what this group is, and it
+# needs no toolchain.
+for s in check-potfiles check-i18n-escapes check-po-complete check-ai-docs \
+    check-jump-host-wiring; do
     if [ -x "scripts/$s.sh" ]; then
         run_gate "$s" "scripts/$s.sh"
     else
@@ -176,15 +193,66 @@ else
     # exits 0 on a pedantic warning and this gate reported `ok` for a tree CI
     # would reject — the Definition of Done says zero warnings, so the gate has
     # to fail on one.
-    clippy_mark=$(wc -l <"$log")
-    run_gate 'cargo clippy --all-targets' "$CARGO" clippy --all-targets -- -D warnings
+    #
+    # On macOS the default feature set cannot be built at all: `web-embedded` is
+    # in `default` and pulls WebKitGTK 6.0 through webkit6, whose -sys build
+    # scripts fail on a missing javascriptcoregtk-6.0.pc and libsoup-3.0.pc. The
+    # feature's own comment in rustconn/Cargo.toml says "Linux only". So this
+    # gate reported a failed clippy run on the maintainer's own machine for a
+    # reason that has nothing to do with the tree — a gate that cannot run where
+    # it is needed. It now uses the same canonical feature set the macOS bundle is
+    # built with, read from macos-build.sh so there is one list and not two.
+    clippy_features=()
+    if [ "$(uname -s)" = Darwin ] && [ -x scripts/macos-build.sh ]; then
+        macos_features=$(./scripts/macos-build.sh --print-features 2>/dev/null | tail -n 1)
+        if [ -n "$macos_features" ]; then
+            clippy_features=(--no-default-features --features "$macos_features")
+            say "  ...  macOS: clippy over the bundle's feature set ($macos_features)"
+        fi
+    fi
+
+    # Clippy's output goes to a file of its own as well as to the shared log, so
+    # the "did it compile anything" check below can read a file that holds exactly
+    # one clippy run.
+    #
+    # It used to record the shared log's line count and then `tail -n +N` after the
+    # run. That was wrong twice: `wc -l` pads its output on BSD, so `tail` rejected
+    # `-n +      18` as an illegal offset and the check scanned nothing; and once
+    # the padding was stripped the offset still came out at the whole file, so the
+    # check read one line and again found nothing. Both times it reported that
+    # clippy had compiled nothing while the log plainly showed several hundred
+    # `Checking` lines — a gate lying in the direction of failure, which is the
+    # cheap direction, but a gate that has to be argued with is a gate that gets
+    # deleted. There is no offset to get wrong now.
+    clippy_log="target/verify-clippy.log"
+    printf '\n===== %s =====\n' 'cargo clippy --all-targets' >>"$log"
+    if "$CARGO" clippy --all-targets "${clippy_features[@]}" -- -D warnings \
+        >"$clippy_log" 2>&1; then
+        say '  ok    cargo clippy --all-targets'
+        record 'cargo clippy --all-targets' OK
+    else
+        say '  FAIL  cargo clippy --all-targets'
+        record 'cargo clippy --all-targets' FAIL
+    fi
+    cat "$clippy_log" >>"$log"
 
     # A cache hit prints "Finished ... in 0.2s" and reports zero warnings without
-    # looking at anything. Treat that as unverified, not as a pass.
-    if ! tail -n "+$clippy_mark" "$log" | grep -qE '^[[:space:]]*(Checking|Compiling) '; then
-        say '  WARN  clippy did not compile anything — that run verified nothing.'
-        say '        Re-run with --fresh to force a real re-check.'
-        results+=("WARN	cargo clippy — cache hit, nothing re-checked")
+    # looking at anything. That is not a pass, and until 0.21.0 this recorded it
+    # as a WARN — which never incremented the failure count, so the script exited
+    # 0 and the run looked done. With the clean above now the default, reaching
+    # here means something is wrong rather than merely unlucky, so it fails.
+    # Under --cached it stays a warning, because the caller asked for the fast
+    # path and is entitled to know what they gave up rather than be refused.
+    if ! grep -qE '^[[:space:]]*(Checking|Compiling) ' "$clippy_log"; then
+        if [ "$fresh" -eq 1 ]; then
+            say '  FAIL  clippy compiled nothing even after cleaning — that run verified nothing.'
+            results+=("FAIL	cargo clippy — nothing re-checked")
+            failed=$((failed + 1))
+        else
+            say '  WARN  clippy did not compile anything — that run verified nothing.'
+            say '        Drop --cached to force a real re-check.'
+            results+=("WARN	cargo clippy — cache hit, nothing re-checked")
+        fi
     fi
 
     # Every packaging build — deb, RPM, AppImage, Flatpak, snap — compiles the
@@ -204,7 +272,27 @@ else
 
     if [ "$tests" -eq 1 ]; then
         say '  ...  cargo test --workspace (~2.5 min)'
-        run_gate 'cargo test --workspace' "$CARGO" test --workspace
+        if [ "${#clippy_features[@]}" -gt 0 ]; then
+            # Same reason the clippy gate above substitutes a feature set on
+            # macOS: `--workspace` resolves `rustconn`'s default features, and
+            # `web-embedded` is one of them, so the run dies in the `webkit6`
+            # build scripts on a missing javascriptcoregtk-6.0.pc — nothing to do
+            # with the tree. The clippy gate was fixed for this earlier in 0.21.0
+            # and the test gate was not, so `verify.sh --tests` still reported a
+            # failure on the maintainer's own platform.
+            #
+            # Split per crate rather than `--workspace` with the flags, because
+            # `--no-default-features` applies to every selected package and the
+            # other crates' defaults are wanted.
+            run_gate 'cargo test -p rustconn-core' "$CARGO" test -p rustconn-core
+            run_gate 'cargo test -p rustconn (macOS features)' \
+                "$CARGO" test -p rustconn "${clippy_features[@]}"
+            run_gate 'cargo test the -sys crates' \
+                "$CARGO" test -p rustconn-pty-sys -p rustconn-locale-sys \
+                -p rustconn-env-sys -p rustconn-dock-sys
+        else
+            run_gate 'cargo test --workspace' "$CARGO" test --workspace
+        fi
         run_gate 'cargo test -p rustconn-cli --features full' \
             "$CARGO" test -p rustconn-cli --features full
     fi

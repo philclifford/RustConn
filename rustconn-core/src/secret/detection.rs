@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use regex::Regex;
 use tokio::process::Command;
@@ -20,7 +21,107 @@ use tokio::process::Command;
 fn detection_command(program: &str) -> Command {
     let mut cmd = Command::new(program);
     cmd.env("PATH", crate::cli_download::get_extended_path());
+    // Required for [`probe`] to mean anything: dropping a `tokio::process::Child`
+    // does not kill it, so a probe abandoned at its deadline would leave the very
+    // unresponsive process it gave up on still running, once per refresh of the
+    // Secrets tab.
+    cmd.kill_on_drop(true);
     cmd
+}
+
+/// How long any single detection probe is given before it is abandoned.
+///
+/// None of these probes had a deadline, and they are not independent:
+/// [`detect_password_managers`] runs all eight detectors under one
+/// `tokio::join!`, which completes only when the last of them does, so one
+/// unresponsive CLI stalls the whole call. `bw status` reaches the network once
+/// its session has expired, `op whoami` can sit on a biometric prompt and
+/// `passbolt list` talks to a server — the three most likely to stall are exactly
+/// the three that do I/O.
+///
+/// Worth knowing before assuming this fixed the Secrets page: **nothing in this
+/// workspace calls these detectors.** They are public and re-exported from
+/// `secret::mod`, and the GUI has its own synchronous copies in
+/// `rustconn/src/dialogs/settings/secrets_tab/detection.rs`, driven from a
+/// `std::thread::scope`, and those are where the page actually stalled. They were
+/// bounded in the same change. Two parallel detector implementations is the real
+/// defect here and neither this constant nor that one fixes it.
+///
+/// The one argument for keeping the async set was that an external consumer of
+/// the crate might depend on it. Checked on the Linux validation pass for 0.21.0
+/// and it does not hold: neither `rustconn-core` nor `rustconn` is published —
+/// `https://crates.io/api/v1/crates/rustconn-core` and the same URL for
+/// `rustconn` both answer 404 — and no `publish` key appears in any manifest, so
+/// there is no released library surface for anything to have been written
+/// against. Together with having no in-workspace caller, that makes this module
+/// dead code rather than an API, and the duplication resolves by deleting it
+/// and keeping the synchronous copies the GUI actually runs.
+///
+/// Not deleted in 0.21.0 on purpose: it is roughly six hundred lines plus their
+/// tests, and 0.21.0 was already prepared and awaiting a tag when the evidence
+/// was gathered. Doing it here would put an unreviewed deletion of that size
+/// into a release the maintainer is about to publish. The decision is made and
+/// the evidence is above; the removal is a 0.22 change. What must *not* happen
+/// is a later session re-deriving the crates.io question — that part is settled.
+///
+/// Five seconds rather than the ten a vault operation gets: this is a `--version`
+/// or a status check, nobody is waiting on a credential, and the answer is only
+/// used to populate a row. A probe that gives up reads as "not installed", which
+/// is already what an errored probe reads as and is the honest answer when a CLI
+/// will not say otherwise.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Runs a detection probe, giving up rather than blocking the caller.
+///
+/// Whether `flatpak info <app_id>` reports the application as installed.
+///
+/// Synchronous, because its two callers are: they build a launch command from a
+/// GTK action, where an unbounded `flatpak` would freeze the window. Bounded
+/// through [`crate::proc::wait_bounded`] rather than `tokio::time::timeout`,
+/// which needs a runtime and an async caller.
+///
+/// Output is discarded rather than piped. Only the exit status is read, and a
+/// child whose pipe nobody drains can block before it exits, which would spend
+/// the budget for no reason.
+fn flatpak_app_installed(app_id: &str, extended_path: &str, what: &'static str) -> bool {
+    let child = std::process::Command::new("flatpak")
+        .env("PATH", extended_path)
+        .args(["info", app_id])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+
+    match child {
+        Ok(child) => crate::proc::wait_bounded(child, PROBE_TIMEOUT, what)
+            .is_ok_and(|waited| waited.succeeded()),
+        Err(e) => {
+            tracing::debug!(probe = what, %e, "flatpak probe could not run");
+            false
+        }
+    }
+}
+
+/// Runs a detection probe, giving up rather than blocking the caller.
+///
+/// `what` names the probe in the log line a timeout produces, and is
+/// `&'static str` so a caller cannot interpolate a path or a credential into it.
+async fn probe(cmd: &mut Command, what: &'static str) -> Option<std::process::Output> {
+    match tokio::time::timeout(PROBE_TIMEOUT, cmd.output()).await {
+        Ok(Ok(output)) => Some(output),
+        Ok(Err(e)) => {
+            tracing::debug!(probe = what, %e, "detection probe could not run");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(
+                probe = what,
+                timeout_secs = PROBE_TIMEOUT.as_secs(),
+                "detection probe timed out; reporting the manager as unavailable"
+            );
+            None
+        }
+    }
 }
 
 /// Cached regex for version parsing: matches patterns like "1.2.3" or "v1.2.3"
@@ -88,10 +189,11 @@ pub async fn detect_keepassxc() -> PasswordManagerInfo {
     };
 
     // Check keepassxc-cli availability (extended PATH covers Homebrew, .app bundle, etc.)
-    if let Ok(output) = detection_command("keepassxc-cli")
-        .arg("--version")
-        .output()
-        .await
+    if let Some(output) = probe(
+        detection_command("keepassxc-cli").arg("--version"),
+        "keepassxc-cli --version",
+    )
+    .await
         && output.status.success()
     {
         let version_str = String::from_utf8_lossy(&output.stdout);
@@ -133,10 +235,11 @@ pub async fn detect_gnome_secrets() -> PasswordManagerInfo {
     };
 
     // Check for flatpak installation
-    if let Ok(output) = detection_command("flatpak")
-        .args(["info", "org.gnome.World.Secrets"])
-        .output()
-        .await
+    if let Some(output) = probe(
+        detection_command("flatpak").args(["info", "org.gnome.World.Secrets"]),
+        "flatpak info (GNOME Secrets)",
+    )
+    .await
         && output.status.success()
     {
         let output_str = String::from_utf8_lossy(&output.stdout);
@@ -182,10 +285,11 @@ pub async fn detect_libsecret() -> PasswordManagerInfo {
     };
 
     // Check secret-tool
-    if let Ok(output) = detection_command("secret-tool")
-        .arg("--version")
-        .output()
-        .await
+    if let Some(output) = probe(
+        detection_command("secret-tool").arg("--version"),
+        "secret-tool --version",
+    )
+    .await
         && output.status.success()
     {
         let version_str = String::from_utf8_lossy(&output.stdout);
@@ -194,10 +298,11 @@ pub async fn detect_libsecret() -> PasswordManagerInfo {
     }
 
     // Check if gnome-keyring-daemon is running
-    if let Ok(output) = detection_command("pgrep")
-        .arg("gnome-keyring-d")
-        .output()
-        .await
+    if let Some(output) = probe(
+        detection_command("pgrep").arg("gnome-keyring-d"),
+        "pgrep gnome-keyring-daemon",
+    )
+    .await
         && output.status.success()
     {
         info.running = true;
@@ -206,7 +311,8 @@ pub async fn detect_libsecret() -> PasswordManagerInfo {
 
     // Check if kwalletd is running (KDE)
     if !info.running
-        && let Ok(output) = detection_command("pgrep").arg("kwalletd").output().await
+        && let Some(output) =
+            probe(detection_command("pgrep").arg("kwalletd"), "pgrep kwalletd").await
         && output.status.success()
     {
         info.running = true;
@@ -250,7 +356,7 @@ pub async fn detect_bitwarden() -> PasswordManagerInfo {
 
     // Try standard paths first
     for path in &bw_paths {
-        if let Ok(output) = detection_command(path).arg("--version").output().await
+        if let Some(output) = probe(detection_command(path).arg("--version"), "cli --version").await
             && output.status.success()
         {
             let version_str = String::from_utf8_lossy(&output.stdout);
@@ -268,7 +374,8 @@ pub async fn detect_bitwarden() -> PasswordManagerInfo {
             if path.contains('*') {
                 continue;
             }
-            if let Ok(output) = detection_command(path).arg("--version").output().await
+            if let Some(output) =
+                probe(detection_command(path).arg("--version"), "cli --version").await
                 && output.status.success()
             {
                 let version_str = String::from_utf8_lossy(&output.stdout);
@@ -282,7 +389,7 @@ pub async fn detect_bitwarden() -> PasswordManagerInfo {
 
     // Check login status
     if let Some(ref cmd) = bw_cmd {
-        if let Ok(output) = detection_command(cmd).arg("status").output().await
+        if let Some(output) = probe(detection_command(cmd).arg("status"), "bw status").await
             && output.status.success()
         {
             let status_str = String::from_utf8_lossy(&output.stdout);
@@ -315,10 +422,11 @@ pub async fn detect_bitwarden() -> PasswordManagerInfo {
     {
         info.path = Some(path.clone());
         // Try to get version from found path
-        if let Ok(ver_output) = detection_command(&path.to_string_lossy())
-            .arg("--version")
-            .output()
-            .await
+        if let Some(ver_output) = probe(
+            detection_command(&path.to_string_lossy()).arg("--version"),
+            "resolved CLI --version",
+        )
+        .await
             && ver_output.status.success()
         {
             let version_str = String::from_utf8_lossy(&ver_output.stdout);
@@ -348,7 +456,11 @@ pub async fn detect_keepass() -> PasswordManagerInfo {
     };
 
     // Check kpcli (Perl CLI for KeePass)
-    if let Ok(output) = detection_command("kpcli").arg("--version").output().await
+    if let Some(output) = probe(
+        detection_command("kpcli").arg("--version"),
+        "kpcli --version",
+    )
+    .await
         && output.status.success()
     {
         let version_str = String::from_utf8_lossy(&output.stdout);
@@ -394,7 +506,7 @@ pub async fn detect_onepassword() -> PasswordManagerInfo {
 
     // Try standard paths first
     for path in &op_paths {
-        if let Ok(output) = detection_command(path).arg("--version").output().await
+        if let Some(output) = probe(detection_command(path).arg("--version"), "cli --version").await
             && output.status.success()
         {
             let version_str = String::from_utf8_lossy(&output.stdout);
@@ -408,7 +520,8 @@ pub async fn detect_onepassword() -> PasswordManagerInfo {
     // Try home-relative paths
     if !info.installed {
         for path in &extra_paths {
-            if let Ok(output) = detection_command(path).arg("--version").output().await
+            if let Some(output) =
+                probe(detection_command(path).arg("--version"), "cli --version").await
                 && output.status.success()
             {
                 let version_str = String::from_utf8_lossy(&output.stdout);
@@ -422,10 +535,11 @@ pub async fn detect_onepassword() -> PasswordManagerInfo {
 
     // Check signin status using whoami
     if let Some(ref cmd) = op_cmd {
-        if let Ok(output) = detection_command(cmd)
-            .args(["whoami", "--format", "json"])
-            .output()
-            .await
+        if let Some(output) = probe(
+            detection_command(cmd).args(["whoami", "--format", "json"]),
+            "op whoami",
+        )
+        .await
         {
             if output.status.success() {
                 info.running = true;
@@ -459,10 +573,11 @@ pub async fn detect_onepassword() -> PasswordManagerInfo {
     {
         info.path = Some(path.clone());
         // Try to get version from found path
-        if let Ok(ver_output) = detection_command(&path.to_string_lossy())
-            .arg("--version")
-            .output()
-            .await
+        if let Some(ver_output) = probe(
+            detection_command(&path.to_string_lossy()).arg("--version"),
+            "resolved CLI --version",
+        )
+        .await
             && ver_output.status.success()
         {
             let version_str = String::from_utf8_lossy(&ver_output.stdout);
@@ -506,7 +621,7 @@ pub async fn detect_passbolt() -> PasswordManagerInfo {
     let mut pb_cmd: Option<String> = None;
 
     for path in &passbolt_paths {
-        if let Ok(output) = detection_command(path).arg("--version").output().await
+        if let Some(output) = probe(detection_command(path).arg("--version"), "cli --version").await
             && output.status.success()
         {
             let version_str = String::from_utf8_lossy(&output.stdout);
@@ -519,7 +634,8 @@ pub async fn detect_passbolt() -> PasswordManagerInfo {
 
     if !info.installed {
         for path in &extra_paths {
-            if let Ok(output) = detection_command(path).arg("--version").output().await
+            if let Some(output) =
+                probe(detection_command(path).arg("--version"), "cli --version").await
                 && output.status.success()
             {
                 let version_str = String::from_utf8_lossy(&output.stdout);
@@ -533,10 +649,11 @@ pub async fn detect_passbolt() -> PasswordManagerInfo {
 
     // Check if configured by listing users
     if let Some(ref cmd) = pb_cmd {
-        if let Ok(output) = detection_command(cmd)
-            .args(["list", "user", "--json"])
-            .output()
-            .await
+        if let Some(output) = probe(
+            detection_command(cmd).args(["list", "user", "--json"]),
+            "passbolt list user",
+        )
+        .await
         {
             if output.status.success() {
                 info.running = true;
@@ -560,10 +677,11 @@ pub async fn detect_passbolt() -> PasswordManagerInfo {
         && let Some(path) = crate::which::find_in_path("passbolt")
     {
         info.path = Some(path.clone());
-        if let Ok(ver_output) = detection_command(&path.to_string_lossy())
-            .arg("--version")
-            .output()
-            .await
+        if let Some(ver_output) = probe(
+            detection_command(&path.to_string_lossy()).arg("--version"),
+            "resolved CLI --version",
+        )
+        .await
             && ver_output.status.success()
         {
             let version_str = String::from_utf8_lossy(&ver_output.stdout);
@@ -611,7 +729,8 @@ pub async fn detect_pass() -> PasswordManagerInfo {
         .map(std::string::ToString::to_string)
         .chain(extra_paths.iter().cloned())
     {
-        if let Ok(output) = detection_command(&path).arg("--version").output().await
+        if let Some(output) =
+            probe(detection_command(&path).arg("--version"), "cli --version").await
             && output.status.success()
         {
             let version_str = String::from_utf8_lossy(&output.stdout);
@@ -650,10 +769,11 @@ pub async fn detect_pass() -> PasswordManagerInfo {
         && let Some(path) = crate::which::find_in_path("pass")
     {
         info.path = Some(path.clone());
-        if let Ok(ver_output) = detection_command(&path.to_string_lossy())
-            .arg("--version")
-            .output()
-            .await
+        if let Some(ver_output) = probe(
+            detection_command(&path.to_string_lossy()).arg("--version"),
+            "resolved CLI --version",
+        )
+        .await
             && ver_output.status.success()
         {
             let version_str = String::from_utf8_lossy(&ver_output.stdout);
@@ -728,12 +848,11 @@ pub fn get_password_manager_launch_command(
                 return Some(("keepassxc".to_string(), vec![]));
             }
             // Try GNOME Secrets (flatpak)
-            if std::process::Command::new("flatpak")
-                .env("PATH", &extended_path)
-                .args(["info", "org.gnome.World.Secrets"])
-                .output()
-                .is_ok_and(|o| o.status.success())
-            {
+            if flatpak_app_installed(
+                "org.gnome.World.Secrets",
+                &extended_path,
+                "flatpak info (GNOME Secrets launch)",
+            ) {
                 return Some((
                     "flatpak".to_string(),
                     vec!["run".to_string(), "org.gnome.World.Secrets".to_string()],
@@ -780,12 +899,11 @@ pub fn get_password_manager_launch_command(
                 return Some(("1password".to_string(), vec![]));
             }
             // Try flatpak version
-            if std::process::Command::new("flatpak")
-                .env("PATH", &extended_path)
-                .args(["info", "com.onepassword.OnePassword"])
-                .output()
-                .is_ok_and(|o| o.status.success())
-            {
+            if flatpak_app_installed(
+                "com.onepassword.OnePassword",
+                &extended_path,
+                "flatpak info (1Password launch)",
+            ) {
                 return Some((
                     "flatpak".to_string(),
                     vec!["run".to_string(), "com.onepassword.OnePassword".to_string()],

@@ -306,9 +306,16 @@ fn build_ssh_command_args(
     // (if the hop is reference-based) so we can resolve its password later.
     let mut hop_ids: Vec<Option<Uuid>> = vec![None; jump_hosts.len()];
 
-    // Handle reference-based jump host (recursive resolution)
-    if let Some(jump_id) = ssh_config.jump_host_id
-        && let Ok(state_ref) = state.try_borrow()
+    // Handle reference-based jump host (recursive resolution).
+    //
+    // The first hop goes through `resolve_first_hop_id`, not `ssh_config
+    // .jump_host_id`: a Jump Host picked on a group or in Preferences → Network
+    // has to be honoured here, and reading the field directly is what made #301
+    // still reproducible after 0.20.9 claimed to have fixed it. Hops further out,
+    // below, keep reading their own field — see that function's docs for why that
+    // asymmetry is deliberate.
+    if let Ok(state_ref) = state.try_borrow()
+        && let Some(jump_id) = super::protocols::resolve_first_hop_id(&state_ref, conn)
     {
         let mut current_id = Some(jump_id);
         let mut visited = std::collections::HashSet::new();
@@ -792,10 +799,22 @@ fn bastion_may_prompt_for_password(
     state: &SharedAppState,
 ) -> bool {
     use rustconn_core::models::PasswordSource;
-    let rustconn_core::ProtocolConfig::Ssh(ssh) = &conn.protocol_config else {
+    // The protocol check stays — this answers `false` for anything that is not
+    // SSH, which the caller's own `has_jump_host` term already covers — but the
+    // config itself is no longer read here.
+    if !matches!(&conn.protocol_config, rustconn_core::ProtocolConfig::Ssh(_)) {
         return false;
-    };
-    match ssh.jump_host_id {
+    }
+    // Through the resolver, not `ssh.jump_host_id`: an inherited bastion prompts
+    // exactly like one set on the connection, and reading the raw field here
+    // would have this answer `false` for the very hop the launcher is about to
+    // dial — suppressing nothing and feeding the target's password to the
+    // bastion prompt, which is the defect #191 fixed.
+    let inherited_hop = state
+        .try_borrow()
+        .ok()
+        .and_then(|s| super::protocols::resolve_first_hop_id(&s, conn));
+    match inherited_hop {
         // Reference hop: inspect its own password source.
         Some(jid) => state
             .try_borrow()
@@ -1021,13 +1040,22 @@ fn start_ssh_connection_internal(
         .map(|s| s.settings().network.clone())
         .unwrap_or_default();
 
-    // Detect jump host / proxy for status detection and monitoring
+    // Detect jump host / proxy for status detection and monitoring.
+    //
+    // Both forms go through inheritance. This used to inherit the free-text
+    // ProxyJump and read the picker's `jump_host_id` raw, so a connection reached
+    // through a group-level or global Jump Host reported `has_jump_host = false`
+    // while the launcher dialled that very bastion — the status and monitoring
+    // paths then treated a bastioned host as directly reachable.
     let has_jump_host = matches!(
         &conn.protocol_config,
-        rustconn_core::ProtocolConfig::Ssh(ssh)
-            if ssh.jump_host_id.is_some() || ssh.proxy_command.is_some()
-    ) || ssh_inheritance::resolve_ssh_proxy_jump(conn, &groups, &network)
-        .is_some();
+        rustconn_core::ProtocolConfig::Ssh(ssh) if ssh.proxy_command.is_some()
+    ) || state
+        .try_borrow()
+        .ok()
+        .and_then(|s| super::protocols::resolve_first_hop_id(&s, conn))
+        .is_some()
+        || ssh_inheritance::resolve_ssh_proxy_jump(conn, &groups, &network).is_some();
 
     // Apply variable substitution to host and username (e.g., ${VAR_NAME} -> actual value)
     let host = substitute_variables(&conn.host, &global_variables);
@@ -1424,12 +1452,17 @@ pub fn reconnect_ssh_in_place(
         .map(|s| s.settings().network.clone())
         .unwrap_or_default();
 
+    // Both forms inherited — see the note on the identical guard in
+    // `start_ssh_connection`.
     let has_jump_host = matches!(
         &conn.protocol_config,
-        rustconn_core::ProtocolConfig::Ssh(ssh)
-            if ssh.jump_host_id.is_some() || ssh.proxy_command.is_some()
-    ) || ssh_inheritance::resolve_ssh_proxy_jump(&conn, &groups, &network)
-        .is_some();
+        rustconn_core::ProtocolConfig::Ssh(ssh) if ssh.proxy_command.is_some()
+    ) || state
+        .try_borrow()
+        .ok()
+        .and_then(|s| super::protocols::resolve_first_hop_id(&s, &conn))
+        .is_some()
+        || ssh_inheritance::resolve_ssh_proxy_jump(&conn, &groups, &network).is_some();
 
     // Build SSH args (shared with start_ssh_connection).
     let (identity_file, extra_args, use_waypipe, jump_host_chain, jump_host_passwords) =

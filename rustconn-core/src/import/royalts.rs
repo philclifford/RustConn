@@ -249,7 +249,7 @@ impl RoyalTsImporter {
         loop {
             match reader.read_event() {
                 Ok(Event::Start(e)) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let name = e.name().as_ref().to_string();
                     if let Some(protocol) = RoyalProtocol::from_element(&name) {
                         object = Context::Connection(protocol);
                         current_connection = ConnectionData::default();
@@ -273,7 +273,7 @@ impl RoyalTsImporter {
                     }
                 }
                 Ok(Event::End(e)) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let name = e.name().as_ref().to_string();
                     if let Some(protocol) = RoyalProtocol::from_element(&name) {
                         // A Terminal object's ConnectionType wins over the
                         // protocol implied by the element name.
@@ -325,10 +325,10 @@ impl RoyalTsImporter {
                     current_value.clear();
                 }
                 Ok(Event::Text(e)) => {
-                    current_value.push_str(&e.xml10_content().unwrap_or_default());
+                    current_value.push_str(&e.xml10_content());
                 }
                 Ok(Event::CData(e)) => {
-                    current_value.push_str(&e.decode().unwrap_or_default());
+                    current_value.push_str(e.as_ref());
                 }
                 Ok(Event::GeneralRef(e)) => {
                     // &amp;, &#39; and friends arrive as their own event.
@@ -430,8 +430,7 @@ impl RoyalTsImporter {
             return Some(character.to_string());
         }
 
-        let name = reference.decode().ok()?;
-        let text = match name.as_ref() {
+        let text = match reference.as_ref() {
             "amp" => "&",
             "lt" => "<",
             "gt" => ">",

@@ -427,6 +427,67 @@ pub(crate) fn open_with_key(
 mod tests {
     use super::*;
 
+    /// The key `derive_passphrase_key` produces for fixed inputs, captured under
+    /// argon2 0.5.3 before the crate was moved to 0.6.
+    ///
+    /// `derive_settings_key` has had a backward-compatibility fixture for a long
+    /// time — the `RCSC` blob below — and `derive_passphrase_key`, which is what
+    /// opens the portable credential store, had none. That gap mattered at exactly
+    /// one moment: an argon2 upgrade. The round-trip tests create a store and open
+    /// it with the same build, so they pass whether or not the derivation changed,
+    /// while every store already on a user's disk would have become unopenable
+    /// with no test going red. This vector is the missing half.
+    ///
+    /// Cheap parameters on purpose — 1 MiB, one pass, one lane. Argon2id does not
+    /// special-case cost, so a change in the algorithm's output shows up here just
+    /// as clearly as at 64 MiB, and the test costs milliseconds instead of half a
+    /// second. `defaults_are_unchanged` covers the other half of the format
+    /// contract, the cost parameters themselves.
+    ///
+    /// Do not regenerate this value. Re-minting it with the current code is how a
+    /// format change gets tracked silently instead of caught.
+    const PASSPHRASE_KDF_VECTOR: [u8; 32] = [
+        0xee, 0x09, 0xf3, 0x9a, 0x5e, 0xe7, 0x59, 0x9e, 0xbb, 0x37, 0x69, 0x25, 0x77, 0x39, 0x1c,
+        0x87, 0xb9, 0x6e, 0x84, 0x5b, 0x4c, 0x53, 0xa9, 0xbf, 0x1e, 0x0d, 0xdf, 0xc6, 0xc1, 0x59,
+        0xc5, 0xba,
+    ];
+
+    /// The passphrase KDF still derives the key it derived before.
+    ///
+    /// If this fails after a dependency bump, the bump changes the on-disk format
+    /// and needs a migration path rather than a version number.
+    #[test]
+    fn passphrase_key_derivation_is_unchanged() {
+        let params = PassphraseKdfParams {
+            m_cost: 1024,
+            t_cost: 1,
+            p_cost: 1,
+        };
+        let key = derive_passphrase_key(
+            b"correct horse battery staple",
+            b"rustconn-kdf-vec",
+            &params,
+        )
+        .expect("derivation with valid parameters cannot fail");
+
+        assert_eq!(
+            *key, PASSPHRASE_KDF_VECTOR,
+            "Argon2id output changed: every existing portable store is now unopenable"
+        );
+    }
+
+    /// The default cost parameters are part of the format too.
+    ///
+    /// They are written into each store's header, so changing them does not break
+    /// an existing file — it is read back from there. What it does change is what
+    /// a *new* store costs to open, and the 64 MiB figure is quoted in
+    /// `docs/USER_GUIDE.md` and in the unlock-latency reasoning above.
+    #[test]
+    fn default_kdf_parameters_are_unchanged() {
+        let d = PassphraseKdfParams::default();
+        assert_eq!((d.m_cost, d.t_cost, d.p_cost), (65536, 3, 4));
+    }
+
     /// A real `RCSC` blob captured ONCE from the pre-refactor `settings.rs`
     /// crypto, encrypting [`FIXTURE_PLAINTEXT`] under [`FIXTURE_MACHINE_KEY`].
     ///

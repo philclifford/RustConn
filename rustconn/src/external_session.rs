@@ -131,9 +131,20 @@ impl ExternalSessionRegistry {
             let Some(child) = session.child.as_mut() else {
                 return false;
             };
-            // ponytail: std::process::Child only offers kill() (SIGKILL); there is no
-            // graceful SIGTERM step. Fine for closing a viewer window; upgrade to
-            // nix::sys::signal if a SIGTERM→SIGKILL escalation is ever needed.
+            // `kill()` is SIGKILL, and that is the decision rather than a
+            // limitation of the API. This used to carry a ponytail note offering
+            // "upgrade to nix::sys::signal if a SIGTERM→SIGKILL escalation is ever
+            // needed", which read as an unexplored option long after it had been
+            // explored: `nix` is a dependency of this crate and
+            // `terminal::child_teardown` already does exactly that escalation,
+            // process group and PID-reuse guard included, one module away.
+            //
+            // A session child gets the grace period because it may be a shell
+            // running an editor with unsaved work. An external viewer is a window
+            // onto a desktop that lives on the remote host and holds no local state
+            // a clean exit would flush, so a SIGTERM step would delay every
+            // teardown by its length and flush nothing. `embedded_rdp`'s
+            // `terminate_external_process` says the same for the same reason.
             if let Err(e) = child.kill() {
                 tracing::warn!(
                     %session_id,

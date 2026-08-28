@@ -73,7 +73,6 @@ fn resolves_locally(host: &str) -> bool {
 /// Returns the child's stdout on a successful exit. A child that outlives the
 /// timeout is killed and reaped so it cannot leak into the session.
 fn spawn_on_host_bounded(program: &str, args: &[&str]) -> Option<String> {
-    use std::io::Read;
     use std::process::{Command, Stdio};
 
     let mut command = Command::new("flatpak-spawn");
@@ -83,37 +82,14 @@ fn spawn_on_host_bounded(program: &str, args: &[&str]) -> Option<String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
 
-    let mut child = command.spawn().ok()?;
-    let deadline = Instant::now() + RESOLVE_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return None;
-                }
-                break;
-            }
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    tracing::debug!(
-                        program,
-                        "Host-side name resolution timed out; killing helper"
-                    );
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
-                }
-                // ponytail: 25 ms poll — the helper normally exits within one or
-                // two ticks, and this path runs at most once per connect.
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            Err(_) => return None,
-        }
+    let child = command.spawn().ok()?;
+    let output = crate::proc::wait_bounded(child, RESOLVE_TIMEOUT, "host name resolution")
+        .ok()?
+        .output()?;
+    if !output.status.success() {
+        return None;
     }
-
-    let mut stdout = child.stdout.take()?;
-    let mut buf = String::new();
-    stdout.read_to_string(&mut buf).ok()?;
+    let buf = String::from_utf8_lossy(&output.stdout).into_owned();
     Some(buf)
 }
 

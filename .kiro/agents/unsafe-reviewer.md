@@ -71,10 +71,12 @@ in `rust-pragmatic-guidelines.md`, is a **contract unit test** asserting the
 precondition guard instead — see the existing tests in `rustconn-locale-sys` and
 `rustconn-env-sys`. Ask for a contract test, never a Miri job.
 
-Also note no CI job builds macOS, so the macOS-only `unsafe` in `rustconn-pty-sys`
-and `rustconn-dock-sys` is compiled only on a developer machine. Verify the gated
-path with `cargo clippy -p <crate> --target aarch64-apple-darwin` rather than
-assuming CI covered it.
+The macOS-only `unsafe` in `rustconn-pty-sys` and `rustconn-dock-sys` is covered
+by the `macos-sys` CI job as of 0.21.0, which clippies and tests the four helper
+crates on a macOS runner. That is the only macOS job in the matrix, so it covers
+the helpers and nothing else: for a macOS-gated path anywhere outside them, still
+verify with `cargo clippy -p <crate> --target aarch64-apple-darwin` rather than
+assuming CI reached it.
 
 ## Report format
 

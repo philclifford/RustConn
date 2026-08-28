@@ -301,10 +301,13 @@ impl TerminalNotebook {
     /// Called during window close / application shutdown to ensure all
     /// buffered recording data is written to disk before exit.
     pub fn flush_active_recordings(&self) {
-        // With the `script`-based approach, recording is handled by the
-        // external `script` process which flushes on exit. We send `exit`
-        // to each active recording session to ensure `script` terminates
-        // and flushes its buffers.
+        // Recording is performed by an external `script` process, which flushes
+        // its buffers when it exits, so each session has to be given a reason to
+        // exit. `detach_recording` does that by feeding EOF (Ctrl+D, `\x04`) to the
+        // terminal — not the literal string `exit`, which is what this comment
+        // claimed for several releases. The distinction is the reason EOF was
+        // chosen: it produces no visible echo in the user's scrollback and is
+        // harmless if the sub-shell has already gone.
         //
         // Blocking variant on purpose: this runs while the window is closing,
         // and anything deferred to the main loop from here would never run.

@@ -118,7 +118,7 @@ impl LibvirtXmlImporter {
         loop {
             match reader.read_event() {
                 Ok(Event::Start(e)) => {
-                    let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let tag = e.name().as_ref().to_string();
 
                     if tag == "graphics" {
                         let entry = Self::parse_graphics_attributes(&e);
@@ -137,7 +137,7 @@ impl LibvirtXmlImporter {
                     text_buf.clear();
                 }
                 Ok(Event::Empty(e)) => {
-                    let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let tag = e.name().as_ref().to_string();
 
                     // Self-closing <graphics .../> (common in libvirt XML)
                     if tag == "graphics" {
@@ -154,7 +154,7 @@ impl LibvirtXmlImporter {
                     }
                 }
                 Ok(Event::Text(e)) => {
-                    text_buf = String::from_utf8_lossy(&e).to_string();
+                    text_buf = e.as_ref().to_string();
                 }
                 Ok(Event::End(_)) => {
                     if let Some(tag) = depth.pop() {
@@ -206,8 +206,8 @@ impl LibvirtXmlImporter {
         };
 
         for attr in e.attributes().flatten() {
-            let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
-            let val = String::from_utf8_lossy(&attr.value).to_string();
+            let key = attr.key.as_ref().to_string();
+            let val = attr.value.to_string();
             match key.as_str() {
                 "type" => entry.graphics_type = val.to_lowercase(),
                 "port" => entry.port = val.parse().unwrap_or(-1),
@@ -236,8 +236,8 @@ impl LibvirtXmlImporter {
         let mut address = String::new();
 
         for attr in e.attributes().flatten() {
-            let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
-            let val = String::from_utf8_lossy(&attr.value).to_string();
+            let key = attr.key.as_ref().to_string();
+            let val = attr.value.to_string();
             match key.as_str() {
                 "type" => listen_type = val,
                 "address" => address = val,

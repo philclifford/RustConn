@@ -43,16 +43,28 @@ This is the single easiest way to report a false green. When nothing has changed
 clippy prints `Finished \`dev\` profile ... in 0.2s` and emits no diagnostics at
 all — not because the code is clean, but because it never re-checked it.
 
-`scripts/verify.sh` checks this for you: it looks for `Checking`/`Compiling` lines
-in clippy's own output and prints
+`scripts/verify.sh` handles this for you, and since 0.21.0 it handles it by
+default rather than on request: it cleans the workspace crates before clippy —
+not their dependencies, so it costs seconds rather than minutes — and then looks
+for `Checking`/`Compiling` lines in clippy's own output. If there are none it
+**fails**, because after a clean there is no innocent explanation left.
+
+It used to clean only under an opt-in `--fresh` and, without it, record the cache
+hit as
 
 ```
 WARN  clippy did not compile anything — that run verified nothing.
 ```
 
-when there are none. That warning is a failed verification, not a pass. Re-run with
-`scripts/verify.sh --fresh`, which cleans the workspace crates — not their
-dependencies, so it costs seconds rather than minutes.
+which never incremented the failure count — so the script exited 0 and the run
+looked done. `--cached` still buys the old fast path, and there the message stays
+a warning: a caller who asked for it is entitled to be told what they gave up
+rather than refused.
+
+The CI clippy job had the same hole and got the same treatment: it caches
+`target/` keyed on `Cargo.lock`, so any change leaving the lock alone restored a
+tree clippy had already linted. It now cleans the workspace crates first and
+fails if nothing compiled.
 
 Doing it by hand, confirm from the output that compilation actually happened
 (`Checking rustconn-core`, `Compiling rustconn`, a runtime of seconds rather than

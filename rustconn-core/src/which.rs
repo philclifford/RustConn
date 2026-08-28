@@ -38,9 +38,6 @@ use std::time::Duration;
 /// well past any working host and short enough not to read as a freeze.
 const HOST_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Poll interval while waiting out [`HOST_PROBE_TIMEOUT`].
-const HOST_PROBE_POLL: Duration = Duration::from_millis(25);
-
 /// Returns whether `path` is a file the current user may execute.
 fn is_executable_file(path: &Path) -> bool {
     #[cfg(unix)]
@@ -159,11 +156,15 @@ pub fn find_on_host(binary: &str) -> Option<PathBuf> {
 
     let child = std::process::Command::new("flatpak-spawn")
         .args(["--host", "sh", "-lc", &format!("command -v {binary}")])
+        // stdin nulled rather than inherited: this is a host *login* shell, and
+        // handing it the application's stdin gives it something to read from if it
+        // ever decides to.
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn();
 
-    let mut child = match child {
+    let child = match child {
         Ok(child) => child,
         Err(e) => {
             tracing::debug!(binary, %e, "flatpak-spawn unavailable; cannot probe the host");
@@ -175,27 +176,14 @@ pub fn find_on_host(binary: &str) -> Option<PathBuf> {
     // before opening a session and the Settings tab asks it while building a row.
     // The wait is on the Flatpak session helper and a host login shell, neither of
     // which RustConn controls, and an unresponsive one must not freeze the window.
-    let deadline = std::time::Instant::now() + HOST_PROBE_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(HOST_PROBE_POLL);
-            }
-            Ok(None) => {
-                tracing::warn!(binary, "host binary probe timed out");
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-            Err(e) => {
-                tracing::debug!(binary, %e, "failed to poll the host binary probe");
-                return None;
-            }
+    let output = match crate::proc::wait_bounded(child, HOST_PROBE_TIMEOUT, "host binary probe") {
+        Ok(crate::proc::Waited::Exited(output)) => output,
+        Ok(crate::proc::Waited::TimedOut) => return None,
+        Err(e) => {
+            tracing::debug!(binary, %e, "failed to poll the host binary probe");
+            return None;
         }
-    }
-
-    let output = child.wait_with_output().ok()?;
+    };
     if !output.status.success() {
         tracing::debug!(binary, "binary not found on the host");
         return None;
