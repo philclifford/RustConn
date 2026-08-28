@@ -1,6 +1,16 @@
 rustconn (0.21.0-1) unstable; urgency=medium
 
   * Version bump to 0.21.0
+  * Fixed: a Jump Host set on a group or in Preferences was ignored when the
+    connection actually opened (#301). It was stored, shown in the editor as
+    inherited and synced between machines, then dropped at connect time — for
+    SSH when picked from the dropdown, and for RDP, VNC and SPICE however it
+    was set. The 0.20.9 notes said inheritance read the same for every
+    protocol; it did not. All seven places that start a connection now resolve
+    it the same way, including the check that stops the target's password being
+    offered to the bastion's own prompt (#191). A free-text ProxyJump set on a
+    group or globally still does not reach RDP, VNC or SPICE, which need a
+    saved connection to open a tunnel through
   * Fixed: the Secrets page in Settings could stay empty instead of listing the
     password managers it found. Each manager is probed by running its
     command-line tool, the probes run together, and the page waited for the
@@ -42,11 +52,6 @@ rustconn (0.21.0-1) unstable; urgency=medium
   * Improved: CI now builds and tests the macOS-specific code. Nothing outside
     the maintainer's own machine had ever compiled it, and a test guarding one
     of the low-level system calls had been failing there unnoticed
-  * Improved: the checks that are supposed to refuse a bad release stopped
-    being able to pass without looking. The lint gate reported no problems from
-    a cached result, and the release script ended a run that had skipped three
-    of its checks the same way it ended one that ran all of them. Both now say
-    what they did and did not do
   * Dependencies: argon2 0.5 to 0.6 — the key derivation behind the encrypted
     credential stores. Existing files still open; that is now proved by a fixed
     test vector rather than assumed. quick-xml 0.41 to 0.42 in the connection
