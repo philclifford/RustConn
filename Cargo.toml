@@ -64,7 +64,7 @@ zeroize = "1.8"
 
 # Encryption
 ring = "0.17"
-argon2 = "0.5"
+argon2 = "0.6"
 hex = "0.4"
 
 # Secret Service (keyring) client used on Linux/BSD only — never compiled on
