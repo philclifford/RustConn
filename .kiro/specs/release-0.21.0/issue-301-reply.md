@@ -3,6 +3,21 @@
 Verified against the code on 2026-08-28, not from memory. Decide yourself whether
 to name a target version; the draft deliberately does not promise one.
 
+> **Status update, same day.** The fix landed on the `0.21.0` branch, so the
+> "What actually happens today" table below describes 0.20.11 and earlier. Two
+> things came out of doing it that this draft got wrong or left out:
+>
+> * **Seven call sites, not four.** Besides the four launch gates, two
+>   `has_jump_host` guards and `bastion_may_prompt_for_password` in
+>   `protocols_ssh.rs` also read the picker's field raw while inheriting the text
+>   field. Fixing only the gates would have had the application dial an inherited
+>   bastion while telling itself it had none — which drives password auto-fill
+>   suppression (#191) and the status/monitoring paths.
+> * **The fix does not close the RDP/VNC/SPICE ProxyJump rows**, and cannot
+>   without new machinery. See the paragraph at the end.
+>
+> Not yet validated against a real bastion — that needs the Linux machine.
+
 Evidence behind every claim:
 
 - `rustconn/src/window/protocols_ssh.rs:301` — free text goes through
@@ -89,3 +104,19 @@ while an SSH terminal to the same host won't. Same config, two different answers
 
 The fix is to route the launch paths through the resolver that already exists and
 is already tested; the precedence itself is correct and doesn't change.
+
+**What that fix does and does not cover.** It closes all four **Jump Host
+(picker)** rows in the table above — the picker now inherits from the group chain
+and from the global tier for SSH, SFTP, RDP, VNC and SPICE alike. It does **not**
+close the two RDP/VNC/SPICE **ProxyJump** rows, and that is a limitation of the
+mechanism rather than an oversight: those protocols reach a bastion by opening an
+SSH tunnel, and building one needs a saved connection with its own host, port,
+identity file and credentials. A free-text `user@host:port` has none of that, so
+there is nothing to build a tunnel from. For those three protocols the bastion has
+to be a picked connection — inherited or on the connection itself — and a text
+ProxyJump at any tier will still be ignored.
+
+So after the fix the table reads: picker works everywhere, at every tier; text
+ProxyJump works for SSH and SFTP at every tier and is ignored by RDP, VNC and
+SPICE. Saying this now rather than later, because "#301 is fixed" without that
+sentence is the same shape of claim that made you open this issue.

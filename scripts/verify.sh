@@ -133,7 +133,11 @@ else
     skip_gate 'typos' 'not installed'
 fi
 
-for s in check-potfiles check-i18n-escapes check-po-complete check-ai-docs; do
+# `check-jump-host-wiring` is not an i18n check but belongs with these: it is a
+# grep over a connection between two files, which is what this group is, and it
+# needs no toolchain.
+for s in check-potfiles check-i18n-escapes check-po-complete check-ai-docs \
+    check-jump-host-wiring; do
     if [ -x "scripts/$s.sh" ]; then
         run_gate "$s" "scripts/$s.sh"
     else

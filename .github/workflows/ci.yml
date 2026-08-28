@@ -190,6 +190,16 @@ jobs:
       - name: Check POTFILES.in consistency
         run: ./scripts/check-potfiles.sh
 
+      # Not an i18n check, but the same shape and the same reason it is a gate
+      # rather than a test: the thing that rots is a connection between a resolver
+      # and its callers, which grep can see and a unit test cannot without a GTK
+      # window and a real bastion. 0.20.9 shipped the three-tier jump-host
+      # resolver, wired the free-text field to it, left all four launchers reading
+      # the picker's field directly, and said in its release notes that
+      # inheritance "reads the same for every protocol".
+      - name: Check the launch paths resolve their bastion
+        run: ./scripts/check-jump-host-wiring.sh
+
       - name: Install gettext
         run: sudo apt-get update && sudo apt-get install -y gettext
 

@@ -128,6 +128,39 @@ Expect ~2.5 min for the test run. If `web-embedded` produces warnings, they are
 pre-existing rather than caused by this branch — check against `main` before
 fixing, and fix them here anyway.
 
+### B2. Validate the #301 fix against a real bastion — the only item here that needs hardware
+
+The jump-host inheritance fix is the one behaviour change in this release, and
+macOS could only prove it compiles. Seven call sites now resolve the first hop
+through `window::protocols::resolve_first_hop_id` instead of reading
+`jump_host_id` off the protocol config.
+
+What to exercise, with a bastion set **only** in Preferences → Network (nothing on
+the connection, nothing on its group), and then again with it set only on a group:
+
+| Case | Expect |
+|---|---|
+| SSH terminal | routes through the bastion |
+| SFTP browser | routes through it (this one already worked — it is the control) |
+| RDP | SSH tunnel to the bastion, then the target |
+| VNC | same |
+| SPICE | same |
+| Any of the above with `Network Mode: Direct` | bastion refused, direct connection |
+| Bastion whose own password is stored | the *bastion's* password reaches the bastion prompt, not the target's (#191) |
+
+The last row is the one worth being careful about: `bastion_may_prompt_for_password`
+was reading the raw field, so it answered "no bastion" for an inherited one and
+suppressed nothing. A wrong answer there feeds the target's password to the
+bastion.
+
+Also confirm the sidebar status and monitoring treat a bastioned host as
+bastioned — both `has_jump_host` guards changed.
+
+**Known and deliberate**: a *text* ProxyJump at group or global level still does
+not reach RDP, VNC or SPICE, because a tunnel needs a saved connection rather than
+a `user@host:port` string. Do not report that as a regression; it is stated in the
+changelog and in the issue reply draft.
+
 ### C. Package builds
 
 - **Flatpak**: build it. Two things to confirm beyond "it built": the new

@@ -720,14 +720,20 @@ else
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 9b. The two i18n gates that need no gettext tooling
+# 9b. The gates that need no tooling at all
 # ──────────────────────────────────────────────────────────────────────────────
 # The checks above validate the catalogues; they say nothing about whether the
-# manifest still matches the sources. The CI `i18n` job runs both of these and
-# fails the build on either, so a release prepared without them gets a red CI on
-# the release commit — which is how the 0.20.0 terminal split reached a tag with
-# two new modules missing from POTFILES.in.
-for i18n_check in check-potfiles.sh check-i18n-escapes.sh; do
+# manifest still matches the sources. The CI `i18n` job runs these and fails the
+# build on any of them, so a release prepared without them gets a red CI on the
+# release commit — which is how the 0.20.0 terminal split reached a tag with two
+# new modules missing from POTFILES.in.
+#
+# `check-jump-host-wiring.sh` is not i18n. It is here because it is the same kind
+# of check — a grep over a connection between a resolver and its callers, which no
+# unit test can cover without a GTK window and a real bastion — and because the
+# defect it guards reached a release *with a changelog entry saying it was fixed*
+# (#301, 0.20.9).
+for i18n_check in check-potfiles.sh check-i18n-escapes.sh check-jump-host-wiring.sh; do
     if [[ -x "scripts/$i18n_check" ]]; then
         if I18N_OUTPUT="$(./scripts/"$i18n_check" 2>&1)"; then
             ok "$i18n_check passed"

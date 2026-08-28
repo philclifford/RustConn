@@ -271,8 +271,12 @@ fn start_rdp_session_internal(
     };
 
     // --- SSH tunnel for jump host ---
+    //
+    // Resolved through the three tiers rather than read off `rdp_config`: a Jump
+    // Host set on a group or in Preferences → Network applies to RDP exactly as
+    // it does to SSH, which is what 0.20.9 said it had done and had not (#301).
     let (effective_host, effective_port, ssh_tunnel) = if let Some(jump_id) =
-        rdp_config.jump_host_id
+        super::protocols::resolve_first_hop_id(&state_ref, conn)
     {
         if let Some(jump_conn) = state_ref.get_connection(jump_id) {
             let mut jump_dest = jump_conn.host.clone();
@@ -1265,8 +1269,10 @@ fn start_vnc_session_internal(
     }
 
     // --- SSH tunnel for jump host ---
+    //
+    // Three-tier resolution, as for RDP above and for the same reason (#301).
     let (effective_host, effective_port, ssh_tunnel) = if let Some(jump_id) =
-        vnc_config.jump_host_id
+        super::protocols::resolve_first_hop_id(&state_ref, conn)
     {
         if let Some(jump_conn) = state_ref.get_connection(jump_id) {
             let mut jump_dest = jump_conn.host.clone();

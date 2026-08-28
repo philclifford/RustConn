@@ -696,6 +696,48 @@ fn parse_jump_host_for_tunnel_control(jump_host: &str) -> (String, u16) {
 /// itself may require another jump host to be reachable.
 ///
 /// Returns a `Vec<String>` of extra args to pass to the SSH tunnel command.
+/// The first bastion hop for `conn`, honouring the group and global tiers.
+///
+/// **Every launch path must resolve its first hop through here.** Reading
+/// `jump_host_id` off the protocol config instead is the bug this function
+/// exists to prevent, and it is not hypothetical: 0.20.9 shipped the three-tier
+/// resolver, wired the *free-text* ProxyJump to it everywhere, and left all four
+/// launchers reading the picker's field directly. So a Jump Host chosen on a
+/// group or in Preferences → Network was stored, shown in the editor as
+/// inherited, synced between machines — and dropped at connect time (issue
+/// [#301]). The release notes said inheritance "reads the same for every
+/// protocol", which was not true of either the picker or of RDP/VNC/SPICE at
+/// all.
+///
+/// This is a thin wrapper on purpose. The decision itself belongs to
+/// `rustconn_core::connection::ssh_inheritance::resolve_ssh_jump_host_id`, which
+/// is tested and which reads the field from every protocol that has one; what
+/// this adds is the two pieces of application state that resolver needs, so a
+/// launcher cannot get the answer wrong by forgetting one of them.
+///
+/// Only the *first* hop is resolved this way. Hops further out keep reading
+/// their own field, which matches `resolve_jump_chain` and is deliberate there:
+/// a bastion's bastion is a property of that bastion, not something the group of
+/// the target should redirect.
+///
+/// Takes `&AppState` rather than `&SharedAppState` because three of the callers
+/// already hold a borrow. Handing it the `RefCell` would make it `try_borrow`
+/// again, fail, and answer `None` — silently reintroducing the bug it is here to
+/// fix.
+///
+/// [#301]: https://github.com/totoshko88/RustConn/issues/301
+pub fn resolve_first_hop_id(
+    state_ref: &crate::state::AppState,
+    conn: &rustconn_core::Connection,
+) -> Option<uuid::Uuid> {
+    let groups = state_ref.list_groups_owned();
+    rustconn_core::connection::ssh_inheritance::resolve_ssh_jump_host_id(
+        conn,
+        &groups,
+        &state_ref.settings().network,
+    )
+}
+
 pub fn resolve_jump_chain_for_tunnel(
     state_ref: &crate::state::AppState,
     jump_conn: &rustconn_core::Connection,
@@ -1220,11 +1262,16 @@ fn start_spice_connection_internal(
 
     // --- SSH tunnel for jump host ---
     // Unix-socket mode connects locally, so the jump host is ignored (no tunnel).
+    //
+    // The hop is resolved through the three tiers rather than read off `opts`, as
+    // for RDP and VNC and for the same reason (#301). That is why the borrow has
+    // moved out of the inner `if`: resolving needs the group list and the network
+    // settings, so it has to happen before the hop id is known rather than after.
     let (effective_host, effective_port, ssh_tunnel) = if let Some(ref opts) = spice_opts
         && opts.unix_socket_path.is_none()
-        && let Some(jump_id) = opts.jump_host_id
     {
         if let Ok(state_ref) = state.try_borrow()
+            && let Some(jump_id) = resolve_first_hop_id(&state_ref, conn)
             && let Some(jump_conn) = state_ref.get_connection(jump_id)
         {
             let mut jump_dest = jump_conn.host.clone();
@@ -1297,7 +1344,15 @@ fn start_spice_connection_internal(
                 }
             }
         } else {
-            tracing::warn!(%jump_id, "Jump host connection not found for SPICE");
+            // Reached either because no bastion resolved at any tier — the common
+            // case, and not worth a warning — or because one resolved to an id
+            // that is no longer in the connection list. The id is not available
+            // here now that resolution happens inside the condition; the resolver
+            // logs nothing either, so a deleted bastion shows up as a direct
+            // connection attempt. Acceptable while the editor cannot store a
+            // dangling reference, and the reason this is `debug` rather than
+            // `warn`: it fires on every SPICE connection without a bastion.
+            tracing::debug!(%connection_id, "No jump host in effect for SPICE");
             (host, port, None)
         }
     } else {
