@@ -4029,16 +4029,29 @@ impl MainWindow {
 
             // If a custom command is set, run it via the host shell.
             // Otherwise use the default login shell behavior.
-            let spawn_cmd = if let Some(ref cmd) = custom_command {
+            //
+            // `script` (util-linux) allocates a real PTY on the host for job
+            // control, but not every distro ships it. Fall back to a plain
+            // `exec` when it is missing — the shell works, only job control
+            // (Ctrl-Z / fg / bg) degrades (#306).
+            let inner_cmd = if let Some(ref cmd) = custom_command {
                 let escaped_cmd = cmd.replace('\'', "'\\''");
-                format!(
-                    "flatpak-spawn --host --env=TERM=xterm-256color -- script -qfc '{host_shell} -c '\"'\"'{escaped_cmd}'\"'\"'' /dev/null"
-                )
+                format!("{host_shell} -c '{escaped_cmd}'")
             } else {
-                format!(
-                    "flatpak-spawn --host --env=TERM=xterm-256color -- script -qfc '{host_shell} --login' /dev/null"
-                )
+                format!("{host_shell} --login")
             };
+            // The inner command is embedded twice inside `sh -c '...'`:
+            // once as the `script -c` argument (which needs its own quoting
+            // layer) and once as the plain fallback. Both paths use the
+            // same shell string, just with different quoting depth.
+            let inner_for_script = inner_cmd.replace('\'', "'\\''");
+            let inner_for_exec = inner_cmd.replace('\'', "'\\''");
+            let spawn_cmd = format!(
+                "flatpak-spawn --host --env=TERM=xterm-256color -- sh -c \
+                 'if command -v script >/dev/null 2>&1; then \
+                 exec script -qfc '\"'\"'{inner_for_script}'\"'\"' /dev/null; \
+                 else exec {inner_for_exec}; fi'"
+            );
             Self::spawn_host_shell_when_allocated(notebook, session_id, spawn_cmd);
         } else if let Some(ref cmd) = custom_command {
             // Custom command: run via user's shell with -c
