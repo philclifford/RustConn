@@ -511,6 +511,14 @@ ok "debian, OBS, spec and metainfo changelogs all lead with $VERSION"
 # `Version: 0.19.9-1` with `Files: rustconn-0.19.8.tar.xz` for a whole release
 # because only the Version: line was ever checked. Restricted to files that
 # hold nothing but the current version — changelogs legitimately keep history.
+#
+# Comment lines are skipped, for exactly the reason changelogs are excluded
+# altogether: a comment can legitimately name an old version because it is
+# describing something that happened then. 0.21.0 added one — the note beside the
+# Flatpak mirror list saying that `ftp.gnu.org` went unreachable during the
+# 0.20.11 release — and the gate failed the release over a sentence that has to
+# keep saying 0.20.11 to remain true. Commented-out YAML or TOML is inert, so
+# nothing that matters can hide behind this.
 # ──────────────────────────────────────────────────────────────────────────────
 VERSION_ONLY_FILES=(
     "Cargo.toml"
@@ -540,7 +548,7 @@ else
     STALE_FAILED=0
     for file in "${VERSION_ONLY_FILES[@]}"; do
         [[ -f "$file" ]] || continue
-        if hits="$(grep -nE -- "$PREV_RE" "$file")"; then
+        if hits="$(grep -nE -- "$PREV_RE" "$file" | grep -vE '^[0-9]+:[[:space:]]*#')"; then
             warn "$file still references the previous version $PREV_VERSION:"
             printf '%s\n' "$hits" >&2
             ((STALE_FAILED += 1))
