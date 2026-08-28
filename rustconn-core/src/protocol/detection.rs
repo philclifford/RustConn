@@ -549,25 +549,15 @@ fn get_version(binary: &str, args: &[&str]) -> Option<String> {
         cmd.env("PATH", crate::cli_download::get_extended_path());
     }
 
-    let mut child = cmd.spawn().ok()?;
+    let child = cmd.spawn().ok()?;
 
-    let start = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_status)) => break,
-            Ok(None) => {
-                if start.elapsed() >= VERSION_CHECK_TIMEOUT {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Some("installed (timeout)".to_string());
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Err(_) => return None,
-        }
-    }
-
-    let output = child.wait_with_output().ok()?;
+    let output = match crate::proc::wait_bounded(child, VERSION_CHECK_TIMEOUT, "version probe") {
+        Ok(crate::proc::Waited::Exited(output)) => output,
+        // The binary is present — it answered the spawn — it just would not say
+        // which version it is, which is worth reporting differently from absence.
+        Ok(crate::proc::Waited::TimedOut) => return Some("installed (timeout)".to_string()),
+        Err(_) => return None,
+    };
 
     // Version info might be in stdout or stderr depending on the tool
     let stdout = String::from_utf8_lossy(&output.stdout);

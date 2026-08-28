@@ -68,6 +68,7 @@ pub mod models;
 pub mod monitoring;
 pub mod password_generator;
 pub mod performance;
+pub mod proc;
 pub mod progress;
 pub mod protocol;
 pub mod search;

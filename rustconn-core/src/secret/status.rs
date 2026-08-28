@@ -10,11 +10,76 @@
 )]
 
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command, Output};
+use std::time::Duration;
 
 use secrecy::{ExposeSecret, SecretString};
 
 use crate::error::{SecretError, SecretResult};
+use crate::proc::{Waited, wait_bounded};
+
+/// How long any single `keepassxc-cli` invocation is given before it is killed.
+///
+/// Every invocation in this module used an unbounded `wait_with_output`, at a
+/// dozen call sites, against a project that bounds a credential resolution at
+/// 30 s overall and every other vault operation at 10 s. `keepassxc-cli` opens
+/// the database on each run, so it can block on a locked file, on a network
+/// share that has gone away, or on a KDBX whose Argon2 parameters are hostile —
+/// and until 0.21.0 the answer to any of those was that the calling thread never
+/// came back. Only the bulk-transfer path in the GUI wrapped these calls, which
+/// bounded the transfer rather than the child.
+///
+/// Ten seconds is the project's standard vault budget, and the value the Secret
+/// Service wrapper in `keyring.rs` uses for the same reason: far longer than a
+/// healthy run, short enough to fail while the user is still watching.
+const KEEPASSXC_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The budget for an invocation that *writes* to the database.
+///
+/// Longer than [`KEEPASSXC_TIMEOUT`] because the consequence of expiry is worse,
+/// not because a write is expected to be slower. A read that is killed costs a
+/// lookup; a `SIGKILL` delivered to `add`, `mkdir` or `rm` lands in the middle of
+/// rewriting the KDBX. So the mutating calls get the 30 s credential-resolution
+/// tier, and the trade is deliberate: a longer wait in exchange for a much
+/// smaller window in which the database can be interrupted mid-write.
+///
+/// The KDF cost is paid *per invocation*, because every `keepassxc-cli` run
+/// reopens the database — so a KDBX with KeePassXC's high-security Argon2
+/// settings does not overrun once, it overruns at every call site. A single save
+/// is four invocations (the group check, the parent-group check, the delete and
+/// the add), each paying it in full.
+const KEEPASSXC_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Waits for a `keepassxc-cli` child, reporting a timeout as an error.
+///
+/// `what` names the invocation in the log and in the error. It is
+/// `&'static str` on purpose: it is user-visible, and a `&str` would let a
+/// caller interpolate an entry name — or a credential — into it.
+fn wait_for_cli(child: Child, what: &'static str) -> SecretResult<Output> {
+    wait_for_cli_with(child, what, KEEPASSXC_TIMEOUT)
+}
+
+/// [`wait_for_cli`] with the write budget, for an invocation that modifies the
+/// database.
+fn wait_for_cli_write(child: Child, what: &'static str) -> SecretResult<Output> {
+    wait_for_cli_with(child, what, KEEPASSXC_WRITE_TIMEOUT)
+}
+
+fn wait_for_cli_with(child: Child, what: &'static str, budget: Duration) -> SecretResult<Output> {
+    match wait_bounded(child, budget, what) {
+        Ok(Waited::Exited(output)) => Ok(output),
+        Ok(Waited::TimedOut) => Err(SecretError::KeePassXC(format!(
+            "keepassxc-cli ({what}) did not respond within {}s and was stopped. \
+             The database may be locked by another process, on storage that is not \
+             responding, or configured with key-derivation parameters too heavy for \
+             this machine — each run of keepassxc-cli pays that cost again.",
+            budget.as_secs()
+        ))),
+        Err(e) => Err(SecretError::KeePassXC(format!(
+            "Failed to wait for keepassxc-cli: {e}"
+        ))),
+    }
+}
 
 /// Status of `KeePass` integration
 ///
@@ -196,10 +261,26 @@ impl KeePassStatus {
     /// # Arguments
     /// * `cli_path` - Path to the `keepassxc-cli` binary
     fn get_keepassxc_version(cli_path: &Path) -> Option<String> {
-        let output = match Self::keepassxc_command(cli_path).arg("--version").output() {
-            Ok(o) => o,
+        // Spawned and waited rather than `.output()`, which has no deadline. This
+        // one runs from `detect()`, i.e. while the Settings dialog is being built,
+        // so an unresponsive binary here freezes the window.
+        let child = match Self::keepassxc_command(cli_path)
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
             Err(e) => {
                 tracing::warn!(?e, cli = %cli_path.display(), "failed to run keepassxc-cli --version");
+                return None;
+            }
+        };
+        let output = match wait_for_cli(child, "--version") {
+            Ok(output) => output,
+            Err(e) => {
+                tracing::warn!(?e, cli = %cli_path.display(), "keepassxc-cli --version did not answer");
                 return None;
             }
         };
@@ -281,9 +362,7 @@ impl KeePassStatus {
                 .map_err(|e| SecretError::KeePassXC(format!("Failed to send password: {e}")))?;
         }
 
-        let output = child.wait_with_output().map_err(|e| {
-            SecretError::KeePassXC(format!("Failed to wait for keepassxc-cli: {e}"))
-        })?;
+        let output = wait_for_cli(child, "show")?;
 
         if output.status.success() {
             // Wiped on drop: this is the credential itself, in the clear, on its
@@ -458,9 +537,7 @@ impl KeePassStatus {
             drop(stdin);
         }
 
-        let output = child.wait_with_output().map_err(|e| {
-            SecretError::KeePassXC(format!("Failed to wait for keepassxc-cli: {e}"))
-        })?;
+        let output = wait_for_cli_write(child, "add")?;
 
         tracing::debug!(
             "keepassxc-cli exit code: {:?}, stdout: '{}', stderr: '{}'",
@@ -553,7 +630,7 @@ impl KeePassStatus {
             stdin.write_all(b"\n").ok();
         }
 
-        let output = child.wait_with_output().ok();
+        let output = wait_for_cli(child, "ls (group probe)").ok();
 
         // If group exists, we're done
         if let Some(ref o) = output {
@@ -605,9 +682,7 @@ impl KeePassStatus {
             stdin.write_all(b"\n").ok();
         }
 
-        let output = child.wait_with_output().map_err(|e| {
-            SecretError::KeePassXC(format!("Failed to wait for keepassxc-cli: {e}"))
-        })?;
+        let output = wait_for_cli_write(child, "mkdir")?;
 
         tracing::debug!(
             "mkdir RustConn result: exit={:?}, stdout='{}', stderr='{}'",
@@ -699,7 +774,7 @@ impl KeePassStatus {
                 stdin.write_all(b"\n").ok();
             }
 
-            let output = child.wait_with_output().ok();
+            let output = wait_for_cli_write(child, "mkdir (parent group)").ok();
 
             if let Some(ref o) = output {
                 let stderr = String::from_utf8_lossy(&o.stderr);
@@ -758,7 +833,10 @@ impl KeePassStatus {
             stdin.write_all(b"\n").ok();
         }
 
-        let _ = child.wait_with_output();
+        // Best-effort by design: the caller deletes before adding and does not
+        // care whether the entry existed. Bounded all the same — "does not care
+        // about the result" is not the same as "may block for ever".
+        let _ = wait_for_cli_write(child, "rm");
         Ok(())
     }
 
@@ -910,9 +988,7 @@ impl KeePassStatus {
                     .map_err(|e| SecretError::KeePassXC(format!("Failed to send password: {e}")))?;
             }
 
-            let output = child.wait_with_output().map_err(|e| {
-                SecretError::KeePassXC(format!("Failed to wait for keepassxc-cli: {e}"))
-            })?;
+            let output = wait_for_cli(child, "show (with key file)")?;
 
             tracing::debug!(
                 "get_password: exit={:?}, stderr='{}'",
@@ -1031,9 +1107,7 @@ impl KeePassStatus {
                 .map_err(|e| SecretError::KeePassXC(format!("Failed to send password: {e}")))?;
         }
 
-        let output = child.wait_with_output().map_err(|e| {
-            SecretError::KeePassXC(format!("Failed to wait for keepassxc-cli: {e}"))
-        })?;
+        let output = wait_for_cli(child, "show (exact entry)")?;
 
         if output.status.success() {
             let password =
@@ -1215,7 +1289,7 @@ impl KeePassStatus {
             stdin.write_all(b"\n").ok()?;
         }
 
-        let output = child.wait_with_output().ok()?;
+        let output = wait_for_cli(child, "show (username)").ok()?;
 
         if output.status.success() {
             let username = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -1281,7 +1355,7 @@ impl KeePassStatus {
             stdin.write_all(b"\n").ok()?;
         }
 
-        let output = child.wait_with_output().ok()?;
+        let output = wait_for_cli(child, "show (url)").ok()?;
 
         if output.status.success() {
             let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -1383,9 +1457,7 @@ impl KeePassStatus {
                 .map_err(|e| SecretError::KeePassXC(format!("Failed to send password: {e}")))?;
         }
 
-        let output = child.wait_with_output().map_err(|e| {
-            SecretError::KeePassXC(format!("Failed to wait for keepassxc-cli: {e}"))
-        })?;
+        let output = wait_for_cli(child, "ls (credential check)")?;
 
         if output.status.success() {
             Ok(())

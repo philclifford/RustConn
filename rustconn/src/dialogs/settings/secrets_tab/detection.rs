@@ -120,6 +120,38 @@ fn run_detection() -> SecretCliDetection {
     })
 }
 
+/// How long any single CLI probe on this page is given before it is killed.
+///
+/// None of them had a deadline, and the shape of `run_detection` is what made
+/// that expensive: the probes are scoped threads and the scope is not joined
+/// until the last of them returns, so one unresponsive CLI kept the whole
+/// Secrets page empty rather than costing it one row. The three most likely to
+/// stall are the three that do I/O — `bw status` reaches the network once its
+/// session has expired, `op whoami` can sit on a biometric prompt, and
+/// `passbolt list user` talks to a server.
+///
+/// Five seconds: nobody is waiting on a credential here, the answers only
+/// populate rows, and a probe that gives up reads as "not installed", which is
+/// already what a failed probe reads as.
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Runs one CLI probe, returning `None` rather than blocking the page.
+///
+/// `what` goes into a log line, so it is `&'static str`: a `&str` would let a
+/// caller interpolate a resolved path — and these paths include `$HOME` — or a
+/// credential into it.
+fn probe(cmd: &mut std::process::Command, what: &'static str) -> Option<std::process::Output> {
+    let child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    rustconn_core::proc::wait_bounded(child, PROBE_TIMEOUT, what)
+        .ok()?
+        .output()
+}
+
 /// Detects the KeePassXC CLI version.
 ///
 /// Delegates to the core detector, which resolves `keepassxc-cli` on the host
@@ -143,10 +175,11 @@ fn detect_bitwarden() -> (bool, String, Option<String>, Option<(String, &'static
     let mut bitwarden_installed = false;
     let mut bitwarden_cmd = "bw".to_string();
     for path in &bw_paths {
-        if std::process::Command::new(path)
-            .arg("--version")
-            .output()
-            .is_ok_and(|output| output.status.success())
+        if probe(
+            std::process::Command::new(path).arg("--version"),
+            "bw --version",
+        )
+        .is_some_and(|output| output.status.success())
         {
             bitwarden_installed = true;
             bitwarden_cmd = path.clone();
@@ -191,10 +224,11 @@ fn detect_onepassword() -> (bool, String, Option<String>, Option<(String, &'stat
     let mut onepassword_installed = false;
     let mut onepassword_cmd = "op".to_string();
     for path in &op_paths {
-        if std::process::Command::new(path)
-            .arg("--version")
-            .output()
-            .is_ok_and(|output| output.status.success())
+        if probe(
+            std::process::Command::new(path).arg("--version"),
+            "op --version",
+        )
+        .is_some_and(|output| output.status.success())
         {
             onepassword_installed = true;
             onepassword_cmd = path.clone();
@@ -243,10 +277,11 @@ fn detect_passbolt() -> (
     }
     let mut passbolt_installed = false;
     for path in &passbolt_paths {
-        if std::process::Command::new(path)
-            .arg("--version")
-            .output()
-            .is_ok_and(|output| output.status.success())
+        if probe(
+            std::process::Command::new(path).arg("--version"),
+            "passbolt --version",
+        )
+        .is_some_and(|output| output.status.success())
         {
             passbolt_installed = true;
             break;
@@ -277,12 +312,10 @@ fn detect_passbolt() -> (
 
 /// Detects the `pass` password store: `(version, status)`
 fn detect_pass() -> (Option<String>, Option<(String, &'static str)>) {
-    let pass_version = if let Ok(output) = std::process::Command::new("pass")
-        .arg("--version")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-    {
+    let pass_version = if let Some(output) = probe(
+        std::process::Command::new("pass").arg("--version"),
+        "pass --version",
+    ) {
         if output.status.success() {
             let version_str = String::from_utf8_lossy(&output.stdout);
             // Extract version number from output like "v1.7.4"
@@ -379,15 +412,15 @@ fn detect_system_keyring_availability() -> rustconn_core::secret::BackendAvailab
 
 /// Gets CLI version from command output
 fn get_cli_version(command: &str, args: &[&str]) -> Option<String> {
-    std::process::Command::new(command)
-        .args(args)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| {
-            let output = String::from_utf8_lossy(&o.stdout);
-            parse_version(&output)
-        })
+    probe(
+        std::process::Command::new(command).args(args),
+        "cli --version",
+    )
+    .filter(|o| o.status.success())
+    .and_then(|o| {
+        let output = String::from_utf8_lossy(&o.stdout);
+        parse_version(&output)
+    })
 }
 
 /// Parses version from output string
@@ -400,10 +433,13 @@ fn parse_version(output: &str) -> Option<String> {
 
 /// Checks Bitwarden vault status synchronously
 pub(super) fn check_bitwarden_status_sync(bw_cmd: &str) -> (String, &'static str) {
-    let output = std::process::Command::new(bw_cmd).arg("status").output();
+    let output = probe(
+        std::process::Command::new(bw_cmd).arg("status"),
+        "bw status",
+    );
 
     match output {
-        Ok(o) if o.status.success() => {
+        Some(o) if o.status.success() => {
             let status_str = String::from_utf8_lossy(&o.stdout);
             if let Ok(status) = serde_json::from_str::<serde_json::Value>(&status_str)
                 && let Some(status_val) = status.get("status").and_then(|v| v.as_str())
@@ -423,12 +459,13 @@ pub(super) fn check_bitwarden_status_sync(bw_cmd: &str) -> (String, &'static str
 
 /// Checks 1Password account status synchronously
 fn check_onepassword_status_sync(op_cmd: &str) -> (String, &'static str) {
-    let output = std::process::Command::new(op_cmd)
-        .args(["whoami", "--format", "json"])
-        .output();
+    let output = probe(
+        std::process::Command::new(op_cmd).args(["whoami", "--format", "json"]),
+        "op whoami",
+    );
 
     match output {
-        Ok(o) if o.status.success() => {
+        Some(o) if o.status.success() => {
             let stdout = String::from_utf8_lossy(&o.stdout);
             if let Ok(whoami) = serde_json::from_str::<serde_json::Value>(&stdout)
                 && let Some(email) = whoami.get("email").and_then(|v| v.as_str())
@@ -437,7 +474,7 @@ fn check_onepassword_status_sync(op_cmd: &str) -> (String, &'static str) {
             }
             (i18n("Signed in"), "success")
         }
-        Ok(o) => {
+        Some(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
             if stderr.contains("not signed in") || stderr.contains("sign in") {
                 (i18n("Not signed in"), "error")
@@ -447,19 +484,20 @@ fn check_onepassword_status_sync(op_cmd: &str) -> (String, &'static str) {
                 (i18n("Not signed in"), "error")
             }
         }
-        Err(_) => (i18n("Error checking status"), "error"),
+        None => (i18n("Error checking status"), "error"),
     }
 }
 
 /// Checks Passbolt CLI configuration status synchronously
 fn check_passbolt_status_sync() -> (String, &'static str) {
-    let output = std::process::Command::new("passbolt")
-        .args(["list", "user", "--json"])
-        .output();
+    let output = probe(
+        std::process::Command::new("passbolt").args(["list", "user", "--json"]),
+        "passbolt list user",
+    );
 
     match output {
-        Ok(o) if o.status.success() => (i18n("Configured"), "success"),
-        Ok(o) => {
+        Some(o) if o.status.success() => (i18n("Configured"), "success"),
+        Some(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
             if stderr.contains("no configuration") {
                 (i18n("Not configured"), "error")
@@ -469,7 +507,7 @@ fn check_passbolt_status_sync() -> (String, &'static str) {
                 (i18n("Not configured"), "error")
             }
         }
-        Err(_) => (i18n("Error checking status"), "error"),
+        None => (i18n("Error checking status"), "error"),
     }
 }
 
