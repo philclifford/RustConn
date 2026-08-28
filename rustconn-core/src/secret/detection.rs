@@ -41,12 +41,28 @@ fn detection_command(program: &str) -> Command {
 ///
 /// Worth knowing before assuming this fixed the Secrets page: **nothing in this
 /// workspace calls these detectors.** They are public and re-exported from
-/// `secret::mod`, so an external consumer of the crate gets the bound, but the
-/// GUI has its own synchronous copies in
+/// `secret::mod`, and the GUI has its own synchronous copies in
 /// `rustconn/src/dialogs/settings/secrets_tab/detection.rs`, driven from a
 /// `std::thread::scope`, and those are where the page actually stalled. They were
 /// bounded in the same change. Two parallel detector implementations is the real
 /// defect here and neither this constant nor that one fixes it.
+///
+/// The one argument for keeping the async set was that an external consumer of
+/// the crate might depend on it. Checked on the Linux validation pass for 0.21.0
+/// and it does not hold: neither `rustconn-core` nor `rustconn` is published —
+/// `https://crates.io/api/v1/crates/rustconn-core` and the same URL for
+/// `rustconn` both answer 404 — and no `publish` key appears in any manifest, so
+/// there is no released library surface for anything to have been written
+/// against. Together with having no in-workspace caller, that makes this module
+/// dead code rather than an API, and the duplication resolves by deleting it
+/// and keeping the synchronous copies the GUI actually runs.
+///
+/// Not deleted in 0.21.0 on purpose: it is roughly six hundred lines plus their
+/// tests, and 0.21.0 was already prepared and awaiting a tag when the evidence
+/// was gathered. Doing it here would put an unreviewed deletion of that size
+/// into a release the maintainer is about to publish. The decision is made and
+/// the evidence is above; the removal is a 0.22 change. What must *not* happen
+/// is a later session re-deriving the crates.io question — that part is settled.
 ///
 /// Five seconds rather than the ten a vault operation gets: this is a `--version`
 /// or a status check, nobody is waiting on a credential, and the answer is only
