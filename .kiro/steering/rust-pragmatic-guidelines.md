@@ -85,11 +85,18 @@ startup `setlocale` call), `rustconn-env-sys` (the startup `GSK_RENDERER` and
 `cfg_attr(target_os = "macos", …)`, since off macOS the crate contains no
 `unsafe` and a bare `expect` would fire `unfulfilled_lint_expectations`).
 `deny` rather than `forbid` because `forbid` cannot be
-overridden at any level, which forced each helper to declare its own `[lints]`
-table — and a crate-local `[lints]` table replaces the inherited one, so those
-three ended up as the only crates in the workspace running without
-`clippy::pedantic`, `clippy::nursery` or `clippy::unwrap_used`. Do not "tighten"
-this back to `forbid` without also solving that.
+overridden at any level. Under `forbid` each helper had to declare its own
+`[lints]` table, and a crate-local `[lints]` table *replaces* the inherited one
+rather than adding to it — so the only crates allowed to write `unsafe` became
+the only crates in the workspace running without `clippy::pedantic`,
+`clippy::nursery` or `clippy::unwrap_used`.
+
+**That is history, not the current state.** All four helpers carry
+`[lints] workspace = true` and do inherit the full table; verify with
+`grep -A1 '^\[lints\]' rustconn-*-sys/Cargo.toml` rather than trusting this
+paragraph. The reason it is written down at all is that the trap is easy to walk
+back into: do not "tighten" `deny` to `forbid` without also solving the
+replaced-table problem, and do not give a helper its own `[lints]` table.
 If further FFI is ever needed — create another small `rustconn-*-sys` crate with
 a documented `// SAFETY:` contract on every `unsafe` block, rather than relaxing
 the lint where the caller lives. Miri cannot execute the syscalls/FFI used here

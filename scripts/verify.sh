@@ -207,13 +207,30 @@ else
         fi
     fi
 
-    # `wc -l` pads its output on BSD — "      18" — and BSD `tail` then rejects
-    # `-n +      18` as an illegal offset, so the cache-hit check below silently
-    # measured nothing and reported that clippy had compiled nothing. Harmless
-    # while that was a warning; a false failure once it became one.
-    clippy_mark=$(wc -l <"$log" | tr -d '[:space:]')
-    run_gate 'cargo clippy --all-targets' \
-        "$CARGO" clippy --all-targets "${clippy_features[@]}" -- -D warnings
+    # Clippy's output goes to a file of its own as well as to the shared log, so
+    # the "did it compile anything" check below can read a file that holds exactly
+    # one clippy run.
+    #
+    # It used to record the shared log's line count and then `tail -n +N` after the
+    # run. That was wrong twice: `wc -l` pads its output on BSD, so `tail` rejected
+    # `-n +      18` as an illegal offset and the check scanned nothing; and once
+    # the padding was stripped the offset still came out at the whole file, so the
+    # check read one line and again found nothing. Both times it reported that
+    # clippy had compiled nothing while the log plainly showed several hundred
+    # `Checking` lines — a gate lying in the direction of failure, which is the
+    # cheap direction, but a gate that has to be argued with is a gate that gets
+    # deleted. There is no offset to get wrong now.
+    clippy_log="target/verify-clippy.log"
+    printf '\n===== %s =====\n' 'cargo clippy --all-targets' >>"$log"
+    if "$CARGO" clippy --all-targets "${clippy_features[@]}" -- -D warnings \
+        >"$clippy_log" 2>&1; then
+        say '  ok    cargo clippy --all-targets'
+        record 'cargo clippy --all-targets' OK
+    else
+        say '  FAIL  cargo clippy --all-targets'
+        record 'cargo clippy --all-targets' FAIL
+    fi
+    cat "$clippy_log" >>"$log"
 
     # A cache hit prints "Finished ... in 0.2s" and reports zero warnings without
     # looking at anything. That is not a pass, and until 0.21.0 this recorded it
@@ -222,7 +239,7 @@ else
     # here means something is wrong rather than merely unlucky, so it fails.
     # Under --cached it stays a warning, because the caller asked for the fast
     # path and is entitled to know what they gave up rather than be refused.
-    if ! tail -n "+$clippy_mark" "$log" | grep -qE '^[[:space:]]*(Checking|Compiling) '; then
+    if ! grep -qE '^[[:space:]]*(Checking|Compiling) ' "$clippy_log"; then
         if [ "$fresh" -eq 1 ]; then
             say '  FAIL  clippy compiled nothing even after cleaning — that run verified nothing.'
             results+=("FAIL	cargo clippy — nothing re-checked")

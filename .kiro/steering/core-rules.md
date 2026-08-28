@@ -50,10 +50,12 @@ the caller lives.
 - No `unsafe` outside the `rustconn-*-sys` crates. Mechanically:
   `unsafe_code = "deny"` in `[workspace.lints.rust]`, re-opened by a crate-level
   `#![expect(unsafe_code, reason = "…")]` in each of the three helpers. It is
-  `deny` and not `forbid` on purpose — `forbid` cannot be overridden, so the
-  helpers had to declare their own `[lints]` table, which *replaces* the
-  inherited one and left the only crates allowed to write `unsafe` as the only
-  crates with no clippy lints at all. `rustconn` keeps a local `forbid`.
+  `deny` and not `forbid` on purpose — `forbid` cannot be overridden, so under it
+  each helper had to declare its own `[lints]` table, which *replaces* the
+  inherited one, and that left the only crates allowed to write `unsafe` as the
+  only crates with no clippy lints at all. All four now carry
+  `[lints] workspace = true` and inherit the full table; that sentence describes
+  the trap, not today. `rustconn` keeps a local `forbid`.
 - Passwords/keys → `secrecy::SecretString`, never plain `String`
 - Intermediate `expose_secret().to_string()` → wrap in `zeroize::Zeroizing::new()`
 - Errors → `thiserror::Error`. No `unwrap()`/`expect()` in production code; both
