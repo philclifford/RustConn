@@ -292,9 +292,24 @@ pub fn save_password_to_vault(
             };
             let username = username.to_string();
             let url = format!("{}://{}", protocol_str, conn_host);
-            // Wrap intermediate plaintext copy in Zeroizing so it is
-            // wiped from memory on drop (M-PUBLIC-DEBUG / SecretString).
-            let pwd = zeroize::Zeroizing::new(password.expose_secret().to_string());
+            // The closure below is `move` and runs on another thread, so it needs
+            // an owned secret. `SecretString` is `SecretBox<str>` and `str` is not
+            // `Clone`, so the secret cannot simply be cloned into it; an `Arc`
+            // shares it without a second plaintext copy, which is the same shape
+            // `db_password` already uses in the bulk-transfer path below. Cloning
+            // the `SecretString` instead would duplicate the `Box<str>`, i.e. make
+            // exactly the second plaintext this avoids.
+            //
+            // The argument has to stay a `to_string()` of a `&str`. That path is
+            // `Vec::with_capacity(len)`, so capacity equals length and the
+            // `into_boxed_str()` inside `SecretString::from` cannot reallocate.
+            // Build the `String` any other way — `format!`, or pushing — and the
+            // shrink-to-fit realloc becomes live, freeing the original buffer
+            // *unzeroed* and making this weaker than the `Zeroizing<String>` it
+            // replaced.
+            let pwd = std::sync::Arc::new(secrecy::SecretString::from(
+                password.expose_secret().to_string(),
+            ));
 
             crate::utils::spawn_blocking_with_callback(
                 move || {
@@ -306,7 +321,7 @@ pub fn save_password_to_vault(
                         key,
                         &entry_name,
                         &username,
-                        pwd.as_str(),
+                        &pwd,
                         Some(&url),
                     )
                 },
@@ -419,8 +434,11 @@ pub fn save_group_password_to_vault(
                 .unwrap_or(group_path)
                 .to_string();
             let username_val = username.to_string();
-            // Wrap intermediate plaintext copy in Zeroizing.
-            let password_val = zeroize::Zeroizing::new(password.expose_secret().to_string());
+            // Owned for the `move` closure, shared rather than copied — see the
+            // note in `save_password_to_vault` above.
+            let password_val = std::sync::Arc::new(secrecy::SecretString::from(
+                password.expose_secret().to_string(),
+            ));
 
             crate::utils::spawn_blocking_with_callback(
                 move || {
@@ -432,7 +450,7 @@ pub fn save_group_password_to_vault(
                         key,
                         &entry_name,
                         &username_val,
-                        password_val.as_str(),
+                        &password_val,
                         None,
                     )
                 },
@@ -943,7 +961,6 @@ pub fn save_variable_to_vault(
     password: &secrecy::SecretString,
 ) -> Result<(), String> {
     use rustconn_core::config::SecretBackendType;
-    use secrecy::ExposeSecret;
 
     let lookup_key = rustconn_core::variable_secret_key(var_name);
     let backend_type = select_backend_for_load(settings);
@@ -963,15 +980,17 @@ pub fn save_variable_to_vault(
                 let key_file = settings.kdbx_key_file.clone();
                 let kdbx = std::path::Path::new(kdbx_path);
                 let key = key_file.as_ref().map(std::path::Path::new);
-                // Wrap intermediate plaintext copy in Zeroizing for the FFI call.
-                let pwd = zeroize::Zeroizing::new(password.expose_secret().to_string());
+                // No intermediate plaintext at all now that the callee takes a
+                // `&SecretString`: this call is synchronous, so the caller's secret
+                // can simply be borrowed. It used to copy into a `Zeroizing<String>`
+                // because the signature asked for `&str`.
                 let result = rustconn_core::secret::KeePassStatus::save_password_to_kdbx(
                     kdbx,
                     settings.kdbx_password.as_ref(),
                     key,
                     &lookup_key,
                     "",
-                    pwd.as_str(),
+                    password,
                     None,
                 )
                 .map_err(|e| format!("{e}"));
@@ -1569,7 +1588,6 @@ pub fn copy_vault_credential(
                     .map_err(|e| format!("{e}"))?;
 
                 if let Some(pwd) = password_opt {
-                    use secrecy::ExposeSecret;
                     // Write to new entry
                     let new_entry_path =
                         rustconn_core::secret::KeePassHierarchy::build_entry_path(new_conn, groups);
@@ -1585,7 +1603,7 @@ pub fn copy_vault_credential(
                         key,
                         &new_entry_name,
                         username,
-                        pwd.expose_secret(),
+                        &pwd,
                         Some(&url),
                     )
                     .map_err(|e| format!("{e}"))?;
@@ -2086,8 +2104,11 @@ impl TransferPort {
                 let Some(password) = creds.password.as_ref() else {
                     return Err("the entry has no password to write".to_string());
                 };
-                // Wrapped so the plaintext copy keepassxc-cli needs is wiped on drop.
-                let plaintext = zeroize::Zeroizing::new(password.expose_secret().to_string());
+                // Owned for the `spawn_blocking` closure, shared rather than
+                // copied — the same `Arc` shape `db_password` uses just below.
+                let entry_password = std::sync::Arc::new(secrecy::SecretString::from(
+                    password.expose_secret().to_string(),
+                ));
                 let path = path.clone();
                 let db_password = db_password.as_ref().map(std::sync::Arc::clone);
                 let key_file = key_file.clone();
@@ -2103,7 +2124,7 @@ impl TransferPort {
                                 key_file.as_deref(),
                                 &entry,
                                 &username,
-                                plaintext.as_str(),
+                                &entry_password,
                                 None,
                             )
                         }),

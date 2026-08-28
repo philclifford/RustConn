@@ -353,7 +353,7 @@ impl KeePassStatus {
         key_file: Option<&Path>,
         entry_name: &str,
         username: &str,
-        password: &str,
+        password: &SecretString,
         url: Option<&str>,
     ) -> SecretResult<()> {
         use std::io::Write as IoWrite;
@@ -445,9 +445,11 @@ impl KeePassStatus {
 
             // Entry password (prompted by -p flag)
             tracing::debug!("Sending entry password to keepassxc-cli");
-            stdin.write_all(password.as_bytes()).map_err(|e| {
-                SecretError::KeePassXC(format!("Failed to send entry password: {e}"))
-            })?;
+            stdin
+                .write_all(password.expose_secret().as_bytes())
+                .map_err(|e| {
+                    SecretError::KeePassXC(format!("Failed to send entry password: {e}"))
+                })?;
             stdin
                 .write_all(b"\n")
                 .map_err(|e| SecretError::KeePassXC(format!("Failed to send newline: {e}")))?;
@@ -1151,7 +1153,7 @@ impl KeePassStatus {
             key_file,
             new_entry_name,
             &username,
-            password.expose_secret(),
+            &password,
             url.as_deref(),
         )?;
 

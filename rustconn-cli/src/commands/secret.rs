@@ -645,10 +645,7 @@ fn cmd_secret_set(
                 key_file,
                 &keepass_key,
                 &username_value,
-                {
-                    use secrecy::ExposeSecret;
-                    password_value.expose_secret()
-                },
+                &password_value,
                 Some(&format!(
                     "{}://{}:{}",
                     connection.protocol.as_str().to_lowercase(),
