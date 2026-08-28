@@ -2604,12 +2604,22 @@ impl super::EmbeddedRdpWidget {
         }
     }
 
-    /// Terminates the external FreeRDP process if running
+    /// Kills the external FreeRDP process if running, then reaps it.
     ///
-    /// This method gracefully terminates the process, waiting for it to exit.
+    /// Not graceful, and the comments here used to claim otherwise:
+    /// `std::process::Child::kill` sends `SIGKILL`, which cannot be caught, so
+    /// there is no shutdown for FreeRDP to perform and nothing to wait out. The
+    /// reap that follows is what stops a zombie, not part of any escalation.
+    ///
+    /// That is the deliberate answer rather than an omission. A `SIGTERM` grace
+    /// period exists for a session child — `terminal::child_teardown` gives one to
+    /// `telnet`, `ssh` and `picocom` — because the process on the other end may be
+    /// a shell running an editor with unsaved work. An external viewer is a window
+    /// onto a desktop that lives on the remote host; it holds no local state that
+    /// a clean exit would flush, so the grace period would buy nothing and delay
+    /// the teardown of every session by its length.
     fn terminate_external_process(&self) {
         if let Some(mut child) = self.process.borrow_mut().take() {
-            // Try graceful termination first (SIGTERM on Unix)
             let _ = child.kill();
 
             // Wait for the process to exit with a timeout

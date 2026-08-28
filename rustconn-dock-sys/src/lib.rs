@@ -13,8 +13,8 @@
 //! of its own. The one interface that works for a bundle-less process is
 //! `-[NSApplication setApplicationIconImage:]`, which replaces the tile image of
 //! the *running* application. That single call is what this crate wraps, so the
-//! `unsafe` it requires does not have to be re-opened in `rustconn`, where
-//! `unsafe_code` is forbidden.
+//! `unsafe` it requires does not have to be re-opened in `rustconn`, which keeps
+//! a crate-local `forbid(unsafe_code)` over the workspace's `deny`.
 //!
 //! It exposes one operation, [`set_dock_icon_png`], and reports what happened as
 //! a [`DockIconOutcome`] instead of an error type: replacing the Dock tile is
@@ -330,6 +330,35 @@ mod tests {
     fn a_valid_png_is_a_no_op_where_there_is_no_dock() {
         let outcome = set_dock_icon_png(ONE_PIXEL_PNG);
         assert_eq!(outcome, DockIconOutcome::NoDock);
+        assert!(!outcome.is_applied());
+    }
+
+    /// The main-thread guard refuses, rather than calling AppKit off the main
+    /// thread or panicking.
+    ///
+    /// This is the one precondition that makes the `unsafe` call sound, and it had
+    /// no test: the suite covered the PNG signature and the shape of every outcome,
+    /// but never the guard itself. That is the same gap that let a
+    /// `rustconn-pty-sys` contract test sit failing on macOS unnoticed until
+    /// 0.20.11 — a guard nothing exercises is a guard nobody knows still works,
+    /// and no CI job builds macOS to find out.
+    ///
+    /// Asked from a spawned thread on purpose. A plain `#[test]` body is not a
+    /// reliable negative here: libtest under `--test-threads=1`, and nextest with
+    /// its process per test, both run the body *on* the main thread, where the
+    /// guard would pass and the call would replace the developer's real Dock tile
+    /// as a side effect of running the suite.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn refuses_a_call_from_another_thread() {
+        let outcome = std::thread::spawn(|| set_dock_icon_png(ONE_PIXEL_PNG))
+            .join()
+            .expect("the probe thread must not panic: the guard returns an outcome");
+        assert_eq!(
+            outcome,
+            DockIconOutcome::OffMainThread,
+            "a non-main thread must be refused before AppKit is reached"
+        );
         assert!(!outcome.is_applied());
     }
 
