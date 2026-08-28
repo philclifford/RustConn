@@ -140,6 +140,19 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.21.0" date="2026-08-28">
+      <description>
+        <p>Version 0.21.0 - things that waited for ever now give up, and the checks that guard a release stopped being able to pass without looking:</p>
+        <ul>
+          <li>Fixed: the Secrets page in Settings could stay empty instead of listing the password managers it found. Each one is probed by running its command-line tool, the probes run together, and the page waited for the slowest — so one tool that never answered held all of them. Every probe now gives up after five seconds and reports that manager as unavailable</li>
+          <li>Fixed: a KeePass operation could freeze RustConn with no way out, because every call to keepassxc-cli waited indefinitely. A database on a network share that had gone away, or one locked by another program, left the window unresponsive. Reads now give up after ten seconds and writes after thirty, and the message names the likely cause — including a database whose key-derivation settings are too heavy for the machine</li>
+          <li>Fixed: printing from an RDP session could stall the session itself. The waits on the local print system are now bounded, so losing the answer costs the printer list rather than the connection</li>
+          <li>Fixed: a translated string could ship as English while every check reported the translations complete, because nothing verified that the translation template still matched the source. That had happened in three releases running, and is now checked</li>
+          <li>Fixed: a Flatpak build could be stopped by any one of seven download hosts having a bad day, and one did. The bundled sources now carry verified fallback mirrors</li>
+          <li>Security: nine advisory warnings are gone. The macOS tray was pulling in the whole GTK3 binding stack, unmaintained since 2024, and thirty-nine packages went with it. None of that code was ever run on any platform</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.11" date="2026-08-27">
       <description>
         <p>Version 0.20.11 - two processes that outlived their welcome, and a viewer that was there all along:</p>

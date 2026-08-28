@@ -5,7 +5,13 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.21.0] - 2026-08-28
+
+A minor version spent almost entirely on the things twelve patch releases in
+fourteen days left behind: gates that reported success without checking, waits
+with no deadline, and comments that described behaviour the code no longer had.
+Two of the fixes are requirement bumps a patch release would have refused, and
+one is a breaking `rustconn-core` signature.
 
 ### Added
 
@@ -42,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The CI clippy gate could pass without checking anything, and so could the local one** — the job caches `target/` keyed on `Cargo.lock`, so any change that leaves the lock alone, which is most changes, restored a tree clippy had already linted: `Finished ... in 0.2s`, zero warnings, exit 0. Nineteen warnings accumulated behind it and were only found in 0.20.11, when a lock change forced a real run; they were fixed there and the gate was not. It now cleans the workspace crates before linting — not their dependencies, which cannot acquire a warning without a lock change, and a lock change already misses the cache — and then **fails if clippy compiled nothing**, so a regression in the clean turns a silent false green back into a red job. The member list is read from `Cargo.toml` rather than written into the workflow, so a new crate is covered by existing. The other cargo jobs need no equivalent: `cargo check` compiles a subset of what clippy does, and the test jobs re-run their binaries regardless of cache state.
 
   `scripts/verify.sh` had the same hole in a worse place, since it is the tool that decides whether local work is done. Cleaning was opt-in behind `--fresh`, and without it a cache hit was recorded as a `WARN` that never incremented the failure count — so the script printed "that run verified nothing" and exited 0. Cleaning is now the default, a cache hit after a clean is a failure, and `--cached` buys back the old fast path where the message stays a warning, because a caller who asked for it should be told what they gave up rather than refused.
+
+- **`verify.sh --tests` failed on macOS for the same reason its clippy gate did, one fix later** — `cargo test --workspace` resolves `rustconn`'s default features, `web-embedded` is one of them, and the run dies in the `webkit6` build scripts on a missing `javascriptcoregtk-6.0.pc`. The clippy gate was given the macOS feature set earlier in this release and the test gate was not, so the tool that decides whether local work is done still reported a failure that had nothing to do with the tree — found by running it, not by reading it. On Darwin the tests now run per crate with the same substitution, split rather than passed to `--workspace` because `--no-default-features` would apply to every selected package.
 
 - **`verify.sh` could not run its main gate on macOS at all** — `web-embedded` is a default feature and pulls WebKitGTK 6.0 through `webkit6`, whose `-sys` build scripts fail on a missing `javascriptcoregtk-6.0.pc` and `libsoup-3.0.pc`; the feature's own comment says "Linux only". So `cargo clippy --all-targets` failed on the maintainer's own machine for a reason unrelated to the tree, which is the "gate that cannot run where it is needed" shape this release went looking for. On Darwin the gate now lints the same canonical feature set the `.app` bundle is built with, read from `scripts/macos-build.sh --print-features` so there is one list and not a second copy to drift.
 
@@ -82,6 +90,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`adw-1-6` cannot be retired yet, and the reason is now beside the feature** — its comment invites "retire this once no supported target is below 1.6", which prompts the question every release, and the snap's `core24` platform is usually cited as the blocker, making a `core26` GNOME extension look like the thing to wait for. It is not: the binding constraint is **Ubuntu 24.04 LTS**, which ships libadwaita 1.5.0, is the baseline tier in `packaging/obs/README.md`, and is supported to 2029. Checking on core26 answers nothing while 24.04 is a target.
 
 ### Dependencies
+
+- **Updated**: cpufeatures 0.3.0 → 0.3.1, flate2 1.1.9 → 1.1.10 (bringing miniz_oxide 0.9.1). `cargo audit` reports one allowed warning across 696 dependencies — RUSTSEC-2023-0089, `atomic-polyfill`, unmaintained and reached transitively; `cargo deny check` is clean, and `cargo machete` finds no unused dependency. Every auto-resolving CLI download endpoint answered: kubectl 1.37.0, Tailscale 1.102.3, Teleport 18.10.0, Boundary 0.21.3, Hoop.dev 1.150.2, Bitwarden CLI 2026.8.0, 1Password CLI 2.39.0, and TigerVNC — the only pinned one — is current at 1.16.2.
 
 - **argon2 0.5 → 0.6 — the key derivation behind the encrypted credential stores, and the question was whether existing files still open.** Deferred from 0.20.11 for that reason. They do, and it is now proved rather than assumed: the derivation is byte-identical, so no migration is needed and no stored credential is affected. It brings `password-hash` 0.5 → 0.6.1, `blake2` 0.10 → 0.11 and a new `phc` 0.6.1 with it, and drops `rand_core` 0.6.4; nothing in RustConn's own code had to change, since the algorithm, version and cost parameters were already passed explicitly.
 

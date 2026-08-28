@@ -6,9 +6,9 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: rustconn 0.20.11\n"
+"Project-Id-Version: rustconn 0.21.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-28 00:45+0200\n"
+"POT-Creation-Date: 2026-08-28 11:58+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -4868,7 +4868,7 @@ msgid "RDP File"
 msgstr ""
 
 #: rustconn/src/dialogs/import/sources.rs:255
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:418
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:454
 msgid "Unknown"
 msgstr ""
 
@@ -6032,70 +6032,70 @@ msgid ""
 "when both are set"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:319
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:352
 msgid "Initialized at {}"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:324
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:357
 msgid "Not initialized (run 'pass init &lt;gpg-id&gt;')"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:329
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:362
 msgid "Cannot determine store directory"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:412
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:448
 #: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1243
 msgid "Unlocked"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:413
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:449
 msgid "Locked"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:414
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:450
 #: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1256
 msgid "Not logged in"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:415
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:451
 msgid "Status: {}"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:420
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:450
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:472
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:456
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:487
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:510
 msgid "Error checking status"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:436
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:473
 msgid "Signed in: {}"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:438
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:475
 msgid "Signed in"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:443
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:447
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:480
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:484
 msgid "Not signed in"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:445
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:482
 msgid "Session expired"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:461
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:499
 #: rustconn/src/dialogs/settings/secrets_tab/mod.rs:3099
 msgid "Configured"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:465
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:469
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:503
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:507
 msgid "Not configured"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:467
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:505
 msgid "Authentication failed"
 msgstr ""
 
@@ -10012,7 +10012,7 @@ msgstr ""
 msgid "Playback: {}"
 msgstr ""
 
-#: rustconn/src/terminal/recording.rs:332
+#: rustconn/src/terminal/recording.rs:335
 msgid "●REC"
 msgstr ""
 

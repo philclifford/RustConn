@@ -268,7 +268,27 @@ else
 
     if [ "$tests" -eq 1 ]; then
         say '  ...  cargo test --workspace (~2.5 min)'
-        run_gate 'cargo test --workspace' "$CARGO" test --workspace
+        if [ "${#clippy_features[@]}" -gt 0 ]; then
+            # Same reason the clippy gate above substitutes a feature set on
+            # macOS: `--workspace` resolves `rustconn`'s default features, and
+            # `web-embedded` is one of them, so the run dies in the `webkit6`
+            # build scripts on a missing javascriptcoregtk-6.0.pc — nothing to do
+            # with the tree. The clippy gate was fixed for this earlier in 0.21.0
+            # and the test gate was not, so `verify.sh --tests` still reported a
+            # failure on the maintainer's own platform.
+            #
+            # Split per crate rather than `--workspace` with the flags, because
+            # `--no-default-features` applies to every selected package and the
+            # other crates' defaults are wanted.
+            run_gate 'cargo test -p rustconn-core' "$CARGO" test -p rustconn-core
+            run_gate 'cargo test -p rustconn (macOS features)' \
+                "$CARGO" test -p rustconn "${clippy_features[@]}"
+            run_gate 'cargo test the -sys crates' \
+                "$CARGO" test -p rustconn-pty-sys -p rustconn-locale-sys \
+                -p rustconn-env-sys -p rustconn-dock-sys
+        else
+            run_gate 'cargo test --workspace' "$CARGO" test --workspace
+        fi
         run_gate 'cargo test -p rustconn-cli --features full' \
             "$CARGO" test -p rustconn-cli --features full
     fi
