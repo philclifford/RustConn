@@ -4054,9 +4054,21 @@ impl MainWindow {
             // The same probe already existed one module away, in
             // `protocols.rs`'s Generic-command path, and was not applied here —
             // the two copies had drifted, which is why the Generic path survived
-            // a missing `script` and this one did not. The command travels as a
-            // positional parameter (`$1`) rather than being interpolated into
-            // the runner, so the nested quoting stays in one place.
+            // a missing `script` and this one did not.
+            //
+            // The command travels as a positional parameter (`$1`) and *not*
+            // interpolated into the runner string. That is the whole reason this
+            // shape was chosen, and it is worth stating because the obvious
+            // alternative is broken in a way that only shows up on one input.
+            // Interpolating needs two different quoting depths — `script -c`
+            // takes the command as a single argument, the fallback `exec` takes
+            // it bare — and an implementation that escapes once and substitutes
+            // twice looks right until a custom command contains a single quote.
+            // Measured on `printf 'it works\n'` as the custom command: the
+            // interpolating version fails with `script: unexpected number of
+            // arguments` when `script` is present, and produces nothing at all
+            // when it is absent. With `$1` there is one quoting layer, applied
+            // in one place, and both branches run the command unchanged.
             //
             // [#306]: https://github.com/totoshko88/RustConn/issues/306
             let inner_escaped = inner.replace('\'', "'\\''");
