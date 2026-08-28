@@ -255,9 +255,18 @@ else
     # failed the v0.21.0 release commit with clippy green and zero warnings.
     # The ESC comes from printf rather than being spelled in the pattern so the
     # sed works under BSD as well as GNU.
+    #
+    # The strip writes a file rather than piping into grep, because this script
+    # runs under `set -o pipefail` and `grep -q` exits on its first match: the
+    # `sed` upstream is then still writing into a closed descriptor, dies of
+    # SIGPIPE, and pipefail reports the pipeline as failed *because* the grep
+    # succeeded. That is not theoretical — the piped version of this fix turned
+    # the CI copy permanently red. It survived one run here only by winning the
+    # race, which is the worst way for a gate to be wrong: right until it is not.
     esc=$(printf '\033')
-    if ! sed "s/${esc}\[[0-9;]*[a-zA-Z]//g" "$clippy_log" \
-         | grep -qE '^[[:space:]]*(Checking|Compiling) '; then
+    clippy_plain="target/verify-clippy-plain.log"
+    sed "s/${esc}\[[0-9;]*[a-zA-Z]//g" "$clippy_log" >"$clippy_plain"
+    if ! grep -qE '^[[:space:]]*(Checking|Compiling) ' "$clippy_plain"; then
         if [ "$fresh" -eq 1 ]; then
             say '  FAIL  clippy compiled nothing even after cleaning — that run verified nothing.'
             results+=("FAIL	cargo clippy — nothing re-checked")

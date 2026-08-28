@@ -307,9 +307,23 @@ jobs:
           # recompile "nothing" on the v0.21.0 release commit. A literal ESC byte
           # from printf keeps the sed portable, which matters because
           # scripts/verify.sh runs the same check on macOS.
+          #
+          # The strip writes a file instead of piping into grep, and that is the
+          # whole point rather than a style choice. `grep -q` exits on its first
+          # match, so with a pipe the `sed` upstream is still writing into a
+          # closed descriptor and dies of SIGPIPE — and this step runs under
+          # `set -o pipefail`, which then reports the *pipeline* as failed
+          # because the left-hand side died precisely as a result of the
+          # right-hand side succeeding. The first attempt at this fix did pipe,
+          # and it turned the gate permanently red: `sed: couldn't write 30
+          # items to stdout: Broken pipe` followed by the very error the check
+          # exists to raise, on a run where clippy had compiled the workspace in
+          # 1m 47s and reported zero warnings. No pipeline, no race, and the
+          # plain-text log stays on disk for whoever has to read it next.
           esc=$(printf '\033')
-          if ! sed "s/${esc}\[[0-9;]*[a-zA-Z]//g" target/ci-clippy.log \
-               | grep -qE '^[[:space:]]*(Checking|Compiling) '; then
+          sed "s/${esc}\[[0-9;]*[a-zA-Z]//g" target/ci-clippy.log \
+              > target/ci-clippy-plain.log
+          if ! grep -qE '^[[:space:]]*(Checking|Compiling) ' target/ci-clippy-plain.log; then
             echo "::error::clippy compiled nothing — this run verified nothing"
             exit 1
           fi
