@@ -21,7 +21,7 @@ RustConn is a cross-platform connection orchestrator with a GTK4/libadwaita inte
 It brings SSH, RDP, VNC, SPICE, MOSH, Telnet, Serial, Kubernetes, and Zero Trust connections under one roof — with embedded Rust clients where possible and seamless integration with external tools where needed.
 Runs on Linux (GTK4/libadwaita), macOS, FreeBSD, and Windows via WSLg.
 
-[![Demo](https://img.youtube.com/vi/huYZkuxtsQg/maxresdefault.jpg)](https://youtu.be/huYZkuxtsQg)
+[![Demo](https://img.youtube.com/vi/-9b3mKy4n20/sddefault.jpg)](https://youtu.be/-9b3mKy4n20)
 
 ## Screenshots
 
@@ -46,11 +46,11 @@ More screenshots on the [Flathub listing](https://flathub.org/apps/io.github.tot
 | **Terminal** | Split terminals, command snippets, text highlighting rules, session recording, custom terminal themes, tab overview, tab pinning |
 | **Session Windows** | Move any session (SSH, Telnet, Serial, Kubernetes, MOSH, Zero Trust, embedded RDP/VNC/Web) to its own window and back with `Ctrl+Shift+M` — per-monitor fullscreen, never reconnects |
 | **Automation** | Expect rules, key sequences, pre/post-connect tasks, cluster & ad-hoc broadcast, session reconnect, Wake-on-LAN |
-| **Networking** | Multipath TCP for mobility & bandwidth aggregation (SSH/RDP/VNC), network-change auto-reconnect, port knocking, fwknop SPA |
+| **Networking** | Jump hosts (bastions) picked per connection, per group, or as a global default — honoured by SSH, SFTP, RDP, VNC, and SPICE, with multi-hop chains and a per-connection Direct override; Multipath TCP for mobility & bandwidth aggregation (SSH/RDP/VNC), network-change auto-reconnect, port knocking, fwknop SPA |
 | **Workflow** | Smart folders, SSH port forwarding, visual SSH tunnel builder, workspace profiles (save/restore open sessions), settings backup/restore, .rdp file association |
 | **Cloud Sync** | Synchronize connections via shared cloud directory (Google Drive, Syncthing, Nextcloud, Dropbox); group sync with Master/Import access model; simple sync with UUID-based merge |
 | **CLI** | `rustconn-cli` — headless management: list/add/update/delete connections, import/export, snippets, groups, templates, clusters, WoL, shell completions; optional secret and client-launch commands behind features |
-| **Languages** | English + 16 translations (Belarusian, Czech, Danish, German, Spanish, French, Italian, Kazakh, Dutch, Polish, Portuguese, Slovak, Swedish, Ukrainian, Uzbek, Chinese) |
+| **Languages** | English + 17 translations (Belarusian, Czech, Danish, German, Spanish, French, Italian, Georgian, Kazakh, Dutch, Polish, Portuguese, Slovak, Swedish, Ukrainian, Uzbek, Chinese) |
 
 ### Protocol support
 
@@ -130,7 +130,7 @@ Bug reports and feature requests are welcome on the
 
 - **Code** — see the [Build Guide](docs/BUILD.md) and
   [Architecture](docs/ARCHITECTURE.md) to get started.
-- **Translations** — RustConn ships 16 languages; `.po` files live in
+- **Translations** — RustConn ships 17 translated languages; `.po` files live in
   [`po/`](po/). New languages and corrections are appreciated.
 
 ## Support
