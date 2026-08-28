@@ -5,6 +5,12 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.1] - 2026-08-28
+
+### Fixed
+
+- **Quitting from the tray put the confirmation dialog on a window the user was not looking at** — quitting with sessions still open asks for confirmation, which is correct, and 0.20.11 made the tray route present the window first so that dialog could not be drawn on a tray-hidden surface and lost. The guard it used was `!win.is_visible()`, which answers a different question than the one that matters: a window can be visible and still not be the window in front of the user, behind others, on another workspace, or simply unfocused. In each of those cases the present was skipped, the confirmation was drawn on a surface nobody was watching, and quitting from the tray meant going to look for it. The window is now presented whenever there is something to confirm; on an already-visible window that raises and focuses it, which is what asking to quit should do. Nothing is touched when there is nothing to confirm, which is what the guard was really there to prevent.
+
 ## [0.21.0] - 2026-08-28
 
 A minor version spent on what twelve patch releases in fourteen days left

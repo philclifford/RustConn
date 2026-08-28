@@ -1003,9 +1003,21 @@ fn setup_tray_handling(
                     // The action may raise the close-confirmation dialog, and an
                     // AdwDialog parented to a tray-hidden window is never drawn —
                     // the quit would look like it did nothing. So the window is
-                    // presented first, but only when there is something to
-                    // confirm: presenting unconditionally would flash the window
-                    // open on every quit.
+                    // presented first whenever there is something to confirm.
+                    //
+                    // `open > 0` is the whole guard, and deliberately so. It used
+                    // to also require `!win.is_visible()`, which answers a
+                    // different question than the one that matters: a window can
+                    // be visible and still not be the window in front of the user
+                    // — behind others, on another workspace, or merely unfocused.
+                    // In each of those the present was skipped, the dialog was
+                    // drawn on a surface nobody was watching, and quitting from
+                    // the tray meant going to look for the confirmation by hand.
+                    // On an already-visible window `present` raises and focuses
+                    // it, which is what asking to quit should do, so there is
+                    // nothing here to protect against. The flash that guard was
+                    // written to avoid is prevented by `open > 0` by itself: with
+                    // nothing to confirm the window is never touched at all.
                     let external =
                         crate::window::external_session_registry().map_or(0, |r| r.active_count());
                     let open = crate::window::open_session_count(
@@ -1015,7 +1027,6 @@ fn setup_tray_handling(
                     );
                     if open > 0
                         && let Some(win) = window_for_msgs.upgrade()
-                        && !win.is_visible()
                     {
                         win.present();
                         tray.set_window_visible(true);
