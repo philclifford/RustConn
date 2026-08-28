@@ -243,7 +243,21 @@ else
     # here means something is wrong rather than merely unlucky, so it fails.
     # Under --cached it stays a warning, because the caller asked for the fast
     # path and is entitled to know what they gave up rather than be refused.
-    if ! grep -qE '^[[:space:]]*(Checking|Compiling) ' "$clippy_log"; then
+    #
+    # ANSI escapes are stripped before looking. Cargo colours its output whenever
+    # CARGO_TERM_COLOR=always, and then a progress line reads
+    #   \e[1m\e[92m    Checking\e[0m rustconn-core v0.21.0 (...)
+    # where the first escape precedes the indentation — so `^[[:space:]]*` never
+    # reaches the verb — and a second sits between the verb and the crate name,
+    # so the trailing space cannot match either. Nothing exports that variable
+    # locally, which is why this pattern looked fine here for a whole release
+    # while the identical copy in the CI workflow, where the variable *is* set,
+    # failed the v0.21.0 release commit with clippy green and zero warnings.
+    # The ESC comes from printf rather than being spelled in the pattern so the
+    # sed works under BSD as well as GNU.
+    esc=$(printf '\033')
+    if ! sed "s/${esc}\[[0-9;]*[a-zA-Z]//g" "$clippy_log" \
+         | grep -qE '^[[:space:]]*(Checking|Compiling) '; then
         if [ "$fresh" -eq 1 ]; then
             say '  FAIL  clippy compiled nothing even after cleaning — that run verified nothing.'
             results+=("FAIL	cargo clippy — nothing re-checked")

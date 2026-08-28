@@ -295,7 +295,21 @@ jobs:
           cargo clippy --all-targets -- -D warnings 2>&1 | tee target/ci-clippy.log
           # And prove it happened. If the clean above ever stops working, this
           # turns a silent false green back into a red job.
-          if ! grep -qE '^[[:space:]]*(Checking|Compiling) ' target/ci-clippy.log; then
+          #
+          # The escapes are stripped first because this workflow sets
+          # CARGO_TERM_COLOR=always at the top level, so cargo colours its output
+          # even through a pipe and a progress line arrives as
+          #   \e[1m\e[92m    Checking\e[0m rustconn-cli v0.21.0 (...)
+          # The first escape sits *before* the indentation, so `^[[:space:]]*`
+          # cannot reach the verb, and a second sits between the verb and the
+          # crate name, so the literal trailing space cannot match either. Both
+          # halves of the pattern failed, and the check called a real two-minute
+          # recompile "nothing" on the v0.21.0 release commit. A literal ESC byte
+          # from printf keeps the sed portable, which matters because
+          # scripts/verify.sh runs the same check on macOS.
+          esc=$(printf '\033')
+          if ! sed "s/${esc}\[[0-9;]*[a-zA-Z]//g" target/ci-clippy.log \
+               | grep -qE '^[[:space:]]*(Checking|Compiling) '; then
             echo "::error::clippy compiled nothing — this run verified nothing"
             exit 1
           fi
