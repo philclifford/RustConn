@@ -105,8 +105,10 @@ the lint where the caller lives. Miri cannot execute the syscalls/FFI used here
 `rustconn-locale-sys` and `rustconn-env-sys`, where the precondition guard is a
 testable type precisely because the FFI call itself is not reachable from a test
 harness. Keep the new crate an unconditional dependency even when only one
-platform reaches the call: CI has no macOS runner, so a platform-gated `-sys`
-crate is `unsafe` that never gets compiled.
+platform reaches the call. The `macos-sys` job covers the four existing helpers;
+every other job is Linux, so a platform-gated `-sys` crate would still be
+`unsafe` that only one job in the matrix compiles, and its guard, API and
+contract tests would go unchecked everywhere else.
 Do not allow unsafe to "spread" across the main crates.
 
 ## Documentation

@@ -87,7 +87,7 @@ rustconn-locale-sys = { path = "../rustconn-locale-sys", version = "0.20.11" }
 # is forbidden here. Not gated to one platform on purpose: the X11 (#85), macOS
 # guest-VM (#274) and Flatpak language (#158) paths all go through it, and an
 # unconditional dependency is what gets the guard compiled and its contract
-# tests run — no CI job builds macOS.
+# tests run on every job rather than on the one macOS job alone.
 rustconn-env-sys = { path = "../rustconn-env-sys", version = "0.20.11" }
 # The macOS Dock tile image, for launches LaunchServices cannot find an icon for
 # (a bare binary from a shell, or an .app whose CFBundleExecutable execs a binary
@@ -128,6 +128,14 @@ wayland-native = ["dep:gdk4-wayland"]
 web-embedded = ["dep:webkit6", "rustconn-core/web-embedded"]
 # Enable libadwaita 1.6+ widgets (AdwSpinner, CSS variables, accent colors)
 # Requires libadwaita >= 1.6 at build time (GNOME 50 Flatpak runtime or Fedora 44+).
+# NOT in `default`, and NOT retirable in 0.21.0 — checked, because the
+# "retire it once no supported target is below 1.6" note below invites the
+# question every release. The binding constraint is **Ubuntu 24.04 LTS**, which
+# ships libadwaita 1.5.0 and is listed as the baseline tier in
+# packaging/obs/README.md. Its standard support runs to 2029. The snap's core24
+# gnome platform is the same story and is often cited as the only reason, which
+# makes a core26 GNOME extension look like the thing to wait for; it is not, and
+# checking it answers nothing while 24.04 is still a target.
 # NOT in `default`: Ubuntu 24.04 ships libadwaita 1.5.0 and the snap's core24
 # gnome-46-2404 platform ships 1.5, so the default build must stay on the v1_5
 # baseline. `crate::spinner` holds the single cfg that picks AdwSpinner over

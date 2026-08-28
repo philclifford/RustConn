@@ -19,8 +19,10 @@ two points before changing anything.
   not compile off Apple platforms — there is no cross-platform stand-in for AppKit
   the way `std::env::set_var` is one for `setenv`. The crate itself, its API and its
   precondition guard are built and tested everywhere. Do not generalise this shape
-  to a new `-sys` crate: no CI job builds macOS, so a macOS-gated *crate* would
-  hold `unsafe` that nothing ever compiles.
+  to a new `-sys` crate. The `macos-sys` CI job covers the four existing helpers,
+  but every other job is Linux, so a macOS-gated *crate* would still be `unsafe`
+  that only one job in the matrix ever compiles — and the crate-level guard, the
+  API and the contract tests are what the other jobs are there to check.
 - **The `expect` is wrapped too**: `#![cfg_attr(target_os = "macos", expect(unsafe_code, …))]`.
   Off macOS the crate contains no `unsafe`, so a bare `#![expect(unsafe_code)]`
   would fire `unfulfilled_lint_expectations` and break the zero-warning gate on

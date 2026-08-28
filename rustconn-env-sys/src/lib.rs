@@ -81,8 +81,10 @@
 //!   macOS included: obtaining the count there means
 //!   `proc_pidinfo(PROC_PIDTASKINFO)` or `task_threads()`, which would add
 //!   `libc` and a hand-transcribed C struct layout to the crate whose entire
-//!   purpose is to keep the unsafe surface small — and no CI job builds macOS,
-//!   so neither would ever be compiled, let alone tested. The check is
+//!   purpose is to keep the unsafe surface small. Since 0.21.0 the `macos-sys`
+//!   CI job does compile and test this crate on macOS, so such a block would be
+//!   checked; the reason to leave it out is the unsafe budget rather than the
+//!   absence of a runner. The check is
 //!   defence-in-depth; what makes the call sound is the call site, and the
 //!   thread-identity clause above still guards a regression.
 //!

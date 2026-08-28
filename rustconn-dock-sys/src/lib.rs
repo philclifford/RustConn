@@ -340,8 +340,9 @@ mod tests {
     /// no test: the suite covered the PNG signature and the shape of every outcome,
     /// but never the guard itself. That is the same gap that let a
     /// `rustconn-pty-sys` contract test sit failing on macOS unnoticed until
-    /// 0.20.11 — a guard nothing exercises is a guard nobody knows still works,
-    /// and no CI job builds macOS to find out.
+    /// 0.20.11 — a guard nothing exercises is a guard nobody knows still works.
+    /// The `macos-sys` CI job added in the same release is what now runs this on a
+    /// machine other than the maintainer's.
     ///
     /// Asked from a spawned thread on purpose. A plain `#[test]` body is not a
     /// reliable negative here: libtest under `--test-threads=1`, and nextest with

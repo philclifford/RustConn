@@ -98,6 +98,10 @@ modules:
       - type: archive
         url: https://download.gnome.org/sources/vte/0.80/vte-0.80.5.tar.xz
         sha256: 58a4e00ab5d4a95b4be4dc57b48308deafd72d6839dbbd076648fa353321cc41
+        # Ceiling deliberate but unexplained until 0.21.0; the evidence, and the
+        # steps to lift it, are recorded once in
+        # packaging/flatpak/io.github.totoshko88.RustConn.yml rather than three
+        # times here.
         x-checker-data:
           type: gnome
           name: vte

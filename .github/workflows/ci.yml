@@ -431,3 +431,69 @@ jobs:
       # advisory ignore list lives in deny.toml [advisories]. (Replaces the
       # separate cargo-audit job, which duplicated that ignore list.)
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+
+  macos-sys:
+    name: macOS (-sys crates)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+
+      # The only system library any of the four needs: rustconn-locale-sys binds
+      # gettext. The other three are libc, nix and objc2, all pure Rust.
+      - name: Install gettext
+        run: brew install gettext
+
+      - name: Cache cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-macos-sys-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-macos-sys-
+
+      # Why this job exists, and why it is this small.
+      #
+      # No job built macOS at all until 0.21.0, and that had already cost
+      # something: the rustconn-pty-sys contract test proving the `pre_exec` hook
+      # runs in the forked child — the thing that makes SSH password prompts work
+      # (#175) — had never passed on macOS. It accepted ENOTTY and EPERM, macOS
+      # answers ENODEV for /dev/null, and it went unnoticed until 0.20.11 because
+      # the only machine that ran it was the maintainer's. A test guarding
+      # `unsafe` that no CI job executes is a test nobody knows the state of.
+      #
+      # Scoped to the four -sys crates rather than the whole workspace on
+      # purpose. They hold every `unsafe` block in the repository, they are where
+      # the platform differences actually live, and between them they need one
+      # Homebrew package. Building the GUI here would mean gtk4, libadwaita, vte3
+      # and WebKitGTK from Homebrew for a twenty-minute job, and `web-embedded` is
+      # a default feature that cannot build on macOS at all — which is a separate
+      # thing worth fixing before this scope grows.
+      #
+      # rustconn-dock-sys is the reason `--all-targets` matters here: off macOS
+      # its AppKit call is `cfg`-ed out and it contains no `unsafe`, so this is
+      # the only place its `unsafe` block and its main-thread guard are compiled
+      # and its contract test is run.
+      - name: Clippy the -sys crates
+        run: |
+          cargo clippy --all-targets \
+            -p rustconn-pty-sys \
+            -p rustconn-locale-sys \
+            -p rustconn-env-sys \
+            -p rustconn-dock-sys \
+            -- -D warnings
+
+      - name: Test the -sys crates
+        run: |
+          cargo test \
+            -p rustconn-pty-sys \
+            -p rustconn-locale-sys \
+            -p rustconn-env-sys \
+            -p rustconn-dock-sys

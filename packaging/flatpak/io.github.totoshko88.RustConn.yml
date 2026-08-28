@@ -96,6 +96,29 @@ modules:
       - type: archive
         url: https://download.gnome.org/sources/vte/0.80/vte-0.80.5.tar.xz
         sha256: 58a4e00ab5d4a95b4be4dc57b48308deafd72d6839dbbd076648fa353321cc41
+        # The ceiling, and what is actually known about it.
+        #
+        # Three release notes in the 0.20 series stated that VTE "stays pinned
+        # below 0.81 by design" and not one of them, nor any comment, nor any
+        # commit message, said what the design was. An assertion repeated until it
+        # looks settled is not a reason, so here is the evidence instead:
+        #
+        #   * `vte4` is at 0.10 and RustConn selects its `v0_76` feature, so the
+        #     API surface in use is VTE 0.76's. VTE keeps that ABI within the
+        #     2.91 series, and 0.84 still provides it.
+        #   * The maintainer's macOS build runs against Homebrew's VTE 0.84.1
+        #     daily, which is the only empirical datum either way and points at
+        #     the ceiling being unnecessary.
+        #   * What is *not* known: whether a bundled 0.81+ built inside the
+        #     GNOME 50 runtime behaves, and whether anything in the `mc` SGR mouse
+        #     workaround below is sensitive to it. Those two are the reason this is
+        #     still pinned rather than lifted here.
+        #
+        # To lift it: raise this to the current stable, rebuild the Flatpak on
+        # Linux, and exercise a Local Shell, an SSH session, `mc` inside both, and
+        # a window resize mid-session. If that passes, delete the `versions` block
+        # and say so in the changelog. If it fails, write down which of the four
+        # broke — that is the reason nobody recorded the first time.
         x-checker-data:
           type: gnome
           name: vte
