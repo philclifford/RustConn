@@ -5,7 +5,7 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.21.2] - 2026-08-31
 
 ### Fixed
 
@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The embedded web browser lost its login on every restart (issue [#309](https://github.com/totoshko88/RustConn/issues/309))** — a Web connection opened in Embedded mode asked for credentials again after RustConn was closed and reopened, while the same connection in System mode stayed logged in. Each connection already gets a persistent `NetworkSession` with its own data directory, which makes the website data manager persistent — but WebKitGTK keeps cookies in a separate subsystem that stays in memory only until `set_persistent_storage` is called on the cookie manager, and that call was missing. Cookies are now written to `cookies.sqlite` in the connection's data directory, so a session survives a restart. Existing connections gain this automatically the next time they are opened; there is nothing to migrate, since there were no persisted cookies before.
 
 - **A new Local Shell tab in Flatpak could open at the wrong size when the window had changed size since the last tab (issue [#294](https://github.com/totoshko88/RustConn/issues/294))** — the host shell runs through `flatpak-spawn --host` and `script`, which copies the window size exactly once at startup and never sees a later `SIGWINCH` (`flatpak-spawn` does not forward it). The spawn already waited for the terminal to be laid out before starting, but the test was a non-zero pixel allocation, and that arrives one frame before VTE recomputes its row and column count for that allocation. A tab opened while the window was a different size than the previous one therefore spawned on the very first poll tick with the *previous* grid still in place, freezing the host shell at that stale size (the reported 18×80). The spawn now waits until the grid has *settled* — a non-zero allocation plus two consecutive polls reporting the same row/column count — so `script` inherits the size the user is actually looking at. SSH and other sessions were never affected: they run on RustConn's own PTY, which tracks resizes normally.
+
+### Dependencies
+
+- **Updated**: gtk-rs stack (glib, gio, cairo-rs, pango, gdk-pixbuf-sys, graphene-sys and their `-sys` crates) 0.22.8 → 0.22.9, aes 0.9.2 → 0.9.3, hyper 1.11.0 → 1.11.1, indexmap 2.14.0 → 2.14.1; system-deps 9.0.0 pulled in transitively. All are semver-compatible patch updates from `cargo update`.
 
 ## [0.21.1] - 2026-08-28
 
