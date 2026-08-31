@@ -1388,7 +1388,40 @@ fn start_spice_connection_internal(
             config = config.with_unix_socket(socket_path);
         }
     }
-    let args = build_spice_viewer_args(&config);
+
+    // Issue #308: hand remote-viewer the resolved password so it stops
+    // re-prompting on every connect. The credential is resolved and cached
+    // before this function runs (see `window/credentials.rs`, where SPICE is
+    // handled in the same arm as SSH), but the launch never read it back. The
+    // password cannot go on argv — `/proc/<pid>/cmdline` would expose it to
+    // every process of the same user — so it travels in a mode-0600 `.vv`
+    // connection file the same way RDP uses `/args-from:`. `build_vv_connection_file`
+    // returns `None` for a unix socket or an empty password, in which case we
+    // fall through to the plain URI args and the viewer prompts as before.
+    //
+    // The guard is held until `spawn_and_register_external_viewer` returns:
+    // after a successful spawn the viewer owns the file (it carries
+    // `delete-this-file=1`), and if the spawn fails the guard's `Drop` removes it.
+    if let Some(password) = cached_connection_password(state, connection_id) {
+        use secrecy::ExposeSecret;
+        config = config.with_password(password.expose_secret());
+    }
+    let vv_file = rustconn_core::spice_client::build_vv_connection_file(&config)
+        .and_then(|contents| super::command_env::EphemeralVvFile::write(&contents));
+
+    let args = if let Some(ref vv_file) = vv_file {
+        // The .vv file carries host/port/TLS/password, so it replaces the URI.
+        // The connection-independent flags (title, USB, shared folders) still go
+        // on argv next to it — remote-viewer accepts both together.
+        let mut args = vec![vv_file.path().to_string_lossy().to_string()];
+        args.extend(rustconn_core::spice_client::build_spice_extra_flags(
+            &config,
+        ));
+        args
+    } else {
+        build_spice_viewer_args(&config)
+    };
+
     spawn_and_register_external_viewer(
         state,
         notebook,
@@ -1399,6 +1432,9 @@ fn start_spice_connection_internal(
         &args,
         ssh_tunnel,
     );
+    // Keep the .vv file alive across the spawn; drop (and remove it) only after
+    // the viewer has had the chance to open it.
+    drop(vv_file);
     None
 }
 

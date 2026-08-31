@@ -135,6 +135,90 @@ impl std::fmt::Debug for EphemeralCommandEnv {
     }
 }
 
+/// A mode-0600 virt-viewer `.vv` connection file that removes itself on drop.
+///
+/// SPICE has no embedded client, so it launches `remote-viewer`, and the only
+/// way to hand that a password without putting it on argv is a `.vv` file (issue
+/// #308). The file's `[virt-viewer]` section carries `password=` together with
+/// the connection parameters; its contents come from
+/// [`rustconn_core::spice_client::build_vv_connection_file`], which also sets
+/// `delete-this-file=1` so a viewer that starts removes the file after reading.
+///
+/// Unlike [`EphemeralCommandEnv`], this guard *does* remove the file on drop.
+/// The two cases do not overlap: `delete-this-file=1` covers a viewer that
+/// launched and read the file, and the drop covers a launch that failed before
+/// the viewer ever opened it. The guard is therefore held by the caller only
+/// until the spawn returns; after a successful spawn the viewer owns the
+/// deletion, and after a failed one the drop cleans up. Removal is best effort
+/// and ignores a missing file, so the two paths never fight.
+pub(super) struct EphemeralVvFile {
+    path: PathBuf,
+}
+
+impl EphemeralVvFile {
+    /// Returns the path passed to `remote-viewer` as its connection file.
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Writes `contents` to a fresh mode-0600 file in `$XDG_RUNTIME_DIR`.
+    ///
+    /// `$XDG_RUNTIME_DIR` (`/run/user/<uid>`) is tmpfs, user-private, and shared
+    /// at the same path with the host, so a `host:` viewer run through
+    /// `flatpak-spawn --host` can still read it — the same reason
+    /// [`EphemeralCommandEnv`] uses it. Returns `None` when the directory is
+    /// unusable or the file cannot be created; the caller then falls back to the
+    /// plain argv launch and lets the viewer prompt.
+    pub(super) fn write(contents: &str) -> Option<Self> {
+        let dir = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .filter(|path| path.is_dir())?;
+        Self::write_in_dir(&dir, contents)
+    }
+
+    fn write_in_dir(dir: &Path, contents: &str) -> Option<Self> {
+        let path = dir.join(format!("rustconn-spice-{}.vv", uuid::Uuid::new_v4()));
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|error| {
+                tracing::warn!(
+                    path = %path.display(),
+                    %error,
+                    "Failed to create SPICE connection file"
+                );
+            })
+            .ok()?;
+
+        let guard = Self { path };
+        if let Err(error) = file.write_all(contents.as_bytes()) {
+            tracing::warn!(
+                path = %guard.path.display(),
+                %error,
+                "Failed to write SPICE connection file"
+            );
+            return None; // guard's Drop removes the partial file
+        }
+        Some(guard)
+    }
+}
+
+impl Drop for EphemeralVvFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+impl std::fmt::Debug for EphemeralVvFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EphemeralVvFile")
+            .field("path", &self.path)
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
@@ -217,6 +301,41 @@ mod tests {
         let password = SecretString::from("hunter2-secret".to_string());
         let guard = EphemeralCommandEnv::write_in_dir(dir.path(), &[("RC_PW", &password)])
             .expect("write env file");
+        assert!(!format!("{guard:?}").contains("hunter2-secret"));
+    }
+
+    #[test]
+    fn vv_file_is_written_mode_0600() {
+        let dir = TempRuntimeDir::new();
+        let guard = EphemeralVvFile::write_in_dir(dir.path(), "[virt-viewer]\ntype=spice\n")
+            .expect("write vv file");
+        let mode = std::fs::metadata(guard.path())
+            .expect("read vv file metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(
+            std::fs::read_to_string(guard.path()).expect("read vv file"),
+            "[virt-viewer]\ntype=spice\n"
+        );
+    }
+
+    #[test]
+    fn vv_file_removed_on_drop() {
+        let dir = TempRuntimeDir::new();
+        let path = {
+            let guard = EphemeralVvFile::write_in_dir(dir.path(), "x").expect("write vv file");
+            guard.path().to_path_buf()
+        };
+        assert!(!path.exists(), "the .vv file must be removed on drop");
+        dir.assert_empty();
+    }
+
+    #[test]
+    fn vv_file_debug_does_not_leak_contents() {
+        let dir = TempRuntimeDir::new();
+        let guard = EphemeralVvFile::write_in_dir(dir.path(), "password=hunter2-secret\n")
+            .expect("write vv file");
         assert!(!format!("{guard:?}").contains("hunter2-secret"));
     }
 }

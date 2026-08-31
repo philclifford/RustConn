@@ -181,6 +181,113 @@ pub fn build_spice_viewer_args(config: &SpiceClientConfig) -> Vec<String> {
     args
 }
 
+/// Builds the viewer flags that work alongside a `.vv` connection file.
+///
+/// A `.vv` file (see [`build_vv_connection_file`]) fully describes the *target*
+/// — host, port, TLS, password — but the connection-independent options are
+/// still passed as flags. `remote-viewer` accepts these next to a connection
+/// file, so the password path can keep USB auto-redirect, WebDAV shared folders
+/// and the window title without putting any of them in the file.
+///
+/// Deliberately omits everything the `.vv` file already carries (`--spice-proxy`,
+/// `--spice-ca-file`, `--spice-host-subject`) so the two never state the same
+/// thing twice, and audio, which is left at the viewer default on this path.
+#[must_use]
+pub fn build_spice_extra_flags(config: &SpiceClientConfig) -> Vec<String> {
+    let mut args = Vec::new();
+
+    args.push("--title".to_string());
+    args.push(format!("SPICE: {}", config.host));
+
+    if config.usb_redirection {
+        args.push("--spice-usbredir-auto-redirect-filter".to_string());
+        args.push(SPICE_USB_AUTO_REDIRECT_FILTER.to_string());
+    }
+    for folder in &config.shared_folders {
+        args.push("--spice-shared-dir".to_string());
+        args.push(folder.local_path.to_string_lossy().to_string());
+    }
+
+    args
+}
+
+/// Escapes a value for a virt-viewer `.vv` INI line.
+///
+/// The `.vv` format is a GLib key file: values run to the end of the line, so a
+/// newline or carriage return would forge or truncate a key. A password is the
+/// one field here that is not RustConn-controlled, so those characters are
+/// stripped rather than trusted. Everything else the caller already validated
+/// (host, port), but the pass is cheap and keeps every emitted line well-formed.
+fn escape_vv_value(value: &str) -> String {
+    value.replace(['\n', '\r'], "")
+}
+
+/// Builds the contents of a virt-viewer `.vv` connection file, or `None`.
+///
+/// A `.vv` file is the only way to hand `remote-viewer` a password without
+/// putting it on argv, where `/proc/<pid>/cmdline` would expose it to every
+/// process of the same user (issue [#308]). The file carries `password=` in a
+/// `[virt-viewer]` section together with the connection parameters, plus
+/// `delete-this-file=1` so the viewer removes it after reading. The caller is
+/// responsible for writing it mode-0600 to a user-private directory and for
+/// removing it if the viewer does not.
+///
+/// Returns `None` — and the caller falls back to the plain
+/// [`build_spice_viewer_args`] URI, which lets the viewer prompt — when there is
+/// no password to deliver, or when the connection uses a unix socket. The `.vv`
+/// format addresses the target by `host`/`port`/`tls-port` and has no field for
+/// a `spice+unix://` path, so a socket connection cannot be expressed here; a
+/// local socket also needs no password in practice.
+///
+/// [#308]: https://github.com/totoshko88/RustConn/issues/308
+#[must_use]
+pub fn build_vv_connection_file(config: &SpiceClientConfig) -> Option<String> {
+    use secrecy::ExposeSecret;
+    use std::fmt::Write as _;
+
+    // No socket support in the .vv format, and a socket needs no password.
+    if config.unix_socket_path.is_some() {
+        return None;
+    }
+    let password = config.password.as_ref()?;
+    let password = password.expose_secret();
+    if password.is_empty() {
+        return None;
+    }
+
+    let mut file = String::from("[virt-viewer]\ntype=spice\n");
+    let _ = writeln!(file, "host={}", escape_vv_value(&config.host));
+    if config.tls_enabled {
+        // tls-port is the encrypted port; `port` stays unset so the viewer does
+        // not also attempt a plaintext channel.
+        let _ = writeln!(file, "tls-port={}", config.port);
+        if let Some(ref ca_path) = config.ca_cert_path
+            && let Ok(ca) = std::fs::read_to_string(ca_path)
+        {
+            // The CA PEM is a multi-line value; the .vv format joins the lines
+            // with literal `\n` sequences, matching oVirt's generated files.
+            let joined = ca.replace('\n', "\\n");
+            let _ = writeln!(file, "ca={joined}");
+        }
+        if config.skip_cert_verify {
+            // An empty host-subject disables subject matching, the closest the
+            // format offers to the argv `--spice-host-subject ""` this replaces.
+            file.push_str("host-subject=\n");
+        }
+    } else {
+        let _ = writeln!(file, "port={}", config.port);
+    }
+    if let Some(ref proxy) = config.proxy {
+        let _ = writeln!(file, "proxy={}", escape_vv_value(proxy));
+    }
+    // Written last so a truncated file (partial write) never carries the
+    // password without also carrying the deletion flag that cleans it up.
+    let _ = writeln!(file, "password={}", escape_vv_value(password));
+    file.push_str("delete-this-file=1\n");
+
+    Some(file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +370,111 @@ mod tests {
         assert!(args.contains(&"spice+unix:///run/libvirt/qemu/vm-spice.sock".to_string()));
         assert!(!args.iter().any(|a| a.starts_with("spice://")));
         assert!(!args.iter().any(|a| a.starts_with("spice+tls://")));
+    }
+
+    #[test]
+    fn vv_file_none_without_password() {
+        let config = SpiceClientConfig::new("192.168.1.100").with_port(5900);
+        assert!(build_vv_connection_file(&config).is_none());
+    }
+
+    #[test]
+    fn vv_file_none_for_empty_password() {
+        let config = SpiceClientConfig::new("192.168.1.100")
+            .with_port(5900)
+            .with_password("");
+        assert!(build_vv_connection_file(&config).is_none());
+    }
+
+    #[test]
+    fn vv_file_none_for_unix_socket() {
+        // The .vv format has no socket field, and a local socket needs no pass.
+        let config = SpiceClientConfig::new("ignored")
+            .with_password("secret")
+            .with_unix_socket("/run/libvirt/qemu/vm-spice.sock");
+        assert!(build_vv_connection_file(&config).is_none());
+    }
+
+    #[test]
+    fn vv_file_plain_tcp_carries_password_and_delete_flag() {
+        let config = SpiceClientConfig::new("192.168.1.100")
+            .with_port(5900)
+            .with_password("s3cret");
+        let file = build_vv_connection_file(&config).expect("vv file");
+
+        assert!(file.starts_with("[virt-viewer]\n"));
+        assert!(file.contains("type=spice\n"));
+        assert!(file.contains("host=192.168.1.100\n"));
+        assert!(file.contains("port=5900\n"));
+        assert!(!file.contains("tls-port="));
+        assert!(file.contains("password=s3cret\n"));
+        assert!(file.contains("delete-this-file=1\n"));
+    }
+
+    #[test]
+    fn vv_file_tls_uses_tls_port_not_port() {
+        let config = SpiceClientConfig::new("secure.example.com")
+            .with_port(5901)
+            .with_tls(true)
+            .with_skip_cert_verify(true)
+            .with_password("s3cret");
+        let file = build_vv_connection_file(&config).expect("vv file");
+
+        assert!(file.contains("tls-port=5901\n"));
+        assert!(!file.contains("\nport="));
+        // skip_cert_verify maps to an empty host-subject.
+        assert!(file.contains("host-subject=\n"));
+    }
+
+    #[test]
+    fn vv_file_strips_newlines_from_password() {
+        // A newline in the value would forge a second .vv key.
+        let config = SpiceClientConfig::new("192.168.1.100")
+            .with_port(5900)
+            .with_password("s3cret\nusb-filter=null");
+        let file = build_vv_connection_file(&config).expect("vv file");
+
+        assert!(file.contains("password=s3cretusb-filter=null\n"));
+        // Exactly one password key, and no injected key on its own line.
+        assert_eq!(file.matches("password=").count(), 1);
+        assert!(!file.contains("\nusb-filter="));
+    }
+
+    #[test]
+    fn vv_file_includes_proxy() {
+        let config = SpiceClientConfig::new("192.168.1.100")
+            .with_port(5900)
+            .with_password("s3cret")
+            .with_proxy("http://proxy:3128");
+        let file = build_vv_connection_file(&config).expect("vv file");
+
+        assert!(file.contains("proxy=http://proxy:3128\n"));
+    }
+
+    #[test]
+    fn extra_flags_have_no_uri_and_no_duplicated_vv_fields() {
+        let folder = SpiceSharedFolder::new("/home/user/share", "MyShare");
+        let config = SpiceClientConfig::new("192.168.1.100")
+            .with_port(5900)
+            .with_tls(true)
+            .with_ca_cert("/etc/ssl/ca.crt")
+            .with_proxy("http://proxy:3128")
+            .with_usb_redirection(true)
+            .with_shared_folder(folder);
+        let flags = build_spice_extra_flags(&config);
+
+        // Title and the connection-independent flags are present.
+        assert!(flags.contains(&"--title".to_string()));
+        assert!(flags.contains(&"SPICE: 192.168.1.100".to_string()));
+        assert!(flags.contains(&"--spice-usbredir-auto-redirect-filter".to_string()));
+        assert!(flags.contains(&"--spice-shared-dir".to_string()));
+        assert!(flags.contains(&"/home/user/share".to_string()));
+
+        // Nothing the .vv file already carries is repeated on argv.
+        assert!(!flags.iter().any(|a| a.starts_with("spice://")));
+        assert!(!flags.iter().any(|a| a.starts_with("spice+tls://")));
+        assert!(!flags.contains(&"--spice-proxy".to_string()));
+        assert!(!flags.contains(&"--spice-ca-file".to_string()));
+        assert!(!flags.contains(&"--spice-host-subject".to_string()));
     }
 }
