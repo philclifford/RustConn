@@ -17,27 +17,37 @@ use super::protocols::{
 use crate::state::SharedAppState;
 use crate::utils::spawn_blocking_with_callback;
 
+/// Environment variable carrying the target account password to the outer
+/// OpenSSH process. Nested proxy hops explicitly clear it before starting SSH.
+const TARGET_PASSWORD_ENV: &str = "_RC_TGT_PW_FILE";
+
 /// Environment variable carrying the jump host (bastion) password to the
 /// `SSH_ASKPASS` helper. Intentionally obscure to reduce exposure in
 /// `/proc/<pid>/environ`, matching the SSH tunnel askpass convention.
-const JUMP_HOST_PW_ENV: &str = "_RC_JH_PW";
+const JUMP_HOST_PW_ENV: &str = "_RC_JH_PW_FILE";
 
-/// Returns the path to a reusable `SSH_ASKPASS` helper that echoes the jump
-/// host password from the given env var name.
+/// Returns the path to the prompt-aware helper for the target account password.
+fn target_password_askpass_script() -> Option<std::path::PathBuf> {
+    askpass_script_for_env(TARGET_PASSWORD_ENV)
+}
+
+/// Returns the path to a reusable `SSH_ASKPASS` helper that reads the jump
+/// host secret-file path from the given env var name.
 ///
-/// The script holds NO secret — only the env var name — so it is safe to keep
-/// for the process lifetime and share across sessions. The password itself
-/// lives solely in the spawned ssh process's environment. The script is placed
-/// in `$XDG_RUNTIME_DIR` (tmpfs, mode 0700, user-private) to avoid `/tmp`
+/// The script holds no secret — only the env var name — so it is safe to keep
+/// for the process lifetime and share across sessions. The password is written
+/// directly from `SecretString` to a randomized mode-0600 runtime file; the env
+/// carries only its path, and the helper opens then unlinks it before output.
+/// The script itself is placed in `$XDG_RUNTIME_DIR` (mode 0700) to avoid `/tmp`
 /// symlink races on a fixed filename, falling back to a randomized temp path.
 /// Created once (mode 0700) and cached per env var name; returns `None` if
 /// creation fails.
 ///
-/// For the legacy single-hop case (env var `_RC_JH_PW`), the script is the
+/// For the legacy single-hop case (env var `_RC_JH_PW_FILE`), the script is the
 /// same singleton as before. For multi-hop (issue #203), each deeper hop gets
-/// its own script reading `_RC_JH_PW_1`, `_RC_JH_PW_2`, etc.
+/// its own script reading `_RC_JH_PW_FILE_1`, `_RC_JH_PW_FILE_2`, etc.
 fn jump_host_askpass_script() -> Option<std::path::PathBuf> {
-    jump_host_askpass_script_for_env(JUMP_HOST_PW_ENV)
+    askpass_script_for_env(JUMP_HOST_PW_ENV)
 }
 
 /// Points the session's Backspace and Delete keys at what this host expects.
@@ -56,6 +66,18 @@ fn apply_ssh_erase_mode(
 ) {
     let (backspace_sends, delete_sends) = conn.protocol_config.erase_modes();
     notebook.set_erase_mode(session_id, backspace_sends, delete_sends);
+}
+
+/// Inserts an opaque proxy hop while preserving host-to-credential alignment.
+fn insert_opaque_jump_host(
+    jump_hosts: &mut Vec<String>,
+    hop_ids: &mut Vec<Option<Uuid>>,
+    index: usize,
+    host: String,
+) {
+    debug_assert_eq!(jump_hosts.len(), hop_ids.len());
+    jump_hosts.insert(index, host);
+    hop_ids.insert(index, None);
 }
 
 /// Parses a jump-host string (`[user@]host[:port]`) and returns `(host, port)`
@@ -95,10 +117,20 @@ fn parse_jump_host_for_control(jump_host: &str) -> (String, u16) {
     (host.to_string(), port)
 }
 
+/// Builds a helper that releases a credential only for OpenSSH's account-password prompt.
+///
+/// Host-key confirmation, private-key passphrases, keyboard-interactive challenges, OTP/token
+/// prompts, and password-change prompts all exit non-zero without printing the credential.
+fn askpass_script_contents(env_var_name: &str) -> String {
+    format!(
+        "#!/bin/sh\ncase \"${{1-}}\" in\n  *\"'s password:\"*)\n    secret_file=\"${{{env_var_name}}}\"\n    [ -n \"$secret_file\" ] || exit 1\n    exec 3<\"$secret_file\" || exit 1\n    rm -f \"$secret_file\"\n    cat <&3\n    ;;\n  *) exit 1 ;;\nesac\n"
+    )
+}
+
 /// Creates (or returns cached) an askpass script that prints the value of
 /// `env_var_name`. Each unique env var gets its own on-disk script so that
 /// nested ProxyCommand hops read their own password (issue #203).
-fn jump_host_askpass_script_for_env(env_var_name: &str) -> Option<std::path::PathBuf> {
+fn askpass_script_for_env(env_var_name: &str) -> Option<std::path::PathBuf> {
     use std::sync::Mutex;
     static SCRIPTS: std::sync::OnceLock<
         Mutex<std::collections::HashMap<String, std::path::PathBuf>>,
@@ -112,22 +144,24 @@ fn jump_host_askpass_script_for_env(env_var_name: &str) -> Option<std::path::Pat
 
     let path = match std::env::var_os("XDG_RUNTIME_DIR") {
         Some(dir) if !dir.is_empty() => {
-            if env_var_name == JUMP_HOST_PW_ENV {
+            if env_var_name == TARGET_PASSWORD_ENV {
+                std::path::PathBuf::from(dir).join("rustconn-target-askpass.sh")
+            } else if env_var_name == JUMP_HOST_PW_ENV {
                 std::path::PathBuf::from(dir).join("rustconn-jh-askpass.sh")
             } else {
                 // Unique file per hop index: rustconn-jh-askpass-1.sh, etc.
                 let suffix = env_var_name
-                    .strip_prefix("_RC_JH_PW_")
+                    .strip_prefix("_RC_JH_PW_FILE_")
                     .unwrap_or(env_var_name);
                 std::path::PathBuf::from(dir).join(format!("rustconn-jh-askpass-{suffix}.sh"))
             }
         }
-        _ => std::env::temp_dir().join(format!("rc-jh-askpass-{}.sh", Uuid::new_v4())),
+        _ => std::env::temp_dir().join(format!("rc-askpass-{}.sh", Uuid::new_v4())),
     };
 
-    let script = format!("#!/bin/sh\nprintf '%s\\n' \"${{{env_var_name}}}\"\n");
+    let script = askpass_script_contents(env_var_name);
     if let Err(e) = std::fs::write(&path, script.as_bytes()) {
-        tracing::error!(error = %e, "Failed to create jump host askpass script");
+        tracing::error!(error = %e, "Failed to create SSH askpass script");
         return None;
     }
 
@@ -135,13 +169,83 @@ fn jump_host_askpass_script_for_env(env_var_name: &str) -> Option<std::path::Pat
     {
         use std::os::unix::fs::PermissionsExt;
         if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)) {
-            tracing::error!(error = %e, "Failed to chmod jump host askpass script");
+            tracing::error!(error = %e, "Failed to chmod SSH askpass script");
             return None;
         }
     }
 
     map.insert(env_var_name.to_string(), path.clone());
     Some(path)
+}
+
+fn create_askpass_secret_file(password: &SecretString) -> std::io::Result<std::path::PathBuf> {
+    use secrecy::ExposeSecret;
+    use std::io::Write;
+
+    let directory = std::env::var_os("XDG_RUNTIME_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+    let path = directory.join(format!("rustconn-askpass-secret-{}", Uuid::new_v4()));
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(&path)?;
+    if let Err(error) = file.write_all(password.expose_secret().as_bytes()) {
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        return Err(error);
+    }
+    drop(file);
+    Ok(path)
+}
+
+fn ssh_askpass_env(
+    jump_host_passwords: &[(String, SecretString)],
+    target_password: Option<(&SecretString, &std::path::Path)>,
+) -> (Vec<zeroize::Zeroizing<String>>, Vec<std::path::PathBuf>) {
+    let mut env = Vec::with_capacity(jump_host_passwords.len() + 3);
+    let mut cleanup_paths = Vec::with_capacity(jump_host_passwords.len() + 1);
+    for (env_name, password) in jump_host_passwords {
+        match create_askpass_secret_file(password) {
+            Ok(path) => {
+                env.push(zeroize::Zeroizing::new(format!(
+                    "{env_name}={}",
+                    path.display()
+                )));
+                cleanup_paths.push(path);
+            }
+            Err(error) => {
+                tracing::error!(%error, "Failed to create jump host askpass secret file");
+            }
+        }
+    }
+    if let Some((password, script)) = target_password {
+        match create_askpass_secret_file(password) {
+            Ok(path) => {
+                env.push(zeroize::Zeroizing::new(format!(
+                    "{TARGET_PASSWORD_ENV}={}",
+                    path.display()
+                )));
+                cleanup_paths.push(path);
+                env.push(zeroize::Zeroizing::new(format!(
+                    "SSH_ASKPASS={}",
+                    script.display()
+                )));
+                env.push(zeroize::Zeroizing::new(
+                    "SSH_ASKPASS_REQUIRE=force".to_string(),
+                ));
+            }
+            Err(error) => {
+                tracing::error!(%error, "Failed to create target askpass secret file");
+            }
+        }
+    }
+    (env, cleanup_paths)
 }
 
 /// Resolves the identity file for a connection that authenticates with a key
@@ -197,11 +301,15 @@ fn agent_identity_file(ssh_config: &rustconn_core::SshConfig) -> Option<String> 
 /// waypipe is used, and the resolved jump-host chain string (for monitoring).
 ///
 /// Returns `(identity_file, extra_args, use_waypipe, jump_host_chain,
-/// jump_host_passwords)`. The last element is a vec of per-hop bastion
-/// passwords (issue #191/#203), set only when `SSH_ASKPASS` helpers were wired
-/// into the `ProxyCommand`; the caller must expose each via its indexed env var
-/// (`_RC_JH_PW`, `_RC_JH_PW_1`, ...) in the spawned ssh environment.
-/// For non-SSH protocols it returns empty defaults.
+/// jump_host_passwords, target_askpass_allowed)`. Bastion passwords are set
+/// only when per-hop helpers were wired into `ProxyCommand`; the last flag is
+/// set only for an explicit password-only target with a non-empty cached
+/// credential and no competing identity/auth override.
+///
+/// Callers expose bastion passwords via `_RC_JH_PW_FILE[_N]`. When the target flag
+/// is set and the helper can be created, they expose the target password via
+/// `_RC_TGT_PW_FILE` together with `SSH_ASKPASS` and `SSH_ASKPASS_REQUIRE=force`.
+/// For non-SSH protocols this returns empty defaults.
 ///
 /// Extracted from `start_ssh_connection` and `reconnect_ssh_in_place`, which
 /// previously carried ~150 near-identical lines each — a fix to one path could
@@ -211,15 +319,17 @@ fn build_ssh_command_args(
     connection_id: Uuid,
     state: &SharedAppState,
     groups: &[rustconn_core::ConnectionGroup],
+    has_cached_target_password: bool,
 ) -> (
     Option<String>,
     Vec<String>,
     bool,
     Option<String>,
     Vec<(String, SecretString)>,
+    bool,
 ) {
     let rustconn_core::ProtocolConfig::Ssh(ssh_config) = &conn.protocol_config else {
-        return (None, Vec::new(), false, None, Vec::new());
+        return (None, Vec::new(), false, None, Vec::new(), false);
     };
 
     // Resolve key path via inheritance (connection → group → parent group → root)
@@ -247,6 +357,34 @@ fn build_ssh_command_args(
     // identity, IdentitiesOnly, proxy_jump, ControlMaster/Persist,
     // agent forwarding, X11, compression, custom options, port forwards
     let mut args = ssh_config.build_command_args();
+
+    // Unlike the old VTE watcher, forced askpass is scoped to OpenSSH's target
+    // authentication phase. Keep the gate fail-closed for mixed identity/auth
+    // configurations; those continue to prompt interactively.
+    let target_askpass_allowed = has_cached_target_password
+        && rustconn_core::ssh_tunnel::target_password_askpass_allowed(ssh_config, key.is_some());
+    if target_askpass_allowed {
+        for option in [
+            "PreferredAuthentications=password",
+            "KbdInteractiveAuthentication=no",
+            "PubkeyAuthentication=no",
+            "PasswordAuthentication=yes",
+            "NumberOfPasswordPrompts=1",
+        ] {
+            args.push("-o".to_string());
+            args.push(option.to_string());
+        }
+        if !ssh_config
+            .custom_options
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case("StrictHostKeyChecking"))
+        {
+            // Forced askpass must never receive the host-key confirmation prompt.
+            // accept-new accepts first use but still rejects a changed host key.
+            args.push("-o".to_string());
+            args.push("StrictHostKeyChecking=accept-new".to_string());
+        }
+    }
 
     // The agent identity is only meaningful together with IdentitiesOnly: without
     // it ssh keeps offering every other key the agent holds, which is exactly the
@@ -298,7 +436,14 @@ fn build_ssh_command_args(
         .ok()
         .map(|s| s.settings().network.clone())
         .unwrap_or_default();
-    if let Some(proxy) = ssh_inheritance::resolve_ssh_proxy_jump(conn, groups, &network) {
+    // A dedicated/custom route is opaque and may win before a generated
+    // ProxyCommand under OpenSSH's first-value semantics. Never combine it
+    // with RustConn-managed hops or their credential environment.
+    let has_unmanaged_proxy_route =
+        rustconn_core::ssh_tunnel::has_unmanaged_proxy_route(ssh_config);
+    if !has_unmanaged_proxy_route
+        && let Some(proxy) = ssh_inheritance::resolve_ssh_proxy_jump(conn, groups, &network)
+    {
         jump_hosts.push(proxy);
     }
 
@@ -314,7 +459,8 @@ fn build_ssh_command_args(
     // still reproducible after 0.20.9 claimed to have fixed it. Hops further out,
     // below, keep reading their own field — see that function's docs for why that
     // asymmetry is deliberate.
-    if let Ok(state_ref) = state.try_borrow()
+    if !has_unmanaged_proxy_route
+        && let Ok(state_ref) = state.try_borrow()
         && let Some(jump_id) = super::protocols::resolve_first_hop_id(&state_ref, conn)
     {
         let mut current_id = Some(jump_id);
@@ -416,9 +562,17 @@ fn build_ssh_command_args(
                                     }
                                     first_hop_password = Some(pw_secret);
                                 }
-                                // Prepend manual proxy from first hop (saved before drop)
+                                // Prepend manual proxy from first hop (saved before drop).
+                                // Keep the parallel ID vector aligned so this opaque hop can
+                                // never receive the following reference hop's credential.
                                 if let Some(p) = manual_proxy {
-                                    jump_hosts.insert(jump_hosts.len() - 1, p);
+                                    let insert_at = jump_hosts.len() - 1;
+                                    insert_opaque_jump_host(
+                                        &mut jump_hosts,
+                                        &mut hop_ids,
+                                        insert_at,
+                                        p,
+                                    );
                                 }
                                 // Continue collecting the rest of the chain if multi-hop.
                                 // Re-borrow and resume from next_jump_id.
@@ -459,9 +613,16 @@ fn build_ssh_command_args(
                                 break;
                             }
                         }
-                        // Prepend manual proxy if exists on jump host (unlikely but possible)
+                        // Prepend manual proxy if it exists on the jump host.
+                        // Insert a matching empty ID to preserve host/credential alignment.
                         if let Some(p) = &jump_config.proxy_jump {
-                            jump_hosts.insert(jump_hosts.len() - 1, p.clone());
+                            let insert_at = jump_hosts.len() - 1;
+                            insert_opaque_jump_host(
+                                &mut jump_hosts,
+                                &mut hop_ids,
+                                insert_at,
+                                p.clone(),
+                            );
                         }
                         current_id = jump_config.jump_host_id;
                     } else {
@@ -573,6 +734,17 @@ fn build_ssh_command_args(
     let mut jump_host_passwords: Vec<(String, SecretString)> = Vec::new();
 
     let jump_host_str = if jump_hosts.is_empty() {
+        if target_askpass_allowed {
+            // An unmanaged ProxyJump/ProxyCommand from ~/.ssh/config would
+            // spawn another ssh below the outer process and inherit its target
+            // credential. Disable implicit routing while automatic delivery is
+            // active; users needing a proxy must configure it in RustConn so we
+            // can build an explicit env-sanitized ProxyCommand.
+            args.push("-o".to_string());
+            args.push("ProxyJump=none".to_string());
+            args.push("-o".to_string());
+            args.push("ProxyCommand=none".to_string());
+        }
         None
     } else {
         // Remove the -J added by build_command_args (if proxy_jump was set)
@@ -595,10 +767,8 @@ fn build_ssh_command_args(
         // the nested ProxyCommand ssh has no controlling TTY, so SSH_ASKPASS
         // with SSH_ASKPASS_REQUIRE=force — scoped to it via the shell
         // env-assignment prefix — authenticates the bastion with ITS password.
-        // The OUTER ssh keeps its VTE TTY and prompts for the TARGET password,
-        // which the VTE auto-fill handles. Each password rides in its own
-        // indexed env var (_RC_JH_PW, _RC_JH_PW_1, ...); only var NAMES
-        // appear on the command line.
+        // If target askpass is enabled, every hop clears `_RC_TGT_PW_FILE` before
+        // starting its own ssh process; the outer helper remains target-only.
         let any_hop_has_password = hop_passwords.iter().any(Option::is_some);
         let askpass_script = if hop_passwords.first().is_some_and(Option::is_some) {
             jump_host_askpass_script()
@@ -611,21 +781,29 @@ fn build_ssh_command_args(
             || first_hop_identity.is_some()
             || askpass_script.is_some()
             || any_hop_has_password
+            || target_askpass_allowed
         {
             // Build a ProxyCommand for the first hop;
             // if there are multiple hops, nest them via nested ProxyCommand.
             let mut proxy_parts: Vec<String> = Vec::new();
 
-            // Env assignments scoped to the nested ssh only (issue #191).
-            // Use `env` command because OpenSSH ≥10 prepends `exec` to ProxyCommand,
-            // and `exec VAR=val cmd` is not valid POSIX sh (the shell treats it
-            // as a command path). `env VAR=val cmd` works in all shells.
+            // Every explicit proxy hop starts with an `env` boundary. A hop
+            // with its own password gets that helper; all other hops explicitly
+            // disable askpass and clear the target credential before `ssh`.
             if let Some(ref script) = askpass_script {
-                proxy_parts.extend(rustconn_core::ssh_tunnel::askpass_proxy_prefix(script));
+                proxy_parts.extend(rustconn_core::ssh_tunnel::askpass_proxy_prefix(
+                    script,
+                    0,
+                    jump_hosts.len(),
+                ));
                 if let Some(Some(pw)) = hop_passwords.first() {
                     let env_name = rustconn_core::ssh_tunnel::jump_host_pw_env_name(0);
                     jump_host_passwords.push((env_name, pw.clone()));
                 }
+            } else {
+                proxy_parts.extend(rustconn_core::ssh_tunnel::askpass_disabled_proxy_prefix(
+                    jump_hosts.len(),
+                ));
             }
 
             proxy_parts.push("ssh".to_string());
@@ -702,15 +880,19 @@ fn build_ssh_command_args(
                         if pw_opt.is_some() {
                             let env_name =
                                 rustconn_core::ssh_tunnel::jump_host_pw_env_name(rel_idx + 1);
-                            jump_host_askpass_script_for_env(&env_name)
+                            askpass_script_for_env(&env_name)
                         } else {
                             None
                         }
                     })
                     .collect();
-                // Collect passwords for the deeper hops into jump_host_passwords.
-                for (rel_idx, pw_opt) in hop_passwords[1..].iter().enumerate() {
-                    if let Some(pw) = pw_opt {
+                // Expose a deeper hop's password only if its helper exists.
+                // Helper creation failure is fail-closed: the hop remains
+                // manual/unavailable, but no unused secret enters the process tree.
+                for (rel_idx, (pw_opt, script_opt)) in
+                    hop_passwords[1..].iter().zip(&inner_askpass).enumerate()
+                {
+                    if let (Some(pw), Some(_script)) = (pw_opt, script_opt) {
                         let env_name =
                             rustconn_core::ssh_tunnel::jump_host_pw_env_name(rel_idx + 1);
                         jump_host_passwords.push((env_name, pw.clone()));
@@ -728,6 +910,8 @@ fn build_ssh_command_args(
                     flatpak_known_hosts.as_deref(),
                     false,
                     &askpass_refs,
+                    1,
+                    jump_hosts.len(),
                 );
                 proxy_parts.push("-o".to_string());
                 proxy_parts.push(format!(
@@ -775,58 +959,14 @@ fn build_ssh_command_args(
         );
     }
 
-    (key, args, waypipe, jump_host_str, jump_host_passwords)
-}
-
-/// Returns `true` if the first reference jump hop may show an interactive
-/// password prompt in the VTE (any [`PasswordSource`] other than `None`).
-///
-/// A key/agent-only bastion (`PasswordSource::None`) authenticates
-/// non-interactively inside the `ProxyCommand`, so it never prompts in the
-/// terminal — the first VTE prompt is then the target's and target-password
-/// auto-fill is safe even with a jump host present. This narrows the issue #191
-/// suppression so the common key-auth-bastion + password-target case still
-/// auto-fills (instead of being suppressed alongside the leak-prone case).
-///
-/// Conservatively returns `true` when the first hop cannot be inspected — a
-/// string `proxy_jump`/`proxy_command` with no backing connection — so a bastion
-/// that might prompt keeps auto-fill suppressed. Returns `false` for non-SSH
-/// protocols (the guard's `has_jump_host` term already covers them).
-///
-/// [`PasswordSource`]: rustconn_core::models::PasswordSource
-fn bastion_may_prompt_for_password(
-    conn: &rustconn_core::Connection,
-    state: &SharedAppState,
-) -> bool {
-    use rustconn_core::models::PasswordSource;
-    // The protocol check stays — this answers `false` for anything that is not
-    // SSH, which the caller's own `has_jump_host` term already covers — but the
-    // config itself is no longer read here.
-    if !matches!(&conn.protocol_config, rustconn_core::ProtocolConfig::Ssh(_)) {
-        return false;
-    }
-    // Through the resolver, not `ssh.jump_host_id`: an inherited bastion prompts
-    // exactly like one set on the connection, and reading the raw field here
-    // would have this answer `false` for the very hop the launcher is about to
-    // dial — suppressing nothing and feeding the target's password to the
-    // bastion prompt, which is the defect #191 fixed.
-    let inherited_hop = state
-        .try_borrow()
-        .ok()
-        .and_then(|s| super::protocols::resolve_first_hop_id(&s, conn));
-    match inherited_hop {
-        // Reference hop: inspect its own password source.
-        Some(jid) => state
-            .try_borrow()
-            .ok()
-            .and_then(|s| {
-                s.get_connection(jid)
-                    .map(|c| c.password_source != PasswordSource::None)
-            })
-            .unwrap_or(true),
-        // String proxy_jump / proxy_command / inherited proxy: not inspectable.
-        None => true,
-    }
+    (
+        key,
+        args,
+        waypipe,
+        jump_host_str,
+        jump_host_passwords,
+        target_askpass_allowed,
+    )
 }
 
 /// Starts SSH and observes a session created after asynchronous setup.
@@ -1064,18 +1204,40 @@ fn start_ssh_connection_internal(
         .as_ref()
         .map(|u| substitute_variables(u, &global_variables));
 
+    // Retrieve the cached target credential resolved from the vault earlier.
+    // It is only exposed to OpenSSH when the strict password-only gate below passes.
+    let cached_password: Option<SecretString> = state
+        .try_borrow()
+        .ok()
+        .and_then(|s| s.get_cached_credentials(connection_id).cloned())
+        .and_then(|c| {
+            use secrecy::ExposeSecret;
+            if c.password.expose_secret().is_empty() {
+                None
+            } else {
+                Some(c.password.clone())
+            }
+        });
+
     // Get SSH-specific options
-    let (identity_file, extra_args, use_waypipe, jump_host_chain, jump_host_passwords) =
-        build_ssh_command_args(conn, connection_id, state, &groups);
+    let (
+        identity_file,
+        extra_args,
+        use_waypipe,
+        jump_host_chain,
+        jump_host_passwords,
+        target_askpass_allowed,
+    ) = build_ssh_command_args(
+        conn,
+        connection_id,
+        state,
+        &groups,
+        cached_password.is_some(),
+    );
 
     // Extract MPTCP flag from SSH config
     let use_mptcp =
         matches!(&conn.protocol_config, rustconn_core::ProtocolConfig::Ssh(cfg) if cfg.mptcp);
-
-    // The bastion is handled out-of-band exactly when SSH_ASKPASS helpers were
-    // wired into ProxyCommand, i.e. `jump_host_passwords` is non-empty (#191/#203).
-    // Capture as bool before passwords are consumed by the spawn env builder.
-    let bastion_handled_out_of_band = !jump_host_passwords.is_empty();
 
     // Update last_connected timestamp
     if let Ok(mut state_mut) = state.try_borrow_mut()
@@ -1121,23 +1283,8 @@ fn start_ssh_connection_internal(
     let feedback = format!("{conn_msg}\r\n{cmd_msg}\r\n\r\n");
     notebook.display_output(session_id, &feedback);
 
-    // Retrieve cached credentials (resolved from vault earlier)
-    let cached_password: Option<SecretString> = state
-        .try_borrow()
-        .ok()
-        .and_then(|s| s.get_cached_credentials(connection_id).cloned())
-        .and_then(|c| {
-            use secrecy::ExposeSecret;
-            let pw = c.password.expose_secret();
-            if pw.is_empty() {
-                None
-            } else {
-                Some(c.password.clone())
-            }
-        });
-
-    // Spawn SSH normally — password injection happens via VTE feed_child
-    // when the terminal detects a password prompt (see below).
+    // Spawn SSH. Password-only targets use prompt-aware OpenSSH askpass;
+    // mixed or custom authentication remains an interactive terminal prompt.
     {
         let extra_refs: Vec<&str> = extra_args.iter().map(std::string::String::as_str).collect();
         let agent_socket = ssh_inheritance::resolve_ssh_agent_socket(conn, &groups);
@@ -1149,18 +1296,22 @@ fn start_ssh_connection_internal(
         // widget, not the command line, and after the tab's terminal settings —
         // see TerminalNotebook::set_erase_mode.
         apply_ssh_erase_mode(notebook, session_id, conn);
-        // Jump host passwords (issue #191/#203) travel in obscure env vars read
-        // by per-hop SSH_ASKPASS helpers wired into ProxyCommand. Zeroized once
-        // the VTE spawn has consumed the environment.
-        let jump_host_env: Vec<zeroize::Zeroizing<String>> = jump_host_passwords
-            .iter()
-            .map(|(env_name, pw)| {
-                use secrecy::ExposeSecret;
-                zeroize::Zeroizing::new(format!("{env_name}={}", pw.expose_secret()))
-            })
-            .collect();
-        let extra_env_refs: Vec<&str> = jump_host_env.iter().map(|e| e.as_str()).collect();
-        notebook.spawn_ssh(
+        // Bastion credentials use per-hop helpers. The target credential is
+        // added only for the strict password-only launch plan and is consumed
+        // by the prompt-aware outer OpenSSH helper, never by VTE output.
+        let target_askpass_script = if target_askpass_allowed {
+            target_password_askpass_script()
+        } else {
+            None
+        };
+        let (askpass_env, askpass_cleanup_paths) = ssh_askpass_env(
+            &jump_host_passwords,
+            cached_password
+                .as_ref()
+                .zip(target_askpass_script.as_deref()),
+        );
+        let extra_env_refs: Vec<&str> = askpass_env.iter().map(|entry| entry.as_str()).collect();
+        notebook.spawn_ssh_with_cleanup(
             session_id,
             &host,
             port,
@@ -1176,45 +1327,7 @@ fn start_ssh_connection_internal(
                 Some(extra_env_refs.as_slice())
             },
             use_mptcp,
-        );
-    }
-
-    // --- VTE password injection: detect the password prompt and type the
-    // cached password (replaces the former sshpass dependency) ---
-    //
-    // Passphrase prompts ("Enter passphrase for key") are excluded by the core
-    // matcher, so a PublicKey session never receives the account password. An
-    // expected-text override from the connection or its group is honoured for
-    // the rare device with unusual wording (issue #254).
-    //
-    // Guard (issue #191, Req 2.2/2.5): only ever inject the target password when
-    // there is no jump host at all, or the bastion was already authenticated
-    // out-of-band via SSH_ASKPASS, or the bastion uses key/agent auth and so
-    // never prompts in the VTE. Otherwise the VTE prompt we'd be answering is
-    // the bastion's, and injecting would leak the target password to it.
-    let allow_target_autofill = !has_jump_host
-        || bastion_handled_out_of_band
-        || !bastion_may_prompt_for_password(conn, state);
-    if allow_target_autofill {
-        crate::window::prompt_autofill::install_login_autofill(
-            notebook,
-            session_id,
-            crate::window::prompt_autofill::LoginAutofill {
-                // SSH never types the account name: it travels in the command line.
-                username: None,
-                password: cached_password.clone(),
-                matcher: rustconn_core::LoginPromptMatcher::new(
-                    None,
-                    resolved_automation.password_prompt.as_deref(),
-                ),
-                protocol: "ssh",
-                deadline_secs: resolved_automation.login_timeout_secs,
-            },
-        );
-    } else if cached_password.is_some() {
-        tracing::info!(
-            protocol = "ssh",
-            "Jump host not handled out-of-band; target password auto-fill suppressed to avoid leaking to bastion"
+            askpass_cleanup_paths,
         );
     }
 
@@ -1464,17 +1577,40 @@ pub fn reconnect_ssh_in_place(
         .is_some()
         || ssh_inheritance::resolve_ssh_proxy_jump(&conn, &groups, &network).is_some();
 
+    // Retrieve the cached target credential before building the launch plan so
+    // proxy routing and auth flags are scoped consistently with initial connect.
+    let cached_password: Option<SecretString> = state
+        .try_borrow()
+        .ok()
+        .and_then(|s| s.get_cached_credentials(connection_id).cloned())
+        .and_then(|c| {
+            use secrecy::ExposeSecret;
+            if c.password.expose_secret().is_empty() {
+                None
+            } else {
+                Some(c.password.clone())
+            }
+        });
+
     // Build SSH args (shared with start_ssh_connection).
-    let (identity_file, extra_args, use_waypipe, jump_host_chain, jump_host_passwords) =
-        build_ssh_command_args(&conn, connection_id, state, &groups);
+    let (
+        identity_file,
+        extra_args,
+        use_waypipe,
+        jump_host_chain,
+        jump_host_passwords,
+        target_askpass_allowed,
+    ) = build_ssh_command_args(
+        &conn,
+        connection_id,
+        state,
+        &groups,
+        cached_password.is_some(),
+    );
 
     // Extract MPTCP flag from SSH config
     let use_mptcp =
         matches!(&conn.protocol_config, rustconn_core::ProtocolConfig::Ssh(cfg) if cfg.mptcp);
-
-    // Bastion handled out-of-band when SSH_ASKPASS helpers were wired into
-    // ProxyCommand (issue #191/#203). Capture before passwords are consumed.
-    let bastion_handled_out_of_band = !jump_host_passwords.is_empty();
 
     // Re-wire child-exited handler for the new process
     MainWindow::setup_child_exited_handler(state, notebook, sidebar, session_id, connection_id);
@@ -1509,26 +1645,6 @@ pub fn reconnect_ssh_in_place(
     let feedback = format!("{conn_msg}\r\n{cmd_msg}\r\n\r\n");
     notebook.display_output(session_id, &feedback);
 
-    // Retrieve cached credentials
-    let cached_password: Option<SecretString> = state
-        .try_borrow()
-        .ok()
-        .and_then(|s| s.get_cached_credentials(connection_id).cloned())
-        .and_then(|c| {
-            use secrecy::ExposeSecret;
-            let pw = c.password.expose_secret();
-            if pw.is_empty() {
-                None
-            } else {
-                Some(c.password.clone())
-            }
-        });
-    let have_cached_password = cached_password.is_some();
-
-    // Effective automation config (group inheritance included) — read here for
-    // the optional password-prompt override used by the auto-fill watcher.
-    let resolved_automation = resolve_automation_for_connection(state, &conn);
-
     // Spawn SSH in the existing terminal
     {
         let extra_refs: Vec<&str> = extra_args.iter().map(std::string::String::as_str).collect();
@@ -1540,16 +1656,20 @@ pub fn reconnect_ssh_in_place(
         // Re-assert the erase mode (issue #271): a reconnect spawns into the
         // same terminal, and nothing else restores it after a VTE reset.
         apply_ssh_erase_mode(notebook, session_id, &conn);
-        // Jump host passwords (issue #191/#203) — see start_ssh_connection_internal.
-        let jump_host_env: Vec<zeroize::Zeroizing<String>> = jump_host_passwords
-            .iter()
-            .map(|(env_name, pw)| {
-                use secrecy::ExposeSecret;
-                zeroize::Zeroizing::new(format!("{env_name}={}", pw.expose_secret()))
-            })
-            .collect();
-        let extra_env_refs: Vec<&str> = jump_host_env.iter().map(|e| e.as_str()).collect();
-        notebook.spawn_ssh(
+        // Same auth-scoped environment as the initial launch.
+        let target_askpass_script = if target_askpass_allowed {
+            target_password_askpass_script()
+        } else {
+            None
+        };
+        let (askpass_env, askpass_cleanup_paths) = ssh_askpass_env(
+            &jump_host_passwords,
+            cached_password
+                .as_ref()
+                .zip(target_askpass_script.as_deref()),
+        );
+        let extra_env_refs: Vec<&str> = askpass_env.iter().map(|entry| entry.as_str()).collect();
+        notebook.spawn_ssh_with_cleanup(
             session_id,
             &host,
             port,
@@ -1565,36 +1685,7 @@ pub fn reconnect_ssh_in_place(
                 Some(extra_env_refs.as_slice())
             },
             use_mptcp,
-        );
-    }
-
-    // VTE password injection — same one-shot watcher as the initial connect
-    // (see `prompt_autofill`), including the issue #191 bastion guard: inject
-    // the target password only when there is no jump host, the bastion was
-    // authenticated out-of-band via SSH_ASKPASS, or it uses key/agent auth and
-    // never prompts in the VTE.
-    let allow_target_autofill = !has_jump_host
-        || bastion_handled_out_of_band
-        || !bastion_may_prompt_for_password(&conn, state);
-    if allow_target_autofill {
-        crate::window::prompt_autofill::install_login_autofill(
-            notebook,
-            session_id,
-            crate::window::prompt_autofill::LoginAutofill {
-                username: None,
-                password: cached_password,
-                matcher: rustconn_core::LoginPromptMatcher::new(
-                    None,
-                    resolved_automation.password_prompt.as_deref(),
-                ),
-                protocol: "ssh",
-                deadline_secs: resolved_automation.login_timeout_secs,
-            },
-        );
-    } else if have_cached_password {
-        tracing::info!(
-            protocol = "ssh",
-            "Jump host not handled out-of-band; target password auto-fill suppressed to avoid leaking to bastion"
+            askpass_cleanup_paths,
         );
     }
 
@@ -1702,4 +1793,83 @@ pub fn reconnect_ssh_in_place(
     }
 
     true
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    fn run_askpass_script(prompt: &str) -> (std::process::Output, std::path::PathBuf) {
+        let secret_path =
+            std::env::temp_dir().join(format!("rustconn-askpass-test-secret-{}", Uuid::new_v4()));
+        std::fs::write(&secret_path, b"test-account-password")
+            .expect("test secret file must be writable");
+        let output = std::process::Command::new("sh")
+            .args([
+                "-c",
+                &askpass_script_contents("_RC_TEST_PW_FILE"),
+                "rustconn-askpass-test",
+                prompt,
+            ])
+            .env("_RC_TEST_PW_FILE", &secret_path)
+            .output()
+            .expect("test askpass script must run");
+        (output, secret_path)
+    }
+
+    #[test]
+    fn opaque_jump_host_keeps_credentials_aligned_with_reference_hops() {
+        let reference_id = Uuid::new_v4();
+        let mut hosts = vec!["reference.example.com".to_string()];
+        let mut ids = vec![Some(reference_id)];
+
+        insert_opaque_jump_host(&mut hosts, &mut ids, 0, "opaque.example.com".to_string());
+
+        assert_eq!(
+            hosts,
+            vec![
+                "opaque.example.com".to_string(),
+                "reference.example.com".to_string()
+            ]
+        );
+        assert_eq!(ids, vec![None, Some(reference_id)]);
+    }
+
+    #[test]
+    fn askpass_secret_file_is_owner_only_and_not_an_environment_value() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let secret = SecretString::new("file-only-secret".to_string().into());
+        let path = create_askpass_secret_file(&secret).expect("secret file must be created");
+        let metadata = std::fs::metadata(&path).expect("secret file metadata must exist");
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::read(&path).expect("secret file must be readable"),
+            b"file-only-secret"
+        );
+        std::fs::remove_file(path).expect("test secret file must be removed");
+    }
+
+    #[test]
+    fn askpass_helper_releases_password_only_for_openssh_account_prompt() {
+        let (accepted, accepted_secret_path) = run_askpass_script("alice@example.com's password: ");
+        assert!(accepted.status.success());
+        assert_eq!(accepted.stdout, b"test-account-password");
+        assert!(!accepted_secret_path.exists());
+
+        for rejected_prompt in [
+            "Enter passphrase for key '/home/alice/.ssh/id_ed25519': ",
+            "The authenticity of host cannot be established. Continue connecting (yes/no)? ",
+            "Verification code: ",
+            "Password expired. Enter new password: ",
+            "[sudo] password for alice: ",
+            "Password: ",
+        ] {
+            let (rejected, rejected_secret_path) = run_askpass_script(rejected_prompt);
+            assert!(!rejected.status.success(), "accepted: {rejected_prompt}");
+            assert!(rejected.stdout.is_empty(), "leaked for: {rejected_prompt}");
+            std::fs::remove_file(rejected_secret_path)
+                .expect("rejected prompt must leave the test file for owner cleanup");
+        }
+    }
 }

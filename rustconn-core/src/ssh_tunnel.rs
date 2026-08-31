@@ -12,6 +12,8 @@ use std::sync::{Arc, Mutex};
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 
+use crate::models::{SshAuthMethod, SshConfig};
+
 /// Errors that can occur when creating an SSH tunnel.
 #[derive(Debug, Error)]
 pub enum SshTunnelError {
@@ -582,6 +584,68 @@ pub fn proxy_jump_arg(chain_target_first: &str) -> String {
         .join(",")
 }
 
+/// Returns whether SSH routing is opaque to RustConn's sanitized proxy builder.
+///
+/// Dedicated `proxy_command` and raw routing options keep their existing manual
+/// behavior, but must never be combined with RustConn-managed hop credentials.
+#[must_use]
+pub fn has_unmanaged_proxy_route(config: &SshConfig) -> bool {
+    config.proxy_command.is_some()
+        || config.custom_options.keys().any(|key| {
+            key.eq_ignore_ascii_case("ProxyCommand") || key.eq_ignore_ascii_case("ProxyJump")
+        })
+}
+
+/// Returns whether the outer SSH process may receive the cached target password via askpass.
+///
+/// Automatic delivery is intentionally narrower than "SSH might ask for a password": it is
+/// enabled only for an explicit password-only connection with no configured identity source or
+/// authentication-routing override. Mixed key/agent/token flows stay interactive so an account
+/// password can never answer a passphrase, touch, OTP, or keyboard-interactive challenge.
+#[must_use]
+pub fn target_password_askpass_allowed(config: &SshConfig, has_resolved_identity: bool) -> bool {
+    const AUTH_ROUTING_OPTIONS: &[&str] = &[
+        "batchmode",
+        "certfile",
+        "certificatefile",
+        "challengeresponseauthentication",
+        "identityagent",
+        "identityfile",
+        "kbdinteractiveauthentication",
+        "numberofpasswordprompts",
+        "passwordauthentication",
+        "pkcs11provider",
+        "preferredauthentications",
+        "proxycommand",
+        "proxyjump",
+        "pubkeyauthentication",
+        "securitykeyprovider",
+    ];
+
+    let has_legacy_agent_identity = config
+        .agent_key_fingerprint
+        .as_deref()
+        .is_some_and(|fingerprint| !fingerprint.trim().is_empty());
+    let has_pkcs11_identity = config.pkcs11_provider.as_deref().is_some_and(|provider| {
+        let provider = provider.trim();
+        !provider.is_empty() && !provider.eq_ignore_ascii_case("none")
+    });
+    let has_auth_override = config.custom_options.keys().any(|key| {
+        AUTH_ROUTING_OPTIONS
+            .iter()
+            .any(|option| key.eq_ignore_ascii_case(option))
+    });
+
+    config.auth_method == SshAuthMethod::Password
+        && !has_resolved_identity
+        && !config.uses_file_auth()
+        && !config.uses_agent_auth()
+        && !has_legacy_agent_identity
+        && !has_pkcs11_identity
+        && !has_auth_override
+        && !has_unmanaged_proxy_route(config)
+}
+
 /// Builds a (possibly nested) SSH `ProxyCommand` value that reaches `hops[0]`
 /// (the hop closest to the target) through every deeper hop in `hops[1..]`.
 ///
@@ -605,12 +669,14 @@ pub fn build_nested_proxy_command(
     known_hosts: Option<&std::path::Path>,
     accept_new_host_keys: bool,
 ) -> String {
-    build_nested_proxy_command_with_askpass(
+    build_nested_proxy_command_inner(
         hops,
         identity_file,
         known_hosts,
         accept_new_host_keys,
         &[],
+        false,
+        (0, hops.len()),
     )
 }
 
@@ -623,11 +689,13 @@ pub fn build_nested_proxy_command(
 /// `askpass_scripts` is index-aligned with `hops`: `askpass_scripts[i]` is the
 /// askpass helper path for `hops[i]`. If the slice is shorter than `hops` or
 /// the entry is `None`, that hop gets no askpass wiring (key/agent auth).
+/// `hop_index_offset` identifies `hops[0]` in the complete chain and
+/// `total_hop_count` lets each recursive level clear every sibling credential.
 ///
-/// The env-var carrying each hop's password is `_RC_JH_PW_<depth>` where
-/// `depth` is the hop's absolute index in the original chain (passed through
-/// from the caller). The scripts themselves only contain the var name — the
-/// password value rides in the spawned process's environment.
+/// The env var carrying each hop's owner-only secret-file path is
+/// `_RC_JH_PW_FILE_<depth>`, where `depth` is the hop's absolute index in the
+/// original chain. The helper opens and unlinks that file before returning its
+/// contents, so no password value enters the SSH process environment.
 ///
 /// Any hop that gets an askpass helper is forced to
 /// `StrictHostKeyChecking=accept-new` regardless of `accept_new_host_keys`,
@@ -643,15 +711,36 @@ pub fn build_nested_proxy_command_with_askpass(
     known_hosts: Option<&std::path::Path>,
     accept_new_host_keys: bool,
     askpass_scripts: &[Option<&std::path::Path>],
+    hop_index_offset: usize,
+    total_hop_count: usize,
+) -> String {
+    build_nested_proxy_command_inner(
+        hops,
+        identity_file,
+        known_hosts,
+        accept_new_host_keys,
+        askpass_scripts,
+        true,
+        (hop_index_offset, total_hop_count),
+    )
+}
+
+fn build_nested_proxy_command_inner(
+    hops: &[&str],
+    identity_file: Option<&str>,
+    known_hosts: Option<&std::path::Path>,
+    accept_new_host_keys: bool,
+    askpass_scripts: &[Option<&std::path::Path>],
+    isolate_outer_askpass: bool,
+    hop_scope: (usize, usize),
 ) -> String {
     debug_assert!(!hops.is_empty(), "build_nested_proxy_command needs >=1 hop");
 
-    let mut parts: Vec<String> = Vec::new();
-
-    // Askpass prefix for THIS hop (hops[0]).
-    if let Some(Some(script)) = askpass_scripts.first() {
-        parts.extend(askpass_proxy_prefix(script));
-    }
+    let mut parts = match askpass_scripts.first() {
+        Some(Some(script)) => askpass_proxy_prefix(script, hop_scope.0, hop_scope.1),
+        _ if isolate_outer_askpass => askpass_disabled_proxy_prefix(hop_scope.1),
+        _ => Vec::new(),
+    };
 
     parts.extend(["ssh".to_string(), "-W".to_string(), "%h:%p".to_string()]);
 
@@ -686,12 +775,14 @@ pub fn build_nested_proxy_command_with_askpass(
         } else {
             &[]
         };
-        let inner = build_nested_proxy_command_with_askpass(
+        let inner = build_nested_proxy_command_inner(
             &hops[1..],
             identity_file,
             known_hosts,
             accept_new_host_keys,
             inner_askpass,
+            isolate_outer_askpass,
+            (hop_scope.0 + 1, hop_scope.1),
         );
         parts.push("-o".to_string());
         parts.push(format!("ProxyCommand={}", shell_single_quote(&inner)));
@@ -699,6 +790,21 @@ pub fn build_nested_proxy_command_with_askpass(
 
     append_proxy_command_destination(&mut parts, hops[0]);
     parts.join(" ")
+}
+
+/// Builds an `env` prefix that prevents outer credentials from reaching a proxy hop.
+///
+/// The target credential and all indexed bastion credentials are cleared alongside OpenSSH's
+/// askpass controls. The shell that starts a `ProxyCommand` necessarily inherits the outer
+/// environment long enough to execute `env`, but the nested SSH process receives only these
+/// overrides.
+#[must_use]
+pub fn askpass_disabled_proxy_prefix(hop_count: usize) -> Vec<String> {
+    let mut prefix = vec!["env".to_string(), "_RC_TGT_PW_FILE=".to_string()];
+    prefix.extend((0..hop_count).map(|index| format!("{}=", jump_host_pw_env_name(index))));
+    prefix.push("SSH_ASKPASS=".to_string());
+    prefix.push("SSH_ASKPASS_REQUIRE=never".to_string());
+    prefix
 }
 
 /// Builds the `env`-assignment prefix for a bastion's `SSH_ASKPASS` helper.
@@ -713,31 +819,38 @@ pub fn build_nested_proxy_command_with_askpass(
 /// every shell. `SSH_ASKPASS_REQUIRE=force` makes OpenSSH call the helper even
 /// without a controlling TTY.
 ///
-/// Returns the prefix tokens (`["env", "SSH_ASKPASS=<script>",
-/// "SSH_ASKPASS_REQUIRE=force"]`) to prepend to the bastion `ssh -W %h:%p`
-/// invocation. The password VALUE itself is delivered through a separate
-/// out-of-band environment variable read by the helper script; it never appears
-/// on the command line.
+/// Returns tokens beginning with `env _RC_TGT_PW_FILE=` to prepend to the
+/// bastion `ssh -W %h:%p` invocation. Every sibling hop's file path is cleared,
+/// leaving only `active_hop_index` available to this helper. Password values
+/// never appear on the command line or in the SSH process environment.
 #[must_use]
-pub fn askpass_proxy_prefix(askpass_script: &std::path::Path) -> Vec<String> {
-    vec![
-        "env".to_string(),
-        format!("SSH_ASKPASS={}", askpass_script.display()),
-        "SSH_ASKPASS_REQUIRE=force".to_string(),
-    ]
+pub fn askpass_proxy_prefix(
+    askpass_script: &std::path::Path,
+    active_hop_index: usize,
+    hop_count: usize,
+) -> Vec<String> {
+    let mut prefix = vec!["env".to_string(), "_RC_TGT_PW_FILE=".to_string()];
+    prefix.extend(
+        (0..hop_count)
+            .filter(|index| *index != active_hop_index)
+            .map(|index| format!("{}=", jump_host_pw_env_name(index))),
+    );
+    prefix.push(format!("SSH_ASKPASS={}", askpass_script.display()));
+    prefix.push("SSH_ASKPASS_REQUIRE=force".to_string());
+    prefix
 }
 
 /// Returns the env-var name carrying the `hop_index`-th bastion password.
 ///
-/// In a multi-hop chain (issue #203), index 0 uses the legacy `_RC_JH_PW` name
+/// In a multi-hop chain (issue #203), index 0 uses the legacy `_RC_JH_PW_FILE` name
 /// for backward compatibility with single-bastion setups; deeper hops use
-/// `_RC_JH_PW_1`, `_RC_JH_PW_2`, etc.
+/// `_RC_JH_PW_FILE_1`, `_RC_JH_PW_FILE_2`, etc.
 #[must_use]
 pub fn jump_host_pw_env_name(hop_index: usize) -> String {
     if hop_index == 0 {
-        "_RC_JH_PW".to_string()
+        "_RC_JH_PW_FILE".to_string()
     } else {
-        format!("_RC_JH_PW_{hop_index}")
+        format!("_RC_JH_PW_FILE_{hop_index}")
     }
 }
 
@@ -909,17 +1022,109 @@ mod tests {
     fn test_askpass_proxy_prefix_shape() {
         // Issue #191: the env-assignment prefix carries the askpass wiring, not
         // the password. Lock in the exact tokens and order OpenSSH needs.
-        let prefix = askpass_proxy_prefix(std::path::Path::new(
-            "/run/user/1000/rustconn-jh-askpass.sh",
-        ));
+        let prefix = askpass_proxy_prefix(
+            std::path::Path::new("/run/user/1000/rustconn-jh-askpass.sh"),
+            0,
+            3,
+        );
         assert_eq!(
             prefix,
             vec![
                 "env".to_string(),
+                "_RC_TGT_PW_FILE=".to_string(),
+                "_RC_JH_PW_FILE_1=".to_string(),
+                "_RC_JH_PW_FILE_2=".to_string(),
                 "SSH_ASKPASS=/run/user/1000/rustconn-jh-askpass.sh".to_string(),
                 "SSH_ASKPASS_REQUIRE=force".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_askpass_disabled_proxy_prefix_clears_target_credential() {
+        assert_eq!(
+            askpass_disabled_proxy_prefix(3),
+            vec![
+                "env".to_string(),
+                "_RC_TGT_PW_FILE=".to_string(),
+                "_RC_JH_PW_FILE=".to_string(),
+                "_RC_JH_PW_FILE_1=".to_string(),
+                "_RC_JH_PW_FILE_2=".to_string(),
+                "SSH_ASKPASS=".to_string(),
+                "SSH_ASKPASS_REQUIRE=never".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_target_password_askpass_requires_password_only_auth() {
+        let config = SshConfig::default();
+        assert!(target_password_askpass_allowed(&config, false));
+        assert!(!target_password_askpass_allowed(&config, true));
+
+        for auth_method in [
+            SshAuthMethod::PublicKey,
+            SshAuthMethod::KeyboardInteractive,
+            SshAuthMethod::Agent,
+            SshAuthMethod::SecurityKey,
+        ] {
+            let config = SshConfig {
+                auth_method,
+                ..SshConfig::default()
+            };
+            assert!(!target_password_askpass_allowed(&config, false));
+        }
+    }
+
+    #[test]
+    fn test_target_password_askpass_rejects_competing_identity_and_auth_options() {
+        let file_config = SshConfig {
+            key_source: crate::models::SshKeySource::File {
+                path: std::path::PathBuf::from("/home/me/.ssh/id_ed25519"),
+            },
+            ..SshConfig::default()
+        };
+        assert!(!target_password_askpass_allowed(&file_config, false));
+
+        let agent_config = SshConfig {
+            key_source: crate::models::SshKeySource::Agent {
+                fingerprint: "SHA256:test".to_string(),
+                comment: "test".to_string(),
+            },
+            ..SshConfig::default()
+        };
+        assert!(!target_password_askpass_allowed(&agent_config, false));
+
+        let token_config = SshConfig {
+            pkcs11_provider: Some("/usr/lib/pkcs11.so".to_string()),
+            ..SshConfig::default()
+        };
+        assert!(!target_password_askpass_allowed(&token_config, false));
+
+        let proxy_config = SshConfig {
+            proxy_command: Some("ncat %h %p".to_string()),
+            ..SshConfig::default()
+        };
+        assert!(has_unmanaged_proxy_route(&proxy_config));
+        assert!(!target_password_askpass_allowed(&proxy_config, false));
+
+        let mut override_config = SshConfig::default();
+        override_config.custom_options.insert(
+            "PreferredAuthentications".to_string(),
+            "keyboard-interactive".to_string(),
+        );
+        assert!(!target_password_askpass_allowed(&override_config, false));
+
+        let mut proxy_jump_override = SshConfig::default();
+        proxy_jump_override.custom_options.insert(
+            "ProxyJump".to_string(),
+            "unmanaged-bastion.example.com".to_string(),
+        );
+        assert!(has_unmanaged_proxy_route(&proxy_jump_override));
+        assert!(!target_password_askpass_allowed(
+            &proxy_jump_override,
+            false
+        ));
     }
 
     #[test]
@@ -931,7 +1136,7 @@ mod tests {
         // password is never fed to the bastion prompt. This mirrors the
         // assembly in `protocols_ssh.rs::build_ssh_command_args`.
         let script = std::path::Path::new("/run/user/1000/rustconn-jh-askpass.sh");
-        let mut proxy_parts = askpass_proxy_prefix(script);
+        let mut proxy_parts = askpass_proxy_prefix(script, 0, 1);
         proxy_parts.push("ssh".to_string());
         proxy_parts.push("-W".to_string());
         proxy_parts.push("%h:%p".to_string());
@@ -940,7 +1145,7 @@ mod tests {
 
         assert_eq!(
             proxy_cmd,
-            "env SSH_ASKPASS=/run/user/1000/rustconn-jh-askpass.sh \
+            "env _RC_TGT_PW_FILE= SSH_ASKPASS=/run/user/1000/rustconn-jh-askpass.sh \
              SSH_ASKPASS_REQUIRE=force ssh -W %h:%p -p 2222 admin@bastion.example.com"
         );
         // The askpass prefix must precede the `ssh` invocation it scopes.
@@ -960,19 +1165,22 @@ mod tests {
     fn test_jump_host_pw_env_name_indices() {
         // Issue #203: hop 0 keeps the legacy name for single-bastion backward
         // compatibility; deeper hops get an indexed suffix.
-        assert_eq!(jump_host_pw_env_name(0), "_RC_JH_PW");
-        assert_eq!(jump_host_pw_env_name(1), "_RC_JH_PW_1");
-        assert_eq!(jump_host_pw_env_name(2), "_RC_JH_PW_2");
+        assert_eq!(jump_host_pw_env_name(0), "_RC_JH_PW_FILE");
+        assert_eq!(jump_host_pw_env_name(1), "_RC_JH_PW_FILE_1");
+        assert_eq!(jump_host_pw_env_name(2), "_RC_JH_PW_FILE_2");
     }
 
     #[test]
-    fn test_nested_askpass_empty_scripts_matches_plain() {
-        // With no askpass scripts, the with_askpass variant must be byte-for-byte
-        // identical to the plain builder (backward compatibility).
-        let plain = build_nested_proxy_command(&["near", "far"], None, None, false);
-        let with =
-            build_nested_proxy_command_with_askpass(&["near", "far"], None, None, false, &[]);
-        assert_eq!(plain, with);
+    fn test_nested_askpass_empty_scripts_isolates_every_hop() {
+        let cmd =
+            build_nested_proxy_command_with_askpass(&["near", "far"], None, None, false, &[], 0, 2);
+        assert_eq!(
+            cmd,
+            "env _RC_TGT_PW_FILE= _RC_JH_PW_FILE= _RC_JH_PW_FILE_1= SSH_ASKPASS= \
+             SSH_ASKPASS_REQUIRE=never ssh -W %h:%p \
+             -o ProxyCommand='env _RC_TGT_PW_FILE= _RC_JH_PW_FILE= _RC_JH_PW_FILE_1= SSH_ASKPASS= \
+             SSH_ASKPASS_REQUIRE=never ssh -W %h:%p far' near"
+        );
     }
 
     #[test]
@@ -986,15 +1194,19 @@ mod tests {
             None,
             false,
             &[Some(script), None],
+            0,
+            2,
         );
         // hops[0]=near uses forced askpass → must get accept-new so an unknown
         // host key never routes the yes/no prompt to the password helper (#203).
         // far has no askpass and accept_new=false → no StrictHostKeyChecking.
         assert_eq!(
             cmd,
-            "env SSH_ASKPASS=/run/user/1000/rustconn-jh-askpass.sh SSH_ASKPASS_REQUIRE=force \
-             ssh -W %h:%p -o StrictHostKeyChecking=accept-new \
-             -o ProxyCommand='ssh -W %h:%p far' near"
+            "env _RC_TGT_PW_FILE= _RC_JH_PW_FILE_1= \
+             SSH_ASKPASS=/run/user/1000/rustconn-jh-askpass.sh \
+             SSH_ASKPASS_REQUIRE=force ssh -W %h:%p -o StrictHostKeyChecking=accept-new \
+             -o ProxyCommand='env _RC_TGT_PW_FILE= _RC_JH_PW_FILE= _RC_JH_PW_FILE_1= SSH_ASKPASS= \
+             SSH_ASKPASS_REQUIRE=never ssh -W %h:%p far' near"
         );
     }
 
@@ -1010,12 +1222,17 @@ mod tests {
             None,
             false,
             &[None, Some(inner)],
+            0,
+            2,
         );
         // near has no askpass → no accept-new; far (inner) uses forced askpass
         // → gets accept-new inside the nested ProxyCommand (#203).
         assert_eq!(
             cmd,
-            "ssh -W %h:%p -o ProxyCommand='env SSH_ASKPASS=/run/user/1000/rustconn-jh-askpass-1.sh \
+            "env _RC_TGT_PW_FILE= _RC_JH_PW_FILE= _RC_JH_PW_FILE_1= SSH_ASKPASS= \
+             SSH_ASKPASS_REQUIRE=never ssh -W %h:%p \
+             -o ProxyCommand='env _RC_TGT_PW_FILE= _RC_JH_PW_FILE= \
+             SSH_ASKPASS=/run/user/1000/rustconn-jh-askpass-1.sh \
              SSH_ASKPASS_REQUIRE=force ssh -W %h:%p -o StrictHostKeyChecking=accept-new far' near"
         );
     }
