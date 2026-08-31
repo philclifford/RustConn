@@ -321,10 +321,14 @@ done
 %{_datadir}/icons/hicolor/*/apps/io.github.totoshko88.RustConn.*
 
 %changelog
-* Sun Aug 31 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.2-0
+* Mon Aug 31 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.2-0
 - Version bump to 0.21.2
 - Fixed: SSH through a jump host could hang at the target password prompt when
   the ProxyCommand step was slow (#301)
+- Changed: a stored SSH password is now handed to OpenSSH through SSH_ASKPASS
+  instead of typed into the terminal, in a mode-0600 runtime file whose path
+  alone reaches the SSH environment; connections askpass does not cover keep the
+  terminal watcher, so no authentication setup loses its stored password
 - Fixed: a SPICE connection asked for the password every time, whatever the
   password source (#308); the password is now passed via a mode-0600 .vv file
 - Fixed: the embedded web browser lost its login on every restart (#309);

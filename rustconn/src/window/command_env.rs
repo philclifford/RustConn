@@ -144,21 +144,39 @@ impl std::fmt::Debug for EphemeralCommandEnv {
 /// [`rustconn_core::spice_client::build_vv_connection_file`], which also sets
 /// `delete-this-file=1` so a viewer that starts removes the file after reading.
 ///
-/// Unlike [`EphemeralCommandEnv`], this guard *does* remove the file on drop.
-/// The two cases do not overlap: `delete-this-file=1` covers a viewer that
-/// launched and read the file, and the drop covers a launch that failed before
-/// the viewer ever opened it. The guard is therefore held by the caller only
-/// until the spawn returns; after a successful spawn the viewer owns the
-/// deletion, and after a failed one the drop cleans up. Removal is best effort
+/// Unlike [`EphemeralCommandEnv`], this guard removes the file on drop — but
+/// only for a launch that never happened. The spawn is asynchronous: `spawn()`
+/// returns as soon as the child is forked, and `remote-viewer` has GTK to
+/// initialise before it opens its connection file, so a guard still alive at
+/// that point would delete the file out from under the viewer and the password
+/// would never arrive. That is the same race [`EphemeralCommandEnv`] documents
+/// as its reason for having no `Drop` at all.
+///
+/// So ownership is handed over explicitly: [`Self::release_to_viewer`] on a
+/// successful spawn, after which `delete-this-file=1` in the file itself is what
+/// removes it. Dropping the guard without releasing it — a spawn that failed, or
+/// a write that failed halfway — removes the file here. Removal is best effort
 /// and ignores a missing file, so the two paths never fight.
 pub(super) struct EphemeralVvFile {
     path: PathBuf,
+    /// Cleared by [`Self::release_to_viewer`] so `Drop` leaves the file alone.
+    remove_on_drop: bool,
 }
 
 impl EphemeralVvFile {
     /// Returns the path passed to `remote-viewer` as its connection file.
     pub(super) fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Gives up the guard's claim on the file after the viewer has been spawned.
+    ///
+    /// Call this once `remote-viewer` is running: from then on the file's own
+    /// `delete-this-file=1` is what removes it, and deleting it here would be a
+    /// race against a viewer that has not opened it yet. A guard that is dropped
+    /// without this call still cleans up, which is what covers a failed spawn.
+    pub(super) fn release_to_viewer(mut self) {
+        self.remove_on_drop = false;
     }
 
     /// Writes `contents` to a fresh mode-0600 file in `$XDG_RUNTIME_DIR`.
@@ -192,7 +210,10 @@ impl EphemeralVvFile {
             })
             .ok()?;
 
-        let guard = Self { path };
+        let guard = Self {
+            path,
+            remove_on_drop: true,
+        };
         if let Err(error) = file.write_all(contents.as_bytes()) {
             tracing::warn!(
                 path = %guard.path.display(),
@@ -207,14 +228,21 @@ impl EphemeralVvFile {
 
 impl Drop for EphemeralVvFile {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        if self.remove_on_drop {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
 impl std::fmt::Debug for EphemeralVvFile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Hand-written rather than derived so the file's *contents* — which hold
+        // the password — can never be pulled in by a future field. The path and
+        // the ownership flag are both safe to show, and showing whether cleanup
+        // is still ours is exactly what a log about a leftover file needs.
         f.debug_struct("EphemeralVvFile")
             .field("path", &self.path)
+            .field("remove_on_drop", &self.remove_on_drop)
             .finish()
     }
 }
@@ -321,7 +349,9 @@ mod tests {
     }
 
     #[test]
-    fn vv_file_removed_on_drop() {
+    fn vv_file_removed_on_drop_without_release() {
+        // A spawn that never happened: the guard is the only thing that can
+        // clean up, because no viewer will act on `delete-this-file=1`.
         let dir = TempRuntimeDir::new();
         let path = {
             let guard = EphemeralVvFile::write_in_dir(dir.path(), "x").expect("write vv file");
@@ -329,6 +359,21 @@ mod tests {
         };
         assert!(!path.exists(), "the .vv file must be removed on drop");
         dir.assert_empty();
+    }
+
+    #[test]
+    fn vv_file_survives_release_to_viewer() {
+        // A spawned viewer opens its connection file some milliseconds later, so
+        // releasing must leave the file in place for it to read (issue #308).
+        let dir = TempRuntimeDir::new();
+        let guard = EphemeralVvFile::write_in_dir(dir.path(), "x").expect("write vv file");
+        let path = guard.path().to_path_buf();
+        guard.release_to_viewer();
+        assert!(
+            path.exists(),
+            "a released .vv file must outlive the guard for the viewer to read it"
+        );
+        std::fs::remove_file(&path).expect("test cleanup");
     }
 
     #[test]

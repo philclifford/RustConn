@@ -1399,9 +1399,11 @@ fn start_spice_connection_internal(
     // returns `None` for a unix socket or an empty password, in which case we
     // fall through to the plain URI args and the viewer prompts as before.
     //
-    // The guard is held until `spawn_and_register_external_viewer` returns:
-    // after a successful spawn the viewer owns the file (it carries
-    // `delete-this-file=1`), and if the spawn fails the guard's `Drop` removes it.
+    // Ownership of the file is handed over explicitly below: the spawn only
+    // forks the viewer, which opens its connection file some milliseconds later,
+    // so removing the file when the spawn call returns would delete it before it
+    // is read. A viewer that started owns the deletion through
+    // `delete-this-file=1`; a spawn that failed leaves it to the guard's `Drop`.
     if let Some(password) = cached_connection_password(state, connection_id) {
         use secrecy::ExposeSecret;
         config = config.with_password(password.expose_secret());
@@ -1422,7 +1424,7 @@ fn start_spice_connection_internal(
         build_spice_viewer_args(&config)
     };
 
-    spawn_and_register_external_viewer(
+    let spawned = spawn_and_register_external_viewer(
         state,
         notebook,
         sidebar,
@@ -1432,9 +1434,15 @@ fn start_spice_connection_internal(
         &args,
         ssh_tunnel,
     );
-    // Keep the .vv file alive across the spawn; drop (and remove it) only after
-    // the viewer has had the chance to open it.
-    drop(vv_file);
+    if let Some(vv_file) = vv_file {
+        if spawned {
+            // The viewer is running and will remove the file itself.
+            vv_file.release_to_viewer();
+        } else {
+            // Nothing will ever read it — drop removes it now.
+            drop(vv_file);
+        }
+    }
     None
 }
 

@@ -226,6 +226,29 @@ For hardware tokens that expose keys through a PKCS#11 library (YubiKey PIV, Ope
 
 > **Through a jump host:** OpenSSH does **not** pass `-o PKCS11Provider` to `ProxyJump` child connections. To authenticate the bastion itself with the token, enable the **PKCS#11 Provider** field on the *jump-host connection* — RustConn injects it into the first hop's `ProxyCommand` for terminal SSH and for RDP/VNC/SPICE tunnels. With a jump host the token may prompt once per hop, because each hop is a separate SSH process.
 
+#### How an SSH password reaches the server
+
+**Changed in 0.21.2.** A stored SSH password is now handed to OpenSSH itself rather than typed into the terminal. Nothing about configuring a connection changes — this is here because it changes what you *see* and what happens when a stored password is wrong.
+
+RustConn writes the password to a file only your account can read, in your session's runtime directory, and tells `ssh` where to find it. OpenSSH asks for it at the moment it needs it, so a slow connection can no longer miss its own prompt — that was the defect behind a jump-host session sitting at `password:` doing nothing. The helper answers only the account-password question OpenSSH asks; a key passphrase, a host-key confirmation, a one-time code and a "your password has expired" prompt are all left to you, so a stored password cannot end up answering the wrong question. The file is removed as soon as it is read, and again when the session ends.
+
+What you will notice:
+
+- **No password appears to be typed.** The prompt simply does not show up. That is expected.
+- **A wrong stored password fails the connection instead of asking again.** RustConn allows one attempt, which is what stops a stale saved password from walking an account into a lockout. Fix the password in the connection, or set the Password Source to **Prompt**, and reconnect.
+- **A host you are connecting to for the first time is accepted automatically** unless the connection sets its own `StrictHostKeyChecking`. A host key that has *changed* is still refused — that check is untouched.
+
+Some connections still have their password typed into the terminal, exactly as before 0.21.2, and for those the **Password Prompt** field under [Automatic Login](#automatic-login-telnet--serial) still applies:
+
+| Connection | Why |
+|------------|-----|
+| Auth method **Security Key** or **Keyboard Interactive** | The touch or the challenge is the point of the method; RustConn must not answer ahead of it |
+| A **PKCS#11 Provider** is set | Same reason — the token's PIN prompt comes first |
+| A custom SSH option redirects authentication or routing (`IdentityFile`, `PreferredAuthentications`, `ProxyJump`, `ProxyCommand`, `BatchMode` and similar) | You have taken authentication over by hand, and RustConn will not override what you wrote |
+| A **ProxyJump** or **ProxyCommand** set in your own `~/.ssh/config` | The bastion it starts would be asked for a password in the same form as the target, and RustConn will not risk sending one host's password to another |
+
+The last row is detected by asking `ssh -G` what your configuration resolves to, which costs a few milliseconds and touches the network not at all. A bastion configured **in RustConn** is handled and does not fall back — each hop gets its own password out of band.
+
 ### Network Mode and Where a Jump Host Comes From
 
 A connection can reach its target through a bastion without naming one itself. Three tiers are consulted, nearest first, and the nearest one that has a value wins — separately for each of the two ways a bastion can be named, *Jump Host* and *ProxyJump*:
@@ -285,9 +308,9 @@ Set the fields only when a device words its prompt differently, for example `Ent
 **Behaviour and limits:**
 
 - Each step fires **once**. If the device rejects the credentials and prompts again, RustConn stops and hands the session over to you — automatic retries are how an account gets locked out.
-- Watching stops 10 seconds after the session starts. A device that is still printing its banner after that has to be logged into manually.
+- Watching stops after the terminal has been **idle** for 10 seconds — the clock restarts on every piece of output, so a device that spends a long time on its banner keeps the watcher alive instead of outliving it (changed in 0.21.2; the window used to run from the moment the session started, which meant a slow banner could outlast it). A hard ceiling of 2 minutes applies regardless, so a device printing a periodic heartbeat cannot keep the watcher running forever. The 10 seconds can be changed per connection or per group with `login_timeout_secs` in the automation section of `connections.toml`; there is no control for it in the interface yet.
 - `Last login:` and `Last failed login:` in an MOTD are explicitly not treated as username prompts.
-- The **Password Prompt** field also applies to SSH, where it overrides the built-in password-prompt detection. The **Username Prompt** field is unused for SSH — the account name travels in the command line.
+- The **Password Prompt** field also applies to SSH, but only to connections where RustConn types the password into the terminal. Since 0.21.2 most SSH connections instead hand the password to OpenSSH itself, which asks for it directly and never shows a prompt to match — see [How an SSH password reaches the server](#how-an-ssh-password-reaches-the-server). The field still applies to the SSH connections that fall back to the terminal watcher, listed there. The **Username Prompt** field is unused for SSH either way — the account name travels in the command line.
 - Telnet transmits everything, including the password, **in clear text**. Automatic login does not change that; use SSH where you can.
 
 > **Tip:** Set both fields on a *group* (Edit Group → **Automation** tab) to cover every device in a vendor folder at once. See [Group Automation](#group-automation-expect-rules--post-login-scripts).
@@ -1084,6 +1107,14 @@ An embedded VNC session carries the same floating toolbar as RDP — Copy, Paste
 
 SPICE connections support TLS encryption, CA certificate validation, USB redirection, clipboard sharing, image compression (Auto/Off/GLZ/LZ/QUIC), proxy URL, and shared folders. SPICE opens in an external viewer (remote-viewer / virt-viewer).
 
+**Password (fixed in 0.21.2):**
+
+The connection's **Password Source** now reaches the viewer, so a SPICE session with a stored password connects without asking for it. Before 0.21.2 the password was resolved and then discarded at launch, and `remote-viewer` prompted every time whatever the Password Source was set to — changing it made no difference, which is what made the behaviour confusing rather than merely missing.
+
+The secret is passed in a virt-viewer `.vv` connection file that only your account can read, never on the command line where other processes could see it. The file carries the flag that tells the viewer to delete it after reading.
+
+Two cases still prompt in the viewer, by design: a connection with no stored password, and **Unix Socket Mode** below — the `.vv` format has no field for a socket path, and a local socket needs no password in practice.
+
 **Unix Socket Mode:**
 
 For local VMs managed by libvirt/QEMU, you can connect directly via a unix socket instead of host:port. Enable the "Unix Socket" toggle in the SPICE tab and provide the socket path (e.g. `/run/libvirt/qemu/vm-spice.sock`). The viewer uses `spice+unix://` URI. Jump host is not available in socket mode.
@@ -1453,7 +1484,7 @@ The **Display Mode** setting in the connection dialog (Advanced tab → Window M
 
 ### Split View
 
-Split view works with **any in-process (embedded) session**, not just VTE terminals. That means every terminal-based session (SSH, Telnet, Serial, Kubernetes, Local Shell, and SFTP in mc mode) as well as embedded RDP, VNC, and SPICE remote desktops. The only sessions that cannot be split are those handed off to an external viewer process (see below). You can mix terminals and embedded remote desktops in the same split, and an embedded session keeps its live connection when it moves between panels.
+Split view works with **any in-process (embedded) session**, not just VTE terminals. That means every terminal-based session (SSH, Telnet, Serial, Kubernetes, Local Shell, and SFTP in mc mode) as well as embedded RDP and VNC remote desktops. The only sessions that cannot be split are those handed off to an external viewer process (see below) — which includes every SPICE session, since SPICE has no embedded client. You can mix terminals and embedded remote desktops in the same split, and an embedded session keeps its live connection when it moves between panels.
 
 Sessions shown through an external viewer (xfreerdp, vncviewer, or an external SPICE viewer) cannot be placed in a split — attempting to split one shows "Split view is not available for external-viewer sessions. Switch this connection to embedded mode to use split." and leaves the layout unchanged.
 

@@ -53,7 +53,7 @@ const DEFAULT_AUTOFILL_DEADLINE: Duration = Duration::from_secs(10);
 
 /// Absolute ceiling: no login watcher survives past this, regardless of
 /// activity, to avoid a permanent wake-up on a device that prints a heartbeat.
-const ABSOLUTE_TIMEOUT: Duration = Duration::from_secs(120);
+const ABSOLUTE_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Credentials to type, and how to recognize the prompts asking for them.
 pub(crate) struct LoginAutofill {

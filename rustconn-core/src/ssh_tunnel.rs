@@ -596,12 +596,120 @@ pub fn has_unmanaged_proxy_route(config: &SshConfig) -> bool {
         })
 }
 
+/// Parses `ssh -G` output and reports whether it declares an effective proxy route.
+///
+/// Split out from [`ssh_config_declares_proxy`] so the parsing is testable without running
+/// `ssh`. `ssh -G` prints resolved keywords lowercased, one per line, and omits `proxycommand`
+/// and `proxyjump` entirely when neither applies; an explicit `none` counts as no route, which
+/// is how OpenSSH itself spells "disabled".
+#[must_use]
+pub fn ssh_g_output_declares_proxy(output: &str) -> bool {
+    output.lines().any(|line| {
+        let mut parts = line.split_whitespace();
+        let keyword = parts.next().unwrap_or_default();
+        if !keyword.eq_ignore_ascii_case("proxycommand")
+            && !keyword.eq_ignore_ascii_case("proxyjump")
+        {
+            return false;
+        }
+        let value = parts.next().unwrap_or_default();
+        !value.is_empty() && !value.eq_ignore_ascii_case("none")
+    })
+}
+
+/// Returns whether OpenSSH's own configuration would route `host` through a proxy.
+///
+/// Asks `ssh -G`, which resolves `~/.ssh/config`, `/etc/ssh/ssh_config` and every `Match`/`Host`
+/// block exactly as a real connection would, and prints the effective value of every keyword.
+/// That is the only honest way to answer the question: RustConn cannot see a bastion the user
+/// declared in their own config, and a stored setting is not a description of what OpenSSH will
+/// do — the same reasoning that issue #307 applied to Password Source.
+///
+/// This exists because automatic target-password delivery must not be combined with a proxy
+/// RustConn did not build. The nested `ssh` that a config-declared `ProxyJump` spawns inherits the
+/// outer process's `SSH_ASKPASS` and credential path, and its bastion prompt has the same
+/// `<user>@<host>'s password: ` shape the helper answers — so the target's password would be typed
+/// at the bastion, which is issue #191 in a new costume. Until the 0.21.2 review this was handled
+/// by appending `ProxyJump=none`/`ProxyCommand=none`, which closed the leak by silently discarding
+/// the user's routing and breaking the connection instead. Detecting it and declining to deliver
+/// the password is the same protection without the collateral damage: the connection simply
+/// prompts, which is the documented fallback.
+///
+/// Cost is a single short-lived `ssh -G`, measured at ~4 ms against OpenSSH 10.2 — it performs no
+/// network I/O. Returns `true` on any failure to run or parse, because "cannot tell" must not
+/// enable automatic delivery.
+#[must_use]
+pub fn ssh_config_declares_proxy(host: &str, port: u16, username: Option<&str>) -> bool {
+    let mut command = std::process::Command::new("ssh");
+    command.arg("-G").arg("-p").arg(port.to_string());
+    if let Some(user) = username.map(str::trim).filter(|user| !user.is_empty()) {
+        command.arg("-l").arg(user);
+    }
+    command
+        .arg(host)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            let declares = ssh_g_output_declares_proxy(&String::from_utf8_lossy(&output.stdout));
+            if declares {
+                tracing::debug!(
+                    host,
+                    "ssh -G reports a proxy route; automatic password delivery stays off"
+                );
+            }
+            declares
+        }
+        Ok(output) => {
+            tracing::warn!(
+                host,
+                status = ?output.status.code(),
+                "ssh -G failed; assuming a proxy route and leaving automatic password delivery off"
+            );
+            true
+        }
+        Err(error) => {
+            tracing::warn!(
+                host,
+                %error,
+                "could not run ssh -G; assuming a proxy route and leaving automatic password delivery off"
+            );
+            true
+        }
+    }
+}
+
 /// Returns whether the outer SSH process may receive the cached target password via askpass.
 ///
-/// Automatic delivery is intentionally narrower than "SSH might ask for a password": it is
-/// enabled only for an explicit password-only connection with no configured identity source or
-/// authentication-routing override. Mixed key/agent/token flows stay interactive so an account
-/// password can never answer a passphrase, touch, OTP, or keyboard-interactive challenge.
+/// What makes automatic delivery safe is the helper's prompt discrimination, not a narrow set
+/// of connections: the helper answers only the prompt OpenSSH *generates itself* for the
+/// `password` method (`<user>@<host>'s password: `, verified against OpenSSH 10.2) and exits
+/// without printing for a key passphrase, a host-key question, a token touch, an OTP or a
+/// password change. A method the helper refuses simply fails and OpenSSH moves on to the next
+/// one, so an identity being available alongside a stored password is not a hazard — if the key
+/// authenticates, the helper is never consulted at all.
+///
+/// So this gate covers the cases where RustConn cannot reason about the launch, not the question
+/// of which credential wins:
+///
+/// * a custom option that redirects authentication or routing — the user has taken over, and an
+///   `-o` of ours on the command line would silently outrank what they wrote;
+/// * a PKCS#11 token or a legacy agent fingerprint, where the interactive PIN/touch step is the
+///   point and a forced helper would sit in front of it;
+/// * `SecurityKey` or `KeyboardInteractive` authentication, for the same reason;
+/// * an opaque proxy route ([`has_unmanaged_proxy_route`]), because the nested `ssh` it spawns is
+///   outside the env-sanitised chain this module builds.
+///
+/// A connection the gate refuses is not left without its password: the caller falls back to the
+/// terminal watcher, which is what handled every SSH connection before 0.21.2.
+///
+/// `has_resolved_identity` is accepted and deliberately *not* treated as a veto. It was one until
+/// the review of 0.21.2: a key inherited from a group turned automatic delivery off for a
+/// password-authenticated connection, which is the same conflation
+/// [`crate::Connection::expects_password_prompt`] was written to avoid. The parameter stays in
+/// the signature because callers have the value and because a reader who does not find this note
+/// will re-add the veto.
 #[must_use]
 pub fn target_password_askpass_allowed(config: &SshConfig, has_resolved_identity: bool) -> bool {
     const AUTH_ROUTING_OPTIONS: &[&str] = &[
@@ -622,6 +730,10 @@ pub fn target_password_askpass_allowed(config: &SshConfig, has_resolved_identity
         "securitykeyprovider",
     ];
 
+    // Read only so the parameter is not silently dropped from the signature; see the doc note
+    // above for why an available identity is not a reason to refuse.
+    let _ = has_resolved_identity;
+
     let has_legacy_agent_identity = config
         .agent_key_fingerprint
         .as_deref()
@@ -635,11 +747,13 @@ pub fn target_password_askpass_allowed(config: &SshConfig, has_resolved_identity
             .iter()
             .any(|option| key.eq_ignore_ascii_case(option))
     });
+    // An interactive second factor is the one thing a forced helper must never stand in front of.
+    let wants_interactive_factor = matches!(
+        config.auth_method,
+        SshAuthMethod::SecurityKey | SshAuthMethod::KeyboardInteractive
+    );
 
-    config.auth_method == SshAuthMethod::Password
-        && !has_resolved_identity
-        && !config.uses_file_auth()
-        && !config.uses_agent_auth()
+    !wants_interactive_factor
         && !has_legacy_agent_identity
         && !has_pkcs11_identity
         && !has_auth_override
@@ -792,18 +906,37 @@ fn build_nested_proxy_command_inner(
     parts.join(" ")
 }
 
-/// Builds an `env` prefix that prevents outer credentials from reaching a proxy hop.
+/// Builds an `env` prefix that keeps RustConn's credentials out of a proxy hop.
 ///
-/// The target credential and all indexed bastion credentials are cleared alongside OpenSSH's
-/// askpass controls. The shell that starts a `ProxyCommand` necessarily inherits the outer
-/// environment long enough to execute `env`, but the nested SSH process receives only these
-/// overrides.
+/// The target credential and every indexed bastion credential are cleared, so a hop RustConn
+/// holds no password for cannot reach one it was not given. The shell that starts a
+/// `ProxyCommand` necessarily inherits the outer environment long enough to execute `env`, but
+/// the nested SSH process sees these overrides.
+///
+/// It also detaches the hop from RustConn's own `SSH_ASKPASS`, which the hop would otherwise
+/// inherit from the outer `ssh` whenever target delivery is active. Both variables are set to the
+/// *empty string* rather than to a value, and the distinction is the whole point:
+///
+/// * `SSH_ASKPASS=` — OpenSSH treats an unset **or empty** value as "use the compiled-in default"
+///   (`/usr/bin/ssh-askpass` on Debian and Ubuntu, an alternatives symlink that points at the
+///   desktop helper), verified against OpenSSH 10.2, which reports `ssh_askpass: exec()` against
+///   that path when the default is not installed. So the hop keeps a working passphrase dialog
+///   while no longer pointing at a RustConn script.
+/// * `SSH_ASKPASS_REQUIRE=` — back to OpenSSH's own rule, askpass only when there is no TTY,
+///   rather than to a forcing value.
+///
+/// Until the review of 0.21.2 the second one was `never`, which forbids askpass outright. A
+/// `ProxyCommand` has no controlling TTY, so `never` left the hop with no way to ask for anything:
+/// a bastion whose key carries a passphrase, with no agent loaded, went from a passphrase dialog
+/// to `Permission denied`. Nothing about RustConn's isolation needed that — with the credential
+/// variables cleared, RustConn's helper finds an empty path and exits without printing, which is
+/// the same refusal by a cheaper route.
 #[must_use]
 pub fn askpass_disabled_proxy_prefix(hop_count: usize) -> Vec<String> {
     let mut prefix = vec!["env".to_string(), "_RC_TGT_PW_FILE=".to_string()];
     prefix.extend((0..hop_count).map(|index| format!("{}=", jump_host_pw_env_name(index))));
     prefix.push("SSH_ASKPASS=".to_string());
-    prefix.push("SSH_ASKPASS_REQUIRE=never".to_string());
+    prefix.push("SSH_ASKPASS_REQUIRE=".to_string());
     prefix
 }
 
@@ -1051,22 +1184,57 @@ mod tests {
                 "_RC_JH_PW_FILE_1=".to_string(),
                 "_RC_JH_PW_FILE_2=".to_string(),
                 "SSH_ASKPASS=".to_string(),
-                "SSH_ASKPASS_REQUIRE=never".to_string(),
+                "SSH_ASKPASS_REQUIRE=".to_string(),
             ]
         );
     }
 
     #[test]
-    fn test_target_password_askpass_requires_password_only_auth() {
+    fn test_target_password_askpass_refuses_only_interactive_second_factors() {
         let config = SshConfig::default();
         assert!(target_password_askpass_allowed(&config, false));
-        assert!(!target_password_askpass_allowed(&config, true));
 
+        // An available identity is not a veto: if the key authenticates, the helper is never
+        // consulted; if it does not, OpenSSH falls through to the password prompt the helper does
+        // answer. Treating this as a refusal is what stopped a group-inherited key path from ever
+        // getting its stored password (0.21.2 review).
+        assert!(
+            target_password_askpass_allowed(&config, true),
+            "a resolved identity must not disable automatic delivery"
+        );
+
+        // A key or agent key source is likewise not a veto, for the same reason.
+        for key_source in [
+            crate::models::SshKeySource::File {
+                path: std::path::PathBuf::from("/home/me/.ssh/id_ed25519"),
+            },
+            crate::models::SshKeySource::Agent {
+                fingerprint: "SHA256:test".to_string(),
+                comment: "test".to_string(),
+            },
+        ] {
+            let config = SshConfig {
+                key_source,
+                ..SshConfig::default()
+            };
+            assert!(target_password_askpass_allowed(&config, true));
+        }
+
+        // PublicKey and Agent negotiate normally and fall through to a password prompt when the
+        // key is rejected, so they stay covered too.
+        for auth_method in [SshAuthMethod::PublicKey, SshAuthMethod::Agent] {
+            let config = SshConfig {
+                auth_method,
+                ..SshConfig::default()
+            };
+            assert!(target_password_askpass_allowed(&config, false));
+        }
+
+        // The two that must stay interactive: a forced helper would sit in front of the touch or
+        // the challenge that is the whole point of the method.
         for auth_method in [
-            SshAuthMethod::PublicKey,
-            SshAuthMethod::KeyboardInteractive,
-            SshAuthMethod::Agent,
             SshAuthMethod::SecurityKey,
+            SshAuthMethod::KeyboardInteractive,
         ] {
             let config = SshConfig {
                 auth_method,
@@ -1077,30 +1245,25 @@ mod tests {
     }
 
     #[test]
-    fn test_target_password_askpass_rejects_competing_identity_and_auth_options() {
-        let file_config = SshConfig {
-            key_source: crate::models::SshKeySource::File {
-                path: std::path::PathBuf::from("/home/me/.ssh/id_ed25519"),
-            },
-            ..SshConfig::default()
-        };
-        assert!(!target_password_askpass_allowed(&file_config, false));
-
-        let agent_config = SshConfig {
-            key_source: crate::models::SshKeySource::Agent {
-                fingerprint: "SHA256:test".to_string(),
-                comment: "test".to_string(),
-            },
-            ..SshConfig::default()
-        };
-        assert!(!target_password_askpass_allowed(&agent_config, false));
-
+    fn test_target_password_askpass_rejects_unreasonable_launches() {
+        // A token's PIN/touch step is the point of the method, so a forced helper must not stand
+        // in front of it.
         let token_config = SshConfig {
             pkcs11_provider: Some("/usr/lib/pkcs11.so".to_string()),
             ..SshConfig::default()
         };
         assert!(!target_password_askpass_allowed(&token_config, false));
 
+        let legacy_agent_config = SshConfig {
+            agent_key_fingerprint: Some("SHA256:legacy".to_string()),
+            ..SshConfig::default()
+        };
+        assert!(!target_password_askpass_allowed(
+            &legacy_agent_config,
+            false
+        ));
+
+        // An opaque route spawns a nested ssh outside the env-sanitised chain this module builds.
         let proxy_config = SshConfig {
             proxy_command: Some("ncat %h %p".to_string()),
             ..SshConfig::default()
@@ -1108,6 +1271,7 @@ mod tests {
         assert!(has_unmanaged_proxy_route(&proxy_config));
         assert!(!target_password_askpass_allowed(&proxy_config, false));
 
+        // The user has taken authentication over by hand; our own -o would outrank what they wrote.
         let mut override_config = SshConfig::default();
         override_config.custom_options.insert(
             "PreferredAuthentications".to_string(),
@@ -1177,9 +1341,9 @@ mod tests {
         assert_eq!(
             cmd,
             "env _RC_TGT_PW_FILE= _RC_JH_PW_FILE= _RC_JH_PW_FILE_1= SSH_ASKPASS= \
-             SSH_ASKPASS_REQUIRE=never ssh -W %h:%p \
+             SSH_ASKPASS_REQUIRE= ssh -W %h:%p \
              -o ProxyCommand='env _RC_TGT_PW_FILE= _RC_JH_PW_FILE= _RC_JH_PW_FILE_1= SSH_ASKPASS= \
-             SSH_ASKPASS_REQUIRE=never ssh -W %h:%p far' near"
+             SSH_ASKPASS_REQUIRE= ssh -W %h:%p far' near"
         );
     }
 
@@ -1206,7 +1370,7 @@ mod tests {
              SSH_ASKPASS=/run/user/1000/rustconn-jh-askpass.sh \
              SSH_ASKPASS_REQUIRE=force ssh -W %h:%p -o StrictHostKeyChecking=accept-new \
              -o ProxyCommand='env _RC_TGT_PW_FILE= _RC_JH_PW_FILE= _RC_JH_PW_FILE_1= SSH_ASKPASS= \
-             SSH_ASKPASS_REQUIRE=never ssh -W %h:%p far' near"
+             SSH_ASKPASS_REQUIRE= ssh -W %h:%p far' near"
         );
     }
 
@@ -1230,10 +1394,50 @@ mod tests {
         assert_eq!(
             cmd,
             "env _RC_TGT_PW_FILE= _RC_JH_PW_FILE= _RC_JH_PW_FILE_1= SSH_ASKPASS= \
-             SSH_ASKPASS_REQUIRE=never ssh -W %h:%p \
+             SSH_ASKPASS_REQUIRE= ssh -W %h:%p \
              -o ProxyCommand='env _RC_TGT_PW_FILE= _RC_JH_PW_FILE= \
              SSH_ASKPASS=/run/user/1000/rustconn-jh-askpass-1.sh \
              SSH_ASKPASS_REQUIRE=force ssh -W %h:%p -o StrictHostKeyChecking=accept-new far' near"
         );
+    }
+}
+
+#[cfg(test)]
+mod proxy_detection_tests {
+    use super::ssh_g_output_declares_proxy;
+
+    #[test]
+    fn ssh_g_reports_no_proxy_when_the_keywords_are_absent() {
+        // `ssh -G` omits both keywords entirely for a host with no routing, which is the common
+        // case and the one that must enable automatic delivery.
+        let output = "user me\nhostname target.example.com\nport 22\naddressfamily any\n";
+        assert!(!ssh_g_output_declares_proxy(output));
+    }
+
+    #[test]
+    fn ssh_g_reports_a_proxy_for_proxyjump_and_proxycommand() {
+        assert!(ssh_g_output_declares_proxy(
+            "hostname target.example.com\nproxyjump bastion.example.com\n"
+        ));
+        assert!(ssh_g_output_declares_proxy(
+            "hostname target.example.com\nproxycommand ncat %h %p\n"
+        ));
+    }
+
+    #[test]
+    fn ssh_g_treats_none_as_no_proxy() {
+        // `none` is how OpenSSH itself spells "disabled", so it must not read as a route.
+        assert!(!ssh_g_output_declares_proxy("proxyjump none\n"));
+        assert!(!ssh_g_output_declares_proxy("proxycommand none\n"));
+        // A bare keyword with no value is not a route either.
+        assert!(!ssh_g_output_declares_proxy("proxycommand\n"));
+    }
+
+    #[test]
+    fn ssh_g_parsing_ignores_unrelated_keywords_that_merely_contain_the_name() {
+        // Prefix matching would fire on this; the parser compares the whole first field.
+        assert!(!ssh_g_output_declares_proxy(
+            "proxyusepdisc no\nproxyjumpsomething value\n"
+        ));
     }
 }

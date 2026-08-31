@@ -359,28 +359,53 @@ fn build_ssh_command_args(
     let mut args = ssh_config.build_command_args();
 
     // Unlike the old VTE watcher, forced askpass is scoped to OpenSSH's target
-    // authentication phase. Keep the gate fail-closed for mixed identity/auth
-    // configurations; those continue to prompt interactively.
+    // authentication phase: the helper answers only the prompt OpenSSH generates
+    // for the `password` method and exits for anything else.
+    //
+    // The `ssh -G` term is last because it spawns a process: it only runs once every cheap
+    // condition already holds. It answers whether OpenSSH's *own* config routes this host through
+    // a proxy RustConn did not build — a nested ssh there would inherit the helper and be asked
+    // for a password with the very shape the helper answers, so the target credential would land
+    // on the bastion. Declining delivery leaves the connection to prompt, which is the documented
+    // fallback; the alternative shipped in 0.21.2 was to append `ProxyJump=none`, which protected
+    // the credential by discarding the user's routing.
     let target_askpass_allowed = has_cached_target_password
-        && rustconn_core::ssh_tunnel::target_password_askpass_allowed(ssh_config, key.is_some());
+        && rustconn_core::ssh_tunnel::target_password_askpass_allowed(ssh_config, key.is_some())
+        && !rustconn_core::ssh_tunnel::ssh_config_declares_proxy(
+            &conn.host,
+            conn.port,
+            conn.username.as_deref(),
+        );
     if target_askpass_allowed {
-        for option in [
-            "PreferredAuthentications=password",
-            "KbdInteractiveAuthentication=no",
-            "PubkeyAuthentication=no",
-            "PasswordAuthentication=yes",
-            "NumberOfPasswordPrompts=1",
-        ] {
-            args.push("-o".to_string());
-            args.push(option.to_string());
-        }
+        // Two options, both about the *shape* of the launch rather than about
+        // which method authenticates.
+        //
+        // `NumberOfPasswordPrompts=1` keeps the one-shot posture that stops a
+        // wrong stored password from walking an account into a lockout.
+        // `StrictHostKeyChecking=accept-new` keeps the host-key question away
+        // from a forced helper, which would otherwise be handed it; a *changed*
+        // key is still refused. The user's own value wins if they set one.
+        //
+        // Deliberately NOT pinned here — `PreferredAuthentications=password`,
+        // `PubkeyAuthentication=no`, `KbdInteractiveAuthentication=no` and
+        // `PasswordAuthentication=yes` were, until the 0.21.2 review, and each
+        // one broke a working setup for no security gain. What keeps the
+        // credential away from the wrong prompt is the helper's prompt matching,
+        // not the method list: a method the helper refuses simply fails and
+        // OpenSSH moves to the next one. Pinning instead meant a server that
+        // offers keyboard-interactive could not authenticate at all, a key
+        // inherited from a group was never offered, and a user's
+        // `PasswordAuthentication no` was overridden from under them. With the
+        // list left alone, OpenSSH tries keyboard-interactive first (its default
+        // order), the helper declines that prompt without consuming the secret
+        // file, and the `password` attempt that follows is the one it answers.
+        args.push("-o".to_string());
+        args.push("NumberOfPasswordPrompts=1".to_string());
         if !ssh_config
             .custom_options
             .keys()
             .any(|key| key.eq_ignore_ascii_case("StrictHostKeyChecking"))
         {
-            // Forced askpass must never receive the host-key confirmation prompt.
-            // accept-new accepts first use but still rejects a changed host key.
             args.push("-o".to_string());
             args.push("StrictHostKeyChecking=accept-new".to_string());
         }
@@ -734,17 +759,6 @@ fn build_ssh_command_args(
     let mut jump_host_passwords: Vec<(String, SecretString)> = Vec::new();
 
     let jump_host_str = if jump_hosts.is_empty() {
-        if target_askpass_allowed {
-            // An unmanaged ProxyJump/ProxyCommand from ~/.ssh/config would
-            // spawn another ssh below the outer process and inherit its target
-            // credential. Disable implicit routing while automatic delivery is
-            // active; users needing a proxy must configure it in RustConn so we
-            // can build an explicit env-sanitized ProxyCommand.
-            args.push("-o".to_string());
-            args.push("ProxyJump=none".to_string());
-            args.push("-o".to_string());
-            args.push("ProxyCommand=none".to_string());
-        }
         None
     } else {
         // Remove the -J added by build_command_args (if proxy_jump was set)
@@ -967,6 +981,119 @@ fn build_ssh_command_args(
         jump_host_passwords,
         target_askpass_allowed,
     )
+}
+
+/// Returns `true` if the first reference jump hop may show an interactive
+/// password prompt in the VTE (any [`PasswordSource`] other than `None`).
+///
+/// Guards the terminal auto-fill fallback, which is what answers a password
+/// prompt for every SSH connection the askpass gate declines — a token, a
+/// security key, a user-supplied authentication option, or an opaque proxy
+/// route. Without the guard, the first VTE prompt on a bastioned connection may
+/// be the *bastion's*, and typing the target's password into it hands one host's
+/// credential to another (issue #191).
+///
+/// A key/agent-only bastion (`PasswordSource::None`) authenticates
+/// non-interactively inside the `ProxyCommand`, so it never prompts in the
+/// terminal — the first VTE prompt is then the target's and target-password
+/// auto-fill is safe even with a jump host present. This narrows the issue #191
+/// suppression so the common key-auth-bastion + password-target case still
+/// auto-fills instead of being suppressed alongside the leak-prone case.
+///
+/// Conservatively returns `true` when the first hop cannot be inspected — a
+/// string `proxy_jump`/`proxy_command` with no backing connection — so a bastion
+/// that might prompt keeps auto-fill suppressed. Returns `false` for non-SSH
+/// protocols (the caller's own `has_jump_host` term already covers them).
+///
+/// [`PasswordSource`]: rustconn_core::models::PasswordSource
+fn bastion_may_prompt_for_password(
+    conn: &rustconn_core::Connection,
+    state: &SharedAppState,
+) -> bool {
+    use rustconn_core::models::PasswordSource;
+    if !matches!(&conn.protocol_config, rustconn_core::ProtocolConfig::Ssh(_)) {
+        return false;
+    }
+    // Through the resolver, not `ssh.jump_host_id`: an inherited bastion prompts
+    // exactly like one set on the connection, and reading the raw field here
+    // would have this answer `false` for the very hop the launcher is about to
+    // dial — suppressing nothing and feeding the target's password to the
+    // bastion prompt, which is the defect #191 fixed.
+    let inherited_hop = state
+        .try_borrow()
+        .ok()
+        .and_then(|s| super::protocols::resolve_first_hop_id(&s, conn));
+    match inherited_hop {
+        // Reference hop: inspect its own password source.
+        Some(jid) => state
+            .try_borrow()
+            .ok()
+            .and_then(|s| {
+                s.get_connection(jid)
+                    .map(|c| c.password_source != PasswordSource::None)
+            })
+            .unwrap_or(true),
+        // String proxy_jump / proxy_command / inherited proxy: not inspectable.
+        None => true,
+    }
+}
+
+/// Installs the terminal auto-fill fallback for a connection askpass does not cover.
+///
+/// The askpass path is the better mechanism where it applies: OpenSSH asks for the credential at
+/// exactly the right moment, so there is no deadline to miss, and the helper can tell an account
+/// password prompt from a passphrase or an OTP challenge. But it does not apply to every
+/// connection — see [`target_password_askpass_allowed`] — and until the 0.21.2 review a connection
+/// outside that set got nothing at all, where 0.21.1 had typed its password. This puts the
+/// watcher back for exactly those, which also restores the per-connection and per-group *expected
+/// password prompt* override from issue #254 for them.
+///
+/// Does nothing when there is no password to type. The issue #191 guard applies: the target
+/// password is typed only when there is no jump host, or the bastion was already authenticated
+/// out of band through its own `SSH_ASKPASS`, or the bastion uses key/agent auth and so never
+/// prompts in the terminal.
+///
+/// [`target_password_askpass_allowed`]: rustconn_core::ssh_tunnel::target_password_askpass_allowed
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fallback needs the shared UI owners plus the connection, credential, automation config and both bastion facts"
+)]
+fn install_ssh_autofill_fallback(
+    state: &SharedAppState,
+    notebook: &SharedNotebook,
+    conn: &rustconn_core::Connection,
+    session_id: Uuid,
+    cached_password: Option<SecretString>,
+    automation: &rustconn_core::models::AutomationConfig,
+    has_jump_host: bool,
+    bastion_handled_out_of_band: bool,
+) {
+    let Some(password) = cached_password else {
+        return;
+    };
+    if has_jump_host && !bastion_handled_out_of_band && bastion_may_prompt_for_password(conn, state)
+    {
+        tracing::info!(
+            protocol = "ssh",
+            "Jump host not handled out-of-band; target password auto-fill suppressed to avoid leaking to bastion"
+        );
+        return;
+    }
+    crate::window::prompt_autofill::install_login_autofill(
+        notebook,
+        session_id,
+        crate::window::prompt_autofill::LoginAutofill {
+            // SSH never types the account name: it travels in the command line.
+            username: None,
+            password: Some(password),
+            matcher: rustconn_core::LoginPromptMatcher::new(
+                None,
+                automation.password_prompt.as_deref(),
+            ),
+            protocol: "ssh",
+            deadline_secs: automation.login_timeout_secs,
+        },
+    );
 }
 
 /// Starts SSH and observes a session created after asynchronous setup.
@@ -1331,6 +1458,22 @@ fn start_ssh_connection_internal(
         );
     }
 
+    // Askpass covers what it can prove; everything else keeps the terminal
+    // watcher, including the issue #254 prompt override. Skipped when askpass is
+    // active so the password is never delivered twice.
+    if !target_askpass_allowed {
+        install_ssh_autofill_fallback(
+            state,
+            notebook,
+            conn,
+            session_id,
+            cached_password.clone(),
+            &resolved_automation,
+            has_jump_host,
+            !jump_host_passwords.is_empty(),
+        );
+    }
+
     // --- SSH status detection: mark sidebar "connected" once terminal output appears ---
     // For jump host connections, also check terminal text for SSH failure patterns
     // to avoid false positives (jump host connects but destination times out).
@@ -1686,6 +1829,22 @@ pub fn reconnect_ssh_in_place(
             },
             use_mptcp,
             askpass_cleanup_paths,
+        );
+    }
+
+    // Same fallback as the initial launch — a reconnect must not silently lose
+    // the password delivery the first connect had.
+    if !target_askpass_allowed {
+        let resolved_automation = resolve_automation_for_connection(state, &conn);
+        install_ssh_autofill_fallback(
+            state,
+            notebook,
+            &conn,
+            session_id,
+            cached_password.clone(),
+            &resolved_automation,
+            has_jump_host,
+            !jump_host_passwords.is_empty(),
         );
     }
 

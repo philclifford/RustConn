@@ -1,14 +1,26 @@
 -------------------------------------------------------------------
-Sun Aug 31 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.2
+Mon Aug 31 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.2
 - Version bump to 0.21.2
 - Fixed: SSH through a jump host could hang at the target password prompt when
-  the ProxyCommand step was slow (#301). The bastion password is delivered out
-  of band via SSH_ASKPASS, but the target host's password is typed by a watcher
-  that recognises the password prompt in the terminal. That watcher gave up
-  after a fixed 10-second window measured from spawn, so a slow proxy handshake
-  ate the whole budget and the session sat at "password:". The window is now
-  measured from the last terminal activity, so the watcher keeps waiting while
-  the connection is still making progress
+  the ProxyCommand step was slow (#301). The target password was typed by a
+  watcher that read the terminal and gave up after a fixed 10-second window
+  measured from spawn, so a slow proxy handshake ate the whole budget and the
+  session sat at "password:". SSH no longer types the password into the terminal
+  at all; it is handed to OpenSSH through SSH_ASKPASS, which has no deadline to
+  miss. The terminal watcher still logs Telnet and Serial in, and its window is
+  now measured from the last terminal activity
+- Changed: a stored SSH password is now given to OpenSSH through SSH_ASKPASS
+  instead of typed into the terminal, with the secret in a mode-0600 runtime file
+  whose path alone reaches the SSH environment. The helper answers only the
+  prompt OpenSSH generates for the password method and refuses passphrase,
+  host-key, keyboard-interactive and password-change prompts. No authentication
+  method is pinned: a method the helper declines fails without consuming the
+  secret and OpenSSH moves on, so an inherited group key is still offered and a
+  server that tries keyboard-interactive first still reaches the password prompt.
+  Where askpass does not apply — security-key or keyboard-interactive auth, a
+  PKCS#11 token, a custom authentication or routing option, or a proxy declared
+  in ~/.ssh/config (detected with ssh -G) — the terminal watcher does the typing
+  as before, including the per-connection expected password prompt from #254
 - Fixed: a SPICE connection asked for the password every time, whatever the
   password source (#308). SPICE runs in remote-viewer, and RustConn resolved and
   cached the password but never handed it to the viewer. It is now passed through

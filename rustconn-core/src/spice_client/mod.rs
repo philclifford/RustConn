@@ -191,7 +191,9 @@ pub fn build_spice_viewer_args(config: &SpiceClientConfig) -> Vec<String> {
 ///
 /// Deliberately omits everything the `.vv` file already carries (`--spice-proxy`,
 /// `--spice-ca-file`, `--spice-host-subject`) so the two never state the same
-/// thing twice, and audio, which is left at the viewer default on this path.
+/// thing twice. Audio is *not* one of those: the `.vv` format has no audio field,
+/// so `--spice-disable-audio` has to stay on argv or a connection with audio
+/// playback switched off would get audio back the moment a password is delivered.
 #[must_use]
 pub fn build_spice_extra_flags(config: &SpiceClientConfig) -> Vec<String> {
     let mut args = Vec::new();
@@ -207,19 +209,46 @@ pub fn build_spice_extra_flags(config: &SpiceClientConfig) -> Vec<String> {
         args.push("--spice-shared-dir".to_string());
         args.push(folder.local_path.to_string_lossy().to_string());
     }
+    if !config.audio_playback {
+        args.push("--spice-disable-audio".to_string());
+    }
 
     args
 }
 
 /// Escapes a value for a virt-viewer `.vv` INI line.
 ///
-/// The `.vv` format is a GLib key file: values run to the end of the line, so a
-/// newline or carriage return would forge or truncate a key. A password is the
-/// one field here that is not RustConn-controlled, so those characters are
-/// stripped rather than trusted. Everything else the caller already validated
-/// (host, port), but the pass is cheap and keeps every emitted line well-formed.
+/// The `.vv` format is a GLib key file and virt-viewer reads it with
+/// `g_key_file_get_string`, which un-escapes the value it is given. That makes
+/// escaping a correctness requirement and not only an injection guard, because
+/// GKeyFile is strict about what it will accept:
+///
+/// * a backslash followed by anything other than `n`, `r`, `t`, `s` or `\` makes
+///   the read fail outright with "value that cannot be interpreted", so a
+///   password containing a single backslash would take the whole file down;
+/// * `\\` decodes back to one backslash, so a backslash left unescaped is
+///   silently altered even when it happens to form a valid sequence;
+/// * leading whitespace is stripped, so a password that starts with a space
+///   arrives short unless the space is written as `\s`;
+/// * a raw newline or carriage return ends the line and would forge or truncate
+///   a key.
+///
+/// Every one of those characters is therefore written in its escaped form, which
+/// round-trips exactly. Escaping spaces everywhere rather than only at the front
+/// keeps the rule simple; `\s` decodes to a space in any position.
 fn escape_vv_value(value: &str) -> String {
-    value.replace(['\n', '\r'], "")
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            ' ' => escaped.push_str("\\s"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 /// Builds the contents of a virt-viewer `.vv` connection file, or `None`.
@@ -266,8 +295,9 @@ pub fn build_vv_connection_file(config: &SpiceClientConfig) -> Option<String> {
         {
             // The CA PEM is a multi-line value; the .vv format joins the lines
             // with literal `\n` sequences, matching oVirt's generated files.
-            let joined = ca.replace('\n', "\\n");
-            let _ = writeln!(file, "ca={joined}");
+            // Same escaper as every other value, so the PEM survives GKeyFile's
+            // un-escaping intact instead of relying on it holding no backslash.
+            let _ = writeln!(file, "ca={}", escape_vv_value(&ca));
         }
         if config.skip_cert_verify {
             // An empty host-subject disables subject matching, the closest the
@@ -280,10 +310,11 @@ pub fn build_vv_connection_file(config: &SpiceClientConfig) -> Option<String> {
     if let Some(ref proxy) = config.proxy {
         let _ = writeln!(file, "proxy={}", escape_vv_value(proxy));
     }
-    // Written last so a truncated file (partial write) never carries the
-    // password without also carrying the deletion flag that cleans it up.
-    let _ = writeln!(file, "password={}", escape_vv_value(password));
+    // The deletion flag goes in before the password, so a file truncated by a
+    // partial write can hold the flag without the secret but never the secret
+    // without the flag that cleans it up.
     file.push_str("delete-this-file=1\n");
+    let _ = writeln!(file, "password={}", escape_vv_value(password));
 
     Some(file)
 }
@@ -427,17 +458,47 @@ mod tests {
     }
 
     #[test]
-    fn vv_file_strips_newlines_from_password() {
-        // A newline in the value would forge a second .vv key.
+    fn vv_file_escapes_newlines_in_password() {
+        // A raw newline in the value would forge a second .vv key; the escaped
+        // form keeps the line intact and still round-trips through GKeyFile.
         let config = SpiceClientConfig::new("192.168.1.100")
             .with_port(5900)
             .with_password("s3cret\nusb-filter=null");
         let file = build_vv_connection_file(&config).expect("vv file");
 
-        assert!(file.contains("password=s3cretusb-filter=null\n"));
+        assert!(file.contains("password=s3cret\\nusb-filter=null\n"));
         // Exactly one password key, and no injected key on its own line.
         assert_eq!(file.matches("password=").count(), 1);
         assert!(!file.contains("\nusb-filter="));
+    }
+
+    #[test]
+    fn vv_file_escapes_backslash_and_space_in_password() {
+        // GKeyFile refuses a value whose backslash starts no known escape
+        // sequence, and strips leading whitespace. Both have to be encoded or
+        // the viewer either fails to read the file or reads a shorter password.
+        let config = SpiceClientConfig::new("192.168.1.100")
+            .with_port(5900)
+            .with_password(" pa\\ss word\t");
+        let file = build_vv_connection_file(&config).expect("vv file");
+
+        assert!(file.contains("password=\\spa\\\\ss\\sword\\t\n"));
+        // The escaped value stays on one line whatever it contained.
+        assert_eq!(file.matches("password=").count(), 1);
+    }
+
+    #[test]
+    fn vv_file_writes_the_delete_flag_before_the_password() {
+        // A truncated write must never leave the secret behind without the flag
+        // that has the viewer remove the file.
+        let config = SpiceClientConfig::new("192.168.1.100")
+            .with_port(5900)
+            .with_password("s3cret");
+        let file = build_vv_connection_file(&config).expect("vv file");
+
+        let flag = file.find("delete-this-file=1").expect("delete flag");
+        let password = file.find("password=").expect("password key");
+        assert!(flag < password);
     }
 
     #[test]
@@ -449,6 +510,24 @@ mod tests {
         let file = build_vv_connection_file(&config).expect("vv file");
 
         assert!(file.contains("proxy=http://proxy:3128\n"));
+    }
+
+    #[test]
+    fn extra_flags_keep_the_audio_setting() {
+        // The .vv format has no audio field, so the flag has to survive on argv
+        // or a muted connection unmutes itself as soon as it gets a password.
+        let muted = SpiceClientConfig::new("192.168.1.100")
+            .with_port(5900)
+            .with_audio_playback(false);
+        assert!(
+            build_spice_extra_flags(&muted).contains(&"--spice-disable-audio".to_string()),
+            "audio playback off must still disable audio on the .vv path"
+        );
+
+        let audible = SpiceClientConfig::new("192.168.1.100")
+            .with_port(5900)
+            .with_audio_playback(true);
+        assert!(!build_spice_extra_flags(&audible).contains(&"--spice-disable-audio".to_string()));
     }
 
     #[test]
