@@ -5,6 +5,12 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A new Local Shell tab in Flatpak could open at the wrong size when the window had changed size since the last tab (issue [#294](https://github.com/totoshko88/RustConn/issues/294))** — the host shell runs through `flatpak-spawn --host` and `script`, which copies the window size exactly once at startup and never sees a later `SIGWINCH` (`flatpak-spawn` does not forward it). The spawn already waited for the terminal to be laid out before starting, but the test was a non-zero pixel allocation, and that arrives one frame before VTE recomputes its row and column count for that allocation. A tab opened while the window was a different size than the previous one therefore spawned on the very first poll tick with the *previous* grid still in place, freezing the host shell at that stale size (the reported 18×80). The spawn now waits until the grid has *settled* — a non-zero allocation plus two consecutive polls reporting the same row/column count — so `script` inherits the size the user is actually looking at. SSH and other sessions were never affected: they run on RustConn's own PTY, which tracks resizes normally.
+
 ## [0.21.1] - 2026-08-28
 
 ### Fixed
