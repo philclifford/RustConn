@@ -173,6 +173,26 @@ pub fn create_network_session(uuid: &Uuid, accept_invalid_certs: bool) -> webkit
 
     let session = webkit6::NetworkSession::new(Some(&data_str), Some(&cache_str));
 
+    // Persist cookies across restarts (issue #294 was terminal size; this is
+    // issue #309). Passing a data directory to `NetworkSession::new` makes the
+    // website data manager persistent, but WebKitGTK's cookie manager is a
+    // separate subsystem that keeps cookies in memory only until
+    // `set_persistent_storage` is called. Without this, a user of an embedded
+    // Web connection is logged out every time RustConn restarts, while the
+    // System-browser mode — which has its own on-disk profile — stays logged
+    // in. The upstream docs frame `set_persistent_storage` as being about
+    // "non-session" cookies, but session-login cookies are exactly what most
+    // sites set as non-session, so calling it is what makes the login survive.
+    // SQLite over the flat-text format because it is the format WebKitGTK's own
+    // browsers use and is robust to a crash mid-write.
+    if let Some(cookie_manager) = session.cookie_manager() {
+        let cookies_path = data_dir.join("cookies.sqlite");
+        cookie_manager.set_persistent_storage(
+            &cookies_path.to_string_lossy(),
+            webkit6::CookiePersistentStorage::Sqlite,
+        );
+    }
+
     if accept_invalid_certs {
         session.set_tls_errors_policy(webkit6::TLSErrorsPolicy::Ignore);
     }

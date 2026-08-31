@@ -851,6 +851,26 @@ impl TerminalNotebook {
         working_directory: Option<&str>,
         ssh_agent_socket: Option<&str>,
     ) -> bool {
+        self.spawn_command_with_cleanup(
+            session_id,
+            argv,
+            envv,
+            working_directory,
+            ssh_agent_socket,
+            Vec::new(),
+        )
+    }
+
+    fn spawn_command_with_cleanup(
+        &self,
+        session_id: Uuid,
+        argv: &[&str],
+        envv: Option<&[&str]>,
+        working_directory: Option<&str>,
+        ssh_agent_socket: Option<&str>,
+        cleanup_paths: Vec<PathBuf>,
+    ) -> bool {
+        let cleanup_paths = ChildCleanupPaths(cleanup_paths);
         let Some(terminal) = self.get_terminal(session_id) else {
             return false;
         };
@@ -920,7 +940,7 @@ impl TerminalNotebook {
         self.deliver_output_to(session_id, &terminal, output);
         self.forward_input_from(session_id, &terminal);
         self.watch_grid_size(session_id, &terminal);
-        watch_child_exit(&terminal, child.pid);
+        watch_child_exit(&terminal, child.pid, cleanup_paths);
 
         true
     }
@@ -1235,19 +1255,36 @@ fn reap_child(pid: u32) {
     let _ = nix::sys::wait::waitpid(pid, None);
 }
 
+struct ChildCleanupPaths(Vec<PathBuf>);
+
+impl Drop for ChildCleanupPaths {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            if let Err(error) = std::fs::remove_file(path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(%error, path = %path.display(), "Failed to remove child secret file");
+            }
+        }
+    }
+}
+
 /// Raises `child-exited` on a terminal when its child process ends.
 ///
-/// VTE only emits that signal for a child it spawned itself, and the whole
-/// teardown path hangs off it — reconnect banner, log flush, monitoring, tab
-/// state. The GLib watch also performs the `waitpid`, which is why
+/// `cleanup_paths` remain owned by the child watch for the complete process
+/// lifetime and are removed on exit. Early spawn failures drop the same guard
+/// before returning. VTE does not emit this signal for a child it did not spawn;
+/// the GLib watch also performs `waitpid`, which is why
 /// [`pty_spawn::spawn_on_pty`] deliberately leaks its `Child` handle.
-fn watch_child_exit(terminal: &Terminal, pid: u32) {
+fn watch_child_exit(terminal: &Terminal, pid: u32, cleanup_paths: ChildCleanupPaths) {
     let terminal = terminal.downgrade();
+    let mut cleanup_paths = Some(cleanup_paths);
     glib::child_watch_add_local(glib::Pid(pid as i32), move |_pid, status| {
         tracing::debug!(status, pid, "Session child exited");
         if let Some(terminal) = terminal.upgrade() {
             terminal.emit_by_name::<()>("child-exited", &[&status]);
         }
+        drop(cleanup_paths.take());
     });
 }
 
@@ -1259,9 +1296,9 @@ fn watch_child_exit(terminal: &Terminal, pid: u32) {
 /// Both spawn paths used to carry their own copy of this, which is how the
 /// macOS `SSH_ASKPASS_REQUIRE` guard (#161) ended up applied on one path only.
 ///
-/// Entries are zeroizing: a jump host's password is handed to `ssh` through
-/// `envv` as an askpass variable, so this vector holds a credential for as long
-/// as it takes to spawn.
+/// Entries are zeroizing because callers may pass short-lived sensitive
+/// values. SSH askpass uses only owner-only secret-file paths here; password
+/// bytes never enter the child environment.
 fn build_child_env(
     envv: Option<&[&str]>,
     ssh_agent_socket: Option<&str>,
@@ -1429,6 +1466,41 @@ impl TerminalNotebook {
         extra_env: Option<&[&str]>,
         use_mptcp: bool,
     ) -> bool {
+        self.spawn_ssh_with_cleanup(
+            session_id,
+            host,
+            port,
+            username,
+            identity_file,
+            extra_args,
+            use_waypipe,
+            ssh_agent_socket,
+            startup_command,
+            extra_env,
+            use_mptcp,
+            Vec::new(),
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "function parameters mirror upstream API or struct fields 1:1; cleanup ownership is the only additional concern"
+    )]
+    pub(crate) fn spawn_ssh_with_cleanup(
+        &self,
+        session_id: Uuid,
+        host: &str,
+        port: u16,
+        username: Option<&str>,
+        identity_file: Option<&str>,
+        extra_args: &[&str],
+        use_waypipe: bool,
+        ssh_agent_socket: Option<&str>,
+        startup_command: Option<&str>,
+        extra_env: Option<&[&str]>,
+        use_mptcp: bool,
+        cleanup_paths: Vec<PathBuf>,
+    ) -> bool {
         let mut argv = if use_waypipe {
             if use_mptcp {
                 vec!["mptcpize", "run", "waypipe", "ssh"]
@@ -1536,7 +1608,14 @@ impl TerminalNotebook {
             argv.push(&startup_wrapped);
         }
 
-        self.spawn_command(session_id, &argv, extra_env, None, ssh_agent_socket)
+        self.spawn_command_with_cleanup(
+            session_id,
+            &argv,
+            extra_env,
+            None,
+            ssh_agent_socket,
+            cleanup_paths,
+        )
     }
 
     /// Points a session's Backspace and Delete keys at the configured bytes.

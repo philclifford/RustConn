@@ -4106,11 +4106,16 @@ impl MainWindow {
     /// geometry once at startup (`mc`, `htop`, shells) then draw at the wrong
     /// size (issue #294).
     ///
-    /// Waiting for the widget's first non-zero allocation is the whole fix: the
-    /// spawn path's `grid_size` reports the real grid from then on and `script`
-    /// inherits it. The predicate is the allocation rather than "is the grid
-    /// still 24×80", because a window genuinely that size is a valid state and
-    /// not a symptom.
+    /// Waiting for the widget's grid to *settle* is the whole fix: the spawn
+    /// path's `grid_size` reports the real grid from then on and `script`
+    /// inherits it. "Settled" means a non-zero pixel allocation plus two
+    /// consecutive ticks reporting the same row/column count — a plain non-zero
+    /// allocation is not enough, because it arrives a frame before VTE
+    /// recomputes the grid for it, so a tab opened while the window is a
+    /// different size than the last one would otherwise spawn on the first tick
+    /// with the previous grid still in place (issue #294). The predicate is the
+    /// allocation rather than "is the grid still 24×80", because a window
+    /// genuinely that size is a valid state and not a symptom.
     ///
     /// There is deliberately no resize forwarding beside this. The
     /// `flatpak-spawn --host -- stty rows R cols C` that used to sit here ran
@@ -4136,6 +4141,19 @@ impl MainWindow {
 
         let notebook = Rc::downgrade(notebook);
         let mut ticks = 0_u32;
+        // The grid from the previous tick. `script` copies the window size once
+        // and never again, so it must inherit the *settled* grid, not a
+        // transitional one. Issue #294: a non-zero pixel allocation
+        // (`width()/height() > 0`) arrives a frame before VTE recomputes its
+        // row/column count for that allocation, so a new tab opened while the
+        // window is at a different size than the last one fired the spawn on the
+        // first tick (`ticks=1`) with the *previous* grid still in place — the
+        // 18×77 the user saw. Waiting until two consecutive ticks report the
+        // same non-zero grid means the layout has come to rest before the host
+        // shell reads it. VTE reports its own 24×80 default while unallocated,
+        // which is itself a stable pair, so the pixel-allocation guard below is
+        // still required to tell "settled at 24×80" from "not laid out yet".
+        let mut last_grid: Option<(u16, u16)> = None;
         glib::timeout_add_local(POLL, move || {
             let Some(notebook) = notebook.upgrade() else {
                 return glib::ControlFlow::Break;
@@ -4146,7 +4164,13 @@ impl MainWindow {
             };
             ticks += 1;
             let allocated = terminal.width() > 0 && terminal.height() > 0;
-            if !allocated && ticks < POLL_LIMIT {
+            let grid = (
+                u16::try_from(terminal.row_count().max(0)).unwrap_or(u16::MAX),
+                u16::try_from(terminal.column_count().max(0)).unwrap_or(u16::MAX),
+            );
+            let settled = allocated && last_grid == Some(grid);
+            last_grid = Some(grid);
+            if !settled && ticks < POLL_LIMIT {
                 return glib::ControlFlow::Continue;
             }
             if !allocated {
@@ -4154,11 +4178,16 @@ impl MainWindow {
                     %session_id,
                     "Terminal never received an allocation; starting the host shell at VTE's default size"
                 );
+            } else if !settled {
+                tracing::warn!(
+                    %session_id,
+                    "Terminal grid never settled; starting the host shell at the last reported size"
+                );
             }
             tracing::debug!(
                 %session_id,
-                rows = terminal.row_count(),
-                cols = terminal.column_count(),
+                rows = grid.0,
+                cols = grid.1,
                 ticks,
                 "Starting the Flatpak host shell"
             );

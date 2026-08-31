@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.21.1
+Version:        0.21.2
 Release:        0
 # rpmlint caps Summary at 79 characters (summary-too-long, badness 200); the
 # protocol list belongs in %description, which has room for all of it. Kept in
@@ -321,6 +321,21 @@ done
 %{_datadir}/icons/hicolor/*/apps/io.github.totoshko88.RustConn.*
 
 %changelog
+* Mon Aug 31 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.2-0
+- Version bump to 0.21.2
+- Fixed: SSH through a jump host could hang at the target password prompt when
+  the ProxyCommand step was slow (#301)
+- Changed: a stored SSH password is now handed to OpenSSH through SSH_ASKPASS
+  instead of typed into the terminal, in a mode-0600 runtime file whose path
+  alone reaches the SSH environment; connections askpass does not cover keep the
+  terminal watcher, so no authentication setup loses its stored password
+- Fixed: a SPICE connection asked for the password every time, whatever the
+  password source (#308); the password is now passed via a mode-0600 .vv file
+- Fixed: the embedded web browser lost its login on every restart (#309);
+  cookies are now persisted to disk
+- Fixed: a new Local Shell tab in Flatpak could open at the wrong size when the
+  window had changed size since the last tab (#294)
+
 * Fri Aug 28 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.1-0
 - Version bump to 0.21.1
 - Fixed: connections that authenticate with a key waited on a password manager

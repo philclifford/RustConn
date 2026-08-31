@@ -290,7 +290,8 @@ pub use snap::{
 pub use snippet::SnippetManager;
 pub use spice_client::{
     SpiceClientConfig, SpiceClientError, SpiceCompression, SpiceSecurityProtocol,
-    SpiceSharedFolder, build_spice_viewer_args, detect_spice_viewer,
+    SpiceSharedFolder, build_spice_extra_flags, build_spice_viewer_args, build_vv_connection_file,
+    detect_spice_viewer,
 };
 // Split view types (tab-scoped layouts)
 pub use split::SplitDirection;

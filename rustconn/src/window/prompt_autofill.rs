@@ -34,13 +34,26 @@ use super::protocols::SharedNotebook;
 /// signals alone can miss it. 150 ms balances responsiveness against wake-ups.
 const POLL_INTERVAL: Duration = Duration::from_millis(150);
 
-/// How long to keep watching for a prompt before giving up.
+/// How long the terminal may stay *idle* before the watcher gives up.
 ///
-/// Covers a slow SSH handshake (DNS + key exchange + banner) and a network
-/// device that spends seconds on its login banner. After this the user types
-/// the credentials manually. Overridden by
+/// Measured from the last terminal activity, not from spawn (issue #301). A
+/// jump-host connection reaches the target's password prompt only after its
+/// `ProxyCommand` chain has authenticated the bastion, which can take longer
+/// than any fixed post-spawn budget: the reporter's target prompt arrived after
+/// the `ssh -o ProxyCommand …` step, well past a wall-clock deadline that
+/// started at spawn, so the watcher had already given up and the session hung
+/// at `password:`. Restarting the clock on every `contents-changed` /
+/// `cursor-moved` means the wait only expires once the terminal has been silent
+/// this long — the connection has genuinely stalled — rather than while a slow
+/// handshake or a long ProxyCommand is still making progress. It still covers a
+/// device that spends seconds on a login banner, because the banner is output
+/// and so keeps the clock alive. Overridden by
 /// [`AutomationConfig::login_timeout_secs`] when set.
 const DEFAULT_AUTOFILL_DEADLINE: Duration = Duration::from_secs(10);
+
+/// Absolute ceiling: no login watcher survives past this, regardless of
+/// activity, to avoid a permanent wake-up on a device that prints a heartbeat.
+const ABSOLUTE_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Credentials to type, and how to recognize the prompts asking for them.
 pub(crate) struct LoginAutofill {
@@ -182,14 +195,23 @@ pub(crate) fn install_login_autofill(
         })
     };
 
-    // Polling safety net. Self-cancels on completion, on session close, and at
-    // the deadline. `Instant` is fine for a 10 s in-process window; it does not
-    // advance across suspend, which for a login window in flight is moot.
+    // The deadline is measured from the last sign of terminal activity, not from
+    // here (issue #301). Every `contents-changed`/`cursor-moved` refreshes it,
+    // so the watcher only expires after `deadline` of genuine silence — the
+    // connection has stalled — rather than while a slow handshake or a long
+    // `ProxyCommand` chain is still making progress toward the prompt.
+    let last_activity = Rc::new(Cell::new(Instant::now()));
+    let started = Instant::now();
+
+    // Polling safety net. Self-cancels on completion, on session close, and once
+    // the terminal has been idle for `deadline`. `Instant` is fine for this
+    // in-process window; it does not advance across suspend, which for a login
+    // in flight is moot.
     {
         let step = step.clone();
         let stage = stage.clone();
         let notebook = notebook.clone();
-        let started = Instant::now();
+        let last_activity = last_activity.clone();
         glib::timeout_add_local(POLL_INTERVAL, move || {
             if stage.get() == Stage::Done {
                 return glib::ControlFlow::Break;
@@ -198,11 +220,23 @@ pub(crate) fn install_login_autofill(
             if notebook.get_terminal(session_id).is_none() {
                 return glib::ControlFlow::Break;
             }
-            if started.elapsed() >= deadline {
+            // Absolute ceiling: a device printing periodic output resets the
+            // idle timer indefinitely; this prevents the watcher from running
+            // forever.
+            if started.elapsed() >= ABSOLUTE_TIMEOUT {
                 tracing::debug!(
                     protocol,
                     %session_id,
-                    "No login prompt within the auto-fill window; giving up"
+                    "Absolute timeout; stopping login auto-fill"
+                );
+                stage.set(Stage::Done);
+                return glib::ControlFlow::Break;
+            }
+            if last_activity.get().elapsed() >= deadline {
+                tracing::debug!(
+                    protocol,
+                    %session_id,
+                    "Terminal idle past the auto-fill window with no login prompt; giving up"
                 );
                 stage.set(Stage::Done);
                 return glib::ControlFlow::Break;
@@ -217,10 +251,19 @@ pub(crate) fn install_login_autofill(
     }
 
     // contents-changed: fires for most terminal output.
-    let on_contents_changed = step.clone();
-    notebook.connect_contents_changed(session_id, move || on_contents_changed());
+    {
+        let on_contents_changed = step.clone();
+        let last_activity = last_activity.clone();
+        notebook.connect_contents_changed(session_id, move || {
+            last_activity.set(Instant::now());
+            on_contents_changed();
+        });
+    }
 
     // cursor-moved: fires for prompts drawn with cursor-positioning escapes and
     // no trailing newline, which is exactly what a password prompt looks like.
-    notebook.connect_cursor_moved(session_id, move || step());
+    notebook.connect_cursor_moved(session_id, move || {
+        last_activity.set(Instant::now());
+        step();
+    });
 }

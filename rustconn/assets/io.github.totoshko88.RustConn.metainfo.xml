@@ -140,6 +140,18 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.21.2" date="2026-08-31">
+      <description>
+        <p>Version 0.21.2 - four connection fixes, and a change to how SSH passwords are delivered:</p>
+        <ul>
+          <li>SSH through a jump host no longer hangs at the target password prompt when the proxy step is slow (#301)</li>
+          <li>Changed: a stored SSH password is now handed to OpenSSH through SSH_ASKPASS instead of typed into the terminal, in a mode-0600 runtime file whose path alone reaches the SSH environment. Connections that askpass does not cover keep the terminal watcher, so no authentication setup loses its stored password</li>
+          <li>SPICE now passes the configured password to remote-viewer instead of prompting every time (#308)</li>
+          <li>The embedded web browser keeps its login across restarts (#309)</li>
+          <li>A new Local Shell tab in Flatpak opens at the correct size when the window changed size since the last tab (#294)</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.21.1" date="2026-08-28">
       <description>
         <p>Version 0.21.1 - a lookup that was repeated for nothing, and two things that were only broken in a package:</p>
