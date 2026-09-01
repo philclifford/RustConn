@@ -20,6 +20,8 @@ pub(super) struct AutomationTabWidgets {
     pub(super) login_username_prompt_entry: Entry,
     /// Expected text of the device's password prompt (empty = built-in matcher).
     pub(super) login_password_prompt_entry: Entry,
+    /// Login prompt watcher timeout in seconds (0 = built-in default).
+    pub(super) login_timeout_spin: SpinButton,
     /// Expect rules list box.
     pub(super) expect_rules_list: ListBox,
     /// Button to add a new expect rule.
@@ -75,7 +77,7 @@ pub(super) fn create_automation_combined_tab() -> AutomationTabWidgets {
     content.set_margin_end(12);
 
     // === Automatic Login Section (issue #254) ===
-    let (login_group, login_username_prompt_entry, login_password_prompt_entry) =
+    let (login_group, login_username_prompt_entry, login_password_prompt_entry, login_timeout_spin) =
         create_automatic_login_section();
     content.append(&login_group);
 
@@ -225,6 +227,7 @@ pub(super) fn create_automation_combined_tab() -> AutomationTabWidgets {
         container: vbox,
         login_username_prompt_entry,
         login_password_prompt_entry,
+        login_timeout_spin,
         expect_rules_list,
         add_expect_rule_button: add_rule_button,
         template_list_box,
@@ -250,8 +253,10 @@ pub(super) fn create_automation_combined_tab() -> AutomationTabWidgets {
 /// fields let a connection (or a whole group) state the exact wording; empty
 /// means the built-in matchers, which already cover the three above.
 ///
-/// Returns the group and the two entries, in username/password order.
-pub(crate) fn create_automatic_login_section() -> (adw::PreferencesGroup, Entry, Entry) {
+/// Returns the group, the two prompt entries (username/password order), and the
+/// login-timeout spin button.
+pub(crate) fn create_automatic_login_section() -> (adw::PreferencesGroup, Entry, Entry, SpinButton)
+{
     let group = adw::PreferencesGroup::builder()
         .title(i18n("Automatic Login"))
         // NOTE: each string stays on one line. A Rust `\`-continuation strips the
@@ -279,7 +284,25 @@ pub(crate) fn create_automatic_login_section() -> (adw::PreferencesGroup, Entry,
         .build();
     group.add(&password_row);
 
-    (group, username_entry, password_entry)
+    // Login timeout: how long the prompt watcher waits before giving up. 0 =
+    // use the built-in default (10 s). Range 0..600 s. Previously TOML-only
+    // (`login_timeout_secs` in the automation section); exposed here so a slow
+    // device with a long banner can be tuned from the interface.
+    let timeout_adj = gtk4::Adjustment::new(0.0, 0.0, 600.0, 5.0, 30.0, 0.0);
+    let timeout_spin = SpinButton::builder()
+        .adjustment(&timeout_adj)
+        .climb_rate(1.0)
+        .digits(0)
+        .valign(gtk4::Align::Center)
+        .build();
+    let timeout_row = adw::ActionRow::builder()
+        .title(i18n("Login Timeout (seconds)"))
+        .subtitle(i18n("How long to watch for the prompt; 0 = default (10 s)"))
+        .build();
+    timeout_row.add_suffix(&timeout_spin);
+    group.add(&timeout_row);
+
+    (group, username_entry, password_entry, timeout_spin)
 }
 
 /// Creates a task section (pre-connect or post-disconnect) wrapped in an `ExpanderRow`.

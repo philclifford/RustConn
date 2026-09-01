@@ -206,6 +206,7 @@ impl ConnectionDialog {
         expect_rules: &Rc<RefCell<Vec<ExpectRule>>>,
         login_username_prompt_entry: &Entry,
         login_password_prompt_entry: &Entry,
+        login_timeout_spin: &SpinButton,
         pre_connect_enabled_switch: &adw::SwitchRow,
         pre_connect_command_entry: &Entry,
         pre_connect_timeout_spin: &SpinButton,
@@ -422,6 +423,7 @@ impl ConnectionDialog {
         let expect_rules = expect_rules.clone();
         let login_username_prompt_entry = login_username_prompt_entry.clone();
         let login_password_prompt_entry = login_password_prompt_entry.clone();
+        let login_timeout_spin = login_timeout_spin.clone();
         let pre_connect_enabled_switch = pre_connect_enabled_switch.clone();
         let pre_connect_command_entry = pre_connect_command_entry.clone();
         let pre_connect_timeout_spin = pre_connect_timeout_spin.clone();
@@ -644,6 +646,7 @@ impl ConnectionDialog {
                 expect_rules: &collected_expect_rules,
                 login_username_prompt_entry: &login_username_prompt_entry,
                 login_password_prompt_entry: &login_password_prompt_entry,
+                login_timeout_spin: &login_timeout_spin,
                 pre_connect_enabled_switch: &pre_connect_enabled_switch,
                 pre_connect_command_entry: &pre_connect_command_entry,
                 pre_connect_timeout_spin: &pre_connect_timeout_spin,

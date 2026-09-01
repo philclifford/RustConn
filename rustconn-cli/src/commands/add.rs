@@ -628,11 +628,6 @@ pub(super) fn parse_protocol(protocol: &str) -> Result<(ProtocolType, u16), CliE
 }
 
 /// Create a connection with the specified parameters
-#[expect(
-    clippy::too_many_lines,
-    reason = "create_connection branches over every protocol kind and applies wave-2 fields \
-              inline; per-protocol helpers exist already and reduce this to a dispatcher"
-)]
 fn create_connection(
     name: &str,
     host: &str,
@@ -641,6 +636,23 @@ fn create_connection(
     key: Option<&Path>,
     auth_method: Option<SshAuthMethod>,
 ) -> Result<Connection, CliError> {
+    // Only SSH and SFTP carry an SSH key / auth method. Passing --key or
+    // --auth-method to any other protocol used to be silently dropped with a
+    // warning, which meant a typo (e.g. -P vnc -k id_rsa) produced a connection
+    // that quietly ignored the flag. Reject it instead so the mistake surfaces.
+    if !matches!(protocol_type, ProtocolType::Ssh | ProtocolType::Sftp) {
+        if key.is_some() {
+            return Err(CliError::Config(format!(
+                "--key is only valid for SSH and SFTP connections, not {protocol_type:?}"
+            )));
+        }
+        if auth_method.is_some() {
+            return Err(CliError::Config(format!(
+                "--auth-method is only valid for SSH and SFTP connections, not {protocol_type:?}"
+            )));
+        }
+    }
+
     let conn = match protocol_type {
         ProtocolType::Ssh => {
             let mut conn = Connection::new_ssh(name.to_string(), host.to_string(), port);
@@ -658,33 +670,9 @@ fn create_connection(
             }
             conn
         }
-        ProtocolType::Rdp => {
-            if key.is_some() {
-                tracing::warn!("--key option is ignored for RDP connections");
-            }
-            if auth_method.is_some() {
-                tracing::warn!("--auth-method is ignored for RDP connections");
-            }
-            Connection::new_rdp(name.to_string(), host.to_string(), port)
-        }
-        ProtocolType::Vnc => {
-            if key.is_some() {
-                tracing::warn!("--key option is ignored for VNC connections");
-            }
-            if auth_method.is_some() {
-                tracing::warn!("--auth-method is ignored for VNC connections");
-            }
-            Connection::new_vnc(name.to_string(), host.to_string(), port)
-        }
-        ProtocolType::Spice => {
-            if key.is_some() {
-                tracing::warn!("--key option is ignored for SPICE connections");
-            }
-            if auth_method.is_some() {
-                tracing::warn!("--auth-method is ignored for SPICE connections");
-            }
-            Connection::new_spice(name.to_string(), host.to_string(), port)
-        }
+        ProtocolType::Rdp => Connection::new_rdp(name.to_string(), host.to_string(), port),
+        ProtocolType::Vnc => Connection::new_vnc(name.to_string(), host.to_string(), port),
+        ProtocolType::Spice => Connection::new_spice(name.to_string(), host.to_string(), port),
         ProtocolType::ZeroTrust => {
             // ZeroTrust connections are handled by create_zerotrust_connection()
             // before this function is called
@@ -693,24 +681,8 @@ fn create_connection(
                     .into(),
             ));
         }
-        ProtocolType::Telnet => {
-            if key.is_some() {
-                tracing::warn!("--key option is ignored for Telnet connections");
-            }
-            if auth_method.is_some() {
-                tracing::warn!("--auth-method is ignored for Telnet connections");
-            }
-            Connection::new_telnet(name.to_string(), host.to_string(), port)
-        }
-        ProtocolType::Serial => {
-            if key.is_some() {
-                tracing::warn!("--key option is ignored for Serial connections");
-            }
-            if auth_method.is_some() {
-                tracing::warn!("--auth-method is ignored for Serial connections");
-            }
-            Connection::new_serial(name.to_string(), host.to_string())
-        }
+        ProtocolType::Telnet => Connection::new_telnet(name.to_string(), host.to_string(), port),
+        ProtocolType::Serial => Connection::new_serial(name.to_string(), host.to_string()),
         ProtocolType::Sftp => {
             let mut conn = Connection::new_sftp(name.to_string(), host.to_string(), port);
             if let rustconn_core::models::ProtocolConfig::Sftp(ref mut ssh_config) =
@@ -727,40 +699,14 @@ fn create_connection(
             }
             conn
         }
-        ProtocolType::Kubernetes => {
-            if key.is_some() {
-                tracing::warn!("--key option is ignored for Kubernetes connections");
-            }
-            if auth_method.is_some() {
-                tracing::warn!("--auth-method is ignored for Kubernetes connections");
-            }
-            Connection::new_kubernetes(name.to_string())
-        }
-        ProtocolType::Mosh => {
-            if key.is_some() {
-                tracing::warn!("--key option is ignored for MOSH connections");
-            }
-            if auth_method.is_some() {
-                tracing::warn!("--auth-method is ignored for MOSH connections");
-            }
-            Connection::new_mosh(name.to_string(), host.to_string(), port)
-        }
-        ProtocolType::Web => {
-            if key.is_some() {
-                tracing::warn!("--key option is ignored for Web connections");
-            }
-            if auth_method.is_some() {
-                tracing::warn!("--auth-method is ignored for Web connections");
-            }
-            Connection::new(
-                name.to_string(),
-                host.to_string(),
-                port,
-                rustconn_core::models::ProtocolConfig::Web(
-                    rustconn_core::models::WebConfig::default(),
-                ),
-            )
-        }
+        ProtocolType::Kubernetes => Connection::new_kubernetes(name.to_string()),
+        ProtocolType::Mosh => Connection::new_mosh(name.to_string(), host.to_string(), port),
+        ProtocolType::Web => Connection::new(
+            name.to_string(),
+            host.to_string(),
+            port,
+            rustconn_core::models::ProtocolConfig::Web(rustconn_core::models::WebConfig::default()),
+        ),
     };
     Ok(conn)
 }

@@ -1034,7 +1034,10 @@ pub fn show_edit_group_dialog(
     // Same two fields as the connection editor; set here they cover every
     // connection in the group, which is the point for a folder of identical
     // devices from one vendor.
-    let (login_prompts_group, group_login_username_entry, group_login_password_entry) =
+    // The group editor exposes the two prompt fields but not the login-timeout
+    // spin — a per-group login timeout is not surfaced here yet, so the 4th
+    // tuple element is ignored (it still inherits via `login_timeout_secs`).
+    let (login_prompts_group, group_login_username_entry, group_login_password_entry, _) =
         crate::dialogs::connection::automation_tab::create_automatic_login_section();
     group_login_username_entry.set_text(group.username_prompt.as_deref().unwrap_or(""));
     group_login_password_entry.set_text(group.password_prompt.as_deref().unwrap_or(""));

@@ -5,6 +5,28 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.4] - 2026-09-01
+
+A documentation-and-consistency pass driven by a user-guide audit: the CLI
+reference and user guide are brought back in line with the code, two CLI flags
+that were silently dropped now fail loudly, and the automatic-login timeout that
+was reachable only by editing `connections.toml` gains a control in the
+connection editor.
+
+### Added
+
+- **Login timeout is now editable in the connection editor** — `login_timeout_secs` (how long the automatic-login watcher waits for the device's prompt) was fully wired through the model and group inheritance but had no UI, so it could only be set by hand-editing the `automation` section of `connections.toml`. The connection editor's **Automation** tab now carries a **Login Timeout (seconds)** row in the Automatic Login group; `0` means the built-in default (10 s), matching the stored `None`.
+
+### Fixed
+
+- **`--key` and `--auth-method` were silently dropped for non-SSH protocols** — `rustconn-cli add`/`update` accepted these flags for every protocol but only applied them to SSH (and, for `add`, SFTP), logging a warning and discarding them otherwise. A typo such as `-P vnc -k id_rsa` produced a connection that quietly ignored the key. Both commands now reject the flags for any protocol other than SSH and SFTP with a clear error, and `update` now also honours them for SFTP connections (previously ignored — a latent bug).
+
+- **`--window-mode` reported SPICE as a supported protocol while ignoring it** — `Connection::supports_window_mode()` returned `true` for SPICE, but SPICE always uses an external viewer, so the setting has no observable effect. The docstring, CLI help, and reference all said "RDP and VNC only" while the code disagreed. SPICE is now excluded from `supports_window_mode()`, so the code, help text, and documentation agree.
+
+### Documentation
+
+- **CLI reference and user guide realigned with the code (0.21.4 audit):** version headers corrected to 0.21.4 (the CLI reference still read 0.18.11); `--audio-mode` and `--printer` RDP flags documented in the `add`/`update` tables; `web` added to the `--protocol` value list (help text and reference); the differing `--mptcp` / `--skip-port-check` semantics on `update` (which accept an explicit `true`/`false`) now explained; `sync inventory` cross-linked from the Cloud Sync subcommand table; the `--backend` help text expanded to the full list of eight backends; and the Split View shortcut table gained the missing **Ctrl+Shift+R** (Pop Pane to Tab) and **Ctrl+Shift+J** (Unsplit).
+
 ## [0.21.3] - 2026-09-01
 
 A release spent on making the secret backends honest: a password the selected

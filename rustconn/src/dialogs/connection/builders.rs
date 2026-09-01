@@ -223,6 +223,8 @@ pub(super) struct ConnectionDialogData<'a> {
     pub login_username_prompt_entry: &'a Entry,
     /// Expected text of the device's password prompt for automatic login.
     pub login_password_prompt_entry: &'a Entry,
+    /// Login prompt watcher timeout in seconds (0 = built-in default).
+    pub login_timeout_spin: &'a SpinButton,
     // Task fields
     pub pre_connect_enabled_switch: &'a adw::SwitchRow,
     pub pre_connect_command_entry: &'a Entry,
@@ -588,6 +590,14 @@ impl ConnectionDialogData<'_> {
         // the wording (issue #254).
         conn.automation.username_prompt = non_empty_text(self.login_username_prompt_entry);
         conn.automation.password_prompt = non_empty_text(self.login_password_prompt_entry);
+        // Login watcher timeout: 0 in the UI means "use the built-in default"
+        // (stored as None so a parent group can still supply a value).
+        let login_timeout = self.login_timeout_spin.value_as_int();
+        conn.automation.login_timeout_secs = if login_timeout > 0 {
+            u32::try_from(login_timeout).ok()
+        } else {
+            None
+        };
 
         // Warn if the username prompt text looks like it would also match as a
         // password prompt — the password matcher wins on a tie, so auto-login
