@@ -25,6 +25,10 @@ use super::connection::UpgradedFramed;
 /// EGFX frame updates from the `GraphicsPipelineHandler`. The session loop
 /// drains it after each `ActiveStage::process()` call to convert RGBA→BGRA
 /// and emit `FrameUpdate` events to the GUI.
+#[expect(
+    clippy::too_many_lines,
+    reason = "long session loop over frame, command and EGFX dispatch; splitting it would only relocate the shared mutable state"
+)]
 pub(super) async fn run_active_session(
     framed: UpgradedFramed,
     connection_result: ConnectionResult,
@@ -62,6 +66,9 @@ pub(super) async fn run_active_session(
 
     // Build ActiveStage from ConnectionResult fields (ironrdp 0.17 builder pattern)
     let activation_factory = connection_result.activation_factory;
+    // Kept for the error path below: a PDU that fails to decode is only
+    // survivable when we can prove it arrived on the message channel.
+    let message_channel_id = connection_result.message_channel_id;
     let mut active_stage = ActiveStageBuilder {
         static_channels: connection_result.static_channels,
         user_channel_id: connection_result.user_channel_id,
@@ -135,6 +142,17 @@ pub(super) async fn run_active_session(
                                 #[cfg(feature = "gfx-h264")]
                                 drain_gfx_updates(&gfx_update_rx, &mut image, &event_tx, &mut frame_stats);
                             }
+                            Err(e) if is_ignorable_message_channel_pdu(
+                                action,
+                                &payload,
+                                message_channel_id,
+                            ) => {
+                                // Not fatal. See `is_ignorable_message_channel_pdu`.
+                                tracing::debug!(
+                                    error = %e,
+                                    "ignoring an unsupported MCS message-channel PDU"
+                                );
+                            }
                             Err(e) => {
                                 return Err(RdpClientError::ProtocolError(format!("Session error: {e}")));
                             }
@@ -149,6 +167,81 @@ pub(super) async fn run_active_session(
     }
 
     Ok(())
+}
+
+/// Whether a PDU that `ActiveStage::process` rejected arrived on the MCS message
+/// channel, and may therefore be ignored instead of ending the session.
+///
+/// # Why this is protocol-correct rather than a workaround
+///
+/// The MCS message channel carries three kinds of PDU, distinguished by the flags
+/// in their Basic Security Header: auto-detect ([MS-RDPBCGR] 2.2.14.3), Heartbeat
+/// (`SEC_HEARTBEAT`) and Initiate Multitransport (`SEC_TRANSPORT_REQ`).
+/// `ironrdp-session` 0.11 implements only the first, and its
+/// `process_message_channel` decodes *every* message-channel PDU as an
+/// `AutoDetectReqPdu`:
+///
+/// ```text
+/// let req = decode::<AutoDetectReqPdu>(data_ctx.user_data).map_err(SessionError::decode)?;
+/// ```
+///
+/// Windows 11 sends a Heartbeat on that channel every one to two seconds. The
+/// first one fails the security-header check, the error is propagated as
+/// `SessionError::decode`, and the caller below used to turn *any* error from
+/// `process` into a dead session — so an embedded RDP session against a Windows 11
+/// host would drop seconds after connecting. RustConn always registers `drdynvc`
+/// as a static channel, and one static channel is enough to make Windows allocate
+/// a real message channel instead of refusing with id 0, so this is reachable on
+/// every such connection rather than being an exotic configuration.
+///
+/// Ignoring an unparseable message-channel PDU is what the specification asks for:
+/// a client that does not implement Heartbeat or multitransport is not required to
+/// answer them, and neither is optional-but-fatal. Auto-detect itself is advisory —
+/// it feeds the server's bandwidth estimate — so even a genuinely malformed
+/// auto-detect request is not worth a disconnect.
+///
+/// # Why the channel is re-derived here instead of matching on the error
+///
+/// `SessionError` is `Error<SessionErrorKind>`, and `SessionErrorKind::Decode` is
+/// produced at several sites in `ironrdp-session`, including the outer
+/// `decode_send_data_indication`. Matching on the kind would therefore also
+/// swallow a failure to parse the MCS framing itself, which *is* fatal. Re-reading
+/// the frame costs one MCS header decode and only on the error path, and it
+/// answers the precise question: which channel was this on.
+///
+/// Remove this on the next `ironrdp-session` bump. Upstream [IronRDP#1814] merged
+/// the real fix on 2026-08-27 — the demux now peeks the security-header flags and
+/// ignores what it does not recognise — but it is not on crates.io yet, where
+/// `ironrdp-session` is still 0.11.0 with the unconditional decode. Check
+/// `x224::Processor::process_message_channel` after the bump: once it dispatches on
+/// the flags, this guard is dead weight.
+///
+/// The guard is deliberately narrow: it returns `false` for a fast-path PDU, for a
+/// connection with no message channel, and for anything whose MCS framing does not
+/// parse or names a different channel.
+///
+/// Not covered here, and still open upstream: [IronRDP#1629], where an auto-detect
+/// request arriving *after* the connector's connect-time phase kills the
+/// connection during the licensing exchange. That is `ironrdp-connector`, before
+/// this session loop exists, so it needs its own fix.
+///
+/// [IronRDP#1814]: https://github.com/Devolutions/IronRDP/pull/1814
+/// [IronRDP#1629]: https://github.com/Devolutions/IronRDP/issues/1629
+fn is_ignorable_message_channel_pdu(
+    action: ironrdp::pdu::Action,
+    payload: &[u8],
+    message_channel_id: Option<u16>,
+) -> bool {
+    // Auto-detect, Heartbeat and multitransport all travel over X224; a fast-path
+    // failure is a framebuffer problem and has nothing to do with this.
+    if action != ironrdp::pdu::Action::X224 {
+        return false;
+    }
+    let Some(message_channel_id) = message_channel_id else {
+        return false;
+    };
+    ironrdp::pdu::mcs::decode_send_data_indication(payload)
+        .is_ok_and(|ctx| ctx.channel_id == message_channel_id)
 }
 
 async fn handle_active_stage_output<S>(
@@ -540,4 +633,97 @@ fn convert_gfx_rgba_to_bgra(update: &GfxFrameUpdate, clipped_w: u16, clipped_h: 
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a real MCS Send Data Indication frame for `channel_id`.
+    ///
+    /// Encoded through the same types `decode_send_data_indication` parses, so the
+    /// test exercises the actual framing rather than a hand-rolled byte string that
+    /// could drift from it.
+    fn indication_frame(channel_id: u16, user_data: &[u8]) -> Vec<u8> {
+        use ironrdp::pdu::mcs::{McsMessage, SendDataIndication};
+        use ironrdp::pdu::x224::X224;
+
+        let msg = SendDataIndication {
+            initiator_id: 1002,
+            channel_id,
+            user_data: std::borrow::Cow::Borrowed(user_data),
+        };
+        let mut buf = ironrdp::pdu::WriteBuf::new();
+        ironrdp::core::encode_buf(&X224(McsMessage::SendDataIndication(msg)), &mut buf)
+            .expect("encoding a Send Data Indication must succeed");
+        buf.into_inner()
+    }
+
+    /// The case this guard exists for: Windows 11 sends a Heartbeat on the message
+    /// channel every one to two seconds, `ironrdp-session` cannot decode it, and
+    /// the session must survive.
+    #[test]
+    fn a_pdu_on_the_message_channel_is_ignorable() {
+        let frame = indication_frame(1005, &[0xff, 0xff, 0xff, 0xff]);
+        assert!(is_ignorable_message_channel_pdu(
+            ironrdp::pdu::Action::X224,
+            &frame,
+            Some(1005)
+        ));
+    }
+
+    /// Everything below is the other half of the contract: the guard must not turn
+    /// a genuine protocol failure into a silently ignored one.
+    #[test]
+    fn a_pdu_on_another_channel_is_still_fatal() {
+        // The IO channel carries the framebuffer; a decode failure there is real.
+        let frame = indication_frame(1003, &[0xff, 0xff, 0xff, 0xff]);
+        assert!(!is_ignorable_message_channel_pdu(
+            ironrdp::pdu::Action::X224,
+            &frame,
+            Some(1005)
+        ));
+    }
+
+    #[test]
+    fn a_fast_path_failure_is_still_fatal() {
+        // Fast-path updates are framebuffer data and never reach the message
+        // channel, so the channel id must not even be consulted.
+        let frame = indication_frame(1005, &[0xff]);
+        assert!(!is_ignorable_message_channel_pdu(
+            ironrdp::pdu::Action::FastPath,
+            &frame,
+            Some(1005)
+        ));
+    }
+
+    #[test]
+    fn without_a_message_channel_nothing_is_ignorable() {
+        // A server that refused to allocate the channel (id 0) cannot have sent
+        // anything on it, so a failure has some other cause.
+        let frame = indication_frame(1005, &[0xff]);
+        assert!(!is_ignorable_message_channel_pdu(
+            ironrdp::pdu::Action::X224,
+            &frame,
+            None
+        ));
+    }
+
+    #[test]
+    fn unparseable_framing_is_still_fatal() {
+        // If the MCS envelope itself does not decode, the stream is out of sync —
+        // which is exactly the error that must not be swallowed. This is why the
+        // guard re-derives the channel instead of matching on the error kind:
+        // `SessionErrorKind::Decode` covers this case too.
+        assert!(!is_ignorable_message_channel_pdu(
+            ironrdp::pdu::Action::X224,
+            &[0x00, 0x01, 0x02, 0x03],
+            Some(1005)
+        ));
+        assert!(!is_ignorable_message_channel_pdu(
+            ironrdp::pdu::Action::X224,
+            &[],
+            Some(1005)
+        ));
+    }
 }

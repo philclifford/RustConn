@@ -181,6 +181,23 @@ cargo build -p rustconn-cli --no-default-features
 cargo build -p rustconn-cli --features full
 ```
 
+### Android / Termux (headless only)
+
+The headless split is real enough to cross platforms: `rustconn-core` and
+`rustconn-cli` build and run under [Termux](https://termux.dev/) on Android with
+default features off. Reported working by a user in issue
+[#129](https://github.com/totoshko88/RustConn/issues/129); not covered by CI, so
+treat it as known-to-work rather than supported.
+
+```bash
+cargo build -p rustconn-core --no-default-features
+cargo build -p rustconn-cli --no-default-features
+```
+
+The GUI is not part of this and will not be: `rustconn` is GTK4/libadwaita, which
+does not target Android. What works there is connection management — config, CRUD,
+import/export, groups, tags, templates — not opening sessions.
+
 ---
 
 ## Running

@@ -11,7 +11,7 @@ use crate::i18n::{i18n, i18n_f};
     clippy::struct_excessive_bools,
     reason = "settings/flags struct mirrors persisted config 1:1; bools represent independent toggles, not a state machine"
 )]
-pub(super) struct SecretCliDetection {
+pub(crate) struct SecretCliDetection {
     pub keepassxc_version: Option<String>,
     pub bitwarden_installed: bool,
     pub bitwarden_cmd: String,
@@ -36,12 +36,196 @@ pub(super) struct SecretCliDetection {
     pub system_keyring_availability: rustconn_core::secret::BackendAvailability,
 }
 
+/// Whether the selected backend can actually store and read a password.
+///
+/// The Secrets page already showed a version number and, for some backends, a
+/// status line — but the version row answered "is the client installed", which is
+/// the least interesting of the prerequisites, and the status line existed for
+/// four backends out of eight. Nothing anywhere answered the question the user is
+/// really asking when they pick from that list. This is that answer, in one shape
+/// for every row, so the page can show one line per backend instead of a
+/// different arrangement per backend.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum BackendReadiness {
+    /// Usable right now.
+    ///
+    /// Carries a detail when the probe learned something worth repeating — which
+    /// account is signed in, where the store lives — and an empty string when
+    /// there is nothing to add beyond "ready".
+    Ready(String),
+    /// The client is there, but something has to happen before it will work —
+    /// logging in, unlocking, initialising a store, choosing a file.
+    ///
+    /// This is the state the three-variant `BackendAvailability` cannot express,
+    /// and the reason a logged-out Bitwarden looks the same to the startup check
+    /// as a working one: `is_available()` is a bool, and a CLI that runs at all
+    /// answers `true`.
+    NeedsAction(String),
+    /// The client program is not installed, so nothing can be done in RustConn.
+    NotInstalled,
+    /// Detection has not finished yet.
+    Unknown,
+}
+
+impl BackendReadiness {
+    /// The line to show the user.
+    pub(crate) fn label(&self) -> String {
+        match self {
+            Self::Ready(detail) if detail.is_empty() => i18n("Ready"),
+            Self::Ready(detail) | Self::NeedsAction(detail) => detail.clone(),
+            Self::NotInstalled => i18n("Not installed"),
+            Self::Unknown => i18n("Checking..."),
+        }
+    }
+
+    /// The css class to render this verdict with.
+    ///
+    /// The label always names the state as well, so status is never carried by
+    /// colour alone (GNOME HIG / WCAG).
+    pub(crate) const fn css_class(&self) -> &'static str {
+        match self {
+            Self::Ready(_) => "success",
+            Self::NeedsAction(_) => "warning",
+            Self::NotInstalled => "error",
+            Self::Unknown => "dim-label",
+        }
+    }
+
+    /// Whether saving a password to this backend can be expected to work.
+    ///
+    /// `Unknown` counts as usable: an unfinished probe is not evidence of a
+    /// problem, and treating a `--version` call that has not returned yet as a
+    /// fault would make the page argue with the user on a slow machine.
+    pub(crate) const fn is_usable(&self) -> bool {
+        matches!(self, Self::Ready(_) | Self::Unknown)
+    }
+}
+
+/// The parts of a backend's readiness that live in the dialog, not in a probe.
+///
+/// Read from the widgets rather than from the saved `SecretSettings`, and that is
+/// the point: someone who has just chosen a database file has not saved it yet,
+/// so a verdict computed from the stored configuration would report the state
+/// they are in the middle of leaving. Three fields because these are the only
+/// prerequisites a probe cannot see.
+pub(crate) struct LocalBackendState {
+    /// The "Use KeePass integration" switch.
+    pub kdbx_enabled: bool,
+    /// The database path currently in the entry, expanded.
+    pub kdbx_path: Option<std::path::PathBuf>,
+    /// Whether the portable file's passphrase field has anything in it.
+    pub portable_passphrase_entered: bool,
+}
+
+impl LocalBackendState {
+    /// Reads the same three prerequisites out of saved settings.
+    ///
+    /// For callers outside the dialog — the startup check and the post-save
+    /// re-check — where there are no widgets to read and the saved configuration
+    /// *is* the state in force.
+    pub(crate) fn from_settings(secrets: &rustconn_core::config::SecretSettings) -> Self {
+        Self {
+            kdbx_enabled: secrets.kdbx_enabled,
+            kdbx_path: secrets.kdbx_path.clone(),
+            portable_passphrase_entered: secrets.portable_passphrase.is_some(),
+        }
+    }
+}
+
+/// Renders the readiness of `backend` from a finished detection pass.
+///
+/// `detection` is `None` while the background probe is still running, which is
+/// the only source of [`BackendReadiness::Unknown`].
+///
+/// The per-backend status strings this reuses are the ones the page already
+/// computed and displayed; what is new is that every backend produces a verdict,
+/// including the four that previously had no status line at all — the two file
+/// backends, KeePassXC and the system keyring, whose row existed but was shown
+/// for one selection only.
+pub(crate) fn backend_readiness(
+    detection: Option<&SecretCliDetection>,
+    backend: rustconn_core::config::SecretBackendType,
+    local: &LocalBackendState,
+) -> BackendReadiness {
+    use rustconn_core::config::SecretBackendType;
+    use rustconn_core::secret::BackendAvailability;
+
+    let Some(det) = detection else {
+        return BackendReadiness::Unknown;
+    };
+
+    // The status pairs carry a css class alongside the text, and the class is
+    // already the backend's own verdict: "success" means usable, "warning" means
+    // a step is missing, "error" means it cannot work. Reading it keeps this
+    // function from re-deriving conclusions the probes already reached.
+    let from_status = |status: Option<&(String, &'static str)>| match status {
+        // Keep the detail — "Signed in: someone@example.com" and
+        // "Initialized at /home/…/.password-store" tell the user which account
+        // and which store, which is worth more than a bare "Ready".
+        Some((text, "success")) => BackendReadiness::Ready(text.clone()),
+        Some((text, _)) => BackendReadiness::NeedsAction(text.clone()),
+        None => BackendReadiness::NotInstalled,
+    };
+
+    match backend {
+        SecretBackendType::Bitwarden => from_status(det.bitwarden_status.as_ref()),
+        SecretBackendType::OnePassword => from_status(det.onepassword_status.as_ref()),
+        SecretBackendType::Passbolt => from_status(det.passbolt_status.as_ref()),
+        SecretBackendType::Pass => from_status(det.pass_status.as_ref()),
+
+        SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain => {
+            match det.system_keyring_availability {
+                BackendAvailability::Available => BackendReadiness::Ready(String::new()),
+                BackendAvailability::ServiceUnavailable => {
+                    BackendReadiness::NeedsAction(i18n("No keyring service responding"))
+                }
+                BackendAvailability::ClientMissing => BackendReadiness::NotInstalled,
+            }
+        }
+
+        // KeePassXC needs three things and the page only ever reported the first.
+        // A database that is not configured is the common case for someone who
+        // has just selected the backend, and it is not "not installed".
+        SecretBackendType::KeePassXc | SecretBackendType::KdbxFile => {
+            if det.keepassxc_version.is_none() {
+                return BackendReadiness::NotInstalled;
+            }
+            if !local.kdbx_enabled {
+                return BackendReadiness::NeedsAction(i18n("Turn on KeePass integration below"));
+            }
+            match local.kdbx_path.as_ref() {
+                None => BackendReadiness::NeedsAction(i18n("Choose a database file below")),
+                Some(path) if !path.exists() => BackendReadiness::NeedsAction(i18n_f(
+                    "Database file not found: {}",
+                    &[&path.display().to_string()],
+                )),
+                Some(_) => BackendReadiness::Ready(String::new()),
+            }
+        }
+
+        // Needs nothing outside RustConn — the key is derived from the machine.
+        SecretBackendType::EncryptedFile => BackendReadiness::Ready(String::new()),
+
+        // Usable once a passphrase has been supplied this session. Whether one
+        // has is session state the page does not hold, so this reports the part
+        // it can see: a passphrase is configured or it is not.
+        SecretBackendType::PortableEncryptedFile => {
+            if local.portable_passphrase_entered {
+                BackendReadiness::Ready(String::new())
+            } else {
+                BackendReadiness::NeedsAction(i18n("Enter the file's passphrase below"))
+            }
+        }
+    }
+}
+
 /// Cached detection result: probing spawns ~10 child processes, so reuse
 /// the result when the settings dialog is reopened shortly after.
 /// Vault lock/unlock actions in the dialog refresh their status labels
 /// directly (not through this cache), so staleness is bounded to reopen.
-static DETECTION_CACHE: std::sync::Mutex<Option<(std::time::Instant, SecretCliDetection)>> =
-    std::sync::Mutex::new(None);
+static DETECTION_CACHE: std::sync::Mutex<
+    Option<(std::time::Instant, Option<String>, SecretCliDetection)>,
+> = std::sync::Mutex::new(None);
 
 /// 30s keeps reopen instant while bounding stale backend status.
 const DETECTION_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
@@ -51,18 +235,24 @@ const DETECTION_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(
 ///
 /// Results are cached for [`DETECTION_CACHE_TTL`]; independent backends are
 /// probed in parallel so total latency equals the slowest probe, not the sum.
-pub(super) fn detect_secret_backends() -> SecretCliDetection {
+pub(crate) fn detect_secret_backends(pass_store_dir: Option<String>) -> SecretCliDetection {
+    // The `pass` store directory is part of the cache key, not just an argument.
+    // The cache is one slot, so without this a probe made with the configured
+    // directory would be served to a caller asking about a different one — and the
+    // 30-second window is exactly long enough to cover someone changing the
+    // directory and looking at the Status row.
     if let Ok(guard) = DETECTION_CACHE.lock()
-        && let Some((detected_at, cached)) = guard.as_ref()
+        && let Some((detected_at, probed_store_dir, cached)) = guard.as_ref()
         && detected_at.elapsed() < DETECTION_CACHE_TTL
+        && *probed_store_dir == pass_store_dir
     {
         return cached.clone();
     }
 
-    let detection = run_detection();
+    let detection = run_detection(pass_store_dir.as_deref());
 
     if let Ok(mut guard) = DETECTION_CACHE.lock() {
-        *guard = Some((std::time::Instant::now(), detection.clone()));
+        *guard = Some((std::time::Instant::now(), pass_store_dir, detection.clone()));
     }
     detection
 }
@@ -72,13 +262,13 @@ pub(super) fn detect_secret_backends() -> SecretCliDetection {
 /// Each probe only spawns short-lived child processes (`--version`,
 /// `status`), so a panic is a programming bug; in that case the backend is
 /// reported as not installed rather than poisoning the whole detection.
-fn run_detection() -> SecretCliDetection {
+fn run_detection(pass_store_dir: Option<&str>) -> SecretCliDetection {
     std::thread::scope(|scope| {
         let keepassxc = scope.spawn(detect_keepassxc);
         let bitwarden = scope.spawn(detect_bitwarden);
         let onepassword = scope.spawn(detect_onepassword);
         let passbolt = scope.spawn(detect_passbolt);
-        let pass = scope.spawn(detect_pass);
+        let pass = scope.spawn(move || detect_pass(pass_store_dir));
         let secret_tool = scope.spawn(detect_secret_tool);
         let keyring_avail = scope.spawn(detect_system_keyring_availability);
 
@@ -311,7 +501,13 @@ fn detect_passbolt() -> (
 }
 
 /// Detects the `pass` password store: `(version, status)`
-fn detect_pass() -> (Option<String>, Option<(String, &'static str)>) {
+///
+/// `configured_store_dir` is the directory the user has set for this backend, if
+/// any — it has to be passed in because the probe runs on a background thread and
+/// the value lives in a GTK entry.
+fn detect_pass(
+    configured_store_dir: Option<&str>,
+) -> (Option<String>, Option<(String, &'static str)>) {
     let pass_version = if let Some(output) = probe(
         std::process::Command::new("pass").arg("--version"),
         "pass --version",
@@ -340,10 +536,23 @@ fn detect_pass() -> (Option<String>, Option<(String, &'static str)>) {
     };
 
     let pass_status = if pass_version.is_some() {
-        // Check if password store is initialized
-        let store_dir = std::env::var("PASSWORD_STORE_DIR").ok().or_else(|| {
-            dirs::home_dir().map(|h| h.join(".password-store").to_string_lossy().to_string())
-        });
+        // Which store to look at, in the same order the backend resolves it:
+        // the directory configured in this very dialog first, then
+        // `$PASSWORD_STORE_DIR`, then pass's own default.
+        //
+        // The configured value was missing from this list, so the probe read the
+        // *ambient* environment while `PassBackend::setup_command` puts the
+        // configured directory into the child's environment. A user with a custom
+        // store was therefore told "Not initialized (run 'pass init <gpg-id>')"
+        // about a healthy store, or "Initialized at ~/.password-store" while the
+        // backend read somewhere else entirely. That verdict is not cosmetic — it
+        // feeds `BackendReadiness::is_usable`.
+        let store_dir = configured_store_dir
+            .map(|dir| dir.to_string())
+            .or_else(|| std::env::var("PASSWORD_STORE_DIR").ok())
+            .or_else(|| {
+                dirs::home_dir().map(|h| h.join(".password-store").to_string_lossy().to_string())
+            });
 
         if let Some(dir) = store_dir {
             let store_path = std::path::PathBuf::from(&dir);

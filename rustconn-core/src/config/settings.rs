@@ -586,6 +586,68 @@ pub enum SecretBackendType {
     PortableEncryptedFile,
 }
 
+impl SecretBackendType {
+    /// Returns the untranslated name to show a user for this backend.
+    ///
+    /// Wrap the result in `i18n()` at the call site. The product names are not
+    /// translated; the three descriptive ones are, which is why this returns the
+    /// English form rather than a localised string.
+    ///
+    /// This exists because the alternative is `format!("{self:?}")`, and the
+    /// startup banner did exactly that — telling users their backend was
+    /// `MacOsKeychain` or `LibSecret`, which are Rust variant names and not
+    /// anything the interface calls them. Any message naming a backend goes
+    /// through here so the name cannot drift per call site.
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::KeePassXc => "KeePassXC",
+            Self::KdbxFile => "KDBX file",
+            Self::LibSecret => "libsecret",
+            Self::Bitwarden => "Bitwarden",
+            Self::OnePassword => "1Password",
+            Self::Passbolt => "Passbolt",
+            Self::Pass => "Pass",
+            Self::MacOsKeychain => "macOS Keychain",
+            Self::EncryptedFile => "Encrypted file",
+            Self::PortableEncryptedFile => "Portable encrypted file",
+        }
+    }
+
+    /// Maps a [`SecretBackend::backend_id`] string back to its configuration variant.
+    ///
+    /// Needed because [`crate::secret::StoreOutcome::Fallback`] and its retrieve
+    /// counterpart report *which backend answered* as a `backend_id`, and a
+    /// message that has to name that backend needs a [`Self`] to call
+    /// [`Self::display_name`] on. Returns `None` for an unrecognised id rather
+    /// than guessing, so a caller can fall back to printing the raw id.
+    ///
+    /// `keepassxc` and `kdbx_file` are listed but cannot occur today: KDBX is
+    /// reached through `KeePassStatus` and the `keepassxc-cli` binary, not
+    /// through a [`SecretBackend`] implementation, so no chain ever reports
+    /// those ids. They are here so that changing that does not silently start
+    /// printing a raw id.
+    ///
+    /// [`SecretBackend`]: crate::secret::SecretBackend
+    /// [`SecretBackend::backend_id`]: crate::secret::SecretBackend::backend_id
+    #[must_use]
+    pub fn from_backend_id(backend_id: &str) -> Option<Self> {
+        match backend_id {
+            "keepassxc" => Some(Self::KeePassXc),
+            "kdbx_file" => Some(Self::KdbxFile),
+            "libsecret" => Some(Self::LibSecret),
+            "bitwarden" => Some(Self::Bitwarden),
+            "onepassword" => Some(Self::OnePassword),
+            "passbolt" => Some(Self::Passbolt),
+            "pass" => Some(Self::Pass),
+            "macos_keychain" => Some(Self::MacOsKeychain),
+            "encrypted_file" => Some(Self::EncryptedFile),
+            "portable_encrypted_file" => Some(Self::PortableEncryptedFile),
+            _ => None,
+        }
+    }
+}
+
 /// Color scheme preference
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

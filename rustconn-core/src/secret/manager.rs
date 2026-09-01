@@ -34,6 +34,30 @@ pub enum StoreOutcome {
     },
 }
 
+/// Which backend a credential was actually read from.
+///
+/// The read-side twin of [`StoreOutcome`], and it did not exist until now — the
+/// only thing [`SecretManager::retrieve`] returned was `Option<Credentials>`, so a
+/// caller could not tell a password that came from the user's chosen backend from
+/// one that came out of the encrypted-file fallback. That made "my backend is
+/// working" and "my backend is broken and everything is quietly coming from a
+/// local file" indistinguishable, which is the read-side half of what
+/// [`StoreOutcome`] was added to fix on the write side.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RetrieveOutcome {
+    /// The credential came from the preferred (primary) backend.
+    Primary,
+    /// The credential came from a later backend in the chain, because the primary
+    /// did not have it or could not be reached.
+    Fallback {
+        /// Identifier of the backend that answered (e.g. `encrypted_file`).
+        backend_id: String,
+    },
+    /// The credential was served from the in-process cache, so no backend was
+    /// consulted and there is nothing to report about where it lives.
+    Cached,
+}
+
 /// A cache entry with a timestamp for TTL-based expiry.
 #[derive(Debug, Clone)]
 struct CacheEntry {
@@ -588,19 +612,54 @@ impl SecretManager {
     /// # Errors
     /// Returns `SecretError` if no backend is available or retrieval fails
     pub async fn retrieve(&self, connection_id: &str) -> SecretResult<Option<Credentials>> {
+        Ok(self
+            .retrieve_reported(connection_id)
+            .await?
+            .map(|(creds, _)| creds))
+    }
+
+    /// Retrieves credentials and reports which backend answered.
+    ///
+    /// Same chain walk as [`Self::retrieve`], which delegates here and discards
+    /// the outcome to keep its original signature. Callers that want to tell the
+    /// user their chosen backend was bypassed need the second half of the tuple:
+    /// without it a credential coming out of the encrypted-file fallback is
+    /// indistinguishable from one coming out of the backend they selected.
+    ///
+    /// A [`RetrieveOutcome::Fallback`] is logged at `warn` here as well, so the
+    /// event is diagnosable from a log even where no caller reports it yet.
+    ///
+    /// # Arguments
+    /// * `connection_id` - Unique identifier for the connection
+    ///
+    /// # Returns
+    /// `Some((credentials, outcome))` if found, `None` if no backend had it.
+    ///
+    /// # Errors
+    /// Returns `SecretError` if a backend reports a passphrase problem, which is
+    /// not a miss and must not be walked past.
+    pub async fn retrieve_reported(
+        &self,
+        connection_id: &str,
+    ) -> SecretResult<Option<(Credentials, RetrieveOutcome)>> {
         // Check cache first (with TTL)
         if self.cache_enabled {
             let cache = self.cache.read().await;
             if let Some(entry) = cache.get(connection_id)
                 && !entry.is_expired()
             {
-                return Ok(Some(entry.credentials.clone()));
+                return Ok(Some((entry.credentials.clone(), RetrieveOutcome::Cached)));
             }
             // Expired entries fall through to backend lookup
         }
 
+        // The chain is ordered, so "not the first entry" is exactly "not the
+        // backend the user chose". Tracked by position rather than by comparing
+        // ids, because two chain entries can share a backend id.
+        let primary_id = self.backends.first().map(|b| b.backend_id());
+
         // Try each backend in order
-        for backend in &self.backends {
+        for (index, backend) in self.backends.iter().enumerate() {
             if !backend.is_available().await {
                 continue;
             }
@@ -612,7 +671,18 @@ impl SecretManager {
                         let mut cache = self.cache.write().await;
                         cache.insert(connection_id.to_string(), CacheEntry::new(creds.clone()));
                     }
-                    return Ok(Some(creds));
+                    let outcome = if index == 0 {
+                        RetrieveOutcome::Primary
+                    } else {
+                        let backend_id = backend.backend_id().to_string();
+                        tracing::warn!(
+                            answered_by = %backend_id,
+                            preferred = ?primary_id,
+                            "credential read from a fallback backend, not the selected one"
+                        );
+                        RetrieveOutcome::Fallback { backend_id }
+                    };
+                    return Ok(Some((creds, outcome)));
                 }
                 Ok(None) => {}
                 // A passphrase problem is not a miss and must not be walked

@@ -81,6 +81,51 @@ fn wait_for_cli_with(child: Child, what: &'static str, budget: Duration) -> Secr
     }
 }
 
+/// Why a `keepassxc-cli show` exited non-zero.
+///
+/// The three readers in this file each classified this inline, and all three drew
+/// the same line in the wrong place: anything that was not recognisably a
+/// credential error became `Ok(None)`, i.e. "there is no such entry". So a corrupt
+/// or unsupported database, an unreadable or wrong `--key-file`, and a
+/// hardware-key database waiting for a touch all reported the same thing as an
+/// empty database — and `Ok(None)` reaches the user as "Vault entry not found.
+/// You will be prompted for a password", which names the wrong problem and offers
+/// no way to act on the real one.
+///
+/// One classifier for all three readers, so they cannot drift apart again.
+enum ShowFailure {
+    /// The database opened and the entry is genuinely not in it.
+    EntryMissing,
+    /// The database did not open with the password or key file supplied.
+    BadCredentials,
+    /// Anything else. The database may be unreadable, of an unsupported version,
+    /// or waiting on something nobody answered — but it was not opened, so
+    /// "the entry is not there" is not a conclusion available to us.
+    Unusable,
+}
+
+/// Classifies a failed `keepassxc-cli show` from its stderr.
+///
+/// String matching, because `keepassxc-cli` distinguishes these cases only in
+/// prose and returns exit code 1 for all of them. That makes the wording a
+/// dependency: a KeePassXC release that rephrases "Could not find entry" turns a
+/// missing entry into [`ShowFailure::Unusable`], which is a dialog saying the
+/// database could not be read rather than a prompt. That is the safe direction to
+/// fail — the old behaviour failed the other way, turning an unopenable database
+/// into "no such password" — but it is worth knowing which way it breaks.
+fn classify_show_failure(stderr: &str) -> ShowFailure {
+    if stderr.contains("Could not find entry")
+        || stderr.contains("Entry not found")
+        || stderr.contains("No entry found")
+    {
+        return ShowFailure::EntryMissing;
+    }
+    if stderr.contains("Invalid credentials") || stderr.contains("wrong password") {
+        return ShowFailure::BadCredentials;
+    }
+    ShowFailure::Unusable
+}
+
 /// Status of `KeePass` integration
 ///
 /// This struct provides information about the current state of `KeePass` integration,
@@ -377,23 +422,25 @@ impl KeePassStatus {
             }
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("Could not find entry")
-                || stderr.contains("Entry not found")
-                || stderr.contains("No entry found")
-            {
-                Ok(None)
-            } else if stderr.contains("Invalid credentials") || stderr.contains("wrong password") {
-                Err(SecretError::KeePassXC(
+            match classify_show_failure(&stderr) {
+                ShowFailure::EntryMissing => Ok(None),
+                ShowFailure::BadCredentials => Err(SecretError::KeePassXC(
                     "Invalid database password".to_string(),
-                ))
-            } else {
-                tracing::warn!(
-                    entry_name,
-                    exit_code = ?output.status.code(),
-                    stderr = %stderr.trim(),
-                    "keepassxc-cli show failed with unexpected error"
-                );
-                Ok(None)
+                )),
+                // Was `Ok(None)` after a warning, which told the log the truth and
+                // the user something else.
+                ShowFailure::Unusable => {
+                    tracing::warn!(
+                        entry_name,
+                        exit_code = ?output.status.code(),
+                        stderr = %stderr.trim(),
+                        "keepassxc-cli could not read the database"
+                    );
+                    Err(SecretError::KeePassXC(format!(
+                        "Could not read the database: {}",
+                        stderr.trim()
+                    )))
+                }
             }
         }
     }
@@ -895,6 +942,10 @@ impl KeePassStatus {
     /// the database cannot be unlocked (wrong password or key file), or the
     /// CLI returns a non-zero exit code for any reason other than "entry not
     /// found".
+    #[expect(
+        clippy::too_many_lines,
+        reason = "sequential fallback over four candidate entry paths, each with its own argv and failure classification; splitting per path only relocates the boilerplate"
+    )]
     pub fn get_password_from_kdbx_with_key(
         kdbx_path: &Path,
         db_password: Option<&SecretString>,
@@ -943,6 +994,11 @@ impl KeePassStatus {
             db_password.is_some(),
             key_file.is_some()
         );
+
+        // First "the database would not open" seen while walking the candidate
+        // paths. Kept so that a run which finds nothing can say *why* it found
+        // nothing; see the end of the loop.
+        let mut unusable: Option<String> = None;
 
         for entry_path in &entry_paths {
             let mut args = vec![
@@ -1010,19 +1066,47 @@ impl KeePassStatus {
                 }
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                // Propagate credential errors immediately instead of trying next path
-                if stderr.contains("Invalid credentials") || stderr.contains("wrong password") {
-                    return Err(SecretError::KeePassXC(
-                        "Invalid database password".to_string(),
-                    ));
+                match classify_show_failure(&stderr) {
+                    // Wrong key for the database — no later candidate path can
+                    // succeed, so stop rather than retrying the same refusal.
+                    ShowFailure::BadCredentials => {
+                        return Err(SecretError::KeePassXC(
+                            "Invalid database password".to_string(),
+                        ));
+                    }
+                    // This path is not in the database; the next candidate may be.
+                    ShowFailure::EntryMissing => {
+                        tracing::debug!("get_password: no entry at '{entry_path}'");
+                    }
+                    // The database was not opened. Remembered rather than returned
+                    // immediately, because the candidate list exists to cope with
+                    // several historical key formats and a later one may still
+                    // work; but if none does, this is what gets reported instead of
+                    // "no such entry".
+                    ShowFailure::Unusable => {
+                        tracing::warn!(
+                            entry_path = %entry_path,
+                            exit_code = ?output.status.code(),
+                            stderr = %stderr.trim(),
+                            "keepassxc-cli could not read the database"
+                        );
+                        if unusable.is_none() {
+                            unusable = Some(stderr.trim().to_string());
+                        }
+                    }
                 }
-                tracing::debug!(
-                    "get_password: path '{}' failed: exit={:?}, stderr='{}'",
-                    entry_path,
-                    output.status.code(),
-                    stderr.trim()
-                );
             }
+        }
+
+        // No candidate produced a password. Whether that means "the entry is not
+        // there" or "the database could not be read" is the distinction the caller
+        // needs: the first is a password prompt, the second is a dialog naming the
+        // database. Reporting the first for both is what made a corrupt database
+        // look like an empty one.
+        if let Some(stderr) = unusable {
+            return Err(SecretError::KeePassXC(format!(
+                "Could not read the database: {stderr}"
+            )));
         }
 
         tracing::debug!("get_password: password not found");
@@ -1120,18 +1204,26 @@ impl KeePassStatus {
             }
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("Invalid credentials") || stderr.contains("wrong password") {
-                Err(SecretError::KeePassXC(
+            match classify_show_failure(&stderr) {
+                ShowFailure::EntryMissing => {
+                    tracing::debug!("get_password_exact: no entry at '{entry_path}'");
+                    Ok(None)
+                }
+                ShowFailure::BadCredentials => Err(SecretError::KeePassXC(
                     "Invalid database password".to_string(),
-                ))
-            } else {
-                tracing::debug!(
-                    "get_password_exact: path '{}' not found: exit={:?}, stderr='{}'",
-                    entry_path,
-                    output.status.code(),
-                    stderr.trim()
-                );
-                Ok(None)
+                )),
+                ShowFailure::Unusable => {
+                    tracing::warn!(
+                        entry_path = %entry_path,
+                        exit_code = ?output.status.code(),
+                        stderr = %stderr.trim(),
+                        "keepassxc-cli could not read the database"
+                    );
+                    Err(SecretError::KeePassXC(format!(
+                        "Could not read the database: {}",
+                        stderr.trim()
+                    )))
+                }
             }
         }
     }

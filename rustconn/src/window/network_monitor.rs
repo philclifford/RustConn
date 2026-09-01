@@ -72,6 +72,32 @@ pub fn classify_change(previous: Option<bool>, available: bool) -> NetworkChange
     }
 }
 
+/// Whether a network change is worth telling the user about.
+///
+/// Reacting to a network change and announcing one are different questions, and
+/// this module answered them together on two of its three paths. The socket
+/// sweeps have to run on every real transition — a stale `ControlMaster` is worth
+/// closing whether or not anything is open, and masters outlive the process — but
+/// a warning has to be *about* something.
+///
+/// The `Up` path already knew this: its toast is raised only after the reconnect
+/// sweep reports a non-zero count, with a comment saying a change that stranded
+/// nothing must not claim to be reconnecting anything. The `Down` path and the
+/// limited-connectivity path had no such test, so an empty window with no
+/// sessions still got "Network disconnected — active sessions may be
+/// interrupted", which is not a warning but a false statement: there were no
+/// active sessions. A four-signal Wi-Fi flap produced three of those in two
+/// seconds before the rate limiter engaged on the fourth.
+///
+/// This also removes the launch-time false positive that [`classify_change`]
+/// cannot: a first signal reporting the network *down* is a real `Down` and is
+/// acted on, but at launch there is nothing open, so it now passes in silence
+/// instead of announcing an outage nobody is affected by.
+#[must_use]
+pub const fn should_announce(suppress_reactions: bool, sessions_at_stake: usize) -> bool {
+    !suppress_reactions && sessions_at_stake > 0
+}
+
 /// Whether this signal is a repeat that the debounce should collapse.
 ///
 /// GIO emits several `network-changed` signals for a single interface switch,
@@ -227,13 +253,24 @@ pub fn setup_network_monitor(
 
         if change == NetworkChange::Down {
             // Network went down — close stale control sockets so they don't
-            // block future connections. Show a banner-like toast.
+            // block future connections. Unconditional: a dead master is worth
+            // closing whether or not a session is open, and masters outlive the
+            // process, so a launch onto a dead network cleans up after the last
+            // one.
             close_all_sockets_unconditionally();
 
-            if !suppress_reactions {
+            // The warning, unlike the sweep, needs something to warn about.
+            let at_stake = sessions_at_stake(&notebook_clone);
+            if should_announce(suppress_reactions, at_stake) {
                 toast_overlay_clone.show_warning(&i18n(
                     "Network disconnected — active sessions may be interrupted",
                 ));
+            } else {
+                tracing::debug!(
+                    at_stake,
+                    suppress_reactions,
+                    "Network went down with nothing open; no toast shown"
+                );
             }
             return;
         }
@@ -248,13 +285,19 @@ pub fn setup_network_monitor(
         // only limited connectivity, reconnecting will fail anyway. Just inform
         // the user and skip the reconnect attempt.
         if connectivity != gio::NetworkConnectivity::Full {
-            if !suppress_reactions {
+            // Same rule as the `Down` path: limited connectivity only matters to
+            // a session that wants to reconnect over it. On an idle window it is
+            // a status report nobody asked for, and during a flap it arrives
+            // between two other toasts.
+            let at_stake = sessions_at_stake(&notebook_clone);
+            if should_announce(suppress_reactions, at_stake) {
                 toast_overlay_clone.show_warning(&i18n(
                     "Network limited — full connectivity not yet available",
                 ));
             }
             tracing::info!(
                 ?connectivity,
+                at_stake,
                 "Skipping reconnect — connectivity is not Full"
             );
             return;
@@ -288,6 +331,24 @@ pub fn setup_network_monitor(
             }
         });
     });
+}
+
+/// How many sessions a network change could have stranded.
+///
+/// Goes through [`open_session_count`] rather than counting tabs, because a
+/// session can be in a tab, in a detached window, or in an external viewer, and
+/// the first of those is the only one `session_count()` knows about. A user whose
+/// only session is in a detached window is exactly the user who needs the
+/// warning, and counting tabs alone would have decided they had nothing at stake.
+///
+/// [`open_session_count`]: super::open_session_count
+fn sessions_at_stake(notebook: &SharedNotebook) -> usize {
+    let external = super::external_session_registry().map_or(0, |reg| reg.active_count());
+    super::open_session_count(
+        notebook.session_count(),
+        notebook.detached_count(),
+        external,
+    )
 }
 
 /// Closes all RustConn SSH `ControlMaster` sockets unconditionally.
@@ -617,5 +678,61 @@ mod tests {
             NetworkChange::Up,
             WINDOW
         ));
+    }
+
+    #[test]
+    fn an_outage_with_nothing_open_is_not_announced() {
+        // The reported symptom: an idle window with no connections showed
+        // "Network disconnected — active sessions may be interrupted" during a
+        // Wi-Fi flap. There were no active sessions, so the warning was not
+        // merely noisy, it was untrue.
+        assert!(!should_announce(false, 0));
+    }
+
+    #[test]
+    fn an_outage_with_a_session_open_is_announced() {
+        assert!(should_announce(false, 1));
+    }
+
+    #[test]
+    fn rate_limiting_still_wins_over_having_something_at_stake() {
+        // Quiet mode exists for VPN reconnect loops, where every flap does
+        // strand something. Having sessions open must not re-open the spam.
+        assert!(!should_announce(true, 3));
+    }
+
+    #[test]
+    fn a_flap_on_an_idle_window_is_silent_end_to_end() {
+        // The four signals from the reported log — Down, Up(Limited), Down,
+        // Up(Full) — arriving with nothing open. The first three each reached a
+        // toast before this change; the fourth was already suppressed by the
+        // rate limiter. Classification is unchanged, so the socket sweeps still
+        // run; only the announcements go away.
+        let signals = [
+            classify_change(None, false),
+            classify_change(Some(false), true),
+            classify_change(Some(true), false),
+            classify_change(Some(false), true),
+        ];
+        assert_eq!(
+            signals,
+            [
+                NetworkChange::Down,
+                NetworkChange::Up,
+                NetworkChange::Down,
+                NetworkChange::Up
+            ],
+            "the sweeps must still see every transition"
+        );
+        // Only the first three were ever candidates for a toast; none of them
+        // announces anything now.
+        for (index, _) in signals.iter().enumerate() {
+            let suppressed =
+                index >= usize::try_from(MAX_REACTIONS_PER_MINUTE).unwrap_or(usize::MAX);
+            assert!(
+                !should_announce(suppressed, 0),
+                "signal {index} announced an outage on an idle window"
+            );
+        }
     }
 }

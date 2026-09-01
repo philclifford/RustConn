@@ -3179,9 +3179,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libredox"
-version = "0.1.21"
+version = "0.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7955dfc218a8afb29dfeffd540e3a6e96baeb94fe7138228dd7cc6937fbbf96"
+checksum = "8d8f1ea3f21fd3405dcaf6c9b5c1630af9afc422d9073ea39c5f6d6c772e08ed"
 dependencies = [
  "libc",
 ]
@@ -4327,9 +4327,9 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "ppmd-rust"
-version = "1.4.0"
+version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efca4c95a19a79d1c98f791f10aebd5c1363b473244630bb7dbde1dc98455a24"
+checksum = "9e9219bcb9d7aca6b2f63c83cf100cf78bcd619ac46e6ecbd0dd90869a39345d"
 
 [[package]]
 name = "ppv-lite86"
@@ -4788,7 +4788,7 @@ dependencies = [
 
 [[package]]
 name = "rustconn"
-version = "0.21.2"
+version = "0.21.3"
 dependencies = [
  "async-channel",
  "chrono",
@@ -4828,7 +4828,7 @@ dependencies = [
 
 [[package]]
 name = "rustconn-cli"
-version = "0.21.2"
+version = "0.21.3"
 dependencies = [
  "chrono",
  "clap",
@@ -4850,7 +4850,7 @@ dependencies = [
 
 [[package]]
 name = "rustconn-core"
-version = "0.21.2"
+version = "0.21.3"
 dependencies = [
  "aes 0.9.3",
  "ar",
@@ -4909,7 +4909,7 @@ dependencies = [
 
 [[package]]
 name = "rustconn-dock-sys"
-version = "0.21.2"
+version = "0.21.3"
 dependencies = [
  "objc2",
  "objc2-app-kit",
@@ -4918,18 +4918,18 @@ dependencies = [
 
 [[package]]
 name = "rustconn-env-sys"
-version = "0.21.2"
+version = "0.21.3"
 
 [[package]]
 name = "rustconn-locale-sys"
-version = "0.21.2"
+version = "0.21.3"
 dependencies = [
  "gettext-rs",
 ]
 
 [[package]]
 name = "rustconn-pty-sys"
-version = "0.21.2"
+version = "0.21.3"
 dependencies = [
  "libc",
  "nix",
@@ -5434,9 +5434,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.15.2"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
 
 [[package]]
 name = "socket2"

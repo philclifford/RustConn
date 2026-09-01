@@ -1,6 +1,6 @@
 //! Secrets settings tab using libadwaita components
 
-mod detection;
+pub(crate) mod detection;
 mod keyring;
 
 use std::cell::{Cell, RefCell};
@@ -18,8 +18,8 @@ use rustconn_core::secret::{CredentialStorage, set_session_key};
 use secrecy::SecretString;
 
 use self::detection::{
-    check_bitwarden_status_sync, detect_secret_backends, extract_session_key,
-    read_passbolt_server_url_sync,
+    LocalBackendState, SecretCliDetection, backend_readiness, check_bitwarden_status_sync,
+    detect_secret_backends, extract_session_key, read_passbolt_server_url_sync,
 };
 use self::keyring::{
     delete_bw_api_credentials_from_keyring, delete_bw_password_from_keyring,
@@ -429,53 +429,67 @@ pub fn backend_choices() -> Vec<BackendChoice> {
         }
     }
 
+    // Labels come from `SecretBackendType::display_name()` rather than being
+    // written out again here. They were duplicated until a message elsewhere
+    // needed the same names and had nothing to call, so the banner printed Rust
+    // variant names (`MacOsKeychain`) instead. One source, two consumers: this
+    // table for the selector, `display_name()` for prose.
+    //
+    // Product names are not translated, which is why `display_name()` returns
+    // English and only the three descriptive labels are wrapped in `i18n()`.
     // Index 1 is the platform system keyring: libsecret on Linux/BSD, the native
-    // Keychain on macOS (libsecret does not exist there). Product names are not
-    // translated; the explanations are.
+    // Keychain on macOS (libsecret does not exist there).
     #[cfg(target_os = "macos")]
     let keyring = choice(
-        "macOS Keychain",
+        SecretBackendType::MacOsKeychain.display_name(),
         i18n("This Mac's login keychain, unlocked with your session"),
         SecretBackendType::MacOsKeychain,
     );
     #[cfg(not(target_os = "macos"))]
     let keyring = choice(
-        "libsecret",
+        SecretBackendType::LibSecret.display_name(),
         i18n("This computer's login keyring, unlocked with your session"),
         SecretBackendType::LibSecret,
     );
 
     vec![
         choice(
-            "KeePassXC",
+            SecretBackendType::KeePassXc.display_name(),
             i18n("A KeePass database, through the KeePassXC application"),
             SecretBackendType::KeePassXc,
         ),
         keyring,
         choice(
-            "Bitwarden",
+            SecretBackendType::Bitwarden.display_name(),
             i18n("Your Bitwarden vault, through the bw command line tool"),
             SecretBackendType::Bitwarden,
         ),
         choice(
-            "1Password",
+            SecretBackendType::OnePassword.display_name(),
             i18n("Your 1Password vault, through the op command line tool"),
             SecretBackendType::OnePassword,
         ),
         choice(
-            "Passbolt",
+            SecretBackendType::Passbolt.display_name(),
             i18n("Your Passbolt server, through the passbolt command line tool"),
             SecretBackendType::Passbolt,
         ),
         choice(
-            "Pass",
+            SecretBackendType::Pass.display_name(),
             i18n("The pass password store, encrypted with your GPG key"),
             SecretBackendType::Pass,
         ),
         // The two file backends differ only in where the key comes from, so each
-        // description names that and nothing else.
+        // description names that and nothing else. Descriptive rather than
+        // product names, so these two are translated — sentence case per GNOME HIG.
+        //
+        // These two labels stay *literal* inside `i18n()` instead of calling
+        // `display_name()` like the rows above. `po/update-pot.sh` runs xgettext,
+        // which extracts by matching `i18n("…")` on a string literal: pass it an
+        // expression and the string is silently dropped from the catalogue and
+        // ships untranslated in all 17 locales. The strings are asserted equal to
+        // `display_name()` in this module's tests so the two cannot drift.
         choice(
-            // Descriptive rather than a product name — sentence case per GNOME HIG.
             &i18n("Encrypted file"),
             i18n("A file on this computer, encrypted with a key tied to this machine"),
             SecretBackendType::EncryptedFile,
@@ -943,35 +957,52 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     version_row.add_suffix(&version_label);
     backend_group.add(&version_row);
 
-    // Availability indicator for the system-keyring backend (R4.3). Shown only
-    // when the system-keyring entry (index 1) is selected; the other backends
-    // already display their own status rows. The text label always names the
-    // state, so status is never conveyed by colour alone (GNOME HIG / WCAG).
+    // Whether the selected backend can actually store a password. Shown for
+    // *every* backend, which is the change: it used to be revealed only when the
+    // system keyring was selected, on the reasoning that "the other backends
+    // already display their own status rows". Four of the eight had no status row
+    // at all, two of the four that did got stuck on "Detecting..." when their CLI
+    // was missing, and the row that existed answered a different question than
+    // the Version row above it without saying so. So the page could show a
+    // version number for a Bitwarden that was not logged in and call that the
+    // whole report — which is how issue #312 got as far as it did.
+    //
+    // The label always names the state, so status is never conveyed by colour
+    // alone (GNOME HIG / WCAG).
     let availability_label = Label::builder()
         .halign(gtk4::Align::End)
         .valign(gtk4::Align::Center)
         .label(i18n("Checking..."))
         .css_classes(["dim-label"])
+        .wrap(true)
+        .max_width_chars(36)
+        .xalign(1.0)
         .build();
-    let availability_row = adw::ActionRow::builder()
-        .title(i18n("Availability"))
-        .build();
+    let availability_row = adw::ActionRow::builder().title(i18n("Status")).build();
     availability_row.add_suffix(&availability_label);
-    availability_row.set_visible(false);
     backend_group.add(&availability_row);
 
     // An `AdwSwitchRow`, not a `GtkCheckButton` in a row prefix: a checkbox in a
     // boxed list is the odd one out on this page and against the project's HIG
-    // notes. The subtitle names the actual fallback store, which is the Keychain
-    // on macOS — it read "libsecret" there, a library that does not exist on the
-    // platform.
-    #[cfg(target_os = "macos")]
-    let fallback_subtitle = i18n("Use the macOS Keychain if the primary backend is unavailable");
-    #[cfg(not(target_os = "macos"))]
-    let fallback_subtitle = i18n("Use libsecret if the primary backend is unavailable");
+    // notes.
+    //
+    // The subtitle names the encrypted file because that is what the fallback
+    // actually is: `SecretManager::build_from_settings` appends
+    // `EncryptedFileBackend`, and has since the libsecret fallback was dropped
+    // for being useless when libsecret is the *failing* backend (#201). The text
+    // still said "Use libsecret", and on macOS "Use the macOS Keychain" — naming
+    // a store the code stopped using. It is also no longer platform-conditional,
+    // because the encrypted file is the same on every platform.
+    //
+    // "Look for passwords in" rather than "Use … if unavailable" because this
+    // switch now governs *reads* only. A write that the chosen backend refuses
+    // asks the user where to put it instead of silently relocating it — see
+    // `save_password_to_vault`.
     let enable_fallback = adw::SwitchRow::builder()
-        .title(i18n("Enable fallback"))
-        .subtitle(fallback_subtitle)
+        .title(i18n("Also read from the encrypted file"))
+        .subtitle(i18n(
+            "Look for passwords in this computer's encrypted file too, so ones saved before you switched backend still resolve",
+        ))
         .active(true)
         .build();
     backend_group.add(&enable_fallback);
@@ -1021,11 +1052,12 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     // Track whether async detection has completed
     let detection_complete: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
 
-    // Cached fine-grained availability of the system-keyring backend, populated
-    // by background detection. Used to render the per-backend availability
-    // indicator when the system-keyring entry is selected (#201, R4.3).
-    let keyring_availability: Rc<RefCell<Option<rustconn_core::secret::BackendAvailability>>> =
-        Rc::new(RefCell::new(None));
+    // The whole detection result, kept so the Status row can be recomputed for
+    // whichever backend is selected. This used to hold only the system keyring's
+    // `BackendAvailability`, which is why the row could only speak about one
+    // backend: the other seven probes were rendered into their own labels once
+    // and then thrown away.
+    let detection_result: Rc<RefCell<Option<SecretCliDetection>>> = Rc::new(RefCell::new(None));
 
     // Shared mutable command paths for callbacks (updated by async detection)
     let bitwarden_cmd: Rc<RefCell<String>> = Rc::new(RefCell::new("bw".to_string()));
@@ -1182,8 +1214,13 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
             // Run unlock asynchronously to avoid blocking the GTK main loop.
             let status_label_async = status_label.clone();
             let button_async = button.clone();
-            let password_owned = password.to_string();
-            let password_for_keyring = password_owned.clone();
+            // Both copies stay `Zeroizing`. `password` above is already
+            // `Zeroizing`, and `password.to_string()` was quietly demoting it to a
+            // bare `String` that then moved into two closures and dropped
+            // unwiped — the master password left in freed heap, which is the one
+            // thing the wrapper three statements up exists to prevent.
+            let password_owned = zeroize::Zeroizing::new(password.to_string());
+            let password_for_keyring = zeroize::Zeroizing::new(password.to_string());
             glib::spawn_future_local(async move {
                 let (session_result, raw_stderr) = gtk4::gio::spawn_blocking(move || {
                     // Try --raw first, then verbose output parsing as fallback
@@ -1192,7 +1229,11 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                         .arg("--passwordenv")
                         .arg("BW_PASSWORD")
                         .arg("--raw")
-                        .env("BW_PASSWORD", &password_owned)
+                        // `.as_str()`, not `&password_owned`: `Command::env` is
+                        // generic over `AsRef<OsStr>`, and deref coercion does not
+                        // apply through a generic bound, so a `Zeroizing<String>`
+                        // has to be unwrapped explicitly.
+                        .env("BW_PASSWORD", password_owned.as_str())
                         .output();
 
                     let (session, stderr) = match raw_result {
@@ -1218,7 +1259,7 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                             .arg("unlock")
                             .arg("--passwordenv")
                             .arg("BW_PASSWORD")
-                            .env("BW_PASSWORD", &password_owned)
+                            .env("BW_PASSWORD", password_owned.as_str())
                             .output();
                         match result {
                             Ok(output) if output.status.success() => {
@@ -1235,10 +1276,10 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                 .unwrap_or((None, String::new()));
 
                 if let Some(session_key) = session_result {
-                    tracing::info!(
-                        session_key_len = session_key.len(),
-                        "Bitwarden GUI: unlock succeeded"
-                    );
+                    // No length field. The handler above already declines to log
+                    // the master password's length as bruteforce metadata, and a
+                    // session key is no different in kind.
+                    tracing::info!("Bitwarden GUI: unlock succeeded");
                     set_session_key(SecretString::from(session_key));
                     update_status_label(&status_label_async, &i18n("Unlocked"), "success");
 
@@ -2302,9 +2343,12 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
     let passbolt_version_clone = passbolt_version.clone();
     let pass_version_clone = pass_version.clone();
     let detection_complete_clone = detection_complete.clone();
-    let availability_row_clone = availability_row.clone();
     let availability_label_clone = availability_label.clone();
-    let keyring_availability_clone = keyring_availability.clone();
+    let detection_result_clone = detection_result.clone();
+    // The two prerequisites the probes cannot see, read live so the Status row
+    // follows what is in the fields rather than what was last saved.
+    let kdbx_path_entry_status = kdbx_path_entry.clone();
+    let portable_passphrase_status = portable_passphrase_entry.clone();
     // Clones for on-demand keyring loading when user switches backend
     let bw_status_label_switch = bitwarden_status_label.clone();
     let op_token_entry_switch = onepassword_token_entry.clone();
@@ -2331,18 +2375,19 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
         auth_group_clone2.set_visible(show_kdbx && kdbx_enabled);
         status_group_clone2.set_visible(show_kdbx && kdbx_enabled);
 
-        // System-keyring availability indicator: only the system-keyring entry
-        // uses the keyring probe; other backends show their own status rows, so
-        // hide this indicator for them (R4.3).
-        if selected == BACKEND_SYSTEM_KEYRING_INDEX {
-            render_keyring_availability(
-                &availability_row_clone,
-                &availability_label_clone,
-                keyring_availability_clone.borrow().as_ref(),
-            );
-        } else {
-            availability_row_clone.set_visible(false);
-        }
+        // Status: can the backend just selected actually store a password. Every
+        // backend answers, which is what makes choosing from this list informed
+        // rather than hopeful.
+        render_backend_readiness(
+            &availability_label_clone,
+            detection_result_clone.borrow().as_ref(),
+            index_to_backend(selected),
+            &LocalBackendState {
+                kdbx_enabled,
+                kdbx_path: expand_user_path(kdbx_path_entry_status.text().as_str()),
+                portable_passphrase_entered: !portable_passphrase_status.text().is_empty(),
+            },
+        );
 
         // Helper to set version label text and style
         let detected = *detection_complete_clone.borrow();
@@ -2685,16 +2730,25 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
             ),
             (kdbx_storage_combo.clone(), kdbx_status_label.clone()),
         ];
-        let availability_row_det = availability_row.clone();
         let availability_label_det = availability_label.clone();
-        let keyring_avail_det = keyring_availability.clone();
+        let detection_result_det = detection_result.clone();
+        let kdbx_enabled_row_det = kdbx_enabled_row.clone();
+        let kdbx_path_entry_det = kdbx_path_entry.clone();
+        let portable_passphrase_det = portable_passphrase_entry.clone();
 
         // Run detection on a real OS thread so the GTK main loop stays idle
         // and can render frames while detection runs in the background.
         // GTK widgets are not Send, so we use a channel to pass results back.
+        // Read on the main thread — it comes out of a GTK entry, which is not
+        // `Send`, and the probe needs it to look at the same store the backend
+        // will use rather than at the ambient `$PASSWORD_STORE_DIR`.
+        let pass_store_dir = {
+            let text = pass_store_dir_entry.text().to_string();
+            (!text.trim().is_empty()).then_some(text)
+        };
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let det = detect_secret_backends();
+            let det = detect_secret_backends(pass_store_dir);
             let _ = tx.send(det);
         });
 
@@ -2707,7 +2761,10 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                     // Store detected command paths
                     *bw_cmd_rc.borrow_mut() = det.bitwarden_cmd.clone();
                     rustconn_core::secret::set_bw_cmd(&det.bitwarden_cmd);
-                    *op_cmd_rc.borrow_mut() = det.onepassword_cmd;
+                    // Cloned, like `bitwarden_cmd` on the line above: moving the
+                    // field out would partially move `det`, and the Status row
+                    // below needs it whole.
+                    *op_cmd_rc.borrow_mut() = det.onepassword_cmd.clone();
 
                     // Store versions for dropdown callback
                     *kpxc_ver.borrow_mut() = det.keepassxc_version.clone();
@@ -2731,20 +2788,30 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                              untouched and flagged in the Secrets tab"
                         );
                     }
-                    *keyring_avail_det.borrow_mut() = Some(det.system_keyring_availability.clone());
+                    // Keep the whole result: the Status row is recomputed from it
+                    // every time the selection changes, so it cannot be rendered
+                    // once and discarded the way the keyring probe used to be.
+                    //
+                    // Rendered from the stored clone rather than from `det`, which
+                    // is partially moved by this point — `det.onepassword_cmd` is
+                    // handed to `op_cmd_rc` above — so it can no longer be
+                    // borrowed whole.
+                    *detection_result_det.borrow_mut() = Some(det.clone());
 
-                    // Refresh the system-keyring availability indicator if that
-                    // backend is currently selected (#201, R4.3).
-                    if dropdown.selected() == 1 {
-                        render_keyring_availability(
-                            &availability_row_det,
-                            &availability_label_det,
-                            Some(&det.system_keyring_availability),
-                        );
-                    }
+                    let selected = dropdown.selected();
+                    let local = LocalBackendState {
+                        kdbx_enabled: kdbx_enabled_row_det.is_active(),
+                        kdbx_path: expand_user_path(kdbx_path_entry_det.text().as_str()),
+                        portable_passphrase_entered: !portable_passphrase_det.text().is_empty(),
+                    };
+                    render_backend_readiness(
+                        &availability_label_det,
+                        detection_result_det.borrow().as_ref(),
+                        index_to_backend(selected),
+                        &local,
+                    );
 
                     // Update version label for currently selected backend
-                    let selected = dropdown.selected();
                     let cur_ver = match selected {
                         0 => &det.keepassxc_version,
                         2 => &det.bitwarden_version,
@@ -2782,18 +2849,28 @@ pub fn create_secrets_page() -> SecretsPageWidgets {
                         update_status_label(&op_status_label, &i18n("Not installed"), "error");
                     }
 
-                    // Update Passbolt status
+                    // Update Passbolt status. The `else` matters: `passbolt_status`
+                    // is `None` exactly when the CLI is missing, and without a
+                    // branch for it the label kept its initial "Detecting..."
+                    // forever — so the one case the user most needs told about
+                    // was the one case the page stayed silent on. Same for Pass
+                    // below. Bitwarden and 1Password already had this branch,
+                    // which is why only two of the four were affected.
                     pb_vault_btn.set_sensitive(det.passbolt_installed);
                     if let Some((text, css)) = det.passbolt_status {
                         update_status_label(&pb_status_label, &text, css);
                         if det.passbolt_installed {
                             pb_open_button.set_sensitive(true);
                         }
+                    } else {
+                        update_status_label(&pb_status_label, &i18n("Not installed"), "error");
                     }
 
                     // Update Pass status label
                     if let Some((text, css)) = det.pass_status {
                         update_status_label(&pass_status_label, &text, css);
+                    } else {
+                        update_status_label(&pass_status_label, &i18n("Not installed"), "error");
                     }
 
                     // Update Passbolt URL from detection if empty
@@ -2898,29 +2975,19 @@ pub(crate) fn update_status_label(label: &Label, text: &str, css_class: &str) {
     label.add_css_class(css_class);
 }
 
-/// Renders the system-keyring availability indicator row from a probe result.
+/// Renders the Status row for `backend`.
 ///
-/// Reveals `row` and sets `label` to a state name paired with a colour css
-/// class (`None` = still probing). The text always names the state, so status
-/// is never conveyed by colour alone (GNOME HIG / WCAG). See `availability()`
-/// and issue #201.
-fn render_keyring_availability(
-    row: &adw::ActionRow,
+/// Replaces `render_keyring_availability`, which could only describe the system
+/// keyring because that was the only probe result the page kept. The verdict
+/// itself is computed in [`backend_readiness`]; this only paints it.
+fn render_backend_readiness(
     label: &Label,
-    availability: Option<&rustconn_core::secret::BackendAvailability>,
+    detection: Option<&SecretCliDetection>,
+    backend: SecretBackendType,
+    local: &LocalBackendState,
 ) {
-    use rustconn_core::secret::BackendAvailability;
-
-    row.set_visible(true);
-    let (text, css) = match availability {
-        Some(BackendAvailability::Available) => (i18n("Available"), "success"),
-        Some(BackendAvailability::ServiceUnavailable) => {
-            (i18n("No keyring service responding"), "warning")
-        }
-        Some(BackendAvailability::ClientMissing) => (i18n("Keyring client not installed"), "error"),
-        None => (i18n("Checking..."), "dim-label"),
-    };
-    update_status_label(label, &text, css);
+    let readiness = backend_readiness(detection, backend, local);
+    update_status_label(label, &readiness.label(), readiness.css_class());
 }
 
 pub fn load_secret_settings(widgets: &SecretsPageWidgets, settings: &SecretSettings) {
@@ -3902,4 +3969,82 @@ fn revoke_stale_keyring_credentials(previous: &SecretSettings, current: &SecretS
         failures += 1;
     }
     failures
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every selector row must map back to the position it was built at.
+    ///
+    /// `backend_to_index` folds `KdbxFile` onto the `KeePassXC` row and the two
+    /// keyring variants onto one platform-dependent row, so it is a hand-written
+    /// match rather than a lookup — which is exactly the kind of thing that goes
+    /// stale when a row is inserted. A mismatch here means a saved configuration
+    /// selects a different backend than the one the user picked.
+    #[test]
+    fn backend_choices_round_trip_through_index() {
+        for (index, choice) in backend_choices().iter().enumerate() {
+            let index = u32::try_from(index).expect("selector has far fewer than u32::MAX rows");
+            assert_eq!(
+                backend_to_index(choice.backend),
+                index,
+                "row {index} holds {:?} but backend_to_index sends it elsewhere",
+                choice.backend
+            );
+            assert_eq!(
+                index_to_backend(index),
+                choice.backend,
+                "index_to_backend({index}) disagrees with the table"
+            );
+        }
+    }
+
+    /// The two descriptive labels are written out as literals in
+    /// `backend_choices` so xgettext can extract them, which means they are a
+    /// second copy of `display_name()`. This is the assertion that comment
+    /// promises: if one is reworded, the other has to follow.
+    #[test]
+    fn descriptive_labels_match_display_name() {
+        let choices = backend_choices();
+        for backend in [
+            SecretBackendType::EncryptedFile,
+            SecretBackendType::PortableEncryptedFile,
+        ] {
+            let row = &choices[backend_to_index(backend) as usize];
+            assert_eq!(
+                row.label,
+                backend.display_name(),
+                "selector label for {backend:?} drifted from display_name()"
+            );
+        }
+    }
+
+    /// `from_backend_id` exists to turn a chain report back into something that
+    /// can be named to a user, so every backend the chain can contain has to be
+    /// recognised. The id strings live in eight separate files next to their
+    /// `SecretBackend` impls; this is the only place they are checked together.
+    #[test]
+    fn backend_ids_map_back_to_their_variant() {
+        for (id, expected) in [
+            ("libsecret", SecretBackendType::LibSecret),
+            ("bitwarden", SecretBackendType::Bitwarden),
+            ("onepassword", SecretBackendType::OnePassword),
+            ("passbolt", SecretBackendType::Passbolt),
+            ("pass", SecretBackendType::Pass),
+            ("macos_keychain", SecretBackendType::MacOsKeychain),
+            ("encrypted_file", SecretBackendType::EncryptedFile),
+            (
+                "portable_encrypted_file",
+                SecretBackendType::PortableEncryptedFile,
+            ),
+        ] {
+            assert_eq!(
+                SecretBackendType::from_backend_id(id),
+                Some(expected),
+                "backend_id {id:?} no longer maps to {expected:?}"
+            );
+        }
+        assert_eq!(SecretBackendType::from_backend_id("nonesuch"), None);
+    }
 }

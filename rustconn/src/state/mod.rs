@@ -1052,11 +1052,48 @@ impl AppState {
                     };
                     return Ok(CredentialResolutionResult::Resolved(creds));
                 }
+                // Both arms below return. Until now they logged and fell
+                // through, and the fall-through was the bug: the non-KeePass
+                // Vault block is skipped (wrong backend), the Inherit block is
+                // skipped (wrong source), so execution reached the generic
+                // resolver at the end of this function — which holds the
+                // `SecretManager` *chain*, i.e. the system keyring plus the
+                // encrypted file.
+                //
+                // So with KeePassXC selected and the database locked, the CLI
+                // missing or the path wrong, a password could be read out of
+                // libsecret or out of `credentials.enc` and used to log in, with
+                // nothing anywhere saying the chosen database had not been
+                // consulted. And a genuine miss came back as `NotNeeded`, so the
+                // KeePass user did not even get the "Vault entry not found"
+                // notice every other backend produces.
+                //
+                // Now KeePass answers the way the others do. That is a deliberate
+                // trade: someone who switches from another backend to KeePassXC
+                // stops being served their old passwords silently and is prompted
+                // instead. Every non-KeePass backend on this path has always
+                // behaved that way — the block below queries the selected backend
+                // alone — so this makes KeePass consistent rather than making it
+                // strict, and "Copy Passwords…" in Settings ▸ Secrets is the
+                // sanctioned way to bring the old entries across.
                 Ok(None) => {
-                    tracing::debug!("[resolve_credentials_blocking] No password found in KeePass");
+                    tracing::debug!(
+                        lookup_key = %lookup_key,
+                        "[resolve_credentials_blocking] No password under this key in KeePass"
+                    );
+                    return Ok(CredentialResolutionResult::VaultEntryMissing {
+                        connection_name: connection.name.clone(),
+                        lookup_key,
+                    });
                 }
                 Err(e) => {
-                    tracing::error!("[resolve_credentials_blocking] KeePass error: {}", e);
+                    tracing::warn!(
+                        error = %e,
+                        "[resolve_credentials_blocking] KeePass database could not be read"
+                    );
+                    return Ok(CredentialResolutionResult::BackendNotConfigured {
+                        required_backend: secret_settings.preferred_backend,
+                    });
                 }
             }
         }

@@ -1,6 +1,6 @@
 # RustConn Architecture Guide
 
-**Version 0.21.2** | Last updated: August 2026
+**Version 0.21.3** | Last updated: August 2026
 
 This document describes the internal architecture of RustConn for contributors and maintainers.
 
@@ -998,25 +998,39 @@ let key = KeePassHierarchy::build_group_lookup_key(&group, &groups, true);
 
 ### Fallback Chain
 
-`SecretManager` tries backends in priority order:
+`SecretManager::build_from_settings` builds a chain of at most two entries: the
+backend the user selected, followed by the machine-bound encrypted file when
+**Also read from the encrypted file** is on. `retrieve` walks it in order and
+returns the first hit.
 
-```rust
-pub struct SecretManager {
-    backends: Vec<Arc<dyn SecretBackend>>,
-    cache: Arc<RwLock<HashMap<String, Credentials>>>,
-}
+**Reads may fall back; writes may not.** The two sides are deliberately
+asymmetric, because they answer different questions:
 
-impl SecretManager {
-    async fn get_available_backend(&self) -> SecretResult<&Arc<dyn SecretBackend>> {
-        for backend in &self.backends {
-            if backend.is_available().await {
-                return Ok(backend);
-            }
-        }
-        Err(SecretError::BackendUnavailable("No backend available".into()))
-    }
-}
-```
+- A read falling through to the encrypted file is usually right. A password saved
+  before the user switched backend still lives there, and refusing to look would
+  strand it. `retrieve_reported` returns a `RetrieveOutcome` naming the backend
+  that answered, so a fall-through can be reported rather than assumed; `retrieve`
+  delegates to it and discards the outcome for callers that do not care.
+- A write is a user action with an explicit destination, so `store_reported` is
+  called with `allow_fallback = false` from the GUI save path and the selected
+  backend's own error comes back untouched. Where the credential goes instead is
+  then a question put to the user (`show_vault_store_failed_dialog`), and the
+  encrypted-file destination is reached by naming it — `dispatch_vault_op_for`
+  with `SecretBackendType::EncryptedFile`.
+
+That asymmetry is the fix for a specific failure. The write side used to walk the
+chain on any primary error, so a locked vault silently relocated the password into
+`credentials.enc` — and the connect path does not read that file when another
+backend is selected, because `resolve_credentials_blocking` queries the selected
+backend alone. The password was saved and, from the connection's point of view,
+missing at the same time; what the user saw was "Vault entry not found. You will
+be prompted for a password" for a password that was on disk.
+
+Connect-time Vault lookups are single-backend on every backend now, KeePassXC
+included. Its branch used to log a failure and fall through to the chain resolver,
+which meant a locked database could be answered from libsecret with nothing said.
+Moving credentials between stores is what **Copy Passwords…** in Settings ▸
+Secrets is for.
 
 ## Protocol Architecture
 

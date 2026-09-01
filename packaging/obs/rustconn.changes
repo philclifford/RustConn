@@ -1,4 +1,57 @@
 -------------------------------------------------------------------
+Tue Sep 01 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.3
+- Version bump to 0.21.3
+- Fixed: a password the selected backend refused was moved into the encrypted
+  file without asking, where the connect path never looks. Saving walked the
+  fallback chain and wrote to credentials.enc, while connect-time resolution
+  queries the selected backend alone — so a locked vault produced a password that
+  was saved and, to the connection, missing. Saving now targets the selected
+  backend only; a refusal opens a dialog naming the backend and offers the
+  encrypted file as a deliberate choice. Reads still walk the chain so pre-switch
+  passwords keep resolving
+- Fixed: secret backends disagreed on how to report a failure, and three of them
+  called an unreadable store a missing entry. KeePassXC turned every non-zero
+  keepassxc-cli exit except invalid credentials into "entry not found"; pass
+  treated any non-zero pass show as a miss and had no readiness check; and the
+  KeePass resolve path fell through to the generic chain, so a locked database
+  could serve a password from libsecret or the encrypted file. All three now
+  separate "opened, entry absent" from "did not open" and answer like every other
+  backend
+- Fixed: secret status was reported with the wrong words, the wrong store, or not
+  at all — "Secret Backend Not Configured" shown to a locked backend, a startup
+  banner describing every backend as a keyring, Passbolt and Pass stuck on
+  "Detecting…", and the pass readiness probe reading a different store than the
+  backend uses. Each now reports the backend in force and whether it can store a
+  password
+- Fixed: the Bitwarden master password was demoted out of its Zeroizing wrapper
+  before use, leaving copies in freed heap; both copies stay wrapped now, and the
+  session-key length is no longer logged
+- Fixed: an embedded RDP session against a Windows 11 host could be killed by the
+  server's own keepalive (#262). ironrdp-session decodes every PDU on the MCS
+  message channel as an auto-detect request, but that channel also carries the
+  Heartbeat PDUs Windows 11 sends every one to two seconds; the first failed to
+  decode and the session ended as a plain "Session error". A PDU the session layer
+  cannot decode is now survivable when it arrived on the message channel, while a
+  failure to parse the MCS framing itself stays fatal
+- Fixed: an idle window with no connections showed network warnings during a
+  Wi-Fi flap, the first reading "active sessions may be interrupted" when there
+  were none. All transition paths now announce only when something is at stake,
+  counted through the open session count; the socket sweeps still run on every
+  transition
+- Changed: "Enable fallback" is now "Also read from the encrypted file" and
+  governs reads only — where a write goes is decided at save time, per the fix
+  above
+- Changed: the Secrets page reports whether the selected backend can actually
+  store a password, with one Status line per backend, re-checked after settings
+  are saved. SecretManager::retrieve_reported now reports which backend answered a
+  read
+- Documentation: the Bitwarden guide, architecture, user guide and build docs
+  updated for the read/write asymmetry and for where the Bitwarden CLI keeps its
+  login state under Flatpak (#312, #129)
+- Dependencies: libredox 0.1.21→0.1.23, ppmd-rust 1.4.0→1.4.1, smallvec
+  1.15.2→1.16.0, all semver-compatible transitive updates from cargo update
+
+-------------------------------------------------------------------
 Mon Aug 31 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.2
 - Version bump to 0.21.2
 - Fixed: SSH through a jump host could hang at the target password prompt when

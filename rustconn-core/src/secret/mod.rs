@@ -69,7 +69,8 @@ pub use libsecret::LibSecretBackend;
 #[cfg(all(feature = "system-keyring", target_os = "macos"))]
 pub use macos_keychain::MacOsKeychainBackend;
 pub use manager::{
-    BulkOperationResult, CACHE_TTL_SECONDS, CredentialUpdate, SecretManager, StoreOutcome,
+    BulkOperationResult, CACHE_TTL_SECONDS, CredentialUpdate, RetrieveOutcome, SecretManager,
+    StoreOutcome,
 };
 pub use onepassword::{
     OnePasswordBackend, OnePasswordStatus, OnePasswordVersion, delete_token_from_keyring,

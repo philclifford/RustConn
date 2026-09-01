@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.21.2** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.21.3** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -2660,8 +2660,11 @@ The settings dialog uses `adw::PreferencesDialog` with built-in search. Settings
 ### Secrets page
 
 **Secret backend group:**
-- **Preferred Backend** — libsecret, KeePassXC, KDBX file, Bitwarden, 1Password, Passbolt, Pass (passwordstore.org)
-- **Enable Fallback** — Use libsecret if primary unavailable
+- **Backend** — libsecret (or macOS Keychain), KeePassXC, Bitwarden, 1Password, Passbolt, Pass (passwordstore.org), Encrypted file, Portable encrypted file
+- **Version** — whether the backend's client program is installed, and which version
+- **Status** — whether that backend can actually store and read a password *right now*. This is the line to read: a backend can be installed and still be unusable because it is locked, not logged in, has no database file chosen, or has no keyring service answering. Shown for every backend. If you select one that is not ready, a banner appears under the header bar after you close Settings, naming the backend and what is missing.
+- **Also read from the encrypted file** — look in this computer's encrypted credential file as well as in the selected backend when resolving a password, so entries saved before you switched backend keep working. Reading only: saving always targets the selected backend, and a write it refuses is reported so you can choose where the password goes instead of having it moved for you.
+- **Copy Passwords…** — move passwords you already have from one store into another. This is the supported way to migrate after changing backend.
 - **Credential Encryption** — Backend master passwords encrypted with AES-256-GCM + Argon2id (machine-specific key)
 - **Bitwarden Settings:** Vault status, unlock button, master password persistence, save to system keyring, auto-unlock, API key authentication for 2FA
 - **1Password Settings:** Account status, sign-in button, biometric auth support, service account token
@@ -3429,11 +3432,12 @@ See [BITWARDEN_SETUP.md](BITWARDEN_SETUP.md) for a detailed guide.
 
 Quick checklist:
 1. Install Bitwarden CLI (Flatpak: via Flatpak Components; Native: `npm install -g @bitwarden/cli`)
-2. For self-hosted: `bw config server https://your-server` before logging in
-3. Login: `bw login` → Unlock: `bw unlock`
-4. Select Bitwarden backend in Settings → Secrets
-5. For 2FA (FIDO2, Duo): use API key authentication
-6. Enable "Save to system keyring" for auto-unlock
+2. **Flatpak only, and the usual cause of "Not logged in":** run `bw` so that it uses the same state directory as the application. A Local Shell tab is a *host* shell, so `bw login` there writes somewhere RustConn does not read. See [BITWARDEN_SETUP.md](BITWARDEN_SETUP.md#where-the-cli-keeps-its-login-state).
+3. For self-hosted: `bw config server https://your-server` before logging in — same directory caveat applies
+4. Login: `bw login` → Unlock from Settings → Secrets
+5. Select Bitwarden in Settings → Secrets and read the **Status** line; it says what is still missing
+6. For 2FA (FIDO2, Duo): use API key authentication
+7. Enable "Save to system keyring" for auto-unlock
 
 ### System Keyring Not Working
 
