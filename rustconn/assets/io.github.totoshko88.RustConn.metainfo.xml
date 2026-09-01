@@ -140,6 +140,18 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.21.4" date="2026-09-01">
+      <description>
+        <p>Version 0.21.4 - a SPICE-in-Flatpak fix, stricter CLI flags, and a documentation audit:</p>
+        <ul>
+          <li>A SPICE connection with a stored password no longer fails in Flatpak with "connection type cannot be detected from URI"; the password file is now handed to the host viewer at a path it can open, with a fallback to prompting</li>
+          <li>rustconn-cli now rejects --key and --auth-method for protocols that cannot use them instead of silently dropping them, and applies them to SFTP connections</li>
+          <li>--window-mode no longer claims to support SPICE, which always opens in an external viewer</li>
+          <li>The automatic-login timeout is now editable in the connection editor instead of only in the config file</li>
+          <li>The CLI reference and user guide were realigned with the code</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.21.3" date="2026-09-01">
       <description>
         <p>Version 0.21.3 - making the secret backends honest about what they can and cannot do:</p>

@@ -218,6 +218,125 @@ pub fn wrap_host_command(command: &str) -> String {
     command.to_string()
 }
 
+/// How long to wait for the host readability probe.
+///
+/// Matches the budget `crate::which::find_on_host` allows its own host probe, and
+/// for the same reason: this runs on the GTK main thread while a SPICE session is
+/// being opened, and the wait is on the Flatpak session helper, which RustConn
+/// does not control.
+const HOST_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Translates a path in this process's view into one a `flatpak-spawn --host`
+/// process can open, or `None` when no such path could be confirmed.
+///
+/// Outside Flatpak the two views are the same filesystem, so the path is returned
+/// unchanged. Inside Flatpak they are not: `$XDG_RUNTIME_DIR` looks like
+/// `/run/user/<uid>` on both sides but is a *different* directory, because Flatpak
+/// gives the sandbox its own and keeps it on the host under
+/// `/run/user/<uid>/.flatpak/<app-id>/xdg-run/`. A file written to
+/// `$XDG_RUNTIME_DIR/x` and handed to a host process by that path therefore does
+/// not exist as far as that process is concerned — which is what issue
+/// [#308](https://github.com/totoshko88/RustConn/issues/308) was: the SPICE
+/// `.vv` connection file was invisible to a host `remote-viewer`, so it fell back
+/// to reading the argument as a URI and failed with "connection type cannot be
+/// detected from URI".
+///
+/// The remapped location is *verified*, not assumed: the candidate is built and
+/// then probed with `test -r` on the host, so a Flatpak that arranges its runtime
+/// directory differently yields `None` rather than another path that does not
+/// exist. Callers are expected to treat `None` as "cannot deliver a file to the
+/// host" and degrade accordingly.
+///
+/// Only paths under `$XDG_RUNTIME_DIR` are remapped; anything else returns `None`
+/// inside Flatpak, since this function knows nothing about how it might be shared.
+#[must_use]
+pub fn host_visible_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    if !is_flatpak() {
+        return Some(path.to_path_buf());
+    }
+
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from)?;
+    let app_id = std::env::var("FLATPAK_ID").ok()?;
+    let candidate = host_runtime_candidate(&runtime_dir, &app_id, path)?;
+
+    if host_can_read(&candidate) {
+        tracing::debug!(
+            sandbox = %path.display(),
+            host = %candidate.display(),
+            "resolved the host-visible path for a sandbox runtime file"
+        );
+        Some(candidate)
+    } else {
+        tracing::warn!(
+            sandbox = %path.display(),
+            candidate = %candidate.display(),
+            "no host-visible path for this sandbox runtime file"
+        );
+        None
+    }
+}
+
+/// Builds the host counterpart of a sandbox path under `$XDG_RUNTIME_DIR`.
+///
+/// Split out from [`host_visible_path`] so the mapping can be tested without a
+/// sandbox: the probe that confirms the result needs `flatpak-spawn`, but the
+/// path arithmetic does not, and it is the part that can be wrong in a way tests
+/// can catch. Returns `None` when `path` is not under `runtime_dir`, or when
+/// `app_id` is empty or holds a path separator — an `app_id` read from the
+/// environment must not be able to climb out of the directory it names.
+fn host_runtime_candidate(
+    runtime_dir: &std::path::Path,
+    app_id: &str,
+    path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let relative = path.strip_prefix(runtime_dir).ok()?;
+    if app_id.is_empty() || app_id.contains('/') || app_id.contains("..") {
+        tracing::warn!(app_id, "refusing to build a host path from this app id");
+        return None;
+    }
+    Some(
+        runtime_dir
+            .join(".flatpak")
+            .join(app_id)
+            .join("xdg-run")
+            .join(relative),
+    )
+}
+
+/// Returns whether a `flatpak-spawn --host` process can read `path`.
+///
+/// `test` is invoked directly rather than through a shell, so the path travels as
+/// one argv element and needs no quoting — it may hold spaces, and it is not
+/// built from user input in a way worth interpreting.
+fn host_can_read(path: &std::path::Path) -> bool {
+    let child = std::process::Command::new("flatpak-spawn")
+        .arg("--host")
+        .arg("test")
+        .arg("-r")
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+
+    let child = match child {
+        Ok(child) => child,
+        Err(e) => {
+            tracing::debug!(%e, "flatpak-spawn unavailable; cannot probe the host");
+            return false;
+        }
+    };
+
+    match crate::proc::wait_bounded(child, HOST_PROBE_TIMEOUT, "host path probe") {
+        Ok(crate::proc::Waited::Exited(output)) => output.status.success(),
+        Ok(crate::proc::Waited::TimedOut) => false,
+        Err(e) => {
+            tracing::debug!(%e, "failed to poll the host path probe");
+            false
+        }
+    }
+}
+
 /// Checks if a path is a Flatpak document portal path.
 ///
 /// Portal paths look like `/run/user/<uid>/doc/<hash>/<filename>`.
@@ -389,6 +508,107 @@ mod tests {
         assert!(is_portal_path(Path::new(
             "/run/user/65534/doc/hash/nested/path"
         )));
+    }
+
+    #[test]
+    fn host_visible_path_is_identity_outside_flatpak() {
+        use std::path::Path;
+        // Outside a sandbox the host and this process share one filesystem view,
+        // so the path must come back untouched — including one that looks like a
+        // runtime path, since there is nothing to remap.
+        if !is_flatpak() {
+            for raw in [
+                "/run/user/1000/rustconn-spice-abc.vv",
+                "/home/user/somewhere/else",
+            ] {
+                assert_eq!(
+                    host_visible_path(Path::new(raw)),
+                    Some(Path::new(raw).to_path_buf()),
+                    "{raw} should be returned unchanged outside Flatpak"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn host_visible_path_rejects_paths_outside_the_runtime_dir() {
+        use std::path::Path;
+        // The remap this function knows about applies to $XDG_RUNTIME_DIR only.
+        // Anything else has no known host counterpart, so inside Flatpak it must
+        // decline rather than invent one. Outside Flatpak the identity rule above
+        // applies instead, so the assertion is scoped to the sandbox.
+        if is_flatpak() {
+            assert_eq!(host_visible_path(Path::new("/home/user/elsewhere")), None);
+        }
+    }
+
+    /// The shape verified by hand against a real sandbox for issue #308: a file
+    /// at `$XDG_RUNTIME_DIR/<name>` is readable by a host process only at
+    /// `$XDG_RUNTIME_DIR/.flatpak/<app-id>/xdg-run/<name>`.
+    #[test]
+    fn host_runtime_candidate_maps_into_the_app_xdg_run_dir() {
+        use std::path::Path;
+        let runtime = Path::new("/run/user/1000");
+        assert_eq!(
+            host_runtime_candidate(
+                runtime,
+                "io.github.totoshko88.RustConn",
+                Path::new("/run/user/1000/rustconn-spice-abc.vv"),
+            ),
+            Some(
+                Path::new(
+                    "/run/user/1000/.flatpak/io.github.totoshko88.RustConn/xdg-run/\
+                     rustconn-spice-abc.vv"
+                )
+                .to_path_buf()
+            )
+        );
+    }
+
+    #[test]
+    fn host_runtime_candidate_preserves_nested_paths() {
+        use std::path::Path;
+        assert_eq!(
+            host_runtime_candidate(
+                Path::new("/run/user/1000"),
+                "app.id",
+                Path::new("/run/user/1000/sub/dir/file.vv"),
+            ),
+            Some(Path::new("/run/user/1000/.flatpak/app.id/xdg-run/sub/dir/file.vv").to_path_buf())
+        );
+    }
+
+    #[test]
+    fn host_runtime_candidate_declines_paths_outside_the_runtime_dir() {
+        use std::path::Path;
+        let runtime = Path::new("/run/user/1000");
+        for outside in [
+            "/home/user/file.vv",
+            "/run/user/1001/file.vv",
+            "/tmp/file.vv",
+        ] {
+            assert_eq!(
+                host_runtime_candidate(runtime, "app.id", Path::new(outside)),
+                None,
+                "{outside} is not under the runtime dir"
+            );
+        }
+    }
+
+    #[test]
+    fn host_runtime_candidate_declines_an_unsafe_app_id() {
+        use std::path::Path;
+        let runtime = Path::new("/run/user/1000");
+        let file = Path::new("/run/user/1000/file.vv");
+        // An app id comes from the environment; one holding a separator or a
+        // parent link would place the path outside the directory it names.
+        for bad in ["", "../escape", "a/b", ".."] {
+            assert_eq!(
+                host_runtime_candidate(runtime, bad, file),
+                None,
+                "app id {bad:?} must be refused"
+            );
+        }
     }
 
     #[test]

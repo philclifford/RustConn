@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.21.3
+Version:        0.21.4
 Release:        0
 # rpmlint caps Summary at 79 characters (summary-too-long, badness 200); the
 # protocol list belongs in %description, which has room for all of it. Kept in
@@ -321,6 +321,24 @@ done
 %{_datadir}/icons/hicolor/*/apps/io.github.totoshko88.RustConn.*
 
 %changelog
+* Tue Sep 01 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.4-0
+- Version bump to 0.21.4
+- Fixed: a SPICE connection with a stored password failed outright in Flatpak
+  with "connection type cannot be detected from URI" (#308), a regression from
+  the 0.21.2 fix. The .vv connection file carrying the password was written to
+  the sandbox $XDG_RUNTIME_DIR, whose path the host remote-viewer cannot open;
+  it is now translated to the host's view and verified, with a URI fallback that
+  makes the viewer prompt as before 0.21.2. No new Flatpak permissions
+- Fixed: rustconn-cli add/update silently dropped --key and --auth-method for
+  non-SSH protocols; both now reject them for anything other than SSH and SFTP,
+  and update honours them for SFTP (previously ignored)
+- Fixed: --window-mode reported SPICE as supported while ignoring it; SPICE is
+  always external, so it is excluded and the code, CLI help and reference agree
+- Added: the automatic-login timeout (login_timeout_secs) is now editable in the
+  connection editor's Automation tab; previously TOML-only
+- Documentation: CLI reference and user guide realigned with the code
+- Dependencies: aws-lc-rs 1.18.0→1.18.1, aws-lc-sys 0.44.0→0.45.0
+
 * Tue Sep 01 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.3-0
 - Version bump to 0.21.3
 - Fixed: a password the selected backend refused was moved into the encrypted

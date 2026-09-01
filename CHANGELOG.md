@@ -19,6 +19,10 @@ connection editor.
 
 ### Fixed
 
+- **A SPICE connection with a stored password failed outright in Flatpak with "connection type cannot be detected from URI" (issue [#308](https://github.com/totoshko88/RustConn/issues/308))** — a regression from the 0.21.2 fix in the same issue. That fix delivers the password to `remote-viewer` through a `.vv` connection file written to `$XDG_RUNTIME_DIR`, on the assumption that the sandbox and the host see that directory at the same path. They do not: Flatpak gives the sandbox its own runtime directory and keeps it on the host under `/run/user/<uid>/.flatpak/<app-id>/xdg-run/`. virt-viewer is a desktop application in its own right and is not bundled in the manifest, so it is found on the host and launched through `flatpak-spawn --host` — where the path it was handed does not exist. `remote-viewer` then falls back to reading the argument as a URI, cannot type it, and aborts. Setting the password source back to **None** was the only way to reconnect, since without a password no file is written and the plain `spice://` URI is used.
+
+  The path handed to a host viewer is now translated to the host's own view of the file, and the translation is *verified* with a readability probe rather than assumed, so a Flatpak that arranges its runtime directory differently is detected instead of silently producing another unusable path. When no host-visible path can be confirmed, the launch drops back to the URI: the viewer asks for the password, as it did before 0.21.2, rather than failing to connect at all. Requires no new Flatpak permissions — the existing `--talk-name=org.freedesktop.Flatpak` is what makes both the probe and the launch possible. Native and Snap installs were never affected, since there is no sandbox boundary to cross. A related leak is fixed with it: a connection file that was written but never handed over is now removed immediately, where previously a successful spawn released ownership to a viewer that had no way to read the file, leaving the password on disk for the rest of the session.
+
 - **`--key` and `--auth-method` were silently dropped for non-SSH protocols** — `rustconn-cli add`/`update` accepted these flags for every protocol but only applied them to SSH (and, for `add`, SFTP), logging a warning and discarding them otherwise. A typo such as `-P vnc -k id_rsa` produced a connection that quietly ignored the key. Both commands now reject the flags for any protocol other than SSH and SFTP with a clear error, and `update` now also honours them for SFTP connections (previously ignored — a latent bug).
 
 - **`--window-mode` reported SPICE as a supported protocol while ignoring it** — `Connection::supports_window_mode()` returned `true` for SPICE, but SPICE always uses an external viewer, so the setting has no observable effect. The docstring, CLI help, and reference all said "RDP and VNC only" while the code disagreed. SPICE is now excluded from `supports_window_mode()`, so the code, help text, and documentation agree.
@@ -26,6 +30,10 @@ connection editor.
 ### Documentation
 
 - **CLI reference and user guide realigned with the code (0.21.4 audit):** version headers corrected to 0.21.4 (the CLI reference still read 0.18.11); `--audio-mode` and `--printer` RDP flags documented in the `add`/`update` tables; `web` added to the `--protocol` value list (help text and reference); the differing `--mptcp` / `--skip-port-check` semantics on `update` (which accept an explicit `true`/`false`) now explained; `sync inventory` cross-linked from the Cloud Sync subcommand table; the `--backend` help text expanded to the full list of eight backends; and the Split View shortcut table gained the missing **Ctrl+Shift+R** (Pop Pane to Tab) and **Ctrl+Shift+J** (Unsplit).
+
+### Dependencies
+
+- **Updated**: aws-lc-rs 1.18.0 → 1.18.1, aws-lc-sys 0.44.0 → 0.45.0. Semver-compatible updates from `cargo update`; `cargo check --all-targets` is clean against the refreshed lock file.
 
 ## [0.21.3] - 2026-09-01
 
