@@ -24,7 +24,7 @@ rustconn (0.21.4-1) unstable; urgency=medium
     subcommand, the full backend list and two missing split-view shortcuts.
   * Dependencies: aws-lc-rs 1.18.0→1.18.1, aws-lc-sys 0.44.0→0.45.0
 
- -- Anton Isaiev <totoshko88@gmail.com>  Tue, 01 Sep 2026 22:00:00 +0300
+ -- Anton Isaiev <totoshko88@gmail.com>  Wed, 02 Sep 2026 02:40:01 +0300
 
 rustconn (0.21.3-1) unstable; urgency=medium
 

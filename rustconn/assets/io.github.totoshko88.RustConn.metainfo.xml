@@ -140,7 +140,7 @@
     <control>touch</control>
   </supports>
   <releases>
-    <release version="0.21.4" date="2026-09-01">
+    <release version="0.21.4" date="2026-09-02">
       <description>
         <p>Version 0.21.4 - a SPICE-in-Flatpak fix, stricter CLI flags, and a documentation audit:</p>
         <ul>

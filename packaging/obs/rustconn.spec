@@ -321,7 +321,7 @@ done
 %{_datadir}/icons/hicolor/*/apps/io.github.totoshko88.RustConn.*
 
 %changelog
-* Tue Sep 01 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.4-0
+* Wed Sep 02 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.4-0
 - Version bump to 0.21.4
 - Fixed: a SPICE connection with a stored password failed outright in Flatpak
   with "connection type cannot be detected from URI" (#308), a regression from
