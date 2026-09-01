@@ -1008,9 +1008,8 @@ asymmetric, because they answer different questions:
 
 - A read falling through to the encrypted file is usually right. A password saved
   before the user switched backend still lives there, and refusing to look would
-  strand it. `retrieve_reported` returns a `RetrieveOutcome` naming the backend
-  that answered, so a fall-through can be reported rather than assumed; `retrieve`
-  delegates to it and discards the outcome for callers that do not care.
+  strand it. `retrieve` warns with both backend ids when a non-primary entry
+  answered, so a fall-through is diagnosable from a log rather than assumed.
 - A write is a user action with an explicit destination, so `store_reported` is
   called with `allow_fallback = false` from the GUI save path and the selected
   backend's own error comes back untouched. Where the credential goes instead is
@@ -1026,11 +1025,30 @@ backend alone. The password was saved and, from the connection's point of view,
 missing at the same time; what the user saw was "Vault entry not found. You will
 be prompted for a password" for a password that was on disk.
 
-Connect-time Vault lookups are single-backend on every backend now, KeePassXC
-included. Its branch used to log a failure and fall through to the chain resolver,
-which meant a locked database could be answered from libsecret with nothing said.
-Moving credentials between stores is what **Copy Passwords…** in Settings ▸
-Secrets is for.
+### The Vault password source does not use the chain
+
+`resolve_credentials_blocking` is the connect-time path for
+`PasswordSource::Vault`, and it goes through `dispatch_vault_op_for` —
+`build_single_backend`, one backend, no chain. So the chain above is not what
+makes **Also read from the encrypted file** true for a `Vault` connection; only
+`PasswordSource::None`, `Inherit` and the variable paths reach `SecretManager` and
+`CredentialResolver`.
+
+That is why the setting is applied a second time, explicitly, at the end of both
+Vault branches: `retrieve_from_encrypted_file_fallback` reads the encrypted file
+under *the same lookup keys the selected backend was asked for*, which is also the
+key the "Save to This Computer" response wrote under. `encrypted_file_fallback_enabled`
+is the single predicate behind both, and applies the same test
+`build_from_settings` applies before appending `EncryptedFileBackend`, so the two
+routes to that store cannot disagree about whether it participates.
+
+The read fallback is on the **miss** path only. The `Err` arms report
+`BackendNotConfigured` and consult nothing: a store that could not be read has not
+said the password is absent, and answering that with a password from elsewhere is
+what was wrong with the old KeePassXC fall-through — a locked database answered
+from libsecret with nothing said. The narrowing that survives is that a KeePassXC
+miss now reaches the encrypted file only, not libsecret. Moving credentials
+between stores is what **Copy Passwords…** in Settings ▸ Secrets is for.
 
 ## Protocol Architecture
 

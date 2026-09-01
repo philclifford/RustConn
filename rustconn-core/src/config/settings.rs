@@ -607,7 +607,11 @@ impl SecretBackendType {
             Self::Bitwarden => "Bitwarden",
             Self::OnePassword => "1Password",
             Self::Passbolt => "Passbolt",
-            Self::Pass => "Pass",
+            // Lowercase because that is the program's name: `pass`, the standard
+            // unix password manager. Capitalising it made the selector row read
+            // as a product called "Pass" while the row's own description, the
+            // status label and the documentation all say `pass`.
+            Self::Pass => "pass",
             Self::MacOsKeychain => "macOS Keychain",
             Self::EncryptedFile => "Encrypted file",
             Self::PortableEncryptedFile => "Portable encrypted file",

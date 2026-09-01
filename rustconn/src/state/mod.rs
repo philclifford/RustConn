@@ -1068,19 +1068,44 @@ impl AppState {
                 // KeePass user did not even get the "Vault entry not found"
                 // notice every other backend produces.
                 //
-                // Now KeePass answers the way the others do. That is a deliberate
-                // trade: someone who switches from another backend to KeePassXC
-                // stops being served their old passwords silently and is prompted
-                // instead. Every non-KeePass backend on this path has always
-                // behaved that way — the block below queries the selected backend
-                // alone — so this makes KeePass consistent rather than making it
-                // strict, and "Copy Passwords…" in Settings ▸ Secrets is the
-                // sanctioned way to bring the old entries across.
+                // Now KeePass answers the way the others do, and the two arms
+                // differ the way they differ everywhere else in this function: a
+                // database that could not be *read* is reported and nothing else
+                // is consulted, while a database that opened and does not hold the
+                // entry falls back to the encrypted file if the user left that
+                // switch on — the same one line the block below ends with.
+                //
+                // The distinction is the whole fix. What was wrong was a *locked*
+                // database serving a password out of libsecret or `credentials.enc`
+                // with nothing saying the chosen database was never opened. A
+                // genuine miss on an open database saying "then look where the
+                // user told me to also look" is not that, and refusing it would
+                // make **Also read from the encrypted file** mean one thing for
+                // KeePassXC and another for every other backend.
                 Ok(None) => {
                     tracing::debug!(
                         lookup_key = %lookup_key,
                         "[resolve_credentials_blocking] No password under this key in KeePass"
                     );
+                    // The flat `rustconn/{name}` key, which is what
+                    // `generate_store_key` yields for KeePassXC and for every
+                    // other non-keyring backend — so a password saved before the
+                    // switch to KeePassXC is under the key this asks for.
+                    let fallback_key = generate_store_key(
+                        &connection.name,
+                        &connection.host,
+                        &protocol_str.to_lowercase(),
+                        secret_settings.preferred_backend,
+                    );
+                    if let Some(creds) = retrieve_from_encrypted_file_fallback(
+                        &secret_settings,
+                        std::slice::from_ref(&fallback_key),
+                    ) {
+                        tracing::debug!(
+                            "[resolve_credentials_blocking] Found password in the encrypted-file fallback"
+                        );
+                        return Ok(CredentialResolutionResult::Resolved(creds));
+                    }
                     return Ok(CredentialResolutionResult::VaultEntryMissing {
                         connection_name: connection.name.clone(),
                         lookup_key,
@@ -1200,6 +1225,30 @@ impl AppState {
                         });
                     }
                 }
+            }
+
+            // The selected backend answered "not here" under either key. Before
+            // giving up, look where the **Also read from the encrypted file**
+            // switch says to look — with the same keys, because that is where the
+            // "Save to This Computer" response of the store-failure dialog wrote.
+            //
+            // This block is what makes that response mean anything. Without it
+            // the dialog offered a destination, the toast confirmed the save, and
+            // then this function queried the selected backend alone and reported
+            // the password missing — the same "saved and missing at the same time"
+            // the silent redirect produced, only with the user's consent on it.
+            //
+            // Deliberately on the miss path only. The `Err` arm above reports
+            // `BackendNotConfigured` and does not come here: a store that could
+            // not be read has not said the password is absent, and serving one
+            // from elsewhere is what was wrong with the old KeePass fall-through.
+            if let Some(creds) =
+                retrieve_from_encrypted_file_fallback(&secret_settings, &lookup_keys)
+            {
+                tracing::debug!(
+                    "[resolve_credentials_blocking] Found password in the encrypted-file fallback"
+                );
+                return Ok(CredentialResolutionResult::Resolved(creds));
             }
 
             tracing::debug!("[resolve_credentials_blocking] No password found in vault");

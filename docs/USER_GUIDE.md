@@ -3339,7 +3339,9 @@ with no terminal it reports that it cannot ask, rather than hanging.
 
 **Fallback Behavior:**
 
-When the preferred backend (e.g., KeePassXC) cannot be reached — database password not configured, database file locked, or CLI tool not installed — RustConn automatically falls back to the system keyring (libsecret) for both reading and writing secrets. This requires the "Enable fallback" option in Settings → Secrets (enabled by default).
+This describes **variable** secrets only. Connection and group passwords behave differently — see **Also read from the encrypted file** in the Secrets settings above, where reads may fall back and writes never do.
+
+When the preferred backend (e.g., KeePassXC) cannot be reached — database password not configured, database file locked, or CLI tool not installed — RustConn falls back to the system keyring (libsecret) for both reading and writing a variable's secret. This requires **Also read from the encrypted file** in Settings → Secrets (enabled by default; it was labelled "Enable fallback" up to 0.21.2).
 
 - **Reading:** If KeePass returns no result, RustConn checks libsecret before showing the "Variable Not Configured" dialog
 - **Writing:** If KeePass save fails, the secret is stored in libsecret instead

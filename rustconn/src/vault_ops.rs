@@ -118,13 +118,29 @@ fn show_saved_to_fallback_toast(destination: rustconn_core::config::SecretBacken
     });
 }
 
-/// Whether a refused write may be offered the encrypted file as a destination.
+/// Whether the encrypted file takes part as the fallback store.
 ///
-/// Two conditions, and both are about not offering a pointless choice: the user
-/// has to have left the read-side fallback on, or a credential written there
-/// would not be found again; and the encrypted file must not already *be* the
-/// backend that just refused, which would offer to retry the failure.
-fn offer_encrypted_file_fallback(secret_settings: &rustconn_core::config::SecretSettings) -> bool {
+/// One predicate for both directions, and that is the point rather than a
+/// convenience: the destination a refused write is *offered* has to be a store the
+/// connect path will actually *look in*, and the two answering differently is the
+/// exact shape of the bug this release is about. So the offer in
+/// [`show_vault_store_failed_dialog`] and the read in
+/// [`retrieve_from_encrypted_file_fallback`] are governed from here.
+///
+/// Two conditions. The user has to have left **Also read from the encrypted
+/// file** on, or a credential written there would not be found again; and the
+/// encrypted file must not already *be* the selected backend, which on the write
+/// side would offer to retry the failure and on the read side would query one
+/// store twice.
+///
+/// Both conditions are the same test `SecretManager::build_from_settings` applies
+/// before appending `EncryptedFileBackend` to its chain, which is deliberate: the
+/// paths that go through the manager and the paths that go through
+/// [`dispatch_vault_op_for`] have to reach the same store or the setting means two
+/// things depending on the password source.
+pub fn encrypted_file_fallback_enabled(
+    secret_settings: &rustconn_core::config::SecretSettings,
+) -> bool {
     secret_settings.enable_fallback
         && !matches!(
             secret_settings.preferred_backend,
@@ -132,11 +148,76 @@ fn offer_encrypted_file_fallback(secret_settings: &rustconn_core::config::Secret
         )
 }
 
+/// Reads a credential out of the encrypted file after the selected backend missed.
+///
+/// The read half of what the **Also read from the encrypted file** switch
+/// promises, and what makes the "Save to This Computer" destination in
+/// [`show_vault_store_failed_dialog`] reachable at all: that write goes to the
+/// encrypted file under the *selected backend's* lookup key, so the read has to
+/// use the same keys. They are passed in rather than derived here for that
+/// reason — a key computed independently is a key that can disagree, and a
+/// password saved to a store nothing queries is what the dialog was added to stop
+/// happening silently.
+///
+/// Call this after a miss and never after an error. A backend that could not be
+/// read has not said the password is absent, so answering it with a password from
+/// somewhere else is the defect fixed on the KeePass resolve path in this same
+/// release. An empty password is not a hit, matching the selected-backend loop:
+/// older releases left such entries behind and accepting one ends the search
+/// before the key holding the secret is tried.
+///
+/// A failure to read the fallback is logged and treated as a miss. The caller is
+/// already on its way to a password prompt, and a broken store the user did not
+/// choose must not turn that into an error dialog about it.
+pub fn retrieve_from_encrypted_file_fallback(
+    secret_settings: &rustconn_core::config::SecretSettings,
+    lookup_keys: &[String],
+) -> Option<rustconn_core::models::Credentials> {
+    use secrecy::ExposeSecret;
+
+    if !encrypted_file_fallback_enabled(secret_settings) {
+        return None;
+    }
+
+    for lookup_key in lookup_keys {
+        match dispatch_vault_op_for(
+            secret_settings,
+            rustconn_core::config::SecretBackendType::EncryptedFile,
+            lookup_key,
+            VaultOp::Retrieve,
+        ) {
+            Ok(Some(creds))
+                if creds
+                    .password
+                    .as_ref()
+                    .is_some_and(|password| !password.expose_secret().is_empty()) =>
+            {
+                tracing::warn!(
+                    %lookup_key,
+                    preferred = ?secret_settings.preferred_backend,
+                    "credential read from the encrypted-file fallback, not the selected backend"
+                );
+                return Some(creds);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    %lookup_key,
+                    error = %e,
+                    "encrypted-file fallback could not be read; treating it as a miss"
+                );
+            }
+        }
+    }
+
+    None
+}
+
 /// Asks where a credential should go after the chosen backend refused it.
 ///
 /// The chosen backend is named, and so is the reason it gave. `on_fallback`, when
 /// present, writes the credential to the encrypted file on this computer; it is
-/// `None` when [`offer_encrypted_file_fallback`] says that is not on offer, and
+/// `None` when [`encrypted_file_fallback_enabled`] says that is not on offer, and
 /// then the dialog is a plain report with no destination to choose.
 ///
 /// This is a dialog and not a toast because the project's HIG notes put a failed
@@ -235,13 +316,13 @@ fn show_vault_store_failed_dialog(
         dialog.add_response("settings", &crate::i18n::i18n("Open Settings"));
         if on_fallback.is_some() {
             dialog.add_response("fallback", &crate::i18n::i18n("Save to This Computer"));
-            // Saving somewhere the user did not originally choose is a real
-            // decision, so it is offered but not suggested; the safe default is
-            // to go and fix the backend they did choose.
-            dialog.set_response_appearance("settings", adw::ResponseAppearance::Suggested);
-        } else {
-            dialog.set_response_appearance("settings", adw::ResponseAppearance::Suggested);
         }
+        // Unconditional, and deliberately the *only* suggested response: saving
+        // somewhere the user did not originally choose is a real decision, so it
+        // is offered without being pushed. The safe next step is to go and fix
+        // the backend they did choose, whether or not there is another
+        // destination on the dialog.
+        dialog.set_response_appearance("settings", adw::ResponseAppearance::Suggested);
         dialog.set_default_response(Some("settings"));
         dialog.set_close_response("close");
 
@@ -528,7 +609,7 @@ pub fn save_password_to_vault(
                         error = %e,
                         "Selected vault backend refused the password"
                     );
-                    let on_fallback = offer_encrypted_file_fallback(&secret_settings).then(|| {
+                    let on_fallback = encrypted_file_fallback_enabled(&secret_settings).then(|| {
                         let settings_retry = secret_settings.clone();
                         let key_retry = lookup_key.clone();
                         let creds_retry = std::sync::Arc::clone(&creds);
@@ -667,7 +748,7 @@ pub fn save_group_password_to_vault(
                         error = %e,
                         "Selected vault backend refused the group password"
                     );
-                    let on_fallback = offer_encrypted_file_fallback(&secret_settings).then(|| {
+                    let on_fallback = encrypted_file_fallback_enabled(&secret_settings).then(|| {
                         let settings_retry = secret_settings.clone();
                         let key_retry = lookup_key.clone();
                         let creds_retry = std::sync::Arc::clone(&creds);

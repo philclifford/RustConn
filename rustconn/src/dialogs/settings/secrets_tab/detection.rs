@@ -150,30 +150,38 @@ pub(crate) fn backend_readiness(
     use rustconn_core::config::SecretBackendType;
     use rustconn_core::secret::BackendAvailability;
 
-    let Some(det) = detection else {
-        return BackendReadiness::Unknown;
-    };
-
-    // The status pairs carry a css class alongside the text, and the class is
-    // already the backend's own verdict: "success" means usable, "warning" means
-    // a step is missing, "error" means it cannot work. Reading it keeps this
-    // function from re-deriving conclusions the probes already reached.
+    // `detection` is consulted per arm rather than unwrapped up here, and that is
+    // load-bearing: the two file backends answer from `local` alone, so a single
+    // early return would report "Checking..." for a verdict no probe can change.
+    // It is also what lets [`backend_needs_probe`] be checkable against this match
+    // rather than a second, driftable copy of it.
     let from_status = |status: Option<&(String, &'static str)>| match status {
         // Keep the detail — "Signed in: someone@example.com" and
         // "Initialized at /home/…/.password-store" tell the user which account
         // and which store, which is worth more than a bare "Ready".
+        //
+        // The status pairs carry a css class alongside the text, and the class is
+        // already the backend's own verdict: "success" means usable, "warning"
+        // means a step is missing, "error" means it cannot work. Reading it keeps
+        // this function from re-deriving conclusions the probes already reached.
         Some((text, "success")) => BackendReadiness::Ready(text.clone()),
         Some((text, _)) => BackendReadiness::NeedsAction(text.clone()),
         None => BackendReadiness::NotInstalled,
     };
+    let probed = |pick: fn(&SecretCliDetection) -> Option<&(String, &'static str)>| {
+        detection.map_or(BackendReadiness::Unknown, |det| from_status(pick(det)))
+    };
 
     match backend {
-        SecretBackendType::Bitwarden => from_status(det.bitwarden_status.as_ref()),
-        SecretBackendType::OnePassword => from_status(det.onepassword_status.as_ref()),
-        SecretBackendType::Passbolt => from_status(det.passbolt_status.as_ref()),
-        SecretBackendType::Pass => from_status(det.pass_status.as_ref()),
+        SecretBackendType::Bitwarden => probed(|det| det.bitwarden_status.as_ref()),
+        SecretBackendType::OnePassword => probed(|det| det.onepassword_status.as_ref()),
+        SecretBackendType::Passbolt => probed(|det| det.passbolt_status.as_ref()),
+        SecretBackendType::Pass => probed(|det| det.pass_status.as_ref()),
 
         SecretBackendType::LibSecret | SecretBackendType::MacOsKeychain => {
+            let Some(det) = detection else {
+                return BackendReadiness::Unknown;
+            };
             match det.system_keyring_availability {
                 BackendAvailability::Available => BackendReadiness::Ready(String::new()),
                 BackendAvailability::ServiceUnavailable => {
@@ -187,6 +195,9 @@ pub(crate) fn backend_readiness(
         // A database that is not configured is the common case for someone who
         // has just selected the backend, and it is not "not installed".
         SecretBackendType::KeePassXc | SecretBackendType::KdbxFile => {
+            let Some(det) = detection else {
+                return BackendReadiness::Unknown;
+            };
             if det.keepassxc_version.is_none() {
                 return BackendReadiness::NotInstalled;
             }
@@ -217,6 +228,29 @@ pub(crate) fn backend_readiness(
             }
         }
     }
+}
+
+/// Whether `backend`'s readiness verdict depends on [`detect_secret_backends`].
+///
+/// False for the two file backends: their prerequisites are all local, so no
+/// probe can change the answer. The startup check in `app.rs` uses this to skip
+/// the probe entirely, which matters because the probe is seven short-lived child
+/// processes with a 5-second ceiling and it now runs on every launch — paying that
+/// for a verdict that is a constant is pure cost. The Secrets page still probes
+/// unconditionally, because it has eight rows to fill and the user is looking at
+/// them.
+///
+/// This is a second reading of the same variants [`backend_readiness`] matches on,
+/// so `a_backend_that_needs_no_probe_answers_without_one` pins the two together: a
+/// backend named here that does consult the detection would report "Checking..."
+/// forever, which is the bug the Passbolt and Pass status labels already had.
+pub(crate) const fn backend_needs_probe(backend: rustconn_core::config::SecretBackendType) -> bool {
+    use rustconn_core::config::SecretBackendType;
+
+    !matches!(
+        backend,
+        SecretBackendType::EncryptedFile | SecretBackendType::PortableEncryptedFile
+    )
 }
 
 /// Cached detection result: probing spawns ~10 child processes, so reuse
@@ -761,4 +795,69 @@ pub(super) fn extract_session_key(output: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use rustconn_core::config::SecretBackendType;
+
+    use super::{BackendReadiness, LocalBackendState, backend_needs_probe, backend_readiness};
+
+    /// Written out rather than derived, because `SecretBackendType` has no
+    /// iterator and the point of these two tests is to notice a variant that was
+    /// added to the enum and to only one of the two functions below.
+    const ALL_BACKENDS: [SecretBackendType; 10] = [
+        SecretBackendType::KeePassXc,
+        SecretBackendType::KdbxFile,
+        SecretBackendType::LibSecret,
+        SecretBackendType::Bitwarden,
+        SecretBackendType::OnePassword,
+        SecretBackendType::Passbolt,
+        SecretBackendType::Pass,
+        SecretBackendType::MacOsKeychain,
+        SecretBackendType::EncryptedFile,
+        SecretBackendType::PortableEncryptedFile,
+    ];
+
+    fn nothing_configured() -> LocalBackendState {
+        LocalBackendState {
+            kdbx_enabled: false,
+            kdbx_path: None,
+            portable_passphrase_entered: false,
+        }
+    }
+
+    /// The contract `backend_needs_probe` promises: a backend it exempts must
+    /// produce a real verdict from `None` detection, or the startup check would
+    /// skip the probe and then show "Checking..." with nothing coming to replace
+    /// it.
+    #[test]
+    fn a_backend_that_needs_no_probe_answers_without_one() {
+        let local = nothing_configured();
+        for backend in ALL_BACKENDS {
+            if backend_needs_probe(backend) {
+                continue;
+            }
+            assert_ne!(
+                backend_readiness(None, backend, &local),
+                BackendReadiness::Unknown,
+                "{backend:?} is exempt from the probe but cannot answer without one"
+            );
+        }
+    }
+
+    /// The other half: a backend that does read the detection must not be exempt,
+    /// or the startup banner would render a verdict built from nothing.
+    #[test]
+    fn a_backend_that_needs_a_probe_is_not_exempt() {
+        let local = nothing_configured();
+        for backend in ALL_BACKENDS {
+            if backend_readiness(None, backend, &local) == BackendReadiness::Unknown {
+                assert!(
+                    backend_needs_probe(backend),
+                    "{backend:?} answers Unknown without a probe but is exempt from running one"
+                );
+            }
+        }
+    }
 }

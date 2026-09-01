@@ -1220,7 +1220,7 @@ fn check_secret_backend_available(
     secret_banner: &adw::Banner,
 ) {
     use crate::dialogs::settings::secrets_tab::detection::{
-        LocalBackendState, backend_readiness, detect_secret_backends,
+        LocalBackendState, backend_needs_probe, backend_readiness, detect_secret_backends,
     };
 
     let secrets = state.borrow().settings().secrets.clone();
@@ -1234,6 +1234,23 @@ fn check_secret_backend_available(
     // that has no keyring client and was in fact installed. That is the shape of
     // issue #312 stated by the application itself.
     //
+    // The two file backends answer from local state alone, so nothing is probed
+    // for them. That is not a micro-optimisation: this runs on every launch, and
+    // the probe is seven child processes with a 5-second ceiling, so without this
+    // branch the encrypted file — the store the fallback offer writes to, and a
+    // reasonable primary choice — would pay for seven `--version` calls to be told
+    // something that is a constant.
+    if !backend_needs_probe(backend) {
+        let local = LocalBackendState::from_settings(&secrets);
+        render_secret_backend_banner(
+            backend,
+            &backend_readiness(None, backend, &local),
+            secret_banner,
+            window_weak,
+        );
+        return;
+    }
+
     // `detect_secret_backends` spawns short-lived probes and is cached for 30s,
     // so it runs on a thread: a cold pass can cost up to the 5s probe budget, and
     // this is called on the GTK main thread both at startup and after a save.
@@ -1261,48 +1278,62 @@ fn check_secret_backend_available(
             }
         };
 
-        if readiness.is_usable() {
-            // Works — clear any warning left from a previous configuration.
-            banner.set_revealed(false);
-            return glib::ControlFlow::Break;
-        }
-
-        let backend_name = crate::vault_ops::backend_display_name(backend);
-        let detail = readiness.label();
-        // In a snap an unresponsive keyring is usually the interface not being
-        // connected rather than a missing service (#249), which is worth saying
-        // because the fix is one command.
-        let message = if rustconn_core::snap::is_snap()
-            && matches!(
-                backend,
-                rustconn_core::config::SecretBackendType::LibSecret
-                    | rustconn_core::config::SecretBackendType::MacOsKeychain
-            ) {
-            crate::i18n::i18n_f(
-                "{} is selected, but the system keyring is not accessible. Run: sudo snap connect rustconn:password-manager-service — or open Settings, then Secrets, to choose another backend.",
-                &[&backend_name],
-            )
-        } else {
-            crate::i18n::i18n_f(
-                "{} is selected, but it cannot store passwords yet: {}. Open Settings, then Secrets.",
-                &[&backend_name, &detail],
-            )
-        };
-
-        tracing::warn!(
-            backend = %backend_name,
-            readiness = ?readiness,
-            "Selected secret backend cannot store passwords"
-        );
-        banner.set_title(&message);
-        banner.set_revealed(true);
-        // The banner lives on the window; if that is gone there is nothing left
-        // to warn on, and the reveal above was a no-op on a dead widget.
-        if window_weak.upgrade().is_none() {
-            tracing::debug!("secret backend warning had no window to appear on");
-        }
+        render_secret_backend_banner(backend, &readiness, &banner, &window_weak);
         glib::ControlFlow::Break
     });
+}
+
+/// Reveals or clears the startup banner for a readiness verdict.
+///
+/// Split out of [`check_secret_backend_available`] so the two routes into it — the
+/// probe-free verdict computed inline, and the one that arrives from the probe
+/// thread — cannot render it differently.
+fn render_secret_backend_banner(
+    backend: rustconn_core::config::SecretBackendType,
+    readiness: &crate::dialogs::settings::secrets_tab::detection::BackendReadiness,
+    banner: &adw::Banner,
+    window_weak: &glib::WeakRef<adw::ApplicationWindow>,
+) {
+    if readiness.is_usable() {
+        // Works — clear any warning left from a previous configuration.
+        banner.set_revealed(false);
+        return;
+    }
+
+    let backend_name = crate::vault_ops::backend_display_name(backend);
+    let detail = readiness.label();
+    // In a snap an unresponsive keyring is usually the interface not being
+    // connected rather than a missing service (#249), which is worth saying
+    // because the fix is one command.
+    let message = if rustconn_core::snap::is_snap()
+        && matches!(
+            backend,
+            rustconn_core::config::SecretBackendType::LibSecret
+                | rustconn_core::config::SecretBackendType::MacOsKeychain
+        ) {
+        crate::i18n::i18n_f(
+            "{} is selected, but the system keyring is not accessible. Run: sudo snap connect rustconn:password-manager-service — or open Settings, then Secrets, to choose another backend.",
+            &[&backend_name],
+        )
+    } else {
+        crate::i18n::i18n_f(
+            "{} is selected, but it cannot store passwords yet: {}. Open Settings, then Secrets.",
+            &[&backend_name, &detail],
+        )
+    };
+
+    tracing::warn!(
+        backend = %backend_name,
+        readiness = ?readiness,
+        "Selected secret backend cannot store passwords"
+    );
+    banner.set_title(&message);
+    banner.set_revealed(true);
+    // The banner lives on the window; if that is gone there is nothing left
+    // to warn on, and the reveal above was a no-op on a dead widget.
+    if window_weak.upgrade().is_none() {
+        tracing::debug!("secret backend warning had no window to appear on");
+    }
 }
 
 /// Loads CSS styles for the application from external stylesheet
