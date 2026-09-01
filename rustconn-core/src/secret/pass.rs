@@ -156,8 +156,27 @@ impl PassBackend {
             .map_err(|e| SecretError::Pass(format!("Failed to run pass: {e}")))?;
 
         if !output.status.success() {
-            // Not found is not an error, just return None
-            return Ok(None);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Only a genuine miss is `Ok(None)`. Every non-zero exit used to be
+            // one, with the stderr discarded, so an uninitialised store, a
+            // missing or expired GPG key and a locked gpg-agent were all
+            // indistinguishable from "no such password" — and `Ok(None)` reaches
+            // the user as "Vault entry not found. You will be prompted for a
+            // password", which is the wrong thing to say and gives them nothing
+            // to act on. Every other backend reports a not-ready state as an
+            // error, which the connect path turns into a dialog naming the
+            // backend; `pass` was the only one that did not.
+            //
+            // `is not in the password store` is pass's own wording for a missing
+            // entry, and `delete_value` below already matches on it for the same
+            // reason, so this is the existing convention rather than a new guess.
+            if stderr.contains("is not in the password store") {
+                return Ok(None);
+            }
+            return Err(SecretError::Pass(format!(
+                "pass show failed: {}",
+                stderr.trim()
+            )));
         }
 
         let value = String::from_utf8_lossy(&output.stdout)

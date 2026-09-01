@@ -599,8 +599,16 @@ impl SecretManager {
             // Expired entries fall through to backend lookup
         }
 
+        // The chain is ordered, so "not the first entry" is exactly "not the
+        // backend the user chose". Worth a `warn` when it happens: "my backend
+        // works" and "my backend is broken and everything is quietly coming from
+        // a local file" are otherwise indistinguishable in a log. Tracked by
+        // position rather than by comparing ids, because two chain entries can
+        // share a backend id.
+        let primary_id = self.backends.first().map(|b| b.backend_id());
+
         // Try each backend in order
-        for backend in &self.backends {
+        for (index, backend) in self.backends.iter().enumerate() {
             if !backend.is_available().await {
                 continue;
             }
@@ -611,6 +619,13 @@ impl SecretManager {
                     if self.cache_enabled {
                         let mut cache = self.cache.write().await;
                         cache.insert(connection_id.to_string(), CacheEntry::new(creds.clone()));
+                    }
+                    if index != 0 {
+                        tracing::warn!(
+                            answered_by = %backend.backend_id(),
+                            preferred = ?primary_id,
+                            "credential read from a fallback backend, not the selected one"
+                        );
                     }
                     return Ok(Some(creds));
                 }

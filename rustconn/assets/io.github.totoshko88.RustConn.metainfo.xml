@@ -140,6 +140,19 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.21.3" date="2026-09-01">
+      <description>
+        <p>Version 0.21.3 - making the secret backends honest about what they can and cannot do:</p>
+        <ul>
+          <li>A password the selected backend refused is no longer moved into the encrypted file behind your back; a refusal opens a dialog and offers the encrypted file as a deliberate choice</li>
+          <li>KeePassXC, pass and the KeePass resolve path no longer report an unreadable store as a missing entry, and no longer serve a password from somewhere else when the chosen store did not answer</li>
+          <li>The Secrets page and startup banner now name the backend in force and say whether it can actually store a password</li>
+          <li>"Enable fallback" is now "Also read from the encrypted file" and governs reads only</li>
+          <li>An embedded RDP session against a Windows 11 host is no longer killed by the server's own keepalive heartbeat</li>
+          <li>An idle window with no connections no longer shows network warnings during a Wi-Fi flap</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.21.2" date="2026-08-31">
       <description>
         <p>Version 0.21.2 - four connection fixes, and a change to how SSH passwords are delivered:</p>

@@ -3249,6 +3249,25 @@ impl MainWindow {
                             crate::toast::ToastType::Success,
                         );
 
+                        // Re-probe the selected secret backend now that the
+                        // choice has changed, so the banner reports the backend
+                        // in force rather than the one selected at launch. The
+                        // Secrets page shows a readiness line while choosing;
+                        // this is what makes a choice made anyway visible
+                        // afterwards, instead of surfacing at the next start.
+                        //
+                        // Deferred to idle because the action's handler takes its
+                        // own `try_borrow_mut` on the state this scope is already
+                        // holding mutably.
+                        let window_for_recheck = window_clone.clone();
+                        glib::idle_add_local_once(move || {
+                            let _ = gtk4::prelude::WidgetExt::activate_action(
+                                &window_for_recheck,
+                                "win.recheck-secret-backend",
+                                None,
+                            );
+                        });
+
                         // A "remember this on the machine" request that could not
                         // be honoured. Same data-loss shape as the keyring failure
                         // below — the secret exists in memory only and is gone

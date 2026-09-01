@@ -459,7 +459,7 @@ impl MainWindow {
                             );
                         }
                     }
-                    CredentialResolutionResult::BackendNotConfigured { .. } => {
+                    CredentialResolutionResult::BackendNotConfigured { required_backend } => {
                         // Show backend missing dialog
                         {
                             let state_be = state_clone.clone();
@@ -472,6 +472,7 @@ impl MainWindow {
 
                             crate::dialogs::show_backend_missing_dialog(
                                 notebook_clone.widget(),
+                                required_backend,
                                 move |response| {
                                     match response {
                                         crate::dialogs::BackendMissingResponse::EnterManually => {

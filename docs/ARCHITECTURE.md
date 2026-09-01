@@ -1,6 +1,6 @@
 # RustConn Architecture Guide
 
-**Version 0.21.2** | Last updated: August 2026
+**Version 0.21.3** | Last updated: August 2026
 
 This document describes the internal architecture of RustConn for contributors and maintainers.
 
@@ -998,25 +998,57 @@ let key = KeePassHierarchy::build_group_lookup_key(&group, &groups, true);
 
 ### Fallback Chain
 
-`SecretManager` tries backends in priority order:
+`SecretManager::build_from_settings` builds a chain of at most two entries: the
+backend the user selected, followed by the machine-bound encrypted file when
+**Also read from the encrypted file** is on. `retrieve` walks it in order and
+returns the first hit.
 
-```rust
-pub struct SecretManager {
-    backends: Vec<Arc<dyn SecretBackend>>,
-    cache: Arc<RwLock<HashMap<String, Credentials>>>,
-}
+**Reads may fall back; writes may not.** The two sides are deliberately
+asymmetric, because they answer different questions:
 
-impl SecretManager {
-    async fn get_available_backend(&self) -> SecretResult<&Arc<dyn SecretBackend>> {
-        for backend in &self.backends {
-            if backend.is_available().await {
-                return Ok(backend);
-            }
-        }
-        Err(SecretError::BackendUnavailable("No backend available".into()))
-    }
-}
-```
+- A read falling through to the encrypted file is usually right. A password saved
+  before the user switched backend still lives there, and refusing to look would
+  strand it. `retrieve` warns with both backend ids when a non-primary entry
+  answered, so a fall-through is diagnosable from a log rather than assumed.
+- A write is a user action with an explicit destination, so `store_reported` is
+  called with `allow_fallback = false` from the GUI save path and the selected
+  backend's own error comes back untouched. Where the credential goes instead is
+  then a question put to the user (`show_vault_store_failed_dialog`), and the
+  encrypted-file destination is reached by naming it — `dispatch_vault_op_for`
+  with `SecretBackendType::EncryptedFile`.
+
+That asymmetry is the fix for a specific failure. The write side used to walk the
+chain on any primary error, so a locked vault silently relocated the password into
+`credentials.enc` — and the connect path does not read that file when another
+backend is selected, because `resolve_credentials_blocking` queries the selected
+backend alone. The password was saved and, from the connection's point of view,
+missing at the same time; what the user saw was "Vault entry not found. You will
+be prompted for a password" for a password that was on disk.
+
+### The Vault password source does not use the chain
+
+`resolve_credentials_blocking` is the connect-time path for
+`PasswordSource::Vault`, and it goes through `dispatch_vault_op_for` —
+`build_single_backend`, one backend, no chain. So the chain above is not what
+makes **Also read from the encrypted file** true for a `Vault` connection; only
+`PasswordSource::None`, `Inherit` and the variable paths reach `SecretManager` and
+`CredentialResolver`.
+
+That is why the setting is applied a second time, explicitly, at the end of both
+Vault branches: `retrieve_from_encrypted_file_fallback` reads the encrypted file
+under *the same lookup keys the selected backend was asked for*, which is also the
+key the "Save to This Computer" response wrote under. `encrypted_file_fallback_enabled`
+is the single predicate behind both, and applies the same test
+`build_from_settings` applies before appending `EncryptedFileBackend`, so the two
+routes to that store cannot disagree about whether it participates.
+
+The read fallback is on the **miss** path only. The `Err` arms report
+`BackendNotConfigured` and consult nothing: a store that could not be read has not
+said the password is absent, and answering that with a password from elsewhere is
+what was wrong with the old KeePassXC fall-through — a locked database answered
+from libsecret with nothing said. The narrowing that survives is that a KeePassXC
+miss now reaches the encrypted file only, not libsecret. Moving credentials
+between stores is what **Copy Passwords…** in Settings ▸ Secrets is for.
 
 ## Protocol Architecture
 

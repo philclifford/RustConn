@@ -6,7 +6,7 @@
 #
 
 Name:           rustconn
-Version:        0.21.2
+Version:        0.21.3
 Release:        0
 # rpmlint caps Summary at 79 characters (summary-too-long, badness 200); the
 # protocol list belongs in %description, which has room for all of it. Kept in
@@ -321,6 +321,36 @@ done
 %{_datadir}/icons/hicolor/*/apps/io.github.totoshko88.RustConn.*
 
 %changelog
+* Tue Sep 01 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.3-0
+- Version bump to 0.21.3
+- Fixed: a password the selected backend refused was moved into the encrypted
+  file without asking, where the connect path never looks. Saving now targets the
+  selected backend only; a refusal opens a dialog and offers the encrypted file
+  as a deliberate choice. Reads still walk the chain so pre-switch passwords keep
+  resolving
+- Fixed: secret backends disagreed on how to report a failure, and three of them
+  called an unreadable store a missing entry (KeePassXC, pass, and the KeePass
+  resolve path, which could serve a password from another store). All three now
+  separate "opened, entry absent" from "did not open"
+- Fixed: secret status was reported with the wrong words, the wrong store, or not
+  at all — a locked backend shown as unconfigured, a keyring-shaped startup
+  banner, Passbolt and Pass stuck on "Detecting…", and the pass probe reading the
+  wrong store
+- Fixed: the Bitwarden master password was demoted out of its Zeroizing wrapper
+  before use; both copies stay wrapped now
+- Fixed: an embedded RDP session against a Windows 11 host could be killed by the
+  server's own keepalive heartbeat (#262)
+- Fixed: an idle window with no connections showed network warnings during a
+  Wi-Fi flap
+- Changed: "Enable fallback" is now "Also read from the encrypted file" and
+  governs reads only
+- Changed: the Secrets page reports whether the selected backend can actually
+  store a password, re-checked after settings are saved
+- Documentation: Bitwarden guide, architecture, user guide and build docs updated
+  for the read/write asymmetry and Flatpak CLI login state (#312, #129)
+- Dependencies: libredox 0.1.21→0.1.23, ppmd-rust 1.4.0→1.4.1, smallvec
+  1.15.2→1.16.0, semver-compatible transitive updates
+
 * Mon Aug 31 2026 Anton Isaiev <totoshko88@gmail.com> - 0.21.2-0
 - Version bump to 0.21.2
 - Fixed: SSH through a jump host could hang at the target password prompt when

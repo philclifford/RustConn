@@ -4,99 +4,19 @@
 //! in the configured secret backend (KeePass, libsecret, Bitwarden, 1Password,
 //! Passbolt, Pass). Extracted from `state.rs` to reduce module complexity.
 
-/// Shows an actionable, blocking dialog when saving a credential fails.
+/// Returns the name to show a user for `backend`, translated.
 ///
-/// A silently lost credential is critical, so this uses an `adw::AlertDialog`
-/// following the GNOME HIG "explain what happened and what to do" pattern
-/// (R1.1, R1.2) rather than a transient toast. The body states the underlying
-/// cause — the [`SecretError`] `Display` string, which carries only operation
-/// context / backend stderr and never any secret value (R1.4) — together with
-/// a recovery action. A "settings" response opens Settings, where the user can
-/// pick a working backend in the Secrets section (R1.5). Every string is routed
-/// through `i18n()` / `i18n_f()` (R1.3, R16.1).
-///
-/// Uses `glib::idle_add_local_once` so the dialog is presented on the GTK main
-/// thread. Falls back to a log message if no active window is found.
-///
-/// [`SecretError`]: rustconn_core::error::SecretError
-fn show_vault_save_error(err: &rustconn_core::error::SecretError) {
-    use gtk4::prelude::*;
-    use libadwaita as adw;
-    use libadwaita::prelude::*;
-
-    // A locked portable store is not a broken backend, and the generic recovery
-    // text below ("no system keyring is responding, pick another backend") is
-    // wrong advice for it. It also used to surface the raw core error string,
-    // which is English in every locale.
-    if matches!(
-        err,
-        rustconn_core::error::SecretError::PassphraseRequired
-            | rustconn_core::error::SecretError::IncorrectPassphrase
-    ) {
-        show_portable_locked_error(matches!(
-            err,
-            rustconn_core::error::SecretError::IncorrectPassphrase
-        ));
-        return;
-    }
-
-    // The cause is the SecretError Display string. Its variants embed only
-    // operation context and backend diagnostics (e.g. secret-tool stderr),
-    // never secret values, so it is safe to surface verbatim (R1.4).
-    let cause = err.to_string();
-
-    gtk4::glib::idle_add_local_once(move || {
-        let Some(app) = gtk4::gio::Application::default() else {
-            tracing::warn!("Could not show vault save error dialog: no default application");
-            return;
-        };
-        let Some(gtk_app) = app.downcast_ref::<gtk4::Application>() else {
-            tracing::warn!("Could not show vault save error dialog: not a GtkApplication");
-            return;
-        };
-        let Some(window) = gtk_app.active_window() else {
-            tracing::warn!("Could not show vault save error dialog: no active window");
-            return;
-        };
-
-        // Recovery action: point the user at Settings -> Secrets to choose a
-        // backend that works on their desktop (R1.5).
-        let recovery = if rustconn_core::snap::is_snap() {
-            crate::i18n::i18n(
-                "The system keyring is not accessible. Run: sudo snap connect rustconn:password-manager-service — or open Settings, then Secrets, and choose another backend.",
-            )
-        } else {
-            crate::i18n::i18n(
-                "No system keyring is responding. Open Settings, then Secrets, and choose another backend such as Encrypted file or KeePassXC.",
-            )
-        };
-        // Body = cause followed by the recovery action (R1.1).
-        let body = crate::i18n::i18n_f("{}\n\n{}", &[&cause, &recovery]);
-
-        let dialog =
-            adw::AlertDialog::new(Some(&crate::i18n::i18n("Password not saved")), Some(&body));
-        dialog.add_response("close", &crate::i18n::i18n("Close"));
-        dialog.add_response("settings", &crate::i18n::i18n("Open Settings"));
-        // The recovery action is the primary, suggested action.
-        dialog.set_response_appearance("settings", adw::ResponseAppearance::Suggested);
-        dialog.set_default_response(Some("settings"));
-        dialog.set_close_response("close");
-
-        let window_for_action = window.clone();
-        dialog.connect_response(None, move |_, response| {
-            if response == "settings" {
-                // Activate the existing window action that opens the Settings
-                // dialog; the user navigates to the Secrets section there.
-                let _ = gtk4::prelude::WidgetExt::activate_action(
-                    &window_for_action,
-                    "win.settings",
-                    None,
-                );
-            }
-        });
-
-        dialog.present(Some(&window));
-    });
+/// One helper rather than `i18n(backend.display_name())` at each call site,
+/// because the reason it is safe needs saying once: `po/update-pot.sh` extracts
+/// translatable strings by matching `i18n("…")` on a *literal*, so this call
+/// contributes nothing to the catalogue. It does not need to — the only two
+/// backend names that are words rather than product names, "Encrypted file" and
+/// "Portable encrypted file", are extracted from the literals in
+/// `secrets_tab::backend_choices`, and gettext looks up whatever string it is
+/// handed at runtime. A name added to `display_name()` and nowhere else would
+/// appear untranslated; the test in `secrets_tab` is what keeps the two in step.
+pub fn backend_display_name(backend: rustconn_core::config::SecretBackendType) -> String {
+    crate::i18n::i18n(backend.display_name())
 }
 
 /// Reports that the portable credential file could not be written because it is
@@ -163,73 +83,314 @@ fn show_portable_locked_error(wrong_passphrase: bool) {
     });
 }
 
-/// Shows a transient toast when a credential was saved to the encrypted-file
-/// fallback because the preferred backend (system keyring) was unavailable.
+/// Confirms that a credential went to `destination` after the user chose it there.
 ///
-/// The credential *was* saved, so this is a non-blocking result notification
-/// (GNOME HIG: transient result → `adw::Toast`, not an error dialog). It is
-/// shown at `Warning` priority because the user's preferred backend is degraded
-/// and worth their attention. The message is routed through `i18n()` (R3.4,
-/// R16.1). The backend identifier is intentionally not surfaced in the UI — the
-/// user-facing distinction is only "preferred vs encrypted-file fallback".
+/// This is a result notification for an action the user just approved, so it is a
+/// toast rather than a dialog, and `Info` rather than `Warning` — nothing is
+/// degraded or unexpected at this point.
 ///
-/// Uses `glib::idle_add_local_once` so the toast is presented on the GTK main
-/// thread, mirroring [`show_vault_save_error`]. Falls back to a log message if
-/// no active window is found.
-fn show_vault_fallback_toast() {
+/// It replaces a toast that fired after a *silent* relocation and read
+/// "Saved to the encrypted file store because the system keyring was
+/// unavailable." Two things were wrong with it. It said "system keyring"
+/// whatever the failing backend was, so a locked Bitwarden produced a sentence
+/// about a keyring the user had not selected; and it reported a decision the
+/// user was never asked about, at which point the password was in a store the
+/// connect path does not read — `resolve_credentials_blocking` queries the
+/// selected backend alone. Naming the destination is now the *smaller* half of
+/// the fix; the larger half is that there is a choice to name.
+fn show_saved_to_fallback_toast(destination: rustconn_core::config::SecretBackendType) {
     use gtk4::prelude::*;
 
     gtk4::glib::idle_add_local_once(move || {
-        let Some(app) = gtk4::gio::Application::default() else {
-            tracing::warn!("Could not show vault fallback toast: no default application");
-            return;
-        };
-        let Some(gtk_app) = app.downcast_ref::<gtk4::Application>() else {
-            tracing::warn!("Could not show vault fallback toast: not a GtkApplication");
-            return;
-        };
-        let Some(window) = gtk_app.active_window() else {
+        let Some(window) = gtk4::gio::Application::default()
+            .and_then(|app| app.downcast_ref::<gtk4::Application>().cloned())
+            .and_then(|app| app.active_window())
+        else {
             tracing::warn!("Could not show vault fallback toast: no active window");
             return;
         };
 
-        let message = crate::i18n::i18n(
-            "Saved to the encrypted file store because the system keyring was unavailable.",
+        let message = crate::i18n::i18n_f(
+            "Password saved to {}.",
+            &[&backend_display_name(destination)],
         );
-        crate::toast::show_toast_on_window(&window, &message, crate::toast::ToastType::Warning);
+        crate::toast::show_toast_on_window(&window, &message, crate::toast::ToastType::Info);
     });
 }
 
-/// Stores credentials through the [`SecretManager`] fallback chain, reporting
-/// which backend accepted the write.
+/// Whether the encrypted file takes part as the fallback store.
 ///
-/// Unlike [`dispatch_vault_op`], which targets a single backend, this routes the
-/// generic (non-KeePass) save path through [`SecretManager::store_reported`] so a
-/// failing preferred backend gracefully falls back to the encrypted-file store
-/// when `enable_fallback` is set (issue #201, R3.1). The returned [`StoreOutcome`]
-/// lets the caller surface a toast when the fallback was used (R3.4).
+/// One predicate for both directions, and that is the point rather than a
+/// convenience: the destination a refused write is *offered* has to be a store the
+/// connect path will actually *look in*, and the two answering differently is the
+/// exact shape of the bug this release is about. So the offer in
+/// [`show_vault_store_failed_dialog`] and the read in
+/// [`retrieve_from_encrypted_file_fallback`] are governed from here.
+///
+/// Two conditions. The user has to have left **Also read from the encrypted
+/// file** on, or a credential written there would not be found again; and the
+/// encrypted file must not already *be* the selected backend, which on the write
+/// side would offer to retry the failure and on the read side would query one
+/// store twice.
+///
+/// Both conditions are the same test `SecretManager::build_from_settings` applies
+/// before appending `EncryptedFileBackend` to its chain, which is deliberate: the
+/// paths that go through the manager and the paths that go through
+/// [`dispatch_vault_op_for`] have to reach the same store or the setting means two
+/// things depending on the password source.
+pub fn encrypted_file_fallback_enabled(
+    secret_settings: &rustconn_core::config::SecretSettings,
+) -> bool {
+    secret_settings.enable_fallback
+        && !matches!(
+            secret_settings.preferred_backend,
+            rustconn_core::config::SecretBackendType::EncryptedFile
+        )
+}
+
+/// Reads a credential out of the encrypted file after the selected backend missed.
+///
+/// The read half of what the **Also read from the encrypted file** switch
+/// promises, and what makes the "Save to This Computer" destination in
+/// [`show_vault_store_failed_dialog`] reachable at all: that write goes to the
+/// encrypted file under the *selected backend's* lookup key, so the read has to
+/// use the same keys. They are passed in rather than derived here for that
+/// reason — a key computed independently is a key that can disagree, and a
+/// password saved to a store nothing queries is what the dialog was added to stop
+/// happening silently.
+///
+/// Call this after a miss and never after an error. A backend that could not be
+/// read has not said the password is absent, so answering it with a password from
+/// somewhere else is the defect fixed on the KeePass resolve path in this same
+/// release. An empty password is not a hit, matching the selected-backend loop:
+/// older releases left such entries behind and accepting one ends the search
+/// before the key holding the secret is tried.
+///
+/// A failure to read the fallback is logged and treated as a miss. The caller is
+/// already on its way to a password prompt, and a broken store the user did not
+/// choose must not turn that into an error dialog about it.
+pub fn retrieve_from_encrypted_file_fallback(
+    secret_settings: &rustconn_core::config::SecretSettings,
+    lookup_keys: &[String],
+) -> Option<rustconn_core::models::Credentials> {
+    use secrecy::ExposeSecret;
+
+    if !encrypted_file_fallback_enabled(secret_settings) {
+        return None;
+    }
+
+    for lookup_key in lookup_keys {
+        match dispatch_vault_op_for(
+            secret_settings,
+            rustconn_core::config::SecretBackendType::EncryptedFile,
+            lookup_key,
+            VaultOp::Retrieve,
+        ) {
+            Ok(Some(creds))
+                if creds
+                    .password
+                    .as_ref()
+                    .is_some_and(|password| !password.expose_secret().is_empty()) =>
+            {
+                tracing::warn!(
+                    %lookup_key,
+                    preferred = ?secret_settings.preferred_backend,
+                    "credential read from the encrypted-file fallback, not the selected backend"
+                );
+                return Some(creds);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    %lookup_key,
+                    error = %e,
+                    "encrypted-file fallback could not be read; treating it as a miss"
+                );
+            }
+        }
+    }
+
+    None
+}
+
+/// Asks where a credential should go after the chosen backend refused it.
+///
+/// The chosen backend is named, and so is the reason it gave. `on_fallback`, when
+/// present, writes the credential to the encrypted file on this computer; it is
+/// `None` when [`encrypted_file_fallback_enabled`] says that is not on offer, and
+/// then the dialog is a plain report with no destination to choose.
+///
+/// This is a dialog and not a toast because the project's HIG notes put a failed
+/// save — where an unfinished user action is at stake — in the dialog column, and
+/// because the thing being decided is *where a password lives*. It replaces a
+/// silent relocation: the write used to walk the backend chain on any primary
+/// error and report the result in a toast, which meant a locked vault quietly
+/// moved the password into a store the connect path never queries. The password
+/// was then simultaneously saved and, from the connection's point of view,
+/// missing — the reported symptom being "Vault entry not found. You will be
+/// prompted for a password" for a password that was on disk the whole time.
+///
+/// The credential is captured in `on_fallback` and therefore stays in memory for
+/// as long as the dialog is open. That is deliberate and it is the narrow cost of
+/// asking: the alternative is to decide for the user, which is what this replaces.
+fn show_vault_store_failed_dialog(
+    backend: rustconn_core::config::SecretBackendType,
+    err: &rustconn_core::error::SecretError,
+    on_fallback: Option<Box<dyn FnOnce()>>,
+) {
+    use gtk4::prelude::*;
+    use libadwaita as adw;
+    use libadwaita::prelude::*;
+
+    // A locked portable store needs its own advice — "pick another backend" is
+    // the wrong next step when the store is fine and merely closed.
+    if matches!(
+        err,
+        rustconn_core::error::SecretError::PassphraseRequired
+            | rustconn_core::error::SecretError::IncorrectPassphrase
+    ) {
+        show_portable_locked_error(matches!(
+            err,
+            rustconn_core::error::SecretError::IncorrectPassphrase
+        ));
+        return;
+    }
+
+    // The SecretError Display string carries operation context and backend
+    // diagnostics only — never a secret value — so it is safe to show verbatim.
+    let cause = err.to_string();
+    let backend_name = backend_display_name(backend);
+
+    gtk4::glib::idle_add_local_once(move || {
+        let Some(window) = gtk4::gio::Application::default()
+            .and_then(|app| app.downcast_ref::<gtk4::Application>().cloned())
+            .and_then(|app| app.active_window())
+        else {
+            tracing::warn!("Could not show vault store failure dialog: no active window");
+            return;
+        };
+
+        let heading = crate::i18n::i18n_f("{} did not accept this password", &[&backend_name]);
+
+        // What to do next depends on which backend refused. The keyring cases
+        // keep the advice the old `show_vault_save_error` carried, including the
+        // snap interface hint (#249) — that text was right, it was just applied
+        // to every backend, so a locked Bitwarden was answered with instructions
+        // about a keyring the user had not selected.
+        let recovery = match backend {
+            rustconn_core::config::SecretBackendType::LibSecret
+            | rustconn_core::config::SecretBackendType::MacOsKeychain => {
+                if rustconn_core::snap::is_snap() {
+                    crate::i18n::i18n(
+                        "The system keyring is not accessible. Run: sudo snap connect rustconn:password-manager-service — or open Settings, then Secrets, and choose another backend.",
+                    )
+                } else {
+                    crate::i18n::i18n(
+                        "No system keyring is responding. Open Settings, then Secrets, and choose another backend such as Encrypted file or KeePassXC.",
+                    )
+                }
+            }
+            _ => crate::i18n::i18n_f(
+                "Fix {} and save again, or choose a different backend in Settings, then Secrets.",
+                &[&backend_name],
+            ),
+        };
+
+        let body = if on_fallback.is_some() {
+            let offer = crate::i18n::i18n(
+                "You can also save it to this computer's encrypted file instead — it will still be found when you connect.",
+            );
+            crate::i18n::i18n_f(
+                "{}\n\nThe password has not been saved. {}\n\n{}",
+                &[&cause, &recovery, &offer],
+            )
+        } else {
+            crate::i18n::i18n_f(
+                "{}\n\nThe password has not been saved. {}",
+                &[&cause, &recovery],
+            )
+        };
+
+        let dialog = adw::AlertDialog::new(Some(&heading), Some(&body));
+        dialog.add_response("close", &crate::i18n::i18n("Cancel"));
+        dialog.add_response("settings", &crate::i18n::i18n("Open Settings"));
+        if on_fallback.is_some() {
+            dialog.add_response("fallback", &crate::i18n::i18n("Save to This Computer"));
+        }
+        // Unconditional, and deliberately the *only* suggested response: saving
+        // somewhere the user did not originally choose is a real decision, so it
+        // is offered without being pushed. The safe next step is to go and fix
+        // the backend they did choose, whether or not there is another
+        // destination on the dialog.
+        dialog.set_response_appearance("settings", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("settings"));
+        dialog.set_close_response("close");
+
+        let window_for_action = window.clone();
+        // `connect_response` wants an `Fn`, and running the action consumes it, so
+        // the `FnOnce` lives in a `Cell` and is taken out on use. `Cell` rather
+        // than `RefCell` because `Cell::take` is exactly this operation and cannot
+        // panic; a second response cannot fire for one dialog, but neither type
+        // system nor reviewer should have to take that on trust.
+        let on_fallback = std::cell::Cell::new(on_fallback);
+        dialog.connect_response(None, move |_, response| match response {
+            "settings" => {
+                let _ = gtk4::prelude::WidgetExt::activate_action(
+                    &window_for_action,
+                    "win.settings",
+                    None,
+                );
+            }
+            "fallback" => {
+                if let Some(action) = on_fallback.take() {
+                    action();
+                }
+            }
+            _ => {}
+        });
+
+        dialog.present(Some(&window));
+    });
+}
+
+/// Stores credentials in the selected backend, and only in the selected backend.
+///
+/// `allow_fallback` is passed as `false` to [`SecretManager::store_reported`], so
+/// the primary backend's own error comes back unchanged and nothing else in the
+/// chain is written to. That is the point: this used to pass
+/// `secret_settings.enable_fallback`, which is `true` by default, so any primary
+/// failure — a locked vault, an unresponsive keyring — walked the chain and put
+/// the password in the encrypted file instead. Nobody was asked, and the connect
+/// path does not read that store when another backend is selected, so the
+/// password was saved and missing at the same time.
+///
+/// Where a refused write goes now is the user's call:
+/// [`show_vault_store_failed_dialog`] asks, and the encrypted-file destination is
+/// reached through [`dispatch_vault_op_for`] naming it explicitly.
+///
+/// The read side is unchanged and still walks the chain — a password saved before
+/// the user switched backend has to keep resolving. `enable_fallback` now governs
+/// only that.
 ///
 /// # Errors
 ///
 /// Returns the backend's own [`SecretError`] if the store times out after 10s or
-/// every backend in the chain rejects the write. The typed error is preserved
-/// rather than flattened to a string because the caller has to tell a locked
-/// portable store apart from an unresponsive keyring — the two need different
-/// advice, and a formatted string cannot be matched on.
+/// the backend rejects the write. The typed error is preserved rather than
+/// flattened to a string because the caller has to tell a locked portable store
+/// apart from an unresponsive keyring — the two need different advice, and a
+/// formatted string cannot be matched on.
 ///
 /// [`SecretManager`]: rustconn_core::secret::SecretManager
 /// [`SecretManager::store_reported`]: rustconn_core::secret::SecretManager::store_reported
-/// [`StoreOutcome`]: rustconn_core::secret::StoreOutcome
 /// [`SecretError`]: rustconn_core::error::SecretError
-fn store_reported_blocking(
+fn store_primary_blocking(
     secret_settings: &rustconn_core::config::SecretSettings,
     lookup_key: &str,
     creds: &rustconn_core::models::Credentials,
-) -> Result<rustconn_core::secret::StoreOutcome, rustconn_core::error::SecretError> {
+) -> Result<(), rustconn_core::error::SecretError> {
     use rustconn_core::error::SecretError;
 
     let manager = rustconn_core::secret::SecretManager::build_from_settings(secret_settings);
-    let allow_fallback = secret_settings.enable_fallback;
 
     crate::async_utils::with_runtime(|rt| {
         rt.block_on(async {
@@ -237,7 +398,7 @@ fn store_reported_blocking(
             // GTK callback indefinitely (matches dispatch_vault_op's timeout).
             tokio::time::timeout(
                 std::time::Duration::from_secs(10),
-                manager.store_reported(lookup_key, creds, allow_fallback),
+                manager.store_reported(lookup_key, creds, false),
             )
             .await
             .map_err(|_| SecretError::StoreFailed("Vault store timed out after 10s".to_string()))?
@@ -245,6 +406,31 @@ fn store_reported_blocking(
     })
     .map_err(SecretError::StoreFailed)
     .and_then(|r| r)
+    .map(|_| ())
+}
+
+/// Writes a credential to the machine-bound encrypted file, naming it explicitly.
+///
+/// The destination is passed to [`dispatch_vault_op_for`] rather than reached by
+/// falling off the end of the backend chain, so this can only ever write where
+/// the caller said. Used by the "Save to This Computer" response of
+/// [`show_vault_store_failed_dialog`].
+///
+/// # Errors
+///
+/// Returns a human-readable error when the encrypted file rejects the write.
+fn store_in_encrypted_file_blocking(
+    secret_settings: &rustconn_core::config::SecretSettings,
+    lookup_key: &str,
+    creds: &rustconn_core::models::Credentials,
+) -> Result<(), String> {
+    dispatch_vault_op_for(
+        secret_settings,
+        rustconn_core::config::SecretBackendType::EncryptedFile,
+        lookup_key,
+        VaultOp::Store(creds),
+    )
+    .map(|_| ())
 }
 
 /// Saves a connection password to the configured vault backend.
@@ -289,6 +475,11 @@ pub fn save_password_to_vault(
     {
         // KeePass backend — use hierarchical path
         if let Some(kdbx_path) = settings.secrets.kdbx_path.clone() {
+            // Which of the two KDBX rows the user picked, so a failure can name
+            // it. The branch condition guarantees this is `KeePassXc` or
+            // `KdbxFile`; it is read rather than hardcoded so the message follows
+            // the selection.
+            let kdbx_backend = settings.secrets.preferred_backend;
             let key_file = settings.secrets.kdbx_key_file.clone();
             let db_password = settings.secrets.kdbx_password.clone();
             let entry_name = if let Some(c) = conn {
@@ -336,10 +527,16 @@ pub fn save_password_to_vault(
                 },
                 move |result| {
                     if let Err(e) = result {
-                        tracing::error!("Failed to save password to vault: {e}");
-                        show_vault_save_error(&e);
+                        tracing::error!(%conn_id, error = %e, "KDBX refused the password");
+                        // No fallback offer here. The KDBX database is a file the
+                        // user chose and manages, and a write that failed against
+                        // it is a problem with that file — silently or otherwise
+                        // putting the password somewhere else would split their
+                        // database, which is the opposite of what picking a
+                        // database backend asks for.
+                        show_vault_store_failed_dialog(kdbx_backend, &e, None);
                     } else {
-                        tracing::info!("Password saved to vault for connection {conn_id}");
+                        tracing::info!(%conn_id, "Password saved to the KDBX database");
                     }
                 },
             );
@@ -376,39 +573,82 @@ pub fn save_password_to_vault(
             protocol_str,
             "save_password_to_vault: storing with key"
         );
-        let username = username.to_string();
-        // Re-wrap into a fresh SecretString for the spawn_blocking move closure.
-        let secret = password.clone();
+        // One `Arc<Credentials>` shared by the write and by the possible second
+        // write after the dialog, so asking the user where the password should go
+        // costs no additional plaintext copy. The one copy is `password.clone()`,
+        // which the previous version made too; what is new is that it is not made
+        // twice when a retry happens.
+        let creds = std::sync::Arc::new(rustconn_core::models::Credentials {
+            username: Some(username.to_string()),
+            password: Some(password.clone()),
+            key_passphrase: None,
+            domain: None,
+        });
         let secret_settings = settings.secrets.clone();
+        let creds_worker = std::sync::Arc::clone(&creds);
+        let settings_worker = secret_settings.clone();
+        let key_worker = lookup_key.clone();
 
         crate::utils::spawn_blocking_with_callback(
-            move || {
-                let creds = rustconn_core::models::Credentials {
-                    username: Some(username),
-                    password: Some(secret),
-                    key_passphrase: None,
-                    domain: None,
-                };
-                store_reported_blocking(&secret_settings, &lookup_key, &creds)
-            },
-            move |result: Result<
-                rustconn_core::secret::StoreOutcome,
-                rustconn_core::error::SecretError,
-            >| match result {
-                Ok(rustconn_core::secret::StoreOutcome::Primary) => {
-                    tracing::info!("Password saved to vault for connection {conn_id}");
-                }
-                Ok(rustconn_core::secret::StoreOutcome::Fallback { backend_id }) => {
-                    tracing::warn!(
-                        backend = %backend_id,
+            move || store_primary_blocking(&settings_worker, &key_worker, &creds_worker),
+            move |result: Result<(), rustconn_core::error::SecretError>| match result {
+                Ok(()) => {
+                    tracing::info!(
+                        ?backend_type,
                         %conn_id,
-                        "Password saved to encrypted-file fallback backend"
+                        "Password saved to the selected vault backend"
                     );
-                    show_vault_fallback_toast();
                 }
                 Err(e) => {
-                    tracing::error!("Failed to save password to vault: {e}");
-                    show_vault_save_error(&e);
+                    // `warn`, not `error`: the write did not happen, but the user
+                    // is about to be asked what to do about it, so this is not the
+                    // end of the story.
+                    tracing::warn!(
+                        ?backend_type,
+                        %conn_id,
+                        error = %e,
+                        "Selected vault backend refused the password"
+                    );
+                    let on_fallback = encrypted_file_fallback_enabled(&secret_settings).then(|| {
+                        let settings_retry = secret_settings.clone();
+                        let key_retry = lookup_key.clone();
+                        let creds_retry = std::sync::Arc::clone(&creds);
+                        Box::new(move || {
+                            crate::utils::spawn_blocking_with_callback(
+                                move || {
+                                    store_in_encrypted_file_blocking(
+                                        &settings_retry,
+                                        &key_retry,
+                                        &creds_retry,
+                                    )
+                                },
+                                move |retry: Result<(), String>| match retry {
+                                    Ok(()) => {
+                                        tracing::info!(
+                                            %conn_id,
+                                            "Password saved to the encrypted file at the user's request"
+                                        );
+                                        show_saved_to_fallback_toast(
+                                            rustconn_core::config::SecretBackendType::EncryptedFile,
+                                        );
+                                    }
+                                    Err(msg) => {
+                                        tracing::error!(
+                                            %conn_id,
+                                            error = %msg,
+                                            "Encrypted-file write refused after the user chose it"
+                                        );
+                                        show_vault_store_failed_dialog(
+                                            rustconn_core::config::SecretBackendType::EncryptedFile,
+                                            &rustconn_core::error::SecretError::StoreFailed(msg),
+                                            None,
+                                        );
+                                    }
+                                },
+                            );
+                        }) as Box<dyn FnOnce()>
+                    });
+                    show_vault_store_failed_dialog(backend_type, &e, on_fallback);
                 }
             },
         );
@@ -436,6 +676,9 @@ pub fn save_group_password_to_vault(
         )
     {
         if let Some(kdbx_path) = settings.secrets.kdbx_path.clone() {
+            // See the connection path: read rather than hardcoded so a failure
+            // names the row the user actually picked.
+            let kdbx_backend = settings.secrets.preferred_backend;
             let key_file = settings.secrets.kdbx_key_file.clone();
             let db_password = settings.secrets.kdbx_password.clone();
             let entry_name = group_path
@@ -465,47 +708,84 @@ pub fn save_group_password_to_vault(
                 },
                 move |result| {
                     if let Err(e) = result {
-                        tracing::error!("Failed to save group password to vault: {e}");
-                        show_vault_save_error(&e);
+                        tracing::error!(error = %e, "KDBX refused the group password");
+                        show_vault_store_failed_dialog(kdbx_backend, &e, None);
                     } else {
-                        tracing::info!("Group password saved to vault");
+                        tracing::info!("Group password saved to the KDBX database");
                     }
                 },
             );
         }
     } else {
+        // Same shape as the connection path above: the selected backend alone is
+        // written to, and a refusal asks the user where the password should go
+        // rather than relocating it silently.
+        let backend_type = select_backend_for_load(&settings.secrets);
         let lookup_key = lookup_key.to_string();
-        let username_val = username.to_string();
-        let secret = password.clone();
+        let creds = std::sync::Arc::new(rustconn_core::models::Credentials {
+            username: Some(username.to_string()),
+            password: Some(password.clone()),
+            key_passphrase: None,
+            domain: None,
+        });
         let secret_settings = settings.secrets.clone();
+        let creds_worker = std::sync::Arc::clone(&creds);
+        let settings_worker = secret_settings.clone();
+        let key_worker = lookup_key.clone();
 
         crate::utils::spawn_blocking_with_callback(
-            move || {
-                let creds = rustconn_core::models::Credentials {
-                    username: Some(username_val),
-                    password: Some(secret),
-                    key_passphrase: None,
-                    domain: None,
-                };
-                store_reported_blocking(&secret_settings, &lookup_key, &creds)
-            },
-            move |result: Result<
-                rustconn_core::secret::StoreOutcome,
-                rustconn_core::error::SecretError,
-            >| match result {
-                Ok(rustconn_core::secret::StoreOutcome::Primary) => {
-                    tracing::info!("Group password saved to vault");
-                }
-                Ok(rustconn_core::secret::StoreOutcome::Fallback { backend_id }) => {
-                    tracing::warn!(
-                        backend = %backend_id,
-                        "Group password saved to encrypted-file fallback backend"
+            move || store_primary_blocking(&settings_worker, &key_worker, &creds_worker),
+            move |result: Result<(), rustconn_core::error::SecretError>| match result {
+                Ok(()) => {
+                    tracing::info!(
+                        ?backend_type,
+                        "Group password saved to the selected backend"
                     );
-                    show_vault_fallback_toast();
                 }
                 Err(e) => {
-                    tracing::error!("Failed to save group password to vault: {e}");
-                    show_vault_save_error(&e);
+                    tracing::warn!(
+                        ?backend_type,
+                        error = %e,
+                        "Selected vault backend refused the group password"
+                    );
+                    let on_fallback = encrypted_file_fallback_enabled(&secret_settings).then(|| {
+                        let settings_retry = secret_settings.clone();
+                        let key_retry = lookup_key.clone();
+                        let creds_retry = std::sync::Arc::clone(&creds);
+                        Box::new(move || {
+                            crate::utils::spawn_blocking_with_callback(
+                                move || {
+                                    store_in_encrypted_file_blocking(
+                                        &settings_retry,
+                                        &key_retry,
+                                        &creds_retry,
+                                    )
+                                },
+                                move |retry: Result<(), String>| match retry {
+                                    Ok(()) => {
+                                        tracing::info!(
+                                            "Group password saved to the encrypted file at the user's request"
+                                        );
+                                        show_saved_to_fallback_toast(
+                                            rustconn_core::config::SecretBackendType::EncryptedFile,
+                                        );
+                                    }
+                                    Err(msg) => {
+                                        tracing::error!(
+                                            error = %msg,
+                                            "Encrypted-file write refused after the user chose it"
+                                        );
+                                        show_vault_store_failed_dialog(
+                                            rustconn_core::config::SecretBackendType::EncryptedFile,
+                                            &rustconn_core::error::SecretError::StoreFailed(msg),
+                                            None,
+                                        );
+                                    }
+                                },
+                            );
+                        }) as Box<dyn FnOnce()>
+                    });
+                    show_vault_store_failed_dialog(backend_type, &e, on_fallback);
                 }
             },
         );
