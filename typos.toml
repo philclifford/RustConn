@@ -19,7 +19,6 @@ extend-exclude = [
     "target/",
     ".flatpak-builder/",
     "Cargo.lock",
-    "package-lock.json",
     "messages.mo",
     # Vendored verbatim from flatpak-builder-tools upstream. It carries an
     # upstream typo ("fragement"); patching vendored code to satisfy a local

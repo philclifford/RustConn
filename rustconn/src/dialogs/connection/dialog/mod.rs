@@ -340,6 +340,8 @@ pub struct ConnectionDialog {
     login_username_prompt_entry: Entry,
     /// Expected text of the device's password prompt for automatic login.
     login_password_prompt_entry: Entry,
+    /// Login prompt watcher timeout in seconds (0 = built-in default).
+    login_timeout_spin: SpinButton,
     // Connection tasks fields
     pre_connect_enabled_switch: adw::SwitchRow,
     pre_connect_command_entry: Entry,

@@ -181,12 +181,19 @@ impl EphemeralVvFile {
 
     /// Writes `contents` to a fresh mode-0600 file in `$XDG_RUNTIME_DIR`.
     ///
-    /// `$XDG_RUNTIME_DIR` (`/run/user/<uid>`) is tmpfs, user-private, and shared
-    /// at the same path with the host, so a `host:` viewer run through
-    /// `flatpak-spawn --host` can still read it — the same reason
-    /// [`EphemeralCommandEnv`] uses it. Returns `None` when the directory is
-    /// unusable or the file cannot be created; the caller then falls back to the
-    /// plain argv launch and lets the viewer prompt.
+    /// `$XDG_RUNTIME_DIR` (`/run/user/<uid>`) is tmpfs and user-private, the same
+    /// reason [`EphemeralCommandEnv`] uses it. Returns `None` when the directory
+    /// is unusable or the file cannot be created; the caller then falls back to
+    /// the plain argv launch and lets the viewer prompt.
+    ///
+    /// It is **not** shared with the host at the same path. Inside Flatpak the
+    /// sandbox gets its own runtime directory, kept on the host under
+    /// `/run/user/<uid>/.flatpak/<app-id>/xdg-run/`, so a `host:` viewer run
+    /// through `flatpak-spawn --host` cannot open the path written here. This doc
+    /// comment claimed the opposite until 0.21.4, and the SPICE launch believed
+    /// it — see [`rustconn_core::host_visible_path`], which the caller uses to
+    /// translate the path, and issue
+    /// [#308](https://github.com/totoshko88/RustConn/issues/308).
     pub(super) fn write(contents: &str) -> Option<Self> {
         let dir = std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)

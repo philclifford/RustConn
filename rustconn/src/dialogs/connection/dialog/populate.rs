@@ -273,6 +273,9 @@ impl ConnectionDialog {
             .set_text(conn.automation.username_prompt.as_deref().unwrap_or(""));
         self.login_password_prompt_entry
             .set_text(conn.automation.password_prompt.as_deref().unwrap_or(""));
+        // Login watcher timeout; None (use built-in default) shows as 0.
+        self.login_timeout_spin
+            .set_value(conn.automation.login_timeout_secs.map_or(0.0, f64::from));
 
         // Set connection tasks
         self.set_pre_connect_task(conn.pre_connect_task.as_ref());

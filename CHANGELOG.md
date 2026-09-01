@@ -5,6 +5,40 @@ All notable changes to RustConn will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.4] - 2026-09-02
+
+A documentation-and-consistency pass driven by a user-guide audit: the CLI
+reference and user guide are brought back in line with the code, two CLI flags
+that were silently dropped now fail loudly, and the automatic-login timeout that
+was reachable only by editing `connections.toml` gains a control in the
+connection editor.
+
+### Added
+
+- **Login timeout is now editable in the connection editor** — `login_timeout_secs` (how long the automatic-login watcher waits for the device's prompt) was fully wired through the model and group inheritance but had no UI, so it could only be set by hand-editing the `automation` section of `connections.toml`. The connection editor's **Automation** tab now carries a **Login Timeout (seconds)** row in the Automatic Login group; `0` means the built-in default (10 s), matching the stored `None`.
+
+### Fixed
+
+- **A SPICE connection with a stored password failed outright in Flatpak with "connection type cannot be detected from URI" (issue [#308](https://github.com/totoshko88/RustConn/issues/308))** — a regression from the 0.21.2 fix in the same issue. That fix delivers the password to `remote-viewer` through a `.vv` connection file written to `$XDG_RUNTIME_DIR`, on the assumption that the sandbox and the host see that directory at the same path. They do not: Flatpak gives the sandbox its own runtime directory and keeps it on the host under `/run/user/<uid>/.flatpak/<app-id>/xdg-run/`. virt-viewer is a desktop application in its own right and is not bundled in the manifest, so it is found on the host and launched through `flatpak-spawn --host` — where the path it was handed does not exist. `remote-viewer` then falls back to reading the argument as a URI, cannot type it, and aborts. Setting the password source back to **None** was the only way to reconnect, since without a password no file is written and the plain `spice://` URI is used.
+
+  The path handed to a host viewer is now translated to the host's own view of the file, and the translation is *verified* with a readability probe rather than assumed, so a Flatpak that arranges its runtime directory differently is detected instead of silently producing another unusable path. When no host-visible path can be confirmed, the launch drops back to the URI: the viewer asks for the password, as it did before 0.21.2, rather than failing to connect at all. Requires no new Flatpak permissions — the existing `--talk-name=org.freedesktop.Flatpak` is what makes both the probe and the launch possible. Native and Snap installs were never affected, since there is no sandbox boundary to cross. A related leak is fixed with it: a connection file that was written but never handed over is now removed immediately, where previously a successful spawn released ownership to a viewer that had no way to read the file, leaving the password on disk for the rest of the session.
+
+- **`--key` and `--auth-method` were silently dropped for non-SSH protocols** — `rustconn-cli add`/`update` accepted these flags for every protocol but only applied them to SSH (and, for `add`, SFTP), logging a warning and discarding them otherwise. A typo such as `-P vnc -k id_rsa` produced a connection that quietly ignored the key. Both commands now reject the flags for any protocol other than SSH and SFTP with a clear error, and `update` now also honours them for SFTP connections (previously ignored — a latent bug).
+
+- **`--window-mode` reported SPICE as a supported protocol while ignoring it** — `Connection::supports_window_mode()` returned `true` for SPICE, but SPICE always uses an external viewer, so the setting has no observable effect. The docstring, CLI help, and reference all said "RDP and VNC only" while the code disagreed. SPICE is now excluded from `supports_window_mode()`, so the code, help text, and documentation agree.
+
+### Documentation
+
+- **CLI reference and user guide realigned with the code (0.21.4 audit):** version headers corrected to 0.21.4 (the CLI reference still read 0.18.11); `--audio-mode` and `--printer` RDP flags documented in the `add`/`update` tables; `web` added to the `--protocol` value list (help text and reference); the differing `--mptcp` / `--skip-port-check` semantics on `update` (which accept an explicit `true`/`false`) now explained; `sync inventory` cross-linked from the Cloud Sync subcommand table; the `--backend` help text expanded to the full list of eight backends; and the Split View shortcut table gained the missing **Ctrl+Shift+R** (Pop Pane to Tab) and **Ctrl+Shift+J** (Unsplit).
+
+- **`.kiro` development rules audited and repaired** — `cargo-security-scan` could not report the one thing it existed for: its inline `cargo deny check advisories 2>/dev/null || cargo audit 2>/dev/null || echo 'Neither … installed'` conflated "the tool found an advisory" with "the tool is absent" (cargo-deny exits non-zero *because* it found one), while `2>/dev/null` discarded the report itself — measured at 0 bytes on stdout against 96 on stderr. The logic moved to `bin/cargo-advisory-scan.sh`, which probes with `command -v`, keeps both streams, logs to `target/cargo-advisories.log`, and invokes the bare `cargo-deny` binary so `rust-toolchain.toml` is not asked to resolve a toolchain for a lockfile parse — the reason `ci.yml` already calls `cargo-machete` directly. `scripts/check-ai-docs.sh` gained a third gate asserting every hook file has a row in `hooks-map.md`, after that map was found covering 15 of 16 (`session-baseline` had been missing since 2026-08-26 in a file whose first line promises all of them). `bash-serialization-guard`'s four block messages pointed at `/tmp` in seven places while the always-loaded `shell-environment.md` requires `target/`; they now agree, and the message's own `nohup` example carries the `timeout` the guard demands of it. `hooks-map.md` also lost a stale false-positive claim (`pgrep -f cargo` is *not* blocked — the guard needs `cargo` plus a build verb, verified by probe) and a worked example built on `rustconn/src/secret/`, a directory that does not exist. `bugfix-workflow.md` became `inclusion: auto`; the four runbooks that must stay `manual` are now listed with the reason in `docs/AI_DEVELOPMENT.md`. Removed two unreferenced tracked files from the repository root: `gitlog.txt` (a `git log` dump) and `package-lock.json` (an empty npm lockfile in a Rust workspace).
+
+- **Contributor-facing community files added** — the four items GitHub's community-standards checklist reported as missing now exist: `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1, enforcement contact and a pointer to Security Advisories for vulnerabilities), `CONTRIBUTING.md` (development setup, the local equivalents of the twelve CI jobs, the crate-boundary and `unsafe` rules that get a PR sent back, commit and changelog conventions, and the translation workflow with its three gates), three issue forms under `.github/ISSUE_TEMPLATE/` (bug report, feature request, translation) with a `config.yml` routing vulnerabilities to Security Advisories and questions to Discussions, and `.github/PULL_REQUEST_TEMPLATE.md` mirroring the Definition of Done. Three labels were created to go with them — `i18n`, applied automatically by the translation form, plus `dependencies` and `ci`, which `.github/dependabot.yml` has been requesting since it was written without ever getting them: Dependabot drops a label that does not exist in the repository, so all sixteen of its pull requests from `#226` onwards landed unlabelled. Nothing in the build or the shipped application changes.
+
+### Dependencies
+
+- **Updated**: aws-lc-rs 1.18.0 → 1.18.1, aws-lc-sys 0.44.0 → 0.45.0. Semver-compatible updates from `cargo update`; `cargo check --all-targets` is clean against the refreshed lock file.
+
 ## [0.21.3] - 2026-09-01
 
 A release spent on making the secret backends honest: a password the selected

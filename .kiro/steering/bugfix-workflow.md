@@ -1,10 +1,21 @@
 ---
-inclusion: manual
+inclusion: auto
+name: bugfix-workflow
+description: "Порядок роботи над баг-фіксом: відтворити, знайти першопричину через context-gatherer, зафіксувати незмінну поведінку, лагодити спільну функцію а не один виклик, лишити тест. Застосовувати, коли запит — виправлення баг-репорту, регресії або дефекту."
 ---
 
 # Bugfix Workflow
 
 Use this workflow for fixing bugs.
+
+> `inclusion: auto` since 2026-09-02, with the `name` and `description` that mode
+> requires — `auto` matches a request against the description, so a file missing
+> either silently matches nothing. This file was `manual` with no `description` at
+> all, so it was both unreachable on its own and hard to find in the `#` picker.
+> Auto is safe here because this is *guidance*: it changes how a fix is
+> approached and starts nothing by itself. The four runbooks that must stay
+> `manual`, and why, are listed under "When `auto` is the wrong mode" in
+> `docs/AI_DEVELOPMENT.md`.
 
 ## Steps
 

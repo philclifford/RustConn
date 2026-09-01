@@ -6,9 +6,9 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: rustconn 0.21.3\n"
+"Project-Id-Version: rustconn 0.21.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-01 19:44+0300\n"
+"POT-Creation-Date: 2026-09-01 23:12+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,7 +18,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 
 #: rustconn/src/alert.rs:15 rustconn/src/alert.rs:54 rustconn/src/alert.rs:64
-#: rustconn/src/app.rs:1687 rustconn/src/toast.rs:246
+#: rustconn/src/app.rs:1718 rustconn/src/toast.rs:246
 msgid "OK"
 msgstr ""
 
@@ -44,7 +44,7 @@ msgstr ""
 #: rustconn/src/dialogs/workspace.rs:236 rustconn/src/dialogs/workspace.rs:290
 #: rustconn/src/embedded_rdp/autotype.rs:166
 #: rustconn/src/terminal/tab_menu.rs:203 rustconn/src/terminal/tab_menu.rs:406
-#: rustconn/src/vault_ops.rs:234 rustconn/src/window/batch_edit.rs:69
+#: rustconn/src/vault_ops.rs:315 rustconn/src/window/batch_edit.rs:69
 #: rustconn/src/window/connection_dialogs.rs:1078
 #: rustconn/src/window/edit_group.rs:1784
 #: rustconn/src/window/edit_group.rs:1832 rustconn/src/window/mod.rs:3521
@@ -54,7 +54,7 @@ msgstr ""
 msgid "Cancel"
 msgstr ""
 
-#: rustconn/src/alert.rs:72 rustconn/src/dialogs/connection/dialog/save.rs:691
+#: rustconn/src/alert.rs:72 rustconn/src/dialogs/connection/dialog/save.rs:694
 msgid "Validation Error"
 msgstr ""
 
@@ -91,20 +91,20 @@ msgstr ""
 msgid "Settings"
 msgstr ""
 
-#: rustconn/src/app.rs:1282
+#: rustconn/src/app.rs:1315
 msgid ""
 "{} is selected, but the system keyring is not accessible. Run: sudo snap "
 "connect rustconn:password-manager-service — or open Settings, then Secrets, "
 "to choose another backend."
 msgstr ""
 
-#: rustconn/src/app.rs:1287
+#: rustconn/src/app.rs:1320
 msgid ""
 "{} is selected, but it cannot store passwords yet: {}. Open Settings, then "
 "Secrets."
 msgstr ""
 
-#: rustconn/src/app.rs:1583
+#: rustconn/src/app.rs:1614
 msgid ""
 "Modern connection manager for Linux with a GTK4/Wayland-native interface. "
 "Manage SSH, RDP, VNC, SPICE, Telnet, Serial, Kubernetes, and Zero Trust "
@@ -112,35 +112,35 @@ msgid ""
 msgstr ""
 
 #. Translators: Replace this with your name and language, e.g. "John Doe (German)"
-#: rustconn/src/app.rs:1619
+#: rustconn/src/app.rs:1650
 msgid "translator-credits"
 msgstr ""
 
-#: rustconn/src/app.rs:1626
+#: rustconn/src/app.rs:1657
 msgid "User Guide"
 msgstr ""
 
-#: rustconn/src/app.rs:1630
+#: rustconn/src/app.rs:1661
 msgid "Installation"
 msgstr ""
 
-#: rustconn/src/app.rs:1634
+#: rustconn/src/app.rs:1665
 msgid "Releases"
 msgstr ""
 
-#: rustconn/src/app.rs:1638
+#: rustconn/src/app.rs:1669
 msgid "Changelog"
 msgstr ""
 
-#: rustconn/src/app.rs:1648
+#: rustconn/src/app.rs:1679
 msgid "Special Thanks"
 msgstr ""
 
-#: rustconn/src/app.rs:1663
+#: rustconn/src/app.rs:1694
 msgid "Made in Ukraine"
 msgstr ""
 
-#: rustconn/src/app.rs:1664
+#: rustconn/src/app.rs:1695
 msgid "All contributors and supporters"
 msgstr ""
 
@@ -176,7 +176,7 @@ msgid "Enter Password Manually"
 msgstr ""
 
 #: rustconn/src/dialogs/backend_missing.rs:56 rustconn/src/vault_ops.rs:66
-#: rustconn/src/vault_ops.rs:235 rustconn/src/window/mod.rs:699
+#: rustconn/src/vault_ops.rs:316 rustconn/src/window/mod.rs:699
 msgid "Open Settings"
 msgstr ""
 
@@ -618,7 +618,7 @@ msgid "No highlight rules"
 msgstr ""
 
 #: rustconn/src/dialogs/connection/advanced_tab.rs:616
-#: rustconn/src/dialogs/connection/automation_tab.rs:155
+#: rustconn/src/dialogs/connection/automation_tab.rs:157
 #: rustconn/src/dialogs/settings/mod.rs:353
 #: rustconn/src/window/edit_group.rs:1155
 msgid "Add Rule"
@@ -706,118 +706,126 @@ msgstr ""
 msgid "Delete highlight rule"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:84
+#: rustconn/src/dialogs/connection/automation_tab.rs:86
 #: rustconn/src/window/edit_group.rs:1046
 msgid "Expect Rules"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:85
+#: rustconn/src/dialogs/connection/automation_tab.rs:87
 #: rustconn/src/window/edit_group.rs:1047
 msgid "Auto-respond to terminal patterns (priority order)"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:96
+#: rustconn/src/dialogs/connection/automation_tab.rs:98
 #: rustconn/src/window/edit_group.rs:1056
 msgid ""
 "Responses support ${password}, ${username}, and ${VARIABLE_NAME} "
 "placeholders resolved at connection time"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:109
+#: rustconn/src/dialogs/connection/automation_tab.rs:111
 #: rustconn/src/window/edit_group.rs:1069
 msgid "No expect rules"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:120
+#: rustconn/src/dialogs/connection/automation_tab.rs:122
 #: rustconn/src/window/edit_group.rs:1085
 msgid "From Template"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:121
+#: rustconn/src/dialogs/connection/automation_tab.rs:123
 #: rustconn/src/window/edit_group.rs:1086
 msgid "Add rules from a built-in template"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:167
+#: rustconn/src/dialogs/connection/automation_tab.rs:169
 #: rustconn/src/window/edit_group.rs:1201
 msgid "Pattern Tester"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:168
+#: rustconn/src/dialogs/connection/automation_tab.rs:170
 msgid "Test text against expect rule patterns"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:175
+#: rustconn/src/dialogs/connection/automation_tab.rs:177
 msgid "Test text against patterns"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:178
+#: rustconn/src/dialogs/connection/automation_tab.rs:180
 #: rustconn/src/window/edit_group.rs:1218
 msgid "Test Input"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:183
+#: rustconn/src/dialogs/connection/automation_tab.rs:185
 #: rustconn/src/window/edit_group.rs:1212
 #: rustconn/src/window/edit_group.rs:1233
 msgid "Enter text to test"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:189
+#: rustconn/src/dialogs/connection/automation_tab.rs:191
 #: rustconn/src/window/edit_group.rs:1222
 msgid "Result"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:204
+#: rustconn/src/dialogs/connection/automation_tab.rs:206
 msgid "Pre-Connect Task"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:215
+#: rustconn/src/dialogs/connection/automation_tab.rs:217
 msgid "Post-Disconnect Task"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:256
+#: rustconn/src/dialogs/connection/automation_tab.rs:260
 msgid "Automatic Login"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:262
+#: rustconn/src/dialogs/connection/automation_tab.rs:266
 msgid ""
 "Telnet and serial sessions log in by typing at the device's own prompts. SSH "
 "types only the password."
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:266
+#: rustconn/src/dialogs/connection/automation_tab.rs:270
 msgid "Username Prompt"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:268
+#: rustconn/src/dialogs/connection/automation_tab.rs:272
 msgid "Expected text; empty detects login:, Username: and >>User name:"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:274
+#: rustconn/src/dialogs/connection/automation_tab.rs:278
 msgid "Password Prompt"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:276
+#: rustconn/src/dialogs/connection/automation_tab.rs:280
 msgid "Expected text; empty detects Password: in every supported language"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:300
+#: rustconn/src/dialogs/connection/automation_tab.rs:298
+msgid "Login Timeout (seconds)"
+msgstr ""
+
+#: rustconn/src/dialogs/connection/automation_tab.rs:299
+msgid "How long to watch for the prompt; 0 = default (10 s)"
+msgstr ""
+
+#: rustconn/src/dialogs/connection/automation_tab.rs:322
 msgid "Run command before connecting"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:302
+#: rustconn/src/dialogs/connection/automation_tab.rs:324
 msgid "Run command after disconnecting"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:314
+#: rustconn/src/dialogs/connection/automation_tab.rs:336
 msgid "Enable Task"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:323
+#: rustconn/src/dialogs/connection/automation_tab.rs:345
 msgid "e.g., /path/to/script.sh or vpn-connect ${host}"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:328
+#: rustconn/src/dialogs/connection/automation_tab.rs:350
 #: rustconn/src/dialogs/connection/general_tab.rs:381
 #: rustconn/src/dialogs/connection_wizard/connection_page.rs:217
 #: rustconn/src/dialogs/settings/terminal_tab.rs:479
@@ -825,132 +833,132 @@ msgstr ""
 msgid "Command"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:330
+#: rustconn/src/dialogs/connection/automation_tab.rs:352
 msgid "Shell command to execute (supports ${variable} syntax)"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:347
+#: rustconn/src/dialogs/connection/automation_tab.rs:369
 msgid "Timeout (ms)"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:348
+#: rustconn/src/dialogs/connection/automation_tab.rs:370
 msgid "0 = no timeout"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:355
+#: rustconn/src/dialogs/connection/automation_tab.rs:377
 msgid "Abort on Failure"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:356
+#: rustconn/src/dialogs/connection/automation_tab.rs:378
 msgid "Cancel connection if this task fails"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:368
+#: rustconn/src/dialogs/connection/automation_tab.rs:390
 msgid "First Connection Only"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:369
+#: rustconn/src/dialogs/connection/automation_tab.rs:391
 msgid ""
 "Only run when opening the first connection in a folder (useful for VPN setup)"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:373
+#: rustconn/src/dialogs/connection/automation_tab.rs:395
 msgid "Last Connection Only"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/automation_tab.rs:374
+#: rustconn/src/dialogs/connection/automation_tab.rs:396
 msgid ""
 "Only run when closing the last connection in a folder (useful for cleanup)"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:290
+#: rustconn/src/dialogs/connection/builders.rs:292
 msgid "Connection name is required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:304
+#: rustconn/src/dialogs/connection/builders.rs:306
 msgid "Host is required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:309
+#: rustconn/src/dialogs/connection/builders.rs:311
 msgid "Host cannot contain spaces"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:319
+#: rustconn/src/dialogs/connection/builders.rs:321
 msgid "Port must be greater than 0"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:327
+#: rustconn/src/dialogs/connection/builders.rs:329
 msgid "Device path is required for serial connections"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:346
+#: rustconn/src/dialogs/connection/builders.rs:348
 msgid "SSH key path is required for public key authentication"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:358
+#: rustconn/src/dialogs/connection/builders.rs:360
 msgid ""
 "Password source is 'None' but auth method is Password. Set source to Prompt "
 "or Vault."
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:368
+#: rustconn/src/dialogs/connection/builders.rs:370
 msgid "Pod name is required when Busybox mode is disabled"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:377
+#: rustconn/src/dialogs/connection/builders.rs:379
 msgid "MAC address is required when WOL is enabled"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:382
+#: rustconn/src/dialogs/connection/builders.rs:384
 msgid "Invalid MAC address format. Use AA:BB:CC:DD:EE:FF or AA-BB-CC-DD-EE-FF"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:400
+#: rustconn/src/dialogs/connection/builders.rs:402
 msgid "Browser command is required when Custom mode is selected"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:421
+#: rustconn/src/dialogs/connection/builders.rs:423
 msgid "AWS SSM target instance ID is required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:426
+#: rustconn/src/dialogs/connection/builders.rs:428
 msgid "GCP instance name and zone are required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:435
+#: rustconn/src/dialogs/connection/builders.rs:437
 msgid ""
 "Azure Bastion resource ID, resource group, and bastion name are required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:441
+#: rustconn/src/dialogs/connection/builders.rs:443
 msgid "Azure VM name and resource group are required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:450
+#: rustconn/src/dialogs/connection/builders.rs:452
 msgid "OCI bastion OCID, target OCID, and target private IP are required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:456
+#: rustconn/src/dialogs/connection/builders.rs:458
 msgid "Cloudflare Access hostname is required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:461
+#: rustconn/src/dialogs/connection/builders.rs:463
 msgid "Teleport host is required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:466
+#: rustconn/src/dialogs/connection/builders.rs:468
 msgid "Tailscale host is required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:471
+#: rustconn/src/dialogs/connection/builders.rs:473
 msgid "Boundary target is required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:476
+#: rustconn/src/dialogs/connection/builders.rs:478
 msgid "Hoop.dev connection name is required"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/builders.rs:482
+#: rustconn/src/dialogs/connection/builders.rs:484
 msgid "Command template is required for the Generic provider"
 msgstr ""
 
@@ -1039,50 +1047,50 @@ msgstr ""
 msgid "Advanced"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:725
-#: rustconn/src/dialogs/connection/dialog/populate.rs:1105
+#: rustconn/src/dialogs/connection/dialog/build.rs:726
+#: rustconn/src/dialogs/connection/dialog/populate.rs:1111
 #: rustconn/src/dialogs/connection/ssh.rs:507
 #: rustconn/src/dialogs/template.rs:698
 msgid "Jump host for tunneling (-J)"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1023
+#: rustconn/src/dialogs/connection/dialog/build.rs:1025
 msgid "Username Loaded"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1024
+#: rustconn/src/dialogs/connection/dialog/build.rs:1026
 msgid "Username loaded from group"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1030
+#: rustconn/src/dialogs/connection/dialog/build.rs:1032
 msgid "No Username"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1031
+#: rustconn/src/dialogs/connection/dialog/build.rs:1033
 msgid "Group has no username defined"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1057
+#: rustconn/src/dialogs/connection/dialog/build.rs:1059
 msgid "Domain Loaded"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1058
+#: rustconn/src/dialogs/connection/dialog/build.rs:1060
 msgid "Domain loaded from group"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1064
+#: rustconn/src/dialogs/connection/dialog/build.rs:1066
 msgid "No Domain"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1065
+#: rustconn/src/dialogs/connection/dialog/build.rs:1067
 msgid "Group has no domain defined"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1093
+#: rustconn/src/dialogs/connection/dialog/build.rs:1095
 msgid "Zero Trust Connection Test"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1094
+#: rustconn/src/dialogs/connection/dialog/build.rs:1096
 msgid ""
 "Zero Trust connections require provider-specific authentication.\n"
 "\n"
@@ -1092,89 +1100,89 @@ msgid ""
 "3. The provider CLI will handle authentication"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1102
-#: rustconn/src/dialogs/connection/dialog/build.rs:1264
-#: rustconn/src/dialogs/connection/dialog/build.rs:1269
+#: rustconn/src/dialogs/connection/dialog/build.rs:1104
+#: rustconn/src/dialogs/connection/dialog/build.rs:1266
+#: rustconn/src/dialogs/connection/dialog/build.rs:1271
 msgid "Connection Test Failed"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1103
+#: rustconn/src/dialogs/connection/dialog/build.rs:1105
 msgid "Fill in the required fields (name and host)"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1145
+#: rustconn/src/dialogs/connection/dialog/build.rs:1147
 msgid "Testing..."
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1244
+#: rustconn/src/dialogs/connection/dialog/build.rs:1246
 #: rustconn/src/dialogs/connection/general_tab.rs:377
 msgid "Test"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1251
+#: rustconn/src/dialogs/connection/dialog/build.rs:1253
 msgid "Connection Test Successful"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1253
+#: rustconn/src/dialogs/connection/dialog/build.rs:1255
 msgid "Connection successful. Latency: {} ms"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1262
+#: rustconn/src/dialogs/connection/dialog/build.rs:1264
 msgid ""
 "The test failed without a specific error. Check the host address and port, "
 "then try again."
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1270
+#: rustconn/src/dialogs/connection/dialog/build.rs:1272
 msgid "Test timed out"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1288
-#: rustconn/src/dialogs/connection/dialog/build.rs:1298
-#: rustconn/src/dialogs/connection/dialog/build.rs:1307
-#: rustconn/src/dialogs/connection/dialog/build.rs:1368
-#: rustconn/src/dialogs/connection/dialog/build.rs:1373
+#: rustconn/src/dialogs/connection/dialog/build.rs:1290
+#: rustconn/src/dialogs/connection/dialog/build.rs:1300
+#: rustconn/src/dialogs/connection/dialog/build.rs:1309
+#: rustconn/src/dialogs/connection/dialog/build.rs:1370
+#: rustconn/src/dialogs/connection/dialog/build.rs:1375
 msgid "Script Test Failed"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1289
+#: rustconn/src/dialogs/connection/dialog/build.rs:1291
 msgid "Script command is empty"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1299
+#: rustconn/src/dialogs/connection/dialog/build.rs:1301
 msgid "Script command is empty after parsing"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1308
+#: rustconn/src/dialogs/connection/dialog/build.rs:1310
 msgid "Failed to parse command"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1315
+#: rustconn/src/dialogs/connection/dialog/build.rs:1317
 msgid "Testing…"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1338
+#: rustconn/src/dialogs/connection/dialog/build.rs:1340
 msgid "Test Script"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1345
+#: rustconn/src/dialogs/connection/dialog/build.rs:1347
 msgid "(empty output)"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1351
+#: rustconn/src/dialogs/connection/dialog/build.rs:1353
 msgid "Script Test Successful"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1352
+#: rustconn/src/dialogs/connection/dialog/build.rs:1354
 #: rustconn/src/dialogs/export.rs:316
 msgid "Output"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1359
+#: rustconn/src/dialogs/connection/dialog/build.rs:1361
 msgid "Command failed"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/build.rs:1374
+#: rustconn/src/dialogs/connection/dialog/build.rs:1376
 msgid "Script timed out after 30 seconds"
 msgstr ""
 
@@ -1348,29 +1356,29 @@ msgstr ""
 msgid "Edit Connection"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/populate.rs:422
+#: rustconn/src/dialogs/connection/dialog/populate.rs:428
 #: rustconn/src/dialogs/connection/general_tab.rs:412
 #: rustconn/src/dialogs/widgets.rs:45
 msgid "(Root)"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/populate.rs:1066
-#: rustconn/src/dialogs/connection/dialog/populate.rs:1137
+#: rustconn/src/dialogs/connection/dialog/populate.rs:1072
+#: rustconn/src/dialogs/connection/dialog/populate.rs:1143
 msgid "Inherited: {}"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/populate.rs:1070
-#: rustconn/src/dialogs/connection/dialog/populate.rs:1074
+#: rustconn/src/dialogs/connection/dialog/populate.rs:1076
+#: rustconn/src/dialogs/connection/dialog/populate.rs:1080
 msgid "Inherited from parent group"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/populate.rs:1079
+#: rustconn/src/dialogs/connection/dialog/populate.rs:1085
 #: rustconn/src/dialogs/connection/ssh.rs:258
 msgid "Default tries ~/.ssh/id_rsa, id_ed25519, id_ecdsa automatically"
 msgstr ""
 
-#: rustconn/src/dialogs/connection/dialog/populate.rs:1145
-#: rustconn/src/dialogs/connection/dialog/populate.rs:1162
+#: rustconn/src/dialogs/connection/dialog/populate.rs:1151
+#: rustconn/src/dialogs/connection/dialog/populate.rs:1168
 msgid "Direct — an inherited jump host is ignored"
 msgstr ""
 
@@ -4857,7 +4865,7 @@ msgid "RDP File"
 msgstr ""
 
 #: rustconn/src/dialogs/import/sources.rs:255
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:663
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:697
 msgid "Unknown"
 msgstr ""
 
@@ -6035,90 +6043,90 @@ msgstr ""
 msgid "Not installed"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:180
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:188
 msgid "No keyring service responding"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:194
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:205
 msgid "Turn on KeePass integration below"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:197
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:208
 msgid "Choose a database file below"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:199
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:210
 msgid "Database file not found: {}"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:216
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:227
 msgid "Enter the file's passphrase below"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:561
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:595
 msgid "Initialized at {}"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:566
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:600
 msgid "Not initialized (run 'pass init &lt;gpg-id&gt;')"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:571
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:605
 msgid "Cannot determine store directory"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:657
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:691
 #: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1284
 msgid "Unlocked"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:658
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:692
 msgid "Locked"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:659
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:693
 #: rustconn/src/dialogs/settings/secrets_tab/mod.rs:1297
 msgid "Not logged in"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:660
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:694
 msgid "Status: {}"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:665
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:696
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:719
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:699
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:730
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:753
 msgid "Error checking status"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:682
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:716
 msgid "Signed in: {}"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:684
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:718
 msgid "Signed in"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:689
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:693
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:723
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:727
 msgid "Not signed in"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:691
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:725
 msgid "Session expired"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:708
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:742
 #: rustconn/src/dialogs/settings/secrets_tab/mod.rs:3166
 msgid "Configured"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:712
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:716
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:746
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:750
 msgid "Not configured"
 msgstr ""
 
-#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:714
+#: rustconn/src/dialogs/settings/secrets_tab/detection.rs:748
 msgid "Authentication failed"
 msgstr ""
 
@@ -10196,36 +10204,36 @@ msgstr ""
 msgid "Password saved to {}."
 msgstr ""
 
-#: rustconn/src/vault_ops.rs:192
+#: rustconn/src/vault_ops.rs:273
 msgid "{} did not accept this password"
 msgstr ""
 
-#: rustconn/src/vault_ops.rs:204
+#: rustconn/src/vault_ops.rs:285
 msgid ""
 "The system keyring is not accessible. Run: sudo snap connect "
 "rustconn:password-manager-service — or open Settings, then Secrets, and "
 "choose another backend."
 msgstr ""
 
-#: rustconn/src/vault_ops.rs:208
+#: rustconn/src/vault_ops.rs:289
 msgid ""
 "No system keyring is responding. Open Settings, then Secrets, and choose "
 "another backend such as Encrypted file or KeePassXC."
 msgstr ""
 
-#: rustconn/src/vault_ops.rs:213
+#: rustconn/src/vault_ops.rs:294
 msgid ""
 "Fix {} and save again, or choose a different backend in Settings, then "
 "Secrets."
 msgstr ""
 
-#: rustconn/src/vault_ops.rs:220
+#: rustconn/src/vault_ops.rs:301
 msgid ""
 "You can also save it to this computer's encrypted file instead — it will "
 "still be found when you connect."
 msgstr ""
 
-#: rustconn/src/vault_ops.rs:223
+#: rustconn/src/vault_ops.rs:304
 msgid ""
 "{}\n"
 "\n"
@@ -10234,14 +10242,14 @@ msgid ""
 "{}"
 msgstr ""
 
-#: rustconn/src/vault_ops.rs:228
+#: rustconn/src/vault_ops.rs:309
 msgid ""
 "{}\n"
 "\n"
 "The password has not been saved. {}"
 msgstr ""
 
-#: rustconn/src/vault_ops.rs:237
+#: rustconn/src/vault_ops.rs:318
 msgid "Save to This Computer"
 msgstr ""
 

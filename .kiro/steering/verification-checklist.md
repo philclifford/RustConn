@@ -1,5 +1,6 @@
 ---
 inclusion: manual
+description: "Ручна половина Definition of Done — те, що вимагає судження, а не команди: чи в тому крейті новий код, чи чесна межа в ponytail-маркері, чи потрібен i18n цьому рядку. Механічну половину виконує scripts/verify.sh."
 ---
 
 # Verification Checklist

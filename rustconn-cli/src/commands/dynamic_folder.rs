@@ -79,10 +79,11 @@ fn cmd_dynamic_folder_list(
             println!("{:-<name_width$}  {:-<10}  {:-<7}  {:-<20}", "", "", "", "");
 
             for group in &groups {
+                // `groups` was filtered on `dynamic_folder.is_some()` above.
                 let df = group
                     .dynamic_folder
                     .as_ref()
-                    .unwrap_or_else(|| unreachable!());
+                    .unwrap_or_else(|| unreachable!("groups pre-filtered to dynamic folders"));
                 let refresh = df
                     .refresh_interval_secs
                     .map_or_else(|| "manual".to_string(), |s| format!("{s}s"));
@@ -100,7 +101,11 @@ fn cmd_dynamic_folder_list(
             let json_groups: Vec<_> = groups
                 .iter()
                 .map(|g| {
-                    let df = g.dynamic_folder.as_ref().unwrap_or_else(|| unreachable!());
+                    // `groups` was filtered on `dynamic_folder.is_some()` above.
+                    let df = g
+                        .dynamic_folder
+                        .as_ref()
+                        .unwrap_or_else(|| unreachable!("groups pre-filtered to dynamic folders"));
                     serde_json::json!({
                         "id": g.id.to_string(),
                         "name": g.name,
@@ -122,10 +127,11 @@ fn cmd_dynamic_folder_list(
         OutputFormat::Csv => {
             println!("group,script,timeout_secs,refresh_interval_secs,last_refreshed_at");
             for group in &groups {
+                // `groups` was filtered on `dynamic_folder.is_some()` above.
                 let df = group
                     .dynamic_folder
                     .as_ref()
-                    .unwrap_or_else(|| unreachable!());
+                    .unwrap_or_else(|| unreachable!("groups pre-filtered to dynamic folders"));
                 let refresh = df
                     .refresh_interval_secs
                     .map_or_else(String::new, |s| s.to_string());

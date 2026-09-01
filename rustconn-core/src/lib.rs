@@ -160,8 +160,8 @@ pub use export::{
     ExportTarget, NATIVE_FILE_EXTENSION, NATIVE_FORMAT_VERSION, NativeExport, NativeImportError,
 };
 pub use flatpak::{
-    copy_key_to_flatpak_ssh, get_flatpak_known_hosts_path, get_flatpak_ssh_dir, is_flatpak,
-    is_portal_path, resolve_key_path,
+    copy_key_to_flatpak_ssh, get_flatpak_known_hosts_path, get_flatpak_ssh_dir, host_visible_path,
+    is_flatpak, is_portal_path, resolve_key_path,
 };
 pub use highlight::{
     CompiledHighlightRules, HighlightMatch, Rgb, builtin_defaults, parse_hex_color,

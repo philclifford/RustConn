@@ -189,23 +189,30 @@ pub(super) fn cmd_update(
         connection.username = Some(user.to_string());
     }
 
-    // Update SSH-specific fields
+    // Update SSH-specific fields. Both SSH and SFTP carry an SSH config; any
+    // other protocol has nowhere to put a key or auth method, so reject the
+    // flag rather than dropping it silently (matches `add` behaviour).
     if params.key.is_some() || params.auth_method.is_some() {
-        if let rustconn_core::models::ProtocolConfig::Ssh(ref mut cfg) = connection.protocol_config
-        {
-            if let Some(key_path) = params.key {
-                cfg.key_path = Some(key_path.to_path_buf());
+        let ssh_cfg = match connection.protocol_config {
+            rustconn_core::models::ProtocolConfig::Ssh(ref mut cfg)
+            | rustconn_core::models::ProtocolConfig::Sftp(ref mut cfg) => cfg,
+            _ => {
+                let flag = if params.key.is_some() {
+                    "--key"
+                } else {
+                    "--auth-method"
+                };
+                return Err(CliError::Config(format!(
+                    "{flag} is only valid for SSH and SFTP connections, not {:?}",
+                    connection.protocol
+                )));
             }
-            if let Some(method_str) = params.auth_method {
-                cfg.auth_method = parse_auth_method(method_str)?;
-            }
-        } else {
-            if params.key.is_some() {
-                tracing::warn!("--key is only applicable to SSH connections");
-            }
-            if params.auth_method.is_some() {
-                tracing::warn!("--auth-method is only applicable to SSH connections");
-            }
+        };
+        if let Some(key_path) = params.key {
+            ssh_cfg.key_path = Some(key_path.to_path_buf());
+        }
+        if let Some(method_str) = params.auth_method {
+            ssh_cfg.auth_method = parse_auth_method(method_str)?;
         }
     }
 

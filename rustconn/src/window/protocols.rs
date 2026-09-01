@@ -1411,11 +1411,31 @@ fn start_spice_connection_internal(
     let vv_file = rustconn_core::spice_client::build_vv_connection_file(&config)
         .and_then(|contents| super::command_env::EphemeralVvFile::write(&contents));
 
-    let args = if let Some(ref vv_file) = vv_file {
+    // A `host:` viewer runs outside the sandbox, and the sandbox's
+    // `$XDG_RUNTIME_DIR` is not the host's despite looking like it, so the path
+    // the file was written to means nothing to that process. Resolve the path it
+    // *can* open before handing it over; `None` means the file cannot be
+    // delivered, and passing an unopenable path is worse than not passing one at
+    // all — `remote-viewer` falls back to reading the argument as a URI and dies
+    // with "connection type cannot be detected from URI" (issue #308). Dropping
+    // to the URI args instead costs a password prompt and keeps the session
+    // working, which is how every release before 0.21.2 behaved.
+    let vv_argument = vv_file
+        .as_ref()
+        .and_then(|file| rustconn_core::host_visible_path(file.path()));
+    if vv_file.is_some() && vv_argument.is_none() {
+        tracing::warn!(
+            connection = %conn_name,
+            "the SPICE connection file is not reachable by the host viewer; \
+             falling back to the URI, so the viewer will ask for the password"
+        );
+    }
+
+    let args = if let Some(ref path) = vv_argument {
         // The .vv file carries host/port/TLS/password, so it replaces the URI.
         // The connection-independent flags (title, USB, shared folders) still go
         // on argv next to it — remote-viewer accepts both together.
-        let mut args = vec![vv_file.path().to_string_lossy().to_string()];
+        let mut args = vec![path.to_string_lossy().to_string()];
         args.extend(rustconn_core::spice_client::build_spice_extra_flags(
             &config,
         ));
@@ -1435,7 +1455,12 @@ fn start_spice_connection_internal(
         ssh_tunnel,
     );
     if let Some(vv_file) = vv_file {
-        if spawned {
+        // Ownership passes to the viewer only if it both started *and* was given
+        // the file: `delete-this-file=1` is what removes it, and a viewer that
+        // never opened it will never act on that. Releasing on `spawned` alone
+        // would leave a password on disk for the whole session whenever the path
+        // could not be translated for a host viewer.
+        if spawned && vv_argument.is_some() {
             // The viewer is running and will remove the file itself.
             vv_file.release_to_viewer();
         } else {

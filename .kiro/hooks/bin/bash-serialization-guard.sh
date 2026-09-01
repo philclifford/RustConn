@@ -72,12 +72,12 @@ if [ -n "$sleeps" ] && { [ "$sleeps" -ge 5 ] || [ "${has_loop:-0}" -gt 0 ]; }; t
         '  if that terminal is busy the line just queues up behind the running job.' \
         '' \
         '  Wait inside one tool call instead:' \
-        '    execute_bash(command="cd /home/totoshko88/Documents/RustConn && cargo test --workspace > /tmp/rc-test.log 2>&1", timeout=900000)' \
-        '  then read /tmp/rc-test.log with the file-reading tool.' \
+        '    execute_bash(command="cd /home/totoshko88/Documents/RustConn && cargo test --workspace > target/rc-test.log 2>&1", timeout=900000)' \
+        '  then read target/rc-test.log with the file-reading tool.' \
         '' \
         '  Or take a handle and poll the filesystem, never the clock:' \
-        '    execute_bash(command="cd /home/totoshko88/Documents/RustConn && rm -f /tmp/rc-test.log /tmp/rc-test.rc && nohup sh -c \x27cargo test --workspace > /tmp/rc-test.log 2>&1; echo $? > /tmp/rc-test.rc\x27 >/dev/null 2>&1 &")' \
-        '  The run is done exactly when /tmp/rc-test.rc exists. Read it with the' \
+        '    execute_bash(command="cd /home/totoshko88/Documents/RustConn && rm -f target/rc-test.log target/rc-test.rc && nohup sh -c \x27cargo test --workspace > target/rc-test.log 2>&1; echo $? > target/rc-test.rc\x27 >/dev/null 2>&1 &", timeout=900000)' \
+        '  The run is done exactly when target/rc-test.rc exists. Read it with the' \
         '  file-reading tool between other work; do not sit in the shell.' \
         '' \
         '  Or hand the whole verification to the rust-quality-check sub-agent.'
@@ -88,8 +88,8 @@ cargo_verbs='build|test|clippy|check|run|bench|doc|nextest|machete|audit'
 if printf '%s' "$cmd" | grep -qE "cargo([[:space:]]+\+[^[:space:]]+)?[[:space:]]+($cargo_verbs)[^|;&]*\|[[:space:]]*(head|tail|grep|rg|egrep|fgrep|less|more|awk|sed|wc|sort|uniq|cut|column)"; then
     block 'piped cargo output is the main way this shell tool returns nothing.' \
         '  Redirect to a file and read the file:' \
-        '    ... cargo clippy --all-targets > /tmp/rc-clippy.log 2>&1' \
-        '  then read /tmp/rc-clippy.log with the file-reading tool (it takes line ranges).'
+        '    ... cargo clippy --all-targets > target/rc-clippy.log 2>&1' \
+        '  then read target/rc-clippy.log with the file-reading tool (it takes line ranges).'
 fi
 
 starts_cargo=0
@@ -134,7 +134,7 @@ if [ "$starts_cargo" -eq 1 ] && [ "$bg" != "true" ] && [ "${tmo:-0}" -lt 300000 
         '  and the terminal will stay busy — that is how the sleep chain starts.' \
         '' \
         '  Pass explicit headroom and a log file:' \
-        '    timeout=900000, command="... > /tmp/rc-run.log 2>&1"' \
+        '    timeout=900000, command="... > target/rc-run.log 2>&1"' \
         '  or set run_in_background=true and read the log with the file-reading tool,' \
         '  or delegate to the rust-quality-check sub-agent.'
 fi

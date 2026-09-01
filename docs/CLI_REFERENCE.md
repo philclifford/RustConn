@@ -1,6 +1,6 @@
 # RustConn CLI Reference
 
-**Version 0.18.11** | Command-line interface for RustConn connection management
+**Version 0.21.4** | Command-line interface for RustConn connection management
 
 The `rustconn-cli` binary provides headless connection management from the terminal. It shares the same configuration files as the GUI (`~/.config/rustconn/`), so changes made in either tool are immediately visible to the other. The default build is the minimal headless path; desktop/client-launch and secret-management commands are enabled with optional features.
 
@@ -143,7 +143,7 @@ Options:
 | `--name` | `-n` | Connection name (required) |
 | `--host` | `-H` | Hostname, IP, or device path (required) |
 | `--port` | `-p` | Port number (defaults: SSH=22, RDP=3389, VNC=5900, Telnet=23) |
-| `--protocol` | `-P` | Protocol: `ssh`, `rdp`, `vnc`, `spice`, `sftp`, `telnet`, `serial`, `mosh`, `kubernetes`/`k8s`, `zerotrust`/`zt` (default: `ssh`) |
+| `--protocol` | `-P` | Protocol: `ssh`, `rdp`, `vnc`, `spice`, `sftp`, `telnet`, `serial`, `mosh`, `kubernetes`/`k8s`, `zerotrust`/`zt`, `web` (default: `ssh`) |
 | `--user` | `-u` | Username |
 | `--key` | `-k` | Path to SSH private key file |
 | `--auth-method` | — | SSH auth: `password`, `publickey`, `keyboard-interactive`, `agent`, `security-key` |
@@ -183,7 +183,9 @@ Options:
 | `--color-depth` | — | RDP color depth: 8, 15, 16, 24, or 32 |
 | `--disable-nla` | — | Disable Network Level Authentication (RDP only) |
 | `--keyboard-layout` | — | RDP keyboard layout override (Windows KLID) |
-| `--audio-redirect` | — | Enable audio redirection (RDP only) |
+| `--audio-redirect` | — | Enable audio redirection (RDP only; shorthand for `--audio-mode local`) |
+| `--audio-mode` | — | Where RDP session audio is played: `local`, `remote`, or `none` (RDP only). Preferred over `--audio-redirect` |
+| `--printer` | — | Enable printer redirection, mapping the local CUPS printer into the session (RDP only) |
 | `--shared-folder` | — | Shared folder `NAME:PATH` (repeatable, RDP only) |
 | `--vnc-client-mode` | — | VNC client mode: `embedded` (default) or `external` |
 | `--vnc-performance` | — | VNC performance mode: `quality`, `balanced` (default), or `speed` |
@@ -406,6 +408,7 @@ rustconn-cli update "My Server" --add-tag critical --remove-tag staging
 rustconn-cli update "Windows" --ignore-certificate
 rustconn-cli update "Windows" --gateway gw.example.com --gateway-port 443
 rustconn-cli update "Windows" --resolution 1920x1080 --color-depth 32
+rustconn-cli update "Windows" --audio-mode remote --printer
 rustconn-cli update "Windows" --shared-folder docs:/home/user/Documents
 rustconn-cli update "Windows" --remote-app-program "||calc" --remote-app-name "Calculator"
 rustconn-cli update "Desktop" --vnc-performance speed --vnc-compression 9 --vnc-view-only
@@ -421,6 +424,10 @@ All flags from `add` are available (except `--protocol`), plus:
 - `--new-name` to rename
 - `--add-tag` / `--remove-tag` for incremental tag editing
 - `--skip-port-check=false` to clear the flag
+
+Two boolean flags accept an explicit value on `update` so they can be *cleared*, unlike on `add` where they only turn a feature on:
+- `--mptcp` — bare `--mptcp` (or `--mptcp true`) enables Multipath TCP; `--mptcp false` disables it
+- `--skip-port-check` — bare `--skip-port-check` (or `=true`) sets the flag; `--skip-port-check=false` clears it
 
 Only specified fields are changed; unspecified fields remain unchanged.
 
@@ -617,6 +624,7 @@ Manage Cloud Sync: export Master groups, import from cloud, check sync status.
 | `sync export <group>` | Export a Master group to its sync file |
 | `sync import <file>` | Import a `.rcn` sync file as an Import group |
 | `sync now` | Export all Master groups and import all Import groups |
+| `sync inventory <file>` | Sync from an external inventory source — see [sync — Sync from external inventory](#sync--sync-from-external-inventory) above |
 
 ```bash
 rustconn-cli sync status

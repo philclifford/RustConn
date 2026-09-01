@@ -936,16 +936,15 @@ impl Connection {
         matches!(self.window_mode, WindowMode::Fullscreen)
     }
 
-    /// Returns true if this connection's protocol supports `window_mode`.
+    /// Returns true if this connection's protocol honours `window_mode`.
     ///
-    /// Currently only RDP and VNC honour the setting; for all other protocols
-    /// the value is silently ignored at connect time.
+    /// Only RDP and VNC honour the setting; for every other protocol the value
+    /// is ignored at connect time. SPICE is deliberately excluded: it always
+    /// uses an external viewer (see [`uses_external_viewer`](Self::uses_external_viewer)),
+    /// so `window_mode` has no observable effect on a SPICE connection.
     #[must_use]
     pub const fn supports_window_mode(&self) -> bool {
-        matches!(
-            self.protocol,
-            ProtocolType::Rdp | ProtocolType::Vnc | ProtocolType::Spice
-        )
+        matches!(self.protocol, ProtocolType::Rdp | ProtocolType::Vnc)
     }
 
     /// Returns `true` when the display is fully delegated to an external viewer.

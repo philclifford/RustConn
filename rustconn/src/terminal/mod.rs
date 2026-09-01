@@ -1936,7 +1936,12 @@ impl TerminalNotebook {
                             "Unresolved variable in key sequence"
                         );
                     }
-                    KeyElement::Wait(_) => unreachable!(),
+                    // `Wait` is peeled off by the `if let KeyElement::Wait(ms)`
+                    // above and folded into `cumulative_delay_ms`; this `match`
+                    // only runs in the `else` branch, so it can never be `Wait`.
+                    KeyElement::Wait(_) => {
+                        unreachable!("Wait is handled by the outer if-let and never reaches here")
+                    }
                 }
             }
         }

@@ -27,14 +27,28 @@ proptest! {
         let config = SanitizeConfig::new();
         let result = sanitize_output(&text, &config);
         // Safe text should not be modified (unless it accidentally matches a pattern)
-        // We check that the result doesn't contain [REDACTED] for truly safe text
-        if !text.to_lowercase().contains("password")
+        // We check that the result doesn't contain [REDACTED] for truly safe text.
+        //
+        // This guard list has to name every marker `SENSITIVE_VALUE_PATTERNS`
+        // reacts to, or the property is asserted over text the sanitizer is
+        // *supposed* to redact. `pass` rather than `password` because the
+        // sanitizer carries `pass[:\s]+\S+` as well: `"pASS ?"` is `pass`, a
+        // space and a value, and it was redacted while this guard let it through
+        // (the saved regression seed is exactly that input).
+        if !text.to_lowercase().contains("pass")
             && !text.to_lowercase().contains("token")
             && !text.to_lowercase().contains("api")
             && !text.to_lowercase().contains("secret")
             && !text.to_lowercase().contains("bearer")
             && !text.contains("AKIA")
             && !text.contains("-----BEGIN")
+            // Provider token prefixes. Vanishingly unlikely from the strategy
+            // above, which would have to produce the exact prefix plus 20-36
+            // matching characters, but cheap to exclude and the same class of
+            // hole as `pass` was.
+            && !text.contains("ghp_")
+            && !text.contains("glpat-")
+            && !text.contains("eyJ")
         {
             prop_assert_eq!(result, text);
         }

@@ -1,6 +1,6 @@
 # RustConn User Guide
 
-**Version 0.21.3** | GTK4/libadwaita Connection Manager for Linux
+**Version 0.21.4** | GTK4/libadwaita Connection Manager for Linux
 
 RustConn is a modern connection manager designed for Linux with Wayland-first approach. It supports SSH, RDP, VNC, SPICE, MOSH, SFTP, Telnet, Serial, Kubernetes, Web protocols and Zero Trust integrations through a native GTK4/libadwaita interface.
 
@@ -3654,6 +3654,8 @@ RustConn uses VTE, which passes all keystrokes to the shell. Configure vim/emacs
 | Ctrl+Shift+H | Split Horizontal |
 | Ctrl+Shift+S | Split Vertical |
 | Ctrl+Shift+X | Close Pane |
+| Ctrl+Shift+R | Pop Pane to Tab (keeps the session, returns it to its own tab) |
+| Ctrl+Shift+J | Unsplit (return every session to its own tab) |
 | Ctrl+` | Focus Next Pane |
 
 ### Application

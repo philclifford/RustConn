@@ -86,7 +86,7 @@ pub enum Commands {
         port: Option<u16>,
 
         /// Protocol type (ssh, rdp, vnc, spice, sftp, telnet, serial,
-        /// mosh, kubernetes/k8s, zerotrust/zt)
+        /// mosh, kubernetes/k8s, zerotrust/zt, web)
         #[arg(short = 'P', long, default_value = "ssh")]
         protocol: String,
 
@@ -1757,8 +1757,9 @@ pub enum SecretCommands {
         /// Connection name or ID
         connection: String,
 
-        /// Secret backend to use
-        /// (keyring, keepass, bitwarden, 1password, passbolt)
+        /// Secret backend to use (keyring/libsecret, keepass/keepassxc,
+        /// bitwarden/bw, 1password/op, passbolt, pass, encrypted-file/file,
+        /// portable/portable-file)
         #[arg(short, long)]
         backend: Option<String>,
     },
@@ -1784,8 +1785,9 @@ pub enum SecretCommands {
         #[arg(long, conflicts_with = "password")]
         password_stdin: bool,
 
-        /// Secret backend to use
-        /// (keyring, keepass, bitwarden, 1password, passbolt)
+        /// Secret backend to use (keyring/libsecret, keepass/keepassxc,
+        /// bitwarden/bw, 1password/op, passbolt, pass, encrypted-file/file,
+        /// portable/portable-file)
         #[arg(short, long)]
         backend: Option<String>,
     },
@@ -1796,8 +1798,9 @@ pub enum SecretCommands {
         /// Connection name or ID
         connection: String,
 
-        /// Secret backend to use
-        /// (keyring, keepass, bitwarden, 1password, passbolt)
+        /// Secret backend to use (keyring/libsecret, keepass/keepassxc,
+        /// bitwarden/bw, 1password/op, passbolt, pass, encrypted-file/file,
+        /// portable/portable-file)
         #[arg(short, long)]
         backend: Option<String>,
     },

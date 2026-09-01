@@ -63,6 +63,36 @@ check() {
 check 'steering file count' "$claimed_steering" "$actual_steering" 'steering'
 check 'hook count' "$claimed_hooks" "$actual_hooks" 'hooks'
 
+# The two checks above catch a wrong *number*. They cannot catch a hook that no
+# document describes, which is the more useful failure: steering `hooks-map.md`
+# opens by calling itself a reference for all of `.kiro/hooks/*.json`, and on
+# 2026-09-02 it covered 15 of 16. `session-baseline` had been missing since it
+# landed on 2026-08-26, and the file had no SessionStart section at all.
+#
+# Name-presence only, deliberately. Verifying that a row is *accurate* means
+# parsing matchers and latencies out of a markdown table, which breaks on every
+# legitimate edit; a check that fires on rename or deletion is the part worth
+# automating.
+map=".kiro/steering/hooks-map.md"
+if [ ! -f "$map" ]; then
+    printf 'FAIL: hook documentation coverage — %s not found.\n' "$map" >&2
+    status=1
+else
+    undocumented=""
+    while IFS= read -r hook; do
+        name=$(basename "$hook" .json)
+        grep -qF "$name" "$map" || undocumented="$undocumented $name"
+    done < <(find .kiro/hooks -maxdepth 1 -name '*.json' -type f 2>/dev/null | sort)
+
+    if [ -n "$undocumented" ]; then
+        printf 'FAIL: hook documentation coverage — %s has no row for:%s\n' "$map" "$undocumented" >&2
+        printf '      Add one to the section for its trigger, or delete the hook.\n' >&2
+        status=1
+    else
+        printf 'ok: hook documentation coverage (%s hooks, all in hooks-map.md)\n' "$actual_hooks"
+    fi
+fi
+
 if [ "$status" -ne 0 ]; then
     printf '\n%s is not an inventory and should not try to be one. If keeping these\n' "$doc" >&2
     printf 'numbers current is not worth it, rewrite the sentences to stop asserting a\n' >&2

@@ -125,13 +125,21 @@ in the app for the complete, always-current list.
 
 ## Contributing
 
-Bug reports and feature requests are welcome on the
-[issue tracker](https://github.com/totoshko88/RustConn/issues).
+[CONTRIBUTING.md](CONTRIBUTING.md) covers development setup, the quality gate,
+and the conventions a pull request is checked against. Participation is under the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
+- **Bugs and features** — [issue tracker](https://github.com/totoshko88/RustConn/issues);
+  the forms ask for the version, install method, and desktop, which is usually
+  what a diagnosis turns on.
+- **Questions** — [Discussions](https://github.com/totoshko88/RustConn/discussions).
 - **Code** — see the [Build Guide](docs/BUILD.md) and
   [Architecture](docs/ARCHITECTURE.md) to get started.
 - **Translations** — RustConn ships 17 translated languages; `.po` files live in
   [`po/`](po/). New languages and corrections are appreciated.
+- **Vulnerabilities** — privately, via
+  [Security Advisories](https://github.com/totoshko88/RustConn/security/advisories/new)
+  rather than an issue ([SECURITY.md](SECURITY.md)).
 
 ## Support
 
