@@ -1,8 +1,0 @@
-9bec968a docs(changelog): rewrite 0.20.4 for users, not contributors
-515cd467 build(deps): update all dependencies
-605d7d0b docs: 16 → 17 locales (Georgian added)
-b39d2ded i18n(ka): complete Georgian catalogue for 0.20.4
-841a7af2 Merge PR #296: Georgian translation by Ekaterine Papava
-958c54b4 fix(rustconn-cli): name a stale saved portable passphrase as stale
-c4f62497 chore(release): propagate 0.20.4 to packaging and metainfo
-1e6fb538 docs: portable encrypted file setup, key hierarchy and its ceilings

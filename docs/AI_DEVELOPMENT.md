@@ -68,6 +68,33 @@ That last row is a trap worth stating: `auto` without `name` + `description` in 
 front matter silently never loads. `shell-environment.md` sat that way and asserted
 in its own text that it was always present.
 
+### When `auto` is the wrong mode
+
+`manual` has an obvious drawback — half the ruleset never loads unless someone
+types `#name` — so `auto` looks like a free upgrade. It is not, and the
+distinction is what a file *does* when it lands in context.
+
+A file that is **guidance** changes how the agent approaches work and starts
+nothing on its own. `bugfix-workflow.md` is the example: loading it during a bug
+fix is exactly what you want, and it was converted to `auto` on 2026-09-02.
+
+A file that is a **runbook** opens with an instruction and expects to be obeyed.
+Four of these must stay `manual`, because `auto` would have them fire on a passing
+mention rather than a decision:
+
+| File | First line commits the agent to |
+|------|---------------------------------|
+| `dependency-audit.md` | running `scripts/dep-audit.sh` and a round of web lookups |
+| `release-version.md` | editing every packaging file for a version bump |
+| `code-review.md` | spawning several reviewer sub-agents in parallel |
+| `ponytail-audit.md` | scanning a crate or the whole tree for over-engineering |
+
+Each is expensive, and each is a decision the developer makes — "audit the
+dependencies" is a request, not a topic. An audit on 2026-09-02 proposed
+converting all four to `auto` on the strength of the count alone, then withdrew it
+after reading what the files actually say. Read the first paragraph of a file
+before changing its mode.
+
 Per-directory rules live outside this mechanism, in a nested `AGENTS.md` in each
 crate, `po/` and `packaging/` — Kiro loads those by directory tree, and unlike
 steering they are also read by agents that do not know about `.kiro/`.
@@ -95,8 +122,13 @@ the agent executes directly. Triggers are PascalCase.
 
 Each hook's own `description` field carries its rationale, including the hardening
 notes that matter (why the KiroGraph sync checks for a stale lock, why the release
-guard covers three separate routes). That is the canonical text;
-`scripts/check-ai-docs.sh` gates only the count above.
+guard covers three separate routes). That is the canonical text.
+
+`scripts/check-ai-docs.sh` gates the count above and, since 2026-09-02, also
+asserts that every hook file has a row in steering `hooks-map.md`. That second
+check was added because the map lost `session-baseline` for a week while claiming
+in its first line to cover every hook — the table above had it, the map did not,
+and nothing compared either against `ls .kiro/hooks/`.
 
 The manual runbooks that used to be listed here as hooks — the quality gate, the
 dependency audit, the ponytail ledger, the release preparation, the commit-message

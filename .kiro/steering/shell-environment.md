@@ -141,6 +141,10 @@ rm -f target/rc-test.log target/rc-test.rc
 nohup sh -c 'cargo test --workspace > target/rc-test.log 2>&1; echo $? > target/rc-test.rc' >/dev/null 2>&1 &
 ```
 
+Pass `timeout=900000` on this call too. It returns immediately, so the timeout is
+never reached — but `bash-serialization-guard` cannot tell a detached run from a
+foreground one and blocks the form without it. Verified by probe on 2026-09-02.
+
 Check it by reading `target/rc-test.rc` with the file-reading tool between other
 work. `control_bash_process` + `get_process_output` is the same idea with a
 managed terminal; if you use it, stop the process when done.
