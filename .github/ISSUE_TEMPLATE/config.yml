@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/totoshko88/RustConn/security/advisories/new
+    about: Private disclosure via GitHub Security Advisories — never in a public issue.
+  - name: Ask a question
+    url: https://github.com/totoshko88/RustConn/discussions
+    about: Usage questions, setup help, and ideas that are not yet a feature request.
+  - name: User Guide
+    url: https://github.com/totoshko88/RustConn/blob/main/docs/USER_GUIDE.md
+    about: Full documentation — worth a search before opening an issue.
+  - name: Installation and build guides
+    url: https://github.com/totoshko88/RustConn/blob/main/docs/INSTALL.md
+    about: Repository setup per distribution, and building from source.

@@ -1,0 +1,62 @@
+name: Translation issue
+description: A wrong, missing, or awkward translation — or a new language
+labels: ["i18n"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        RustConn ships 17 languages from the `.po` catalogues in
+        [`po/`](https://github.com/totoshko88/RustConn/tree/main/po). Corrections
+        are always welcome, and a pull request against the `.po` file is even
+        more welcome than an issue — see
+        [CONTRIBUTING.md](https://github.com/totoshko88/RustConn/blob/main/CONTRIBUTING.md#translations).
+
+  - type: input
+    id: language
+    attributes:
+      label: Language
+      description: Name and locale code
+      placeholder: "Ukrainian (uk) / Georgian (ka)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of issue?
+      options:
+        - Wrong or misleading translation
+        - String shows in English although the language is complete
+        - Awkward or inconsistent wording
+        - Text is cut off or overflows the widget
+        - I want to add a new language
+    validations:
+      required: true
+
+  - type: textarea
+    id: strings
+    attributes:
+      label: Which strings?
+      description: |
+        The English original and the current translation, plus what it should be.
+        Where it appears in the UI helps a lot.
+      placeholder: |
+        Original: "Trigger only once, then remove the rule"
+        Current:  "…"
+        Should be: "…"
+        Where: Settings → Automation → Expect rules
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: RustConn version
+      placeholder: "0.21.3"
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Would you like to submit the fix?
+      options:
+        - label: I can open a pull request against the `.po` file

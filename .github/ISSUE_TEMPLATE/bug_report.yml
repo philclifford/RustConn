@@ -1,0 +1,147 @@
+name: Bug report
+description: Something in RustConn does not work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file this.
+
+        **Do not report security vulnerabilities here.** Use
+        [Security Advisories](https://github.com/totoshko88/RustConn/security/advisories/new)
+        instead — see [SECURITY.md](https://github.com/totoshko88/RustConn/blob/main/SECURITY.md).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before reporting
+      options:
+        - label: I searched the existing issues and this is not a duplicate
+          required: true
+        - label: This is not a security vulnerability
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: RustConn version
+      description: "Help → About, or `rustconn --version`"
+      placeholder: "0.21.3"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install it?
+      options:
+        - Flatpak (Flathub)
+        - Flatpak (local build)
+        - Snap
+        - Homebrew (macOS)
+        - .deb from OBS
+        - .rpm from OBS
+        - AUR
+        - FreeBSD pkg / ports
+        - Nix
+        - AppImage
+        - Built from source
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Distribution and version, or macOS version
+      placeholder: "Fedora 43 / macOS 15.2 / Ubuntu 26.04 under WSLg"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: session
+    attributes:
+      label: Display session
+      options:
+        - Wayland
+        - X11
+        - macOS (Quartz)
+        - WSLg
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: desktop
+    attributes:
+      label: Desktop environment
+      description: Relevant for anything about window behaviour, theming, or the tray
+      placeholder: "GNOME 49 / KDE Plasma 6.4 / Hyprland"
+
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Which protocol or area?
+      options:
+        - SSH
+        - RDP
+        - VNC
+        - SPICE
+        - Telnet
+        - Serial
+        - Kubernetes
+        - MOSH
+        - Zero Trust broker
+        - Embedded web browser
+        - SFTP file browser
+        - Credentials / secret backend
+        - Import / export
+        - Cloud sync
+        - CLI (rustconn-cli)
+        - User interface (not protocol-specific)
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Create an SSH connection with a jump host set on its group
+        2. Right-click the connection → Open SFTP
+        3. The bastion is skipped and the connection times out
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Run with debug logging and paste the relevant part:
+
+        ```bash
+        RUST_LOG=debug rustconn
+        # Flatpak:
+        RUST_LOG=debug flatpak run io.github.totoshko88.RustConn
+        ```
+
+        Check the output before pasting — remove hostnames, usernames, or tokens
+        you would rather not publish.
+      render: shell
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, a recording, or a note that it used to work in an earlier version
